@@ -93,6 +93,22 @@ std::string common_render_tool_family_index(
     return rendered;
 }
 
+std::string common_tool_family_required_selection_prompt(
+        const std::vector<common_tool_family_index> & families) {
+    return "Tool execution is required for this request. Choose one or more tool families "
+           "from the available host-authorized family ids. Return exactly one JSON object "
+           "with a non-empty families array. Do not return NO_TOOLS, needs_tools:false, "
+           "tool names, arguments, explanations, or invented family ids. Available "
+           "families:\n" + common_render_tool_family_index(families, 2048);
+}
+
+std::string common_tool_family_required_selection_repair_prompt() {
+    return "Tool execution is required. Your previous family selection was invalid. "
+           "Return only a JSON object with a non-empty families array containing one or "
+           "more ids from the available list. Do not return NO_TOOLS, needs_tools:false, "
+           "tool arguments, resource ids, explanations, or any other text.";
+}
+
 std::vector<common_chat_tool> common_filter_tools_by_families(
         const std::vector<common_chat_tool> & tools,
         const std::vector<std::string> & family_ids) {

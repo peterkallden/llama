@@ -29,6 +29,10 @@ std::string common_render_tool_family_index(
     const std::vector<common_tool_family_index> & families,
     size_t max_chars = 2048);
 
+std::string common_tool_family_required_selection_prompt(
+    const std::vector<common_tool_family_index> & families);
+std::string common_tool_family_required_selection_repair_prompt();
+
 std::vector<common_chat_tool> common_filter_tools_by_families(
     const std::vector<common_chat_tool> & tools,
     const std::vector<std::string> & family_ids);

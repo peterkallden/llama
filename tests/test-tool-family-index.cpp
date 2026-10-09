@@ -66,6 +66,14 @@ int main() {
         error));
     assert(!selection.needs_tools && selection.family_ids.empty());
     const auto required_schema = common_tool_family_required_selection_schema(families);
+    const auto required_prompt = common_tool_family_required_selection_prompt(families);
+    assert(required_prompt.find("Tool execution is required for this request") == 0);
+    assert(required_prompt.find("available host-authorized family ids") != std::string::npos);
+    assert(required_prompt.find("tool names, arguments") != std::string::npos);
+    assert(required_prompt.find("data: Query and transform datasets") != std::string::npos);
+    const auto required_repair_prompt = common_tool_family_required_selection_repair_prompt();
+    assert(required_repair_prompt.find("previous family selection was invalid") != std::string::npos);
+    assert(required_repair_prompt.find("non-empty families array") != std::string::npos);
     assert(required_schema.find("\"minItems\":1") != std::string::npos);
     assert(required_schema.find("\"maxItems\":9") != std::string::npos);
     assert(required_schema.find("\"needs_tools\"") == std::string::npos);

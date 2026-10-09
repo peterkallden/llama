@@ -302,6 +302,9 @@ int main() {
     assert(describe_compact.find("columns (per-column count, null_count, min, max, mean and stddev)") != std::string::npos);
     assert(describe_compact.find("columns (optional, string list): Columns to describe") != std::string::npos);
     assert(describe_compact.find("group_by (optional, string list): Return separate statistics for each group.") != std::string::npos);
+    assert(describe_compact.find("rule: `columns` accepts only source-dataset column names.") != std::string::npos);
+    assert(describe_compact.find("rule: Omit group_by unless the request explicitly asks for separate groups.") != std::string::npos);
+    assert(describe_compact.find("example:\nopen! statistics.describe\ndataset: $orders.dataset\ncolumns: amount") != std::string::npos);
     const auto artifact_compact = common_render_compact_tool_description(
         artifact_export->name,
         artifact_export->description,

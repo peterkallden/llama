@@ -14,6 +14,7 @@
 #include "plan/plan-json.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <set>
 #include <sstream>
@@ -174,6 +175,97 @@ std::string workflow_action_contracts(
     return out;
 }
 
+const common_agent_dataset_descriptor * workflow_action_dataset_context(
+        const common_agent_request & request) {
+    if (request.available_datasets.empty()) return nullptr;
+    std::string prompt = request.prompt;
+    std::transform(prompt.begin(), prompt.end(), prompt.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    for (const auto & dataset : request.available_datasets) {
+        if (dataset.ref.name.empty()) continue;
+        std::string name = dataset.ref.name;
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        if (prompt.find(name) != std::string::npos) return &dataset;
+    }
+    return request.available_datasets.size() == 1 ? &request.available_datasets.front() : nullptr;
+}
+
+std::string workflow_action_known_columns(const common_agent_request & request) {
+    const auto * dataset = workflow_action_dataset_context(request);
+    if (dataset == nullptr || dataset->columns.empty()) return {};
+    std::string out = "\nKnown source columns";
+    if (!dataset->ref.name.empty()) out += " for " + dataset->ref.name;
+    out += ": ";
+    for (size_t index = 0; index < dataset->columns.size() && index < 32; ++index) {
+        if (index != 0) out += ", ";
+        out += dataset->columns[index].name;
+    }
+    return out + ". Use these exact names when a tool field expects a column.\n";
+}
+
+bool validate_workflow_action_dataset_columns(
+        const common_agent_request & request,
+        const std::string & tool_name,
+        const json & arguments,
+        std::string & error) {
+    if (tool_name != "statistics.describe" && tool_name != "statistics.outliers" &&
+            tool_name != "statistics.value_counts") return true;
+    const auto * dataset = workflow_action_dataset_context(request);
+    if (dataset == nullptr || dataset->columns.empty() || !arguments.is_object()) return true;
+    std::set<std::string> allowed;
+    for (const auto & column : dataset->columns) allowed.insert(column.name);
+    const auto list_allowed = [&]() {
+        std::string result;
+        for (const auto & column : dataset->columns) {
+            if (!result.empty()) result += ", ";
+            result += column.name;
+        }
+        return result;
+    };
+    const auto validate_value = [&](const char * field, const json & value) {
+        if (!value.is_string() || allowed.find(value.get<std::string>()) == allowed.end()) {
+            error = "workflow action " + std::string(field) + " must use an exact source column; allowed: " + list_allowed();
+            return false;
+        }
+        return true;
+    };
+    for (const char * field : {"columns", "group_by", "column"}) {
+        const auto value = arguments.find(field);
+        if (value == arguments.end()) continue;
+        if (value->is_array()) {
+            for (const auto & item : *value) if (!validate_value(field, item)) return false;
+        } else if (!validate_value(field, *value)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool normalize_workflow_optional_grouping(json & arguments) {
+    const auto grouping = arguments.find("group_by");
+    if (grouping == arguments.end()) return false;
+    const auto is_absent_marker = [](const json & value) {
+        if (value.is_null()) return true;
+        if (!value.is_string()) return false;
+        std::string text = value.get<std::string>();
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        return text == "none" || text == "null";
+    };
+    const bool all_absent_markers = grouping->is_array() && !grouping->empty() &&
+        std::all_of(grouping->begin(), grouping->end(), is_absent_marker);
+    if (is_absent_marker(*grouping) || all_absent_markers) {
+        arguments.erase(grouping);
+        return true;
+    }
+    return false;
+}
+
 json workflow_action_schema(
         const std::vector<common_chat_tool> & tools,
         const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
@@ -293,6 +385,11 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
 
     std::string last_error;
     const auto schema = workflow_action_schema(tools, fixed_bindings, host_resolved_dataset_tools);
+    // The route compiler frequently reduces a workflow terminal choice to one
+    // exact operation.  Do not make the model re-decide that host fact: it
+    // only needs to express the remaining flat arguments for that operation.
+    const bool host_selected_tool = tools.size() == 1;
+    const std::string host_selected_name = host_selected_tool ? tools.front().name : std::string{};
     if (output_format != common_agent_tool_output_format::compact_dsl &&
             schema.value("oneOf", json::array()).empty()) {
         error = "workflow action schema has no supported registered tools";
@@ -302,7 +399,21 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         common_chat_msg system{
             "system",
             output_format == common_agent_tool_output_format::compact_dsl
-                ? ("Choose the best tool for the request.\n\n"
+                ? (host_selected_tool
+                    ? ("The host selected the exact tool `" + host_selected_name + "`.\n\n"
+                      "Return exactly this header followed only by the needed flat fields:\n\n"
+                      "open! " + host_selected_name + "\n"
+                      "field: value\n\n"
+                      "Do not select another tool. Do not use output names as input fields.\n"
+                      "Use one field per line.\n"
+                      "Use plain scalars for single values.\n"
+                      "For scalar lists, use `a, b`, `[a, b]`, or repeat the field.\n"
+                      "For object lists, repeat the declared directive; use indexed fields when shown.\n"
+                      "Omit unset or host-resolved fields, including optional grouping when the task does not ask for groups.\n"
+                      "Quote values containing spaces or commas.\n\n"
+                      "Tool contract:" + workflow_action_contracts(tools, host_resolved_dataset_tools) +
+                      workflow_action_known_columns(request))
+                    : ("Choose the best tool for the request.\n\n"
                   "Return exactly one action:\n\n"
                   "open! TOOL_NAME\n"
                   "field: value\n\n"
@@ -312,8 +423,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                   "For object lists, repeat the declared directive; use indexed fields when shown.\n"
                   "Omit unset or host-resolved fields.\n"
                   "Quote values containing spaces or commas.\n\n"
-                  "Tools:" +
-                  workflow_action_contracts(tools, host_resolved_dataset_tools))
+                  "Tools:" + workflow_action_contracts(tools, host_resolved_dataset_tools)))
                 : ("Choose the listed tool that fits the request. Return one JSON object with `tool` and `args` matching its contract. "
                   "Include needed arguments only; omit unset or host-resolved fields. Return no explanation.\nTools:" +
                     workflow_action_contracts(tools, host_resolved_dataset_tools)),
@@ -388,6 +498,22 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             error = "workflow action arguments could not be normalized: " + last_error;
             return result;
         }
+        const bool normalized_optional_grouping = normalize_workflow_optional_grouping(normalized_arguments);
+        if (!validate_workflow_action_dataset_columns(
+                request, tool_name, normalized_arguments, last_error)) {
+            if (generation_config.generation_trace) {
+                std::string preview = generated.content.substr(0, 2048);
+                for (char & ch : preview) {
+                    if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
+                }
+                std::fprintf(stderr,
+                    "agent workflow-action trace: attempt=%zu semantic-validation=failed error=%s response=<<<%s>>>\n",
+                    attempt + 1, last_error.c_str(), preview.c_str());
+            }
+            if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
+            error = last_error;
+            return result;
+        }
         std::string normalized;
         if (!common_schema_normalize_and_validate_object(
                 normalized_arguments.dump(), selected->parameters, normalized, last_error)) {
@@ -401,8 +527,9 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                 if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
             }
             std::fprintf(stderr,
-                "agent workflow-action trace: attempt=%zu parse=ok tool=%s canonical_args=%s response=<<<%s>>>\n",
-                attempt + 1, tool_name.c_str(), normalized.c_str(), preview.c_str());
+                "agent workflow-action trace: attempt=%zu parse=ok tool=%s canonical_args=%s optional_grouping_normalized=%s response=<<<%s>>>\n",
+                attempt + 1, tool_name.c_str(), normalized.c_str(),
+                normalized_optional_grouping ? "true" : "false", preview.c_str());
         }
         result.action = common_agent_tool_argument_binding{tool_name, normalized, "workflow-action", false};
         result.reason = "selected one route-scoped schema-valid tool action";

@@ -175,11 +175,7 @@ bool select_model_tool_families(
     common_chat_msg system{
         "system",
         required_family_selection
-            ? "Tool execution is required for this request. Choose one or more tool families "
-              "from the available host-authorized family ids. Return exactly one JSON object "
-              "with a non-empty families array. Do not return NO_TOOLS, needs_tools:false, "
-              "tool names, arguments, explanations, or invented family ids. Available "
-              "families:\n" + family_view
+            ? common_tool_family_required_selection_prompt(families)
             : "Decide whether the user request needs external tools. Reply with exactly one line: "
               "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
               "are needed. Current-turn attachments are optional inputs: choose the resource or "
@@ -236,10 +232,7 @@ bool select_model_tool_families(
         common_chat_msg repair{
             "system",
             required_family_selection
-                ? "Tool execution is required. Your previous family selection was invalid. "
-                  "Return only a JSON object with a non-empty families array containing one or "
-                  "more ids from the available list. Do not return NO_TOOLS, needs_tools:false, "
-                  "tool arguments, resource ids, explanations, or any other text."
+                ? common_tool_family_required_selection_repair_prompt()
                 : "Your previous tool-family selection was invalid. Return the required JSON object only. "
                   "Families may contain only ids from the available list; do not include tool arguments, "
                   "resource ids, explanations, or any other text.",

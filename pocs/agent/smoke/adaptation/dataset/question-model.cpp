@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tool-family-index.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
 
@@ -136,32 +137,29 @@ int main(int argc, char ** argv) {
     auto * model = model_context == nullptr ? nullptr : llama_get_model(model_context);
     if (model == nullptr) return 1;
 
+    const auto definitions = catalog.load_profile("analysis", error);
+    if (!error.empty()) {
+        std::cerr << "could not load analysis tool profile: " << error << '\n';
+        return 1;
+    }
     std::vector<common_chat_tool> chat_tools;
-    chat_tools.reserve(suite["scenarios"].size());
-    for (const auto & scenario : suite["scenarios"]) {
-        const auto name = scenario.value("expected_tool", "");
-        const auto * definition = catalog.find_definition(name);
-        if (!definition) {
-            std::cerr << "unknown expected tool: " << name << '\n';
-            return 1;
-        }
+    chat_tools.reserve(definitions.size());
+    for (const auto & definition : definitions) {
         std::string compact_error;
         const auto description = common_render_compact_tool_description(
-            definition->name, definition->description,
-            common_tool_model_input_schema(*definition),
-            common_tool_model_result_schema(*definition), compact_error);
+            definition.name, definition.description,
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition), compact_error);
         if (!compact_error.empty()) {
             std::cerr << compact_error << '\n';
             return 1;
         }
-        if (std::none_of(chat_tools.begin(), chat_tools.end(), [&](const auto & tool) {
-                return tool.name == definition->name;
-            })) {
-            chat_tools.push_back({definition->name, description,
-                common_tool_model_input_schema(*definition),
-                common_tool_model_result_schema(*definition)});
-        }
+        chat_tools.push_back({definition.name, description,
+            common_tool_model_input_schema(definition),
+            common_tool_model_result_schema(definition)});
     }
+    const auto families = common_generate_tool_family_index(chat_tools);
+    const auto family_schema = common_tool_family_required_selection_schema(families);
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
@@ -175,12 +173,90 @@ int main(int argc, char ** argv) {
     size_t matched = 0;
     size_t mismatched = 0;
     for (const auto & scenario : suite["scenarios"]) {
+        const auto expected = scenario.value("expected_tool", "");
+        const auto family_prompt = common_tool_family_required_selection_prompt(families);
+        common_agent_generation_options family_options;
+        family_options.n_predict = 64;
+        family_options.n_threads = value.n_threads;
+        family_options.generation_trace = true;
+        auto family_request = common_agent_make_generation_request(
+            common_agent_generation_purpose::tool_family_selection,
+            "flydelta-dataset-question-family-" + scenario.value("id", ""),
+            std::nullopt,
+            {{"system", family_prompt}, {"user", scenario.value("question", "")}},
+            family_options,
+            family_schema);
+        auto family_result = inference->generate_result(family_request);
+        const std::string initial_family_output = preview(family_result);
+        common_tool_family_selection family_selection;
+        std::string family_error;
+        bool family_selected = common_agent_generation_succeeded(family_result) &&
+            common_parse_tool_family_required_selection(
+                family_result.content, families, family_selection, family_error);
+        bool family_repaired = false;
+        if (!family_selected) {
+            common_agent_generation_options repair_options = family_options;
+            auto repair_request = common_agent_make_generation_request(
+                common_agent_generation_purpose::tool_family_selection,
+                "flydelta-dataset-question-family-repair-" + scenario.value("id", ""),
+                std::nullopt,
+                {{"system", family_prompt},
+                 {"system", common_tool_family_required_selection_repair_prompt()},
+                 {"user", scenario.value("question", "")}},
+                repair_options,
+                family_schema);
+            auto repaired_result = inference->generate_result(repair_request);
+            std::string repair_error;
+            family_repaired = common_agent_generation_succeeded(repaired_result) &&
+                common_parse_tool_family_required_selection(
+                    repaired_result.content, families, family_selection, repair_error);
+            if (family_repaired) {
+                family_result = std::move(repaired_result);
+                family_selected = true;
+                family_error.clear();
+            } else {
+                if (!repair_error.empty()) family_error = std::move(repair_error);
+                family_result = std::move(repaired_result);
+            }
+        }
+        if (!family_selected) {
+            ++mismatched;
+            std::cout << "scenario=" << scenario.value("id", "")
+                      << " expected=" << expected
+                      << " family_selection=failed"
+                      << " family_repaired=no"
+                      << " error=" << (family_error.empty() ? family_result.error_message : family_error)
+                      << " initial_output=" << initial_family_output
+                      << " output=" << preview(family_result) << '\n';
+            continue;
+        }
+        const auto family_tools = common_filter_tools_by_families(
+            chat_tools, family_selection.family_ids);
+        const bool expected_tool_available = std::any_of(
+            family_tools.begin(), family_tools.end(), [&](const auto & tool) {
+                return tool.name == expected;
+            });
+        if (!expected_tool_available) {
+            ++mismatched;
+            std::cout << "scenario=" << scenario.value("id", "")
+                      << " expected=" << expected
+                      << " selected_families=";
+            for (size_t i = 0; i < family_selection.family_ids.size(); ++i) {
+                if (i != 0) std::cout << ',';
+                std::cout << family_selection.family_ids[i];
+            }
+            std::cout << " family_mismatch=expected_tool_not_exposed"
+                      << " initial_family_output=" << initial_family_output
+                      << " family_output=" << preview(family_result) << '\n';
+            continue;
+        }
+
         common_agent_generation_request request;
         request.purpose = common_agent_generation_purpose::tool_followup;
         request.options.n_predict = value.n_predict;
         request.options.n_threads = value.n_threads;
         request.options.generation_trace = true;
-        request.tools = chat_tools;
+        request.tools = family_tools;
         request.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
         request.messages = {
             {"system", "You are a host-controlled dataset tool selector. Select exactly one most-specific read-only tool. "
@@ -192,11 +268,19 @@ int main(int argc, char ** argv) {
         common_agent_generation_result result;
         const bool executed = inference->generate(request, result);
         const auto actual = selected_tool(result);
-        const auto expected = scenario.value("expected_tool", "");
         const bool correct = executed && actual == expected;
         if (correct) ++matched; else ++mismatched;
         std::cout << "scenario=" << scenario.value("id", "")
                   << " expected=" << expected << " selected=" << (actual.empty() ? "<none>" : actual)
+                  << " selected_families=";
+        for (size_t i = 0; i < family_selection.family_ids.size(); ++i) {
+            if (i != 0) std::cout << ',';
+            std::cout << family_selection.family_ids[i];
+        }
+        std::cout << " exposed_tools=" << family_tools.size()
+                  << " family_repaired=" << (family_repaired ? "yes" : "no")
+                  << " initial_family_output=" << initial_family_output
+                  << " family_output=" << preview(family_result)
                   << " outcome=" << (correct ? "matched" : "repair_observation")
                   << " capture=" << (result.flydelta_capture && result.flydelta_capture->captured ? "yes" : "no")
                   << " output=" << preview(result) << '\n';
