@@ -1,6 +1,7 @@
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
 #include "../openapi/agent-openapi-catalog.h"
+#include "../openapi/dynamic/agent-openapi-dynamic-admission.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "tools/agent/resource/assembly/agent-resource-processor-factory.h"
@@ -380,6 +381,67 @@ bool resolve_agent_host_tool_selection(
         bindings.resource_runtime = selection.tooling.resource_runtime;
         bindings.resource_runtime.store = resource_store;
         selection.tooling.resource_runtime.store = resource_store;
+        if (request.dynamic_openapi_registry != nullptr && resource_store != nullptr) {
+            const auto runtime = bindings.resource_runtime;
+            const auto registry = request.dynamic_openapi_registry;
+            bindings.openapi_connect = [resource_store, runtime, registry](const std::string & input) {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object() || !arguments.contains("spec_resource") ||
+                        !arguments["spec_resource"].is_string()) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.invalid_arguments", common_tool_failure_class::validation, false,
+                        "OpenAPI connection requires a fetched spec resource.", "spec_resource must be a string");
+                }
+                const std::string uri = arguments["spec_resource"].get<std::string>();
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                agent_resource_descriptor descriptor;
+                std::string error;
+                if (!resource_store->stat(uri, authority, descriptor, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.resource_unavailable", common_tool_failure_class::not_found, false,
+                        "The OpenAPI spec resource is not available in this session.", std::move(error));
+                }
+                if (descriptor.mime_type != "application/json" && descriptor.mime_type != "text/plain") {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.unsupported_media_type", common_tool_failure_class::validation, false,
+                        "The fetched resource is not a JSON OpenAPI document.", descriptor.mime_type);
+                }
+                std::string payload;
+                if (!resource_store->read_text(uri, authority, 1024 * 1024, payload, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.resource_read_failed", common_tool_failure_class::execution, false,
+                        "The OpenAPI spec resource could not be read.", std::move(error));
+                }
+                auto document = json::parse(payload, nullptr, false);
+                if (document.is_object() && document.contains("text") && document["text"].is_string()) {
+                    document = json::parse(document["text"].get<std::string>(), nullptr, false);
+                }
+                if (!document.is_object()) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.invalid_spec", common_tool_failure_class::validation, false,
+                        "The resource does not contain a valid OpenAPI JSON document.", "OpenAPI resource JSON parse failed");
+                }
+                agent_openapi_dynamic_registration registration;
+                if (!admit_agent_dynamic_openapi_document(
+                        document, uri, descriptor.sha256, registration, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.admission_rejected", common_tool_failure_class::validation, false,
+                        "The OpenAPI document did not meet the host's admission policy.", std::move(error));
+                }
+                const auto provider_id = registration.config.id;
+                const auto operation_count = registration.catalog.operations.size();
+                if (!registry->add(std::move(registration), error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.registration_failed", common_tool_failure_class::execution, false,
+                        "The OpenAPI provider could not be registered in this session.", std::move(error));
+                }
+                return common_tool_execution_result::success(json({
+                    {"provider_id", provider_id},
+                    {"operation_count", operation_count},
+                    {"available_next_turn", true},
+                }).dump(), "Validated read-only OpenAPI provider registered for the next turn in this session.");
+            };
+        }
         selection.resource_processor_registry = std::make_shared<agent_resource_processor_registry>();
         auto pdf_text_processor = std::make_shared<agent_pdf_text_processor>();
         if (!selection.resource_processor_registry->add(*pdf_text_processor, error)) {
@@ -881,6 +943,63 @@ bool resolve_agent_host_tool_selection(
         }
         selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
             std::move(catalog), std::move(executor), materializer));
+    }
+
+    if (request.dynamic_openapi_registry != nullptr) {
+        for (const auto & registration : request.dynamic_openapi_registry->snapshot()) {
+            const auto provider_id = registration.config.id;
+            const auto materializer = [resource_store, provider_id](
+                    const agent_tool_context & context,
+                    const agent_openapi_operation & operation,
+                    const std::string & arguments_json,
+                    agent_openapi_execution_result & result,
+                    std::string & materializer_error) {
+                if (resource_store == nullptr) {
+                    materializer_error = "dynamic OpenAPI result requires the host resource store";
+                    return false;
+                }
+                agent_resource_put_request put;
+                put.name = provider_id + "-" + operation.operation_id + ".json";
+                put.description = "Bounded response from a session-scoped dynamic OpenAPI provider.";
+                put.mime_type = result.mime_type.empty() ? "application/json" : result.mime_type;
+                const bool text_payload = put.mime_type.rfind("application/json", 0) == 0 ||
+                    put.mime_type.rfind("text/", 0) == 0;
+                if (text_payload) {
+                    put.text = result.structured_content_json;
+                } else {
+                    put.bytes = result.structured_content_json;
+                    put.bytes_are_authoritative = true;
+                }
+                put.scope = common_runtime_resource_scope::session;
+                put.namespace_id = context.scope.namespace_id;
+                put.session_id = context.scope.session_id;
+                put.project_id = context.scope.project_id;
+                put.turn_id = context.scope.turn_id;
+                put.source_provider = provider_id;
+                put.source_tool = operation.operation_id;
+                put.created_at = std::time(nullptr);
+                put.metadata.source_provider = provider_id;
+                put.metadata.source_operation = operation.operation_id;
+                put.metadata.source_request_json = arguments_json;
+                put.metadata.retrieved_at = put.created_at;
+                put.metadata.content_summary = "Bounded dynamic OpenAPI response retained as a host resource.";
+                put.metadata.limitations = "Read-only single request; pagination requires an explicit plan step.";
+                agent_resource_descriptor descriptor;
+                if (!resource_store->put_text(put, descriptor, materializer_error)) return false;
+                descriptor.metadata.content_hash = descriptor.sha256;
+                result.resource_refs.push_back(std::move(descriptor));
+                return true;
+            };
+            auto executor = make_agent_openapi_http_executor(registration.config);
+            const auto executor_override = request.openapi_executor_overrides.find(provider_id);
+            if (executor_override != request.openapi_executor_overrides.end()) {
+                executor = executor_override->second;
+            }
+            selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
+                registration.catalog,
+                std::move(executor),
+                materializer));
+        }
     }
 
     if (native_provider || !mcp_providers.empty() || !selection.openapi_providers.empty()) {

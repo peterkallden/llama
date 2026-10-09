@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
+#include "agent/tooling/contracts/tool-result-contracts.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
@@ -95,6 +96,10 @@ public:
 };
 
 int main() {
+    const auto fetched_payload = common_tool_web_fetch_inline_result_to_json({
+        "https://example.test/openapi.json", "https://example.test/openapi.json", 200,
+        "application/json", "spec", "{}", 2, false, "resource://session/spec-1"});
+    assert(fetched_payload.value("resource_ref", std::string{}) == "resource://session/spec-1");
     std::string error;
     common_memory_in_memory_store memories;
     assert(memories.open("", error));
@@ -239,6 +244,7 @@ int main() {
         {"diagnostics.include_graph", 1, true, "{}"},
         {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
+        {"openapi.connect", 1, true, "{}"},
     };
     foundation_profile.allow_policy_gated_writes = true;
     std::map<std::string, common_tool_profile> foundation_profiles;
@@ -252,6 +258,16 @@ int main() {
     foundation_resources.available_uris.insert("resource://uploads/sales.xlsx");
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
+    foundation_bindings.openapi_connect = [](const std::string & input) {
+        const auto arguments = nlohmann::json::parse(input, nullptr, false);
+        if (!arguments.is_object() || arguments.value("spec_resource", std::string{}).empty()) {
+            return common_tool_execution_result::failure(
+                "tool.openapi.connect.invalid_arguments", common_tool_failure_class::validation,
+                false, "OpenAPI connection requires a fetched spec resource.", "missing spec_resource");
+        }
+        return common_tool_execution_result::success(
+            R"({"provider_id":"dynamic-test","operation_count":1,"available_next_turn":true})");
+    };
     foundation_bindings.document_tables = [](const std::string & input) {
         return common_tool_execution_result::success(
             std::string(R"({"resource":"agent-resource://document/report.json","tables":[{"index":0,"name":"Population","node_id":"document-node://table/0","dataset":"dataset://report/table/0"}]})") +
@@ -271,6 +287,9 @@ int main() {
     foundation_bindings.resource_runtime.session_id = "session-1";
     foundation_bindings.resource_runtime.turn_id = "turn-1";
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
+    assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&
+           result.output.find("available_next_turn") != std::string::npos);
     result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
     assert(result.ok && result.output.find("content_hash") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});

@@ -49,6 +49,7 @@ struct common_tool_web_fetch_inline_result {
     std::string text_excerpt;
     size_t text_length = 0;
     bool truncated = false;
+    std::string resource_ref;
 };
 
 struct common_tool_memory_search_payload {

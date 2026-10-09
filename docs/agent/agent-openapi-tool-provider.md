@@ -24,6 +24,29 @@ same resolved `agent_tool_view` may be projected through the MCP server. The
 host must not create an internal MCP server and route its own OpenAPI calls
 through that transport.
 
+## Session-scoped dynamic admission
+
+The `analysis` and `research` profiles also expose `openapi.connect`. The
+model supplies only `spec_resource`, a resource handle returned by
+`web.fetch`; it cannot supply a server URL, credentials, HTTP method, or
+operation name to the admission step. `web.fetch` now materializes its bounded
+result whenever the resource store is available, including small OpenAPI
+documents, and includes the stable handle in its result.
+
+The host reads the resource, parses the fetched text as OpenAPI JSON, and
+reuses the normal catalog builder. Admission requires an explicit HTTPS
+server and registers only anonymous read-only operations. Private-network
+access remains disabled, and the existing HTTP executor checks the server
+before each operation. Unsupported or external `$ref` values are rejected by
+the catalog builder. No operation is contacted during admission.
+
+Dynamic providers are held in an in-memory registry owned by the runtime
+session. They are resolved into the ordinary OpenAPI provider/tool view on the
+next turn, so route compilation sees their capabilities at the normal host
+boundary. They are removed when the session is reset or closed and are not
+persisted across process restarts. Results from dynamic operations are
+materialized as bounded host resources with provider/operation provenance.
+
 ## Eurostat example
 
 Eurostat's public Statistics API is documented with WADL rather than OpenAPI.

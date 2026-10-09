@@ -1,5 +1,6 @@
 #include "tools/agent/openapi/agent-openapi-catalog.h"
 #include "tools/agent/openapi/agent-openapi-provider.h"
+#include "tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
@@ -128,7 +129,7 @@ int main() {
     const auto compact = common_render_compact_tool_description(
         "sales.listSales", "List sales", catalog.operations[0].input_schema_json,
         R"({"type":"object"})", compact_error);
-    if (!compact_error.empty() || compact.find("id?:string [may be inferred]") == std::string::npos ||
+    if (!compact_error.empty() || compact.find("id (optional, string) [host may infer]") == std::string::npos ||
             agent_openapi_exposed_tool_name(catalog, catalog.operations[0]) != "sales.listSales") {
         std::cerr << "OpenAPI compact inferability rendering failed: " << compact_error
                   << " compact=" << compact << "\n";
@@ -202,6 +203,57 @@ int main() {
     };
     assert(!build_agent_openapi_catalog(external_ref_document, config, catalog, error));
     assert(error.find("external") != std::string::npos);
+
+    const nlohmann::json dynamic_document = {
+        {"openapi", "3.0.3"},
+        {"info", {{"title", "Public Data API"}, {"version", "1"}}},
+        {"servers", {{{"url", "https://api.example.test/v1"}}}},
+        {"paths", {
+            {"/items", {{"get", {{"operationId", "listItems"}, {"summary", "List items"},
+                {"responses", {{"200", {{"description", "ok"}}}}}}},
+                {"post", {{"operationId", "createItem"}, {"summary", "Create item"},
+                {"responses", {{"201", {{"description", "ok"}}}}}}}}},
+            {"/private", {{"get", {{"operationId", "privateItems"},
+                {"security", {{{"apiKey", json::array()}}}},
+                {"responses", {{"200", {{"description", "ok"}}}}}}}}},
+        }},
+        {"components", {{"securitySchemes", {{"apiKey", {{"type", "apiKey"}, {"in", "header"}, {"name", "key"}}}}}}},
+    };
+    agent_openapi_dynamic_registration dynamic_registration;
+    assert(admit_agent_dynamic_openapi_document(
+        dynamic_document, "resource://session/spec", "0123456789abcdef",
+        dynamic_registration, error));
+    assert(dynamic_registration.config.access == "read_only");
+    assert(dynamic_registration.config.auth.type == "none");
+    assert(dynamic_registration.catalog.operations.size() == 1);
+    assert(dynamic_registration.catalog.operations.front().operation_id == "listItems");
+    agent_openapi_tool_provider dynamic_provider(
+        dynamic_registration.catalog,
+        [](const agent_tool_context &, const agent_openapi_operation &,
+           const std::string &, agent_openapi_execution_result &, std::string &) {
+            return false;
+        });
+    agent_tool_context dynamic_context;
+    dynamic_context.allow_network = true;
+    auto dynamic_view = dynamic_provider.resolve_tools(dynamic_context, error);
+    assert(dynamic_view && dynamic_view->chat_tools().size() == 1);
+    assert(dynamic_view->chat_tools().front().name ==
+        dynamic_registration.config.prefix + ".listItems");
+    agent_openapi_dynamic_registry dynamic_registry;
+    assert(dynamic_registry.add(dynamic_registration, error));
+    assert(dynamic_registry.contains(dynamic_registration.config.id));
+    assert(dynamic_registry.snapshot().size() == 1);
+    assert(dynamic_registry.add(dynamic_registration, error));
+    assert(dynamic_registry.snapshot().size() == 1);
+    dynamic_registry.clear();
+    assert(dynamic_registry.snapshot().empty());
+
+    auto http_dynamic_document = dynamic_document;
+    http_dynamic_document["servers"][0]["url"] = "http://api.example.test/v1";
+    assert(!admit_agent_dynamic_openapi_document(
+        http_dynamic_document, "resource://session/spec", "0123456789abcdef",
+        dynamic_registration, error));
+    assert(error.find("HTTPS") != std::string::npos);
 
     std::cout << "agent-openapi-catalog-smoke: ok\n";
     return 0;

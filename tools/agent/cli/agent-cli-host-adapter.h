@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 
+class agent_openapi_dynamic_registry;
+
 struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
     std::vector<std::unique_ptr<agent_mcp_tool_client>> mcp_clients;
@@ -61,6 +63,7 @@ struct agent_host_tool_selection_request {
     common_agent_data_store * data_store = nullptr;
     std::vector<agent_host_stdio_mcp_provider_request> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
+    std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
     // Host-owned integration seam. Production callers normally leave this
     // empty and use the configured HTTP executor; tests or an embedding host
     // may bind an already-authorized executor for a named provider.

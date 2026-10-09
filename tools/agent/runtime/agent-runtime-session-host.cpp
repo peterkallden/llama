@@ -1,4 +1,5 @@
 #include "agent-runtime-session-host.h"
+#include "../openapi/dynamic/agent-openapi-dynamic-admission.h"
 
 #include "../runtime/agent-runtime-resident.h"
 #include "../tooling/agent-tool-provider.h"
@@ -148,7 +149,8 @@ common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
 
 common_agent_runtime_session_host::common_agent_runtime_session_host(
         common_agent_runtime_session_host_config config)
-    : config(std::move(config)) {}
+    : config(std::move(config))
+    , dynamic_openapi_registry(std::make_shared<agent_openapi_dynamic_registry>()) {}
 
 common_agent_runtime_session_host::~common_agent_runtime_session_host() = default;
 
@@ -350,6 +352,7 @@ bool common_agent_runtime_session_host::run_turn(
     }
 
     common_agent_runtime_session_host_turn_request effective_request = request;
+    effective_request.dynamic_openapi_registry = dynamic_openapi_registry;
     if (config.flydelta_deployment_resolver) {
         common_flydelta_deployment_result deployment;
         if (!config.flydelta_deployment_resolver(request, deployment, error)) {
@@ -493,6 +496,7 @@ common_agent_runtime_session_host_descriptor common_agent_runtime_session_host::
 
 void common_agent_runtime_session_host::reset() {
     runtime.reset();
+    if (dynamic_openapi_registry) dynamic_openapi_registry->clear();
     active_runtime_key = {};
     active_policy_pack.reset();
     generated_turn_counter = 0;

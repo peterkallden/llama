@@ -16,6 +16,7 @@
 #include <vector>
 
 class common_agent_runtime_resident_runtime;
+class agent_openapi_dynamic_registry;
 
 struct common_agent_runtime_session_host_runtime_key {
     std::string session_id;
@@ -73,6 +74,8 @@ struct common_agent_runtime_session_host_turn_request {
     // Optional host-owned capture request for diagnostic/counterfactual
     // callers. It is request-scoped and remains disabled by default.
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Internal host-owned registry; never deserialized from a client request.
+    std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
 };
 
 struct common_agent_runtime_session_host_turn_result {
@@ -213,4 +216,5 @@ private:
     std::optional<common_memory_policy_pack> active_policy_pack;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
+    std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
 };

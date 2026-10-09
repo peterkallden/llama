@@ -106,7 +106,7 @@ json common_tool_web_fetch_result_to_json(
 
 json common_tool_web_fetch_inline_result_to_json(
         const common_tool_web_fetch_inline_result & result) {
-    return {
+    json payload = {
         {"url", result.url},
         {"final_url", result.final_url},
         {"status", result.status},
@@ -116,6 +116,8 @@ json common_tool_web_fetch_inline_result_to_json(
         {"text_length", result.text_length},
         {"truncated", result.truncated},
     };
+    if (!result.resource_ref.empty()) payload["resource_ref"] = result.resource_ref;
+    return payload;
 }
 
 json common_tool_memory_record_to_json(

@@ -960,9 +960,12 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     const std::string title = trim_copy(fetch_result.title);
                     const std::string text = fetch_result.text;
                     const bool truncated = fetch_result.truncated;
-                    const bool should_externalize =
-                        bindings.resource_runtime.store != nullptr &&
-                        (full_payload.size() > 4096 || text.size() > 2048 || truncated);
+                    // Always materialize fetched content when the host resource
+                    // store is available. Follow-up host operations such as
+                    // OpenAPI admission need a stable handle even for small
+                    // documents; size-based externalization made those paths
+                    // depend on response length.
+                    const bool should_externalize = bindings.resource_runtime.store != nullptr;
                     if (!should_externalize) {
                         return common_tool_execution_result::success(
                             common_tool_web_fetch_result_to_json(fetch_result).dump(),
@@ -1009,6 +1012,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         bounded_text_preview(text, 1024),
                         text.size(),
                         truncated,
+                        resource_ref.uri,
                     };
 
                     return common_tool_execution_result::success(
@@ -1018,6 +1022,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                             : "Fetched bounded page text for \"" + title + "\"; the full payload was stored as a turn resource.",
                         {std::move(resource_ref)});
                 }, error);
+            }
+        } else if (definition.executor_id == "builtin.openapi_connect") {
+            if (bindings.openapi_connect) {
+                installed = register_definition(definition, registry, bindings.openapi_connect, error);
             }
         } else if (definition.executor_id == "builtin.plan_get" && bindings.plan_store && bindings.plan_id != nullptr && !bindings.plan_id->empty()) {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
