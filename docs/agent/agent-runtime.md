@@ -2022,9 +2022,17 @@ registered tool families use the same bounded projection, with array items
 represented as indexed facts. User-controlled strings are escaped so they
 cannot close the evidence wrapper or add another evidence block.
 
-The final synthesis and reflection paths use this observation budget
-separately from `plan_chars`. This prevents a long plan or raw result from
-clipping the facts needed to produce and verify the final answer.
+Final synthesis uses a deliberately smaller task frame: the bounded goal,
+success criteria, at most two constraints, verified observations, the user
+request and any input-resource handles. It does **not** receive retrieved
+procedure text, the symbolic-memory overlay, or the complete A* plan. Those
+belong to framing and execution. This prevents a completed workflow from
+making the answer model reconstruct its route rather than state the verified
+result, and keeps small models inside a predictable context budget.
+
+Reflection uses the observation budget separately from `plan_chars`. This
+prevents a long plan or raw result from clipping the facts needed to produce
+and verify the final answer.
 
 Reflection uses a narrower projection than final synthesis. It receives the
 goal, active/failed and dependency-relevant step state, bounded verified
@@ -2032,6 +2040,11 @@ observations, the relevant tool contracts, the user request, resource handles
 and the draft. It does not receive the full tool catalog, full memory overlay,
 or the complete raw plan history. This keeps repair decisions useful for small
 models without changing the authoritative host plan or evidence store.
+
+For an ordinary compact-DSL answer review, reflection is further restricted to
+one of `reflect accept` or `reflect revise` with a small generation budget.
+Tool-failure repair keeps its separate, typed contract. Neither form can add
+authority or alter the active route; a revision remains host-validated.
 
 If a reflection request still exceeds the model context, the runtime handles
 that as a bounded quality-pass failure. A draft may be accepted without
@@ -5502,16 +5515,14 @@ The script is fail-closed: it requires completed traces for the expected
 tool-failure, repair-limit, or unavailable-document diagnostics. A process exit
 alone is not evidence that the model actually used the tools.
 
-For diagnostics, `--generation-trace` records bounded model generation,
-token-progress details, and a bounded preview of each completed generated
-content value. The preview is intended for local debugging of planner,
-reflection, repair, and answer formatting; it must not be treated as an
-authoritative audit log. When a reflection response fails generation or
-dialect validation, this option also records each attempt's complete system
-input, user input, structured schema (when present), raw model output, and the
-validation or generation failure reason. This failure-only capture can include
-the full task context and is intended for local debugging; protect and share
-the resulting log accordingly. `--agent-trace` records the corresponding
+For diagnostics, `--generation-trace` records each logical model message, its
+final template-expanded prompt, and the complete raw generated output, in
+addition to bounded generation/token-progress telemetry. This is an explicit
+local diagnostic mode for planner, reflection, repair and answer-formatting
+regressions; it can contain the full task context, so protect and share the
+resulting log accordingly. It is not an authoritative audit log. When a
+reflection response fails generation or dialect validation, the trace also
+records the validation or generation failure reason. `--agent-trace` records the corresponding
 bounded host tool lifecycle: normalized tool name, argument keys, selected resource URI,
 whether safe defaults were applied, failure code, and a short sanitized
 diagnostic. During a `repair*` step it additionally records bounded

@@ -59,7 +59,16 @@ void resident_trace_content(
         const char * event,
         const common_agent_generation_request & request,
         const std::string & content) {
-    if (!resident_trace_content_enabled()) {
+    if (!resident_trace_content_enabled() && !request.options.generation_trace) {
+        return;
+    }
+    if (request.options.generation_trace) {
+        std::fprintf(stderr,
+            "agent generation trace output: event=%s purpose=%s bytes=%zu begin\n%s\nagent generation trace output: end\n",
+            event,
+            common_agent_generation_purpose_name(request.purpose),
+            content.size(), content.c_str());
+        std::fflush(stderr);
         return;
     }
     std::string preview = content.substr(0, 2048);
@@ -74,6 +83,25 @@ void resident_trace_content(
         common_agent_generation_purpose_name(request.purpose),
         content.size(),
         preview.c_str());
+    std::fflush(stderr);
+}
+
+// --generation-trace is an explicit diagnostic opt-in.  Log both the logical
+// messages and the final template-expanded prompt: prompt byte counts alone
+// are insufficient when diagnosing model/template regressions.
+void generation_trace_prompt(
+        const common_agent_generation_request & request,
+        const common_agent_prepared_generation & prepared) {
+    if (!request.options.generation_trace) {
+        return;
+    }
+    std::fprintf(stderr, "agent generation trace prompt: purpose=%s messages=%zu begin\n",
+        common_agent_generation_purpose_name(request.purpose), request.messages.size());
+    for (size_t index = 0; index < request.messages.size(); ++index) {
+        const auto & message = request.messages[index];
+        std::fprintf(stderr, "[message %zu role=%s]\n%s\n", index, message.role.c_str(), message.content.c_str());
+    }
+    std::fprintf(stderr, "[rendered prompt]\n%s\nagent generation trace prompt: end\n", prepared.prompt.c_str());
     std::fflush(stderr);
 }
 
@@ -299,6 +327,7 @@ private:
             error = "failed to prepare server generation";
             return false;
         }
+        generation_trace_prompt(request, prepared);
 
         task = server_task(SERVER_TASK_TYPE_COMPLETION);
         task.id = reader.get_new_id();
@@ -394,6 +423,7 @@ private:
                 result.error_message = "failed to prepare server generation";
                 return false;
             }
+            generation_trace_prompt(request, prepared);
             result.chat_params = chat_params;
             if (resident_trace_enabled()) {
                 std::fprintf(stderr, "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
