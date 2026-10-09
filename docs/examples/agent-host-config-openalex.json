@@ -6,44 +6,11 @@
   },
   "tools": {
     "profile": "all-configured",
+    "include_dir": "openalex-provider.d",
     "families": {
       "openalex": {
-        "description": "Search and verify scholarly work metadata through the host-configured public OpenAlex API"
+        "description": "Search OpenAlex works by title, author, institution, topic and year; inspect bounded scholarly metadata"
       }
-    },
-      "providers": [
-      {
-        "type": "openapi",
-        "id": "openalex",
-        "enabled": true,
-        "required": true,
-        "spec_path": "openalex-works-openapi.json",
-        "base_url": "https://api.openalex.org",
-        "prefix": "openalex",
-        "policy": {
-          "access": "read_only",
-          "exposure": "include",
-          "operations": {
-            "listWorks": {
-              "default_projection": "id,display_name",
-              "required_parameters": ["search"]
-            },
-            "getWork": {
-              "default_projection": "id,display_name,publication_year,doi"
-            }
-          }
-        },
-        "auth": {
-          "type": "none"
-        },
-        "limits": {
-          "connect_timeout_ms": 5000,
-          "request_timeout_ms": 30000,
-          "max_result_bytes": 1048576,
-          "default_page_size": 1,
-          "max_page_size": 1
-        }
-      }
-    ]
+    }
   }
 }

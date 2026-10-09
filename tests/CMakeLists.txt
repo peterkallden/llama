@@ -355,6 +355,7 @@ if (TARGET gguf-model-data)
 endif()
 
 if (LLAMA_AGENT_RUNTIME)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     foreach(TEST_SOURCE
         test-agent-contract.cpp
         test-agent-cognitive-mode.cpp
@@ -577,6 +578,14 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
+
+    llama_test_cmd(
+        ${Python3_EXECUTABLE}
+        NAME test-agent-provider-bootstrap
+        LABEL agent
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        ARGS ${PROJECT_SOURCE_DIR}/tests/test-agent-provider-bootstrap.py ${PROJECT_SOURCE_DIR}
+    )
 
     llama_build_and_test(test-agent-learning-transaction-backends.cpp)
     target_link_libraries(test-agent-learning-transaction-backends PRIVATE

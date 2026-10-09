@@ -111,7 +111,32 @@ helper can now keep those addresses separate:
   --base-url https://api.openalex.org \
   --spec-url https://help.openalex.org/openapi.json \
   --spec-output openalex-openapi.json \
-  --output openapi-openalex-generated.json
+  --output openalex-provider.d/openalex.json \
+  --required \
+  --anonymous-public-reads \
+  --allowed-operation listWorks \
+  --allowed-operation getWork \
+  --allowed-operation listAuthors \
+  --allowed-operation getAuthor \
+  --allowed-operation listInstitutions \
+  --allowed-operation getInstitution \
+  --allowed-operation listTopics \
+  --allowed-operation getTopic \
+  --default-projection listWorks=id,display_name,publication_year,doi,cited_by_count,primary_topic,topics \
+  --default-projection getWork=id,display_name,publication_year,publication_date,doi,authorships,primary_topic,topics \
+  --default-projection listAuthors=id,display_name,works_count,cited_by_count,orcid,last_known_institutions \
+  --default-projection getAuthor=id,display_name,works_count,cited_by_count,orcid,last_known_institutions \
+  --default-projection listInstitutions=id,display_name,country_code,works_count,ror \
+  --default-projection getInstitution=id,display_name,country_code,works_count,ror \
+  --default-projection listTopics=id,display_name,works_count,subfield,field,domain \
+  --default-projection getTopic=id,display_name,works_count,subfield,field,domain \
+  --default-page-size 5 \
+  --max-page-size 10 \
+  --parameter-description 'listWorks.filter=Filter works with field:value syntax. Combine filters with commas for AND or pipes for OR. Examples: publication_year:2024, author.id:A..., institutions.id:I..., topics.id:T... (any assigned topic), primary_topic.id:T... (top-ranked topic).' \
+  --parameter-description 'listWorks.search=Full-text search across work titles, abstracts and other text fields. Use display_name to return the work title.' \
+  --parameter-description 'listAuthors.search=Search author records by name and other indexed author text.' \
+  --parameter-description 'listInstitutions.search=Search institution names and other indexed institution text.' \
+  --parameter-description 'listTopics.search=Search research-topic names and other indexed topic text.'
 ```
 
 In an installed POSIX agent package the same helper is available as
@@ -121,25 +146,34 @@ library and needs Python 3 plus the system certificate store only when it
 downloads an HTTPS specification. The native OpenAPI provider does not invoke
 Python after the provider configuration has been written.
 
-The generated fragment is also checked in as
-[`openapi-openalex-generated.json`](../examples/openapi-openalex-generated.json).
-For a small, reviewable smoke contract, use
-[`openalex-works-openapi.json`](../examples/openalex-works-openapi.json) with
-[`agent-host-config-openalex.json`](../examples/agent-host-config-openalex.json).
-It covers `openalex.listWorks` and `openalex.getWork`, including the
-component-referenced `search`, `per_page` and `select` parameters. The
-checked-in contract explicitly sets `security: []` on these public operations.
-That is intentional: OpenAlex's API guide documents anonymous access, while
-the upstream OpenAPI document declares a global apiKey requirement. A
-deployment that requires a key should use the downloaded upstream document
-and configure the provider's `api_key` auth instead.
+The generated spec and provider fragment are checked in as
+[`openalex-openapi.json`](../examples/openalex-openapi.json) and
+[`openalex-provider.d/openalex.json`](../examples/openalex-provider.d/openalex.json).
+The host example loads the fragment through `tools.include_dir`. It uses
+`exposure: include` and allows only eight read operations: list/get works,
+authors, institutions and topics. The upstream document defines many more
+operations; they remain hidden from the model.
 
-This host config is a static-provider example: startup resolves the local
-contract and exposes only those two read-only operations. It is suited to
+OpenAlex assigns each work up to three topics and exposes a `primary_topic`.
+Resolve a human topic name through `openalex.listTopics`, then filter works by
+the returned `topics.id:T…`. This matches works carrying that assigned topic;
+`primary_topic.id:T…` is narrower and matches the top-ranked topic. The
+`listWorks.search` field provides text discovery over titles, abstracts and
+other text fields, while `display_name` returns the work title. The operation
+filter description adds examples for author, institution, topic and year
+filters. OpenAPI parameter descriptions are retained in each model-facing
+input schema, so those search/filter semantics appear beside the corresponding
+fields rather than only in host documentation. The upstream OpenAPI document
+declares global API-key security and a required `api_key` parameter; the
+generator's explicit
+`--anonymous-public-reads` option clears both for selected safe operations.
+
+This host config is a static-provider example: startup resolves the generated
+local spec and exposes only the allowlisted read operations. It is suited to
 recurring scholarly work and does not require a turn to call `web.fetch` or
-`openapi.connect`. The starter workflow package adds OpenAlex search,
-work-lookup and bounded literature-review routes; they are eligible only when
-the configured provider is present.
+`openapi.connect`. The starter package includes work search, work lookup,
+bounded literature review, and entity-filtered search by author, institution,
+topic and year.
 
 The model-free live client smoke is opt-in:
 
@@ -147,21 +181,20 @@ The model-free live client smoke is opt-in:
 cmake --build build-agent-packaging \
   --target llama-agent-openapi-openalex-live-smoke --parallel 3
 ./build-agent-packaging/bin/llama-agent-openapi-openalex-live-smoke \
-  --spec docs/examples/openalex-works-openapi.json
+  --spec docs/examples/openalex-openapi.json
 ```
 
-It makes one bounded `GET /works` request with `search=machine learning`,
-`per_page=1` and `select=id,display_name`, then verifies the standard OpenAlex
-`meta`/`results` envelope. The OpenAlex list response is an object envelope,
-not a top-level array, so the current provider keeps it as a bounded JSON
-resource rather than guessing that it is a tabular dataset.
+It validates all eight allowlisted operations, performs bounded title/text,
+author, institution and topic searches, then applies returned entity IDs and
+`publication_year` filters to works. OpenAlex list responses stay bounded
+`meta`/`results` JSON resources.
 
 ### Paging is contract-derived
 
 The host classifies collection operations from the parameters declared by the
 OpenAPI contract. It recognizes bounded page sizes, page numbers, offsets and
 cursors, and records the exact parameter names together with an optional
-projection parameter. For example, the checked-in OpenAlex `listWorks`
+projection parameter. For example, the generated OpenAlex `listWorks`
 operation is classified as a cursor-paged collection with `per_page`, `cursor`
 and `select`.
 

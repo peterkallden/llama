@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v5",
+  "version": "v6",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -84,6 +84,20 @@
       "id": "literature-review-boundaries-v1",
       "summary": "literature review boundaries",
       "content": "For a literature overview, make the search scope, query terms, date limits, returned page size and selection criteria visible. Use a bounded candidate set, distinguish search ranking from research quality, and preserve the returned records as a resource or exported artifact when the user needs to continue the analysis.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-entity-resolution-v1",
+      "summary": "OpenAlex entity resolution",
+      "content": "When a request names an author, institution or research topic, search the corresponding configured OpenAlex collection first. Compare bounded returned candidates and retain only an ID from a returned record. For a topic, use the Topic collection; work records carry up to three assigned topics and a primary_topic. Use a topic ID in the works filter, then present the returned title and year separately from interpretation.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-filtered-work-retrieval-v1",
+      "summary": "bounded OpenAlex filtered work retrieval",
+      "content": "Use works search for text across titles, abstracts and other text fields. Use filter for structured constraints such as publication_year:2024, author.id:A…, institutions.id:I… and topics.id:T…. The topics filter matches assigned topics; primary_topic is the top-ranked topic. Request a bounded page and include display_name, publication_year and relevant topic metadata in the projection. A bounded result set is not exhaustive coverage or a quality judgment.",
       "importance": 0.9,
       "confidence": 1.0
     }
@@ -204,6 +218,17 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-literature-review-graph@v1",
+      "required_capabilities": ["openapi.read", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available"]
+    },
+    {
+      "id": "openalex-entity-filtered-search-path-v1",
+      "source_revision": "agent-workflows-starter@v6",
+      "workflow_ref": "workflow://openalex/entity-filtered-work-search",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-entity-filtered-work-search-graph@v1",
       "required_capabilities": ["openapi.read", "resource.read"],
       "optional_capabilities": ["artifact.export"],
       "required_context": ["context.openapi.available"]
@@ -523,6 +548,31 @@
         {"id": "retrieve-candidates", "title": "Retrieve candidates", "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.", "depends_on": ["define-review-scope"]},
         {"id": "preserve-results", "title": "Preserve results", "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.", "depends_on": ["retrieve-candidates"]},
         {"id": "answer", "title": "Answer", "objective": "Summarize the candidate set and make the review boundary explicit.", "depends_on": ["preserve-results"]}
+      ]
+    },
+    {
+      "id": "openalex-entity-filtered-work-search-v1",
+      "source_revision": "agent-workflows-starter@v6",
+      "selection_description": "Search OpenAlex works by title or text, author, institution, research topic and publication year.",
+      "purpose": "Turn a research question into a traceable, bounded set of works using text and structured metadata.",
+      "goal": "Return works grounded in explicit search terms, host-returned entity identities and OpenAlex filters.",
+      "success_criteria": "Search terms, entity identity where used, applied filters, returned title/year/topic metadata and coverage limits are explicit.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["openalex-entity-resolution-v1", "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://openalex/entity-filtered-work-search", "workflow_revision": "v1"}],
+      "next_action": "resolve-entity",
+      "constraints": [
+        {"id": "returned-entity-only", "description": "Use only an author, institution or topic ID returned by the configured provider.", "hard": true},
+        {"id": "explicit-filter-boundary", "description": "Keep year and entity filters explicit and within the configured API contract.", "hard": true},
+        {"id": "text-search-boundary", "description": "Use works search for title and full-text discovery; use the returned metadata to verify title, year and topic.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-search", "title": "Scope search", "objective": "Identify title/text terms and any author, institution, topic or year constraints."},
+        {"id": "resolve-entity", "title": "Resolve entity", "objective": "When a named author, institution or research topic is requested, search its configured collection and retain a returned identity.", "depends_on": ["scope-search"]},
+        {"id": "bind-filters", "title": "Bind filters", "objective": "Combine any returned entity identity with explicit year and other requested works filters.", "depends_on": ["resolve-entity"]},
+        {"id": "retrieve-works", "title": "Retrieve works", "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.", "depends_on": ["bind-filters"]},
+        {"id": "answer", "title": "Answer", "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.", "depends_on": ["retrieve-works"]}
       ]
     }
   ]

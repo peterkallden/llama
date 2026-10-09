@@ -62,6 +62,8 @@ RUN mkdir -p /opt/llama-agent \
     && test -x /opt/llama-agent/bin/llama-agent-provider-bootstrap \
     && test -f /opt/llama-agent/bin/agent-provider-bootstrap.py \
     && test -f /opt/llama-agent/share/llama-agent/examples/agent-host-config-openalex.json \
+    && test -f /opt/llama-agent/share/llama-agent/examples/openalex-openapi.json \
+    && test -f /opt/llama-agent/share/llama-agent/examples/openalex-provider.d/openalex.json \
     && test -f /opt/llama-agent/share/llama-agent/examples/openalex-works-openapi.json \
     && test -f /opt/llama-agent/share/llama-agent/examples/openapi-openalex-generated.json \
     && test -f /opt/llama-agent/lib/libllama-agent-tool-provider.so \

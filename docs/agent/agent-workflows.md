@@ -79,9 +79,9 @@ scope matcher for active task plans remains exact.
 ## OpenAlex starter library
 
 [`agent-host-config-openalex.json`](../examples/agent-host-config-openalex.json)
-is a least-privilege static provider example: it loads the checked-in
-OpenAlex contract at host startup and exposes only `openalex.listWorks` and
-`openalex.getWork`. This is distinct from `workflow://openapi/resource-onboarding`,
+is a least-privilege static provider example: it loads the generated OpenAlex
+spec and provider fragment at host startup and exposes only list/get operations
+for works, authors, institutions and topics. This is distinct from `workflow://openapi/resource-onboarding`,
 which remains the path for an API supplied during a conversation.
 
 For a host that wants both the static provider and the starter library, use
@@ -95,7 +95,7 @@ llama-agent --config docs/examples/agent-host-config-openalex.json \
   --agent-runtime "Find recent work on retrieval-augmented generation"
 ```
 
-The starter package supplies three configured-OpenAlex workflows and matching
+The starter package supplies four configured-OpenAlex workflows and matching
 blueprints:
 
 - `workflow://openalex/work-search` for bounded scholarly-work discovery.
@@ -103,6 +103,18 @@ blueprints:
   check.
 - `workflow://openalex/literature-review` for a transparent candidate set that
   remains available as a host resource and can optionally be exported.
+- `workflow://openalex/entity-filtered-work-search` for title/text discovery
+  and bounded works search by a resolved author, institution or research topic,
+  optionally combined with publication-year filters.
+
+The entity workflow resolves a human name through the corresponding OpenAlex
+collection and uses only an ID returned by that operation. For research areas,
+it searches the Topics collection, then filters works with `topics.id:T…`.
+Work records expose up to three assigned `topics` plus `primary_topic`; use
+`primary_topic.id` only when the request specifically asks about the top-ranked
+topic. The works `search` parameter searches title, abstract and other text,
+and `display_name` is the returned work title. The host bounds each request and
+the workflow reports that the resulting candidate set is not exhaustive.
 
 They share the OpenAPI read capability but carry different procedures,
 constraints and plan steps. In particular, search ranking is not treated as a

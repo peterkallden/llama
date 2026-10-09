@@ -297,12 +297,21 @@ int main() {
     openalex_candidate.description = openalex_blueprint.goal;
     tooling.capabilities = {"openapi.read", "resource.read"};
     tooling.capability_tools = {
-        {"openapi.read", {"openalex.listWorks", "openalex.getWork"}},
+        {"openapi.read", {"openalex.listWorks", "openalex.getWork",
+            "openalex.listAuthors", "openalex.getAuthor",
+            "openalex.listInstitutions", "openalex.getInstitution",
+            "openalex.listTopics", "openalex.getTopic"}},
         {"resource.read", {"resource.read"}},
     };
     tooling.tools = {
         {"openalex.listWorks", "List OpenAlex works", R"({"type":"object"})"},
         {"openalex.getWork", "Get OpenAlex work", R"({"type":"object"})"},
+        {"openalex.listAuthors", "List OpenAlex authors", R"({"type":"object"})"},
+        {"openalex.getAuthor", "Get OpenAlex author", R"({"type":"object"})"},
+        {"openalex.listInstitutions", "List OpenAlex institutions", R"({"type":"object"})"},
+        {"openalex.getInstitution", "Get OpenAlex institution", R"({"type":"object"})"},
+        {"openalex.listTopics", "List OpenAlex topics", R"({"type":"object"})"},
+        {"openalex.getTopic", "Get OpenAlex topic", R"({"type":"object"})"},
         {"resource.read", "Read host resource", R"({"type":"object"})"},
     };
     tooling.available_context = {"context.openapi.available"};
@@ -313,8 +322,51 @@ int main() {
     assert(std::find(catalog.candidates[1].resolved_tools.begin(),
         catalog.candidates[1].resolved_tools.end(), "openalex.listWorks") !=
         catalog.candidates[1].resolved_tools.end());
+    assert(std::find(catalog.candidates[1].resolved_tools.begin(),
+        catalog.candidates[1].resolved_tools.end(), "openalex.listTopics") !=
+        catalog.candidates[1].resolved_tools.end());
+
+    common_plan_state openalex_entity_workflow;
+    openalex_entity_workflow.id = "bootstrap:local:session:s:workflow:openalex-entity-filtered-work-search";
+    openalex_entity_workflow.namespace_id = "local";
+    openalex_entity_workflow.session_id = "s";
+    openalex_entity_workflow.kind = common_plan_kind::workflow;
+    openalex_entity_workflow.scope = common_plan_scope::session;
+    openalex_entity_workflow.workflow_definition = common_plan_workflow_definition{
+        "workflow://openalex/entity-filtered-work-search", "v1", "openapi",
+        "openalex-entity-filtered-work-search-graph@v1", {},
+        {"openapi.read", "resource.read"}, {}, {"context.openapi.available"}};
+    assert(store.create(openalex_entity_workflow, error));
+    common_plan_state openalex_entity_blueprint = make_blueprint(true);
+    openalex_entity_blueprint.id =
+        "bootstrap:local:session:s:blueprint:openalex-entity-filtered-work-search";
+    openalex_entity_blueprint.goal =
+        "Find works by title, author, institution, topic or publication year";
+    openalex_entity_blueprint.required_capabilities = {"tool.openapi", "workflow.openapi"};
+    openalex_entity_blueprint.workflow_bindings = {
+        {"workflow://openalex/entity-filtered-work-search", "v1"}};
+    assert(store.create(openalex_entity_blueprint, error));
+    common_blueprint_candidate openalex_entity_candidate = make_candidate();
+    openalex_entity_candidate.logical_id = "openalex-entity-filtered-work-search";
+    openalex_entity_candidate.persisted_id = openalex_entity_blueprint.id;
+    openalex_entity_candidate.description = openalex_entity_blueprint.goal;
+    assert(compile_agent_route_catalog(request, store, scope,
+        {openalex_candidate, openalex_entity_candidate}, tooling, "", catalog, error));
+    const auto entity_route = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
+        [](const common_agent_route_candidate & candidate) {
+            return candidate.blueprint_logical_id == "openalex-entity-filtered-work-search";
+        });
+    assert(entity_route != catalog.candidates.end() &&
+        entity_route->kind == common_agent_route_kind::blueprint_workflow &&
+        std::find(entity_route->resolved_tools.begin(), entity_route->resolved_tools.end(),
+            "openalex.listAuthors") != entity_route->resolved_tools.end() &&
+        std::find(entity_route->resolved_tools.begin(), entity_route->resolved_tools.end(),
+            "openalex.listInstitutions") != entity_route->resolved_tools.end() &&
+        std::find(entity_route->resolved_tools.begin(), entity_route->resolved_tools.end(),
+            "openalex.listTopics") != entity_route->resolved_tools.end());
     tooling.available_context.clear();
-    assert(compile_agent_route_catalog(request, store, scope, {openalex_candidate},
+    assert(compile_agent_route_catalog(request, store, scope,
+        {openalex_candidate, openalex_entity_candidate},
         tooling, "", catalog, error));
     assert(catalog.candidates.size() == 1);
 

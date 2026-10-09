@@ -240,17 +240,52 @@ bool run_configured_openalex_smoke(
     const bool has_openalex_context = std::find(selection.tooling.available_context.begin(),
         selection.tooling.available_context.end(), "context.openapi.available") !=
         selection.tooling.available_context.end();
-    if (!selection.tool_view->exposes_tool("openalex.listWorks") ||
-            !selection.tool_view->exposes_tool("openalex.getWork") ||
+    const std::vector<std::string> expected_openalex_tools = {
+        "openalex.listWorks", "openalex.getWork",
+        "openalex.listAuthors", "openalex.getAuthor",
+        "openalex.listInstitutions", "openalex.getInstitution",
+        "openalex.listTopics", "openalex.getTopic",
+    };
+    const auto unexpected_openalex_tool = std::find_if(
+        selection.tooling.tools.begin(), selection.tooling.tools.end(),
+        [&](const common_chat_tool & tool) {
+            return tool.name.rfind("openalex.", 0) == 0 &&
+                std::find(expected_openalex_tools.begin(), expected_openalex_tools.end(), tool.name) ==
+                    expected_openalex_tools.end();
+        });
+    if (std::any_of(expected_openalex_tools.begin(), expected_openalex_tools.end(),
+                [&](const std::string & name) { return !selection.tool_view->exposes_tool(name); }) ||
+            unexpected_openalex_tool != selection.tooling.tools.end() ||
             read_capability == selection.tooling.capability_tools.end() ||
             std::find(read_capability->second.begin(), read_capability->second.end(),
-                "openalex.listWorks") == read_capability->second.end() || !has_openalex_context) {
-        std::cerr << "configured OpenAlex provider was not exposed as an automatic read-only tool view\n";
+                "openalex.listTopics") == read_capability->second.end() || !has_openalex_context) {
+        std::cerr << "configured OpenAlex provider did not expose exactly the intended read-only research surface\n";
+        return false;
+    }
+    const auto works_tool = std::find_if(selection.tooling.tools.begin(), selection.tooling.tools.end(),
+        [](const common_chat_tool & tool) { return tool.name == "openalex.listWorks"; });
+    const auto works_schema = works_tool == selection.tooling.tools.end()
+        ? nlohmann::json::object()
+        : nlohmann::json::parse(works_tool->parameters, nullptr, false);
+    const auto properties = works_schema.is_object()
+        ? works_schema.value("properties", nlohmann::json::object())
+        : nlohmann::json::object();
+    const std::string search_description = properties.value("search", nlohmann::json::object())
+        .value("description", "");
+    const std::string filter_description = properties.value("filter", nlohmann::json::object())
+        .value("description", "");
+    if (works_tool == selection.tooling.tools.end() ||
+            search_description.find("titles") == std::string::npos ||
+            filter_description.find("topics.id:T") == std::string::npos ||
+            filter_description.find("publication_year:2024") == std::string::npos) {
+        std::cerr << "configured OpenAlex model-facing parameter schemas omitted title or topic filter guidance\n"
+                  << "  search: " << search_description << "\n"
+                  << "  filter: " << filter_description << "\n";
         return false;
     }
     const auto result = selection.tool_view->call({
         "configured-openalex-list", "openalex.listWorks",
-        R"({"search":"machine learning","per_page":1,"select":"id,display_name"})"}, error);
+        R"({"search":"machine learning","per_page":1,"select":"id,display_name,publication_year,primary_topic,topics"})"}, error);
     if (!result.ok || result.resource_refs.size() != 1) {
         std::cerr << "configured OpenAlex operation failed"
                   << " failure_code=" << result.failure_code

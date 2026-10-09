@@ -232,6 +232,7 @@ bool operation_input_schema(
     nlohmann::json inferable = nlohmann::json::array();
     std::vector<std::string> parameter_order;
     std::map<std::string, nlohmann::json> parameter_schemas;
+    std::map<std::string, std::string> parameter_descriptions;
     std::map<std::string, bool> parameter_required;
     std::map<std::string, bool> parameter_inferable;
     auto collect_parameters = [&](const nlohmann::json & parameters) {
@@ -250,6 +251,7 @@ bool operation_input_schema(
             std::set<std::string> schema_refs;
             if (!resolve_local_refs(document, parameter_schema, schema_refs, error)) return false;
             parameter_schemas[name] = std::move(parameter_schema);
+            parameter_descriptions[name] = parameter.value("description", "");
             parameter_required[name] = parameter.value("required", false);
             parameter_inferable[name] = parameter.value("x-agent-inferable", false);
         }
@@ -259,6 +261,9 @@ bool operation_input_schema(
             !collect_parameters(operation.value("parameters", nlohmann::json::array()))) return false;
     for (const auto & name : parameter_order) {
         schema["properties"][name] = parameter_schemas[name];
+        if (!parameter_descriptions[name].empty()) {
+            schema["properties"][name]["description"] = parameter_descriptions[name];
+        }
         if (parameter_inferable[name]) {
             schema["properties"][name]["x-agent-inferable"] = true;
             inferable.push_back(name);

@@ -242,10 +242,10 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v5");
-    assert(checked_in_starter.procedures.size() == 12 &&
-        checked_in_starter.blueprints.size() == 11);
-    assert(checked_in_starter.workflows.size() == 12);
+        checked_in_starter.version == "v6");
+    assert(checked_in_starter.procedures.size() == 14 &&
+        checked_in_starter.blueprints.size() == 12);
+    assert(checked_in_starter.workflows.size() == 13);
     assert(checked_in_starter.workflows[0].definition.workflow_ref ==
         "workflow://dataset/analysis");
     assert(checked_in_starter.workflows[0].definition.required_capabilities ==
@@ -319,6 +319,26 @@ int main() {
     assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);
     assert(openalex_search_blueprint->procedure_refs ==
         std::vector<std::string>({"scholarly-search-evidence-v1", "analysis-evidence-v1"}));
+    const auto openalex_entity_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/entity-filtered-work-search";
+        });
+    assert(openalex_entity_workflow != checked_in_starter.workflows.end());
+    assert(openalex_entity_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"openapi.read", "resource.read"}));
+    assert(openalex_entity_workflow->definition.required_context ==
+        std::vector<std::string>({"context.openapi.available"}));
+    const auto openalex_entity_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "openalex-entity-filtered-work-search-v1";
+        });
+    assert(openalex_entity_blueprint != checked_in_starter.blueprints.end());
+    assert(openalex_entity_blueprint->workflow_policy ==
+        common_plan_workflow_policy::required);
+    assert(openalex_entity_blueprint->procedure_refs ==
+        std::vector<std::string>({"openalex-entity-resolution-v1",
+            "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"}));
     assert(checked_in_starter.workflows[0].definition.required_context ==
         std::vector<std::string>({"context.dataset.available"}));
     assert(checked_in_starter.blueprints[3].workflow_bindings.size() == 3);
@@ -334,9 +354,9 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 12 &&
-        checked_in_import.installed_blueprint_ids.size() == 11);
-    assert(checked_in_import.installed_workflow_ids.size() == 12);
+    assert(checked_in_import.installed_memory_ids.size() == 14 &&
+        checked_in_import.installed_blueprint_ids.size() == 12);
+    assert(checked_in_import.installed_workflow_ids.size() == 13);
     const auto checked_in_openapi_blueprint = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:openapi-resource-onboarding-v1", error);
     assert(checked_in_openapi_blueprint &&
@@ -368,7 +388,7 @@ int main() {
     assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
     assert(reparsed_starter.blueprints[3].selection_description ==
         checked_in_starter.blueprints[3].selection_description);
-    assert(reparsed_starter.workflows.size() == 12 &&
+    assert(reparsed_starter.workflows.size() == 13 &&
         reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
@@ -387,7 +407,7 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         partial_memory, partial_plans, config, partial_package, embed,
         partial_import, error));
-    assert(partial_import.installed_blueprint_ids.size() == 10 &&
+    assert(partial_import.installed_blueprint_ids.size() == 11 &&
         partial_import.rejected_items.size() == 1 &&
         partial_import.rejected_items.front().id == "dataset-analysis-v2");
 

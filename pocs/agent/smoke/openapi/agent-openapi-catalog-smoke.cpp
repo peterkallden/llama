@@ -29,6 +29,7 @@ int main() {
             }},
             {"parameters", {
                 {"search", {{"name", "search"}, {"in", "query"},
+                    {"description", "Full-text search across titles and abstracts."},
                     {"schema", {{"type", "string"}}}}},
                 {"perPage", {{"name", "per-page"}, {"in", "query"},
                     {"schema", {{"type", "integer"}}}}},
@@ -63,6 +64,9 @@ int main() {
                         {{"name", "id"}, {"in", "query"}, {"x-agent-inferable", true},
                             {"schema", {{"type", "string"}}}},
                         {{"$ref", "#/components/parameters/search"}},
+                        {{"name", "filter"}, {"in", "query"},
+                            {"description", "Filter by publication_year:2024 or topics.id:T…"},
+                            {"schema", {{"type", "string"}}}},
                         {{"$ref", "#/components/parameters/perPage"}},
                         {{"name", "cursor"}, {"in", "query"},
                             {"schema", {{"type", "string"}}}},
@@ -97,6 +101,10 @@ int main() {
             catalog.operations[0].operation_id != "listSales" ||
             !catalog.operations[0].read_only ||
             catalog.operations[0].input_schema_json.find("\"type\":\"string\"") == std::string::npos ||
+            catalog.operations[0].input_schema_json.find(
+                "Full-text search across titles and abstracts.") == std::string::npos ||
+            catalog.operations[0].input_schema_json.find(
+                "publication_year:2024 or topics.id:T") == std::string::npos ||
             std::find(catalog.operations[0].query_parameters.begin(),
                 catalog.operations[0].query_parameters.end(), "search") ==
                 catalog.operations[0].query_parameters.end() ||

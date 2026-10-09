@@ -6,24 +6,37 @@ source "$(dirname "$0")/agent-model-smoke-common.sh"
 repo_root=$(agent_smoke_repo_root)
 build_dir=$(agent_smoke_build_dir)
 model="${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"
-embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-}"
-spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-works-openapi.json}"
+embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-v1.5.Q4_K_M.gguf}"
+spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-openapi.json}"
+provider_fragment="${LLAMA_AGENT_OPENALEX_PROVIDER:-${repo_root}/docs/examples/openalex-provider.d/openalex.json}"
 work_dir=$(agent_smoke_prepare_workdir openalex-model)
 agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
 
 agent_smoke_require_file "$model" "chat model"
-agent_smoke_require_file "$spec" "OpenAlex OpenAPI smoke contract"
+agent_smoke_require_file "$embedding_model" "embedding model"
+agent_smoke_require_file "$spec" "generated OpenAlex OpenAPI spec"
+agent_smoke_require_file "$provider_fragment" "generated OpenAlex provider fragment"
 agent_smoke_require_executable "$agent_bin" "llama-agent"
 agent_smoke_build_if_requested
 
 config="$work_dir/openalex-host-config.json"
-python3 - "$config" "$model" "$spec" <<'PY'
+python3 - "$config" "$model" "$spec" "$provider_fragment" <<'PY'
 import json
 import os
 import pathlib
 import sys
 
-output, model, spec = sys.argv[1:]
+output, model, spec, provider_fragment = sys.argv[1:]
+provider = json.loads(pathlib.Path(provider_fragment).read_text(encoding="utf-8"))
+provider["spec_path"] = str(pathlib.Path(spec).resolve())
+operations = provider.setdefault("policy", {}).setdefault("operations", {})
+list_works = operations["listWorks"]
+provider["policy"]["operations"] = {"listWorks": list_works}
+list_works["bound_arguments"] = {
+    "search": "machine learning",
+    "per_page": 1,
+    "select": "id,display_name,publication_year,primary_topic,topics",
+}
 pathlib.Path(output).write_text(json.dumps({
     "schema_version": 1,
     "model": {"backend": "server-context", "path": model},
@@ -31,7 +44,7 @@ pathlib.Path(output).write_text(json.dumps({
         "profile": "openalex-smoke",
         "families": {
             "openalex": {
-                "description": "Search and retrieve scholarly works from OpenAlex"
+                "description": "Search OpenAlex works by title, author, institution, topic and year"
             }
         },
         "profiles": {
@@ -40,37 +53,7 @@ pathlib.Path(output).write_text(json.dumps({
                 "allow_policy_gated_writes": False
             }
         },
-        "providers": [{
-            "type": "openapi",
-            "id": "openalex",
-            "enabled": True,
-            "required": True,
-            "spec_path": str(pathlib.Path(spec).resolve()),
-            "base_url": "https://api.openalex.org",
-            "prefix": "openalex",
-            "policy": {
-                "access": "read_only",
-                "exposure": "include",
-                "operations": {
-                    "listWorks": {
-                        "enabled": True,
-                        "default_projection": "id,display_name",
-                        "required_parameters": ["search"],
-                        "bound_arguments": {
-                            "search": "machine learning",
-                            "per_page": 1,
-                            "select": "id,display_name",
-                        },
-                    },
-                },
-            },
-            "auth": {"type": "none"},
-            "limits": {
-                "default_page_size": 1,
-                "max_page_size": 1,
-                "max_result_bytes": 1048576,
-            },
-        }],
+        "providers": [provider],
     },
     # The generic CLI default is intentionally short for local tools.  Make
     # the network smoke's budget explicit so the OpenAPI request timeout is
@@ -82,7 +65,7 @@ pathlib.Path(output).write_text(json.dumps({
 PY
 
 log_path="$work_dir/openalex-model.log"
-prompt="Use only the openalex.listWorks tool to search the configured OpenAlex workflow. After the tool succeeds, answer with the first work id and display name. Do not invent a result."
+prompt="Call exactly openalex.listWorks (same lowercase spelling), and no other tool, to search for machine learning. The host already supplies search, page size and projection; emit no fields. After it succeeds, answer with the first work id and display name. Do not invent a result."
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-smoke

@@ -1022,6 +1022,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-eurostat.json
         ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-openalex.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/openalex-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
@@ -1035,6 +1036,9 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json
         ${PROJECT_SOURCE_DIR}/docs/examples/llama-agent-daemon.service
         DESTINATION share/llama-agent/examples)
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/docs/examples/openalex-provider.d/openalex.json
+        DESTINATION share/llama-agent/examples/openalex-provider.d)
 
     # The Vue client is an example deployment companion for llama-agent-web.
     # Keep its source, Nginx example and package metadata with the other
