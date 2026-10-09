@@ -1073,7 +1073,15 @@ bool resolve_agent_cli_tool_selection(
     const auto repository_root = !options.repository_root.empty()
         ? std::filesystem::weakly_canonical(options.repository_root).string()
         : std::string();
-    const auto request = make_agent_cli_tool_selection_request(options, query, repository_root);
+    auto request = make_agent_cli_tool_selection_request(options, query, repository_root);
+    // The CLI runtime resolves its tool view before inference. Provide the
+    // same host-owned dynamic registry used by the OpenAPI connect binding at
+    // that point, otherwise `openapi.connect` is silently omitted from the
+    // model-facing family catalog even when the selected profile enables it.
+    // Keep the registry alive with the tooling/provider view for the whole
+    // turn; the daemon's session host supplies its own session-scoped registry.
+    auto dynamic_openapi_registry = std::make_shared<agent_openapi_dynamic_registry>();
+    request.dynamic_openapi_registry = dynamic_openapi_registry;
     const bool ok = resolve_agent_host_tool_selection(
         store,
         plan_store,
@@ -1087,6 +1095,8 @@ bool resolve_agent_cli_tool_selection(
         error);
     if (ok) {
         selection.embedding_provider = std::move(embedding_provider);
+        selection.tooling.owned_resources.push_back(
+            std::static_pointer_cast<void>(std::move(dynamic_openapi_registry)));
     }
     return ok;
 }

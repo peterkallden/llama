@@ -18,7 +18,7 @@ namespace {
 
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
     return "bootstrap:" + scope.namespace_id + ":" +
-        (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
+        (scope.project_id.empty() ? "global" : "project:" + scope.project_id) + ":";
 }
 
 std::string make_automatic_blueprint_plan_id(const common_agent_scope & scope) {
@@ -468,11 +468,12 @@ bool maybe_select_agent_route(
         common_memory_query query;
         query.kind = common_memory_kind::procedure;
         query.scope = context.scope.project_id.empty()
-            ? common_memory_scope::session : common_memory_scope::project;
+            ? common_memory_scope::global : common_memory_scope::project;
         query.namespace_id = context.scope.namespace_id;
         query.session_id = context.scope.session_id;
         query.project_id = context.scope.project_id;
         query.turn_id = context.scope.turn_id;
+        query.global_opt_in = context.scope.project_id.empty();
         query.limit = 64;
         std::string procedure_error;
         const auto procedures = context.memory_store.list(query, procedure_error);
@@ -536,6 +537,7 @@ bool maybe_select_agent_route(
     auto request = make_orchestration_selection_request(context.config, context.scope);
     request.selected_workflow = selected_route.workflow;
     request.workflow_definition = selected_route.workflow_definition;
+    request.memories = context.route_procedure_memories;
     request.available_datasets = context.tooling->available_datasets;
     if (context.policy_pack != nullptr) request.policy_pack = *context.policy_pack;
     if (context.tool_argument_bindings != nullptr) {

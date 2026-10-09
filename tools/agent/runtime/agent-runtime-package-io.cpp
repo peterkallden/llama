@@ -10,7 +10,7 @@ namespace {
 
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
     return "bootstrap:" + scope.namespace_id + ":" +
-        (scope.project_id.empty() ? "session:" + scope.session_id : "project:" + scope.project_id) + ":";
+        (scope.project_id.empty() ? "global" : "project:" + scope.project_id) + ":";
 }
 
 } // namespace
@@ -41,16 +41,16 @@ bool export_agent_package(
         const std::string & output_path,
         std::string & error) {
     if (!common_cli_supports_bootstrap_package_scope(scope)) {
-        error = "--agent-export currently supports only session- or project-scoped bootstrap packages";
+        error = "--agent-export supports host-wide or project-scoped bootstrap packages";
         return false;
     }
     common_memory_query query;
-    query.scope = scope.project_id.empty() ? common_memory_scope::session : common_memory_scope::project;
+    query.scope = scope.project_id.empty() ? common_memory_scope::global : common_memory_scope::project;
     query.namespace_id = scope.namespace_id;
     query.session_id = scope.session_id;
     query.project_id = scope.project_id;
     query.turn_id = scope.turn_id;
-    query.global_opt_in = false;
+    query.global_opt_in = scope.project_id.empty();
     const auto memories = memory_store.list(query, error);
     if (!error.empty()) {
         return false;

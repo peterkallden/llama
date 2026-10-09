@@ -52,7 +52,12 @@ static void test_bootstrap_scope_guard() {
     global_args.memory_scope = "global";
     global_args.memory_global_opt_in = true;
     const auto global_scope = common_cli_make_agent_scope_with_matching_plan_scope(global_args);
-    assert(!common_cli_supports_bootstrap_package_scope(global_scope));
+    assert(common_cli_supports_bootstrap_package_scope(global_scope));
+
+    args project_import_args;
+    project_import_args.memory_project = "repo-1";
+    const auto project_import_scope = common_cli_make_agent_scope_with_matching_plan_scope(project_import_args);
+    assert(common_cli_supports_bootstrap_package_scope(project_import_scope));
 }
 
 int main() {

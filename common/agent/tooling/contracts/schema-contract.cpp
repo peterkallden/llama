@@ -83,7 +83,9 @@ bool validate_value(
         const auto required = schema.value("required", json::array());
         for (const auto & key : required) {
             if (!key.is_string() || !value.contains(key.get<std::string>())) {
-                error = "required contract field is missing: " + field;
+                const std::string missing = key.is_string() ? key.get<std::string>() : "<invalid-schema-key>";
+                error = "required contract field is missing: " +
+                    (field.empty() ? missing : field + "." + missing);
                 return false;
             }
         }

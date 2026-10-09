@@ -79,7 +79,7 @@ bool run_resource_fetch_smoke(
     }
     const auto fetched = selection.tool_view->call({
         "web-resource-live", "web.fetch",
-        R"({"url":"https://www.iana.org/domains/example","max_bytes":65536,"extract":"text"})"}, error);
+        R"({"url":"https://www.iana.org/domains/example","max_bytes":65536})"}, error);
     if (!fetched.ok || fetched.resource_refs.size() != 1) {
         std::cerr << "live web.fetch did not return a host resource: " << error << " "
                   << fetched.raw_diagnostic << "\n";
@@ -113,7 +113,7 @@ bool run_openapi_bootstrap_smoke(
     }
     const auto fetched = first_turn.tool_view->call({
         "openapi-spec-live", "web.fetch",
-        nlohmann::json({{"url", spec_url}, {"max_bytes", 500000}, {"extract", "text"}}).dump()}, error);
+        nlohmann::json({{"url", spec_url}, {"max_bytes", 500000}}).dump()}, error);
     if (!fetched.ok || fetched.resource_refs.size() != 1) {
         std::cerr << "live OpenAPI spec fetch failed: " << error << " "
                   << fetched.raw_diagnostic << "\n";
@@ -165,8 +165,14 @@ bool run_openapi_bootstrap_smoke(
         "openalex-api-live", tool_name,
         R"({"search":"machine learning","per_page":1,"select":"id,display_name"})"}, error);
     if (!result.ok || result.resource_refs.size() != 1) {
-        std::cerr << "live OpenAlex operation failed: " << error << " "
-                  << result.raw_diagnostic << "\n";
+        std::cerr << "live OpenAlex operation failed"
+                  << " failure_code=" << result.failure_code
+                  << " failure_class=" << common_tool_failure_class_name(result.failure_class)
+                  << " retryable=" << (result.retryable ? "true" : "false")
+                  << " safe_summary=" << result.safe_summary
+                  << " error=" << error
+                  << " raw_diagnostic=" << result.raw_diagnostic
+                  << " response=" << result.content_json.substr(0, 800) << "\n";
         return false;
     }
     auto response = nlohmann::json::parse(result.content_json, nullptr, false);

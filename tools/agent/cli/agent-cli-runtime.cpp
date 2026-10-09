@@ -39,7 +39,8 @@ bool request_has_tool_argument_binding(
 
 nlohmann::ordered_json planner_tool_schema_for_request(
         const common_chat_tool & tool,
-        const common_agent_request & request) {
+        const common_agent_request & request,
+        bool model_contract = false) {
     auto schema = json::parse(tool.parameters, nullptr, false);
     if (!schema.is_object() || schema.value("type", std::string()) != "object") return schema;
 
@@ -64,6 +65,18 @@ nlohmann::ordered_json planner_tool_schema_for_request(
     }
 
     for (const auto & field : inferable_fields) {
+        if (model_contract) {
+            // The planner can omit an inferable field when a preceding
+            // completed tool result has exactly one compatible output; the
+            // host's typed dataflow binder supplies it before execution.
+            // Keep the execution validator's original required contract
+            // unchanged, so an unbound value still fails closed.
+            required.erase(std::remove_if(required.begin(), required.end(),
+                [&field](const json & required_field) {
+                    return required_field.is_string() && required_field == field;
+                }), required.end());
+            continue;
+        }
         if (request_has_tool_argument_binding(request, tool.name, field)) continue;
         if (required_fields.insert(field).second) required.push_back(field);
     }
@@ -76,7 +89,7 @@ std::string render_planner_tool_contracts(
     std::string rendered;
     std::string error;
     for (const auto & tool : tools) {
-        const auto schema = planner_tool_schema_for_request(tool, request);
+        const auto schema = planner_tool_schema_for_request(tool, request, true);
         const std::string compact = common_render_compact_tool_description(
             tool.name,
             tool.description,

@@ -11,7 +11,7 @@ namespace {
 
 std::string bootstrap_prefix(const common_agent_bootstrap_config & config) {
     return "bootstrap:" + config.namespace_id + ":" +
-        (config.project_id.empty() ? "session:" + config.session_id : "project:" + config.project_id) + ":";
+        (config.project_id.empty() ? "global" : "project:" + config.project_id) + ":";
 }
 
 common_plan_step step(const char * id, const char * title, const char * objective, std::vector<std::string> depends_on = {}, common_plan_step_mode mode = common_plan_step_mode::reasoning) {
@@ -172,7 +172,7 @@ bool common_agent_install_bootstrap_package(
 
     const auto prefix = bootstrap_prefix(config);
     const common_memory_scope memory_scope = config.project_id.empty()
-        ? common_memory_scope::session : common_memory_scope::project;
+        ? common_memory_scope::global : common_memory_scope::project;
     if (config.install_procedures) {
         for (const auto & definition : package.procedures) {
             if (definition.id.empty() || definition.content.empty() || definition.content.size() > 8192 || definition.importance < 0.0f || definition.importance > 1.0f || definition.confidence < 0.0f || definition.confidence > 1.0f) {
@@ -247,7 +247,7 @@ bool common_agent_install_bootstrap_package(
             workflow.source_revision = definition.source_revision.empty()
                 ? package.name + "@" + package.version : definition.source_revision;
             workflow.kind = common_plan_kind::workflow;
-            workflow.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
+            workflow.scope = config.project_id.empty() ? common_plan_scope::global : common_plan_scope::project;
             workflow.purpose = "Host-validated " + definition.definition.family + " workflow.";
             workflow.goal = definition.definition.workflow_ref;
             workflow.success_criteria = "Workflow revision remains host-valid before materialization.";
@@ -278,7 +278,7 @@ bool common_agent_install_bootstrap_package(
             blueprint.source_revision = definition.source_revision.empty()
                 ? package.name + "@" + package.version : definition.source_revision;
             blueprint.kind = common_plan_kind::blueprint;
-            blueprint.scope = config.project_id.empty() ? common_plan_scope::session : common_plan_scope::project;
+            blueprint.scope = config.project_id.empty() ? common_plan_scope::global : common_plan_scope::project;
             blueprint.purpose = definition.purpose.empty() ? definition.goal : definition.purpose;
             blueprint.goal = definition.goal;
             blueprint.success_criteria = definition.success_criteria;

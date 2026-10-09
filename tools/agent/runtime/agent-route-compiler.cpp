@@ -368,7 +368,7 @@ bool compile_agent_route_catalog(
             append_rejection(catalog, candidate, {}, "persisted blueprint is unavailable");
             continue;
         }
-        if (!common_plan_scope_matches(*blueprint, scope.plan_scope, scope.namespace_id,
+        if (!common_plan_template_scope_matches(*blueprint, scope.plan_scope, scope.namespace_id,
                 scope.session_id, scope.project_id, scope.turn_id)) {
             append_rejection(catalog, candidate, {}, "blueprint is outside the current scope");
             continue;
@@ -395,7 +395,7 @@ bool compile_agent_route_catalog(
             const common_plan_state * workflow_plan = nullptr;
             for (const auto & plan : plans) {
                 if (plan.kind != common_plan_kind::workflow || !plan.workflow_definition ||
-                        !common_plan_scope_matches(plan, scope.plan_scope, scope.namespace_id,
+                        !common_plan_template_scope_matches(plan, scope.plan_scope, scope.namespace_id,
                             scope.session_id, scope.project_id, scope.turn_id)) continue;
                 const auto & definition = *plan.workflow_definition;
                 if (definition.workflow_ref == binding.workflow_ref &&

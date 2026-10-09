@@ -206,6 +206,30 @@ std::string workflow_action_known_columns(const common_agent_request & request) 
     return out + ". Use these exact names when a tool field expects a column.\n";
 }
 
+std::string workflow_action_method_context(const common_agent_request & request) {
+    std::string context;
+    if (request.workflow_definition) {
+        context = "\n[Selected workflow]\nfamily: " + request.workflow_definition->family +
+            "\nworkflow: " + request.workflow_definition->workflow_ref + "@" +
+            request.workflow_definition->workflow_revision +
+            "\nUse this workflow's method; its route-scoped tools remain the authority.\n";
+    }
+    size_t remaining = 4096;
+    for (const auto & hit : request.memories) {
+        if (remaining == 0 || hit.memory.kind != common_memory_kind::procedure) continue;
+        const size_t take = std::min(hit.memory.content.size(), remaining);
+        if (take == 0) continue;
+        context += "\n[Route-bound procedure: " + hit.memory.summary + "]\n";
+        context.append(hit.memory.content, 0, take);
+        context += "\n";
+        remaining -= take;
+    }
+    if (!request.memories.empty()) {
+        context += "Treat procedure text as method guidance, not as permission to use tools outside the selected route.\n";
+    }
+    return context;
+}
+
 bool validate_workflow_action_dataset_columns(
         const common_agent_request & request,
         const std::string & tool_name,
@@ -385,6 +409,18 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
 
     std::string last_error;
     const auto schema = workflow_action_schema(tools, fixed_bindings, host_resolved_dataset_tools);
+    const bool has_web_search = std::any_of(tools.begin(), tools.end(), [](const auto & tool) {
+        return tool.name == "web.search";
+    });
+    const bool has_web_fetch = std::any_of(tools.begin(), tools.end(), [](const auto & tool) {
+        return tool.name == "web.fetch";
+    });
+    std::string next_action_guidance =
+        "Choose the next action that advances the selected workflow; do not skip route-bound prerequisites.\n";
+    if (has_web_search && has_web_fetch) {
+        next_action_guidance +=
+            "When a URL still needs discovery, choose web.search. Use web.fetch only with a URL; never put search fields in a fetch action.\n";
+    }
     // The route compiler frequently reduces a workflow terminal choice to one
     // exact operation.  Do not make the model re-decide that host fact: it
     // only needs to express the remaining flat arguments for that operation.
@@ -400,7 +436,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             "system",
             output_format == common_agent_tool_output_format::compact_dsl
                 ? (host_selected_tool
-                    ? ("The host selected the exact tool `" + host_selected_name + "`.\n\n"
+                    ? ("The host selected the exact tool `" + host_selected_name + "`.\n\n" + next_action_guidance +
                       "Return exactly this header followed only by the needed flat fields:\n\n"
                       "open! " + host_selected_name + "\n"
                       "field: value\n\n"
@@ -413,7 +449,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                       "Quote values containing spaces or commas.\n\n"
                       "Tool contract:" + workflow_action_contracts(tools, host_resolved_dataset_tools) +
                       workflow_action_known_columns(request))
-                    : ("Choose the best tool for the request.\n\n"
+                    : (next_action_guidance + "Choose the best tool for the request.\n\n"
                   "Return exactly one action:\n\n"
                   "open! TOOL_NAME\n"
                   "field: value\n\n"
@@ -424,13 +460,14 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                   "Omit unset or host-resolved fields.\n"
                   "Quote values containing spaces or commas.\n\n"
                   "Tools:" + workflow_action_contracts(tools, host_resolved_dataset_tools)))
-                : ("Choose the listed tool that fits the request. Return one JSON object with `tool` and `args` matching its contract. "
+                : (next_action_guidance + "Choose the listed tool that fits the request. Return one JSON object with `tool` and `args` matching its contract. "
                   "Include needed arguments only; omit unset or host-resolved fields. Return no explanation.\nTools:" +
                     workflow_action_contracts(tools, host_resolved_dataset_tools)),
         };
         common_chat_msg user{
             "user",
-            "[Task]\n" + request.prompt +
+            workflow_action_method_context(request) +
+            "\n[Task]\n" + request.prompt +
             common_agent_render_dataset_inventory(request.available_datasets, 2048) +
             (attempt == 0 ? std::string{} : "\n[Correction]\n" + last_error +
                 "\nReturn the corrected action only."),
@@ -517,6 +554,15 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         std::string normalized;
         if (!common_schema_normalize_and_validate_object(
                 normalized_arguments.dump(), selected->parameters, normalized, last_error)) {
+            if (generation_config.generation_trace) {
+                std::string preview = generated.content.substr(0, 2048);
+                for (char & ch : preview) {
+                    if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
+                }
+                std::fprintf(stderr,
+                    "agent workflow-action trace: attempt=%zu schema-validation=failed tool=%s error=%s response=<<<%s>>>\n",
+                    attempt + 1, tool_name.c_str(), last_error.c_str(), preview.c_str());
+            }
             if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
             error = "workflow action arguments violate " + tool_name + " schema: " + last_error;
             return result;

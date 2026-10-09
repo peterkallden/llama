@@ -310,7 +310,7 @@ bool select_model_tool_families(
         execution.family_chat_routed = true;
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
     }
-    execution.model_tools = common_filter_tools_by_families(
+    execution.model_tools = common_expand_tool_family_prerequisites(
         execution.tooling.tools, selection.family_ids);
     if (execution.model_tools.empty()) {
         error = "tool family selection did not resolve any registered tools";

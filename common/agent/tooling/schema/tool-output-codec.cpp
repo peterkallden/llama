@@ -910,12 +910,17 @@ bool common_parse_compact_dsl_plan(
             error = "compact DSL plan step must start with `step`";
             return false;
         }
-        const size_t separator = step_line.find(" | ", 5);
+        // `step | open! ...` has its separator beginning at offset 4; an
+        // optional `as=alias` may move it farther right. Searching from 5
+        // accidentally rejected the documented no-alias form.
+        const size_t separator = step_line.find(" | ", 4);
         if (separator == std::string::npos) {
             error = "compact DSL plan step requires ` | open! TOOL ...`";
             return false;
         }
-        std::string metadata = step_line.substr(5, separator - 5);
+        const std::string metadata = separator == 4
+            ? std::string()
+            : step_line.substr(5, separator - 5);
         std::string alias;
         size_t meta_position = 0;
         while (meta_position < metadata.size()) {

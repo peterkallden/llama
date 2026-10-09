@@ -85,6 +85,22 @@ int main() {
     assert(blueprint->constraints.size() == 2 && blueprint->assumptions.size() == 1);
     assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);
 
+    common_agent_bootstrap_config host_config = config;
+    host_config.session_id = "session-b";
+    host_config.project_id.clear();
+    common_agent_bootstrap_result host_install;
+    assert(common_agent_install_default_bootstrap(memory, plans, host_config, embed, host_install, error));
+    const auto host_procedure = memory.get(host_install.installed_memory_ids.front(), error);
+    assert(host_procedure && host_procedure->scope == common_memory_scope::global);
+    const auto host_blueprint = plans.get(host_install.installed_blueprint_ids.front(), error);
+    assert(host_blueprint && host_blueprint->scope == common_plan_scope::global);
+    assert(common_plan_template_scope_matches(*host_blueprint, common_plan_scope::turn,
+        "local", "another-session", "", "turn-1"));
+    assert(common_plan_template_scope_matches(*host_blueprint, common_plan_scope::project,
+        "local", "another-session", "another-project", ""));
+    assert(!common_plan_scope_matches(*host_blueprint, common_plan_scope::turn,
+        "local", "another-session", "", "turn-1"));
+
     common_plan_state instance;
     assert(common_plan_instantiate_blueprint(*blueprint, "instance-a", config.session_id, instance, error, common_plan_scope::project, 43));
     assert(instance.kind == common_plan_kind::task);

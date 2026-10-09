@@ -37,6 +37,12 @@ std::vector<common_chat_tool> common_filter_tools_by_families(
     const std::vector<common_chat_tool> & tools,
     const std::vector<std::string> & family_ids);
 
+// Add narrowly scoped host-owned prerequisite tools for selected families.
+// The returned tools must still come from the already policy-filtered input.
+std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
+    const std::vector<common_chat_tool> & tools,
+    const std::vector<std::string> & family_ids);
+
 std::string common_tool_family_selection_schema();
 
 // Required-mode family selection has no NO_TOOLS branch: the model must

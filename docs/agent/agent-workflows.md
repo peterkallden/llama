@@ -57,6 +57,22 @@ operations through an optional capability after admission. The model receives
 the fetched resource handle from `web.fetch`; the host owns operation discovery,
 policy filtering and the next-turn tool view.
 
+OpenAPI HTTP failures retain retryability and a status-specific failure class:
+invalid request/input (400/405/415/422), host credentials or access policy
+(401/403), missing resource (404/410), timeout/conflict/size-limit, and
+transient service/rate-limit failures (408/425/429/5xx). Retry guidance is
+host-derived from `Retry-After` (delta seconds or HTTP date), standard
+`RateLimit`/`RateLimit-Reset`, and common `X-RateLimit-*` / `X-Rate-Limit-*`
+headers. The runtime reports the observed delay and headers; it does not
+automatically replay a request or let the model choose a retry time.
+
+An imported package without a `project_id` is host-wide within its namespace:
+its procedures use global memory scope, and its blueprints/workflows use global
+template scope. Supplying a `project_id` installs the package in that project
+instead. Global template visibility does not make task plans global; instantiated
+plans still use the caller's requested turn/session/project scope. The plan
+scope matcher for active task plans remains exact.
+
 Dataset analysis/quality/join, resource/document analysis and web research
 declare `artifact.export` as an optional capability. The route receives it only
 when the selected tool profile exposes the host-backed exporter. Export remains

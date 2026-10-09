@@ -16,3 +16,10 @@ bool common_plan_scope_matches(const common_plan_state & plan, common_plan_scope
     }
     return false;
 }
+
+bool common_plan_template_scope_matches(const common_plan_state & plan, common_plan_scope scope,
+        const std::string & namespace_id, const std::string & session_id,
+        const std::string & project_id, const std::string & turn_id) {
+    if (plan.scope == common_plan_scope::global && plan.namespace_id == namespace_id) return true;
+    return common_plan_scope_matches(plan, scope, namespace_id, session_id, project_id, turn_id);
+}

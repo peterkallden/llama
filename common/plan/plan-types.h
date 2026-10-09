@@ -291,5 +291,11 @@ struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version
 
 const char * common_plan_operation_kind_name(common_plan_operation_kind kind);
 bool common_plan_scope_matches(const common_plan_state & plan, common_plan_scope scope,
-    const std::string & namespace_id, const std::string & session_id,
-    const std::string & project_id, const std::string & turn_id);
+        const std::string & namespace_id, const std::string & session_id,
+        const std::string & project_id, const std::string & turn_id);
+// Bootstrap/curated templates at host-global scope are visible to narrower
+// execution scopes in the same namespace. This must not be used to resume
+// concrete task plans, for which common_plan_scope_matches remains exact.
+bool common_plan_template_scope_matches(const common_plan_state & plan, common_plan_scope scope,
+        const std::string & namespace_id, const std::string & session_id,
+        const std::string & project_id, const std::string & turn_id);

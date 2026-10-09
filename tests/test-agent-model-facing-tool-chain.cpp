@@ -24,6 +24,8 @@ int main() {
         {"data.aggregate", "Aggregate a dataset", "{}", "{}"},
         {"openapi.search", "Search the configured API", "{}", "{}"},
         {"openapi.get", "Get one API record", "{}", "{}"},
+        {"web.fetch", "Fetch public content into a resource", "{}", "{}"},
+        {"web.search", "Search public web content", "{}", "{}"},
         {"memory.search", "Search memory", "{}", "{}"},
     };
     const auto families = common_generate_tool_family_index(tools, {
@@ -48,6 +50,14 @@ int main() {
     assert(!has_tool(selected, "memory.search"));
     assert(!common_parse_tool_family_selection_text(
         "TOOLS: datasets", families, selection, error));
+
+    const auto openapi_route = common_expand_tool_family_prerequisites(
+        tools, {"openapi"});
+    assert(has_tool(openapi_route, "openapi.search"));
+    assert(has_tool(openapi_route, "openapi.get"));
+    assert(has_tool(openapi_route, "web.fetch"));
+    assert(!has_tool(openapi_route, "web.search"));
+    assert(!has_tool(openapi_route, "memory.search"));
 
     common_tool_definition dataset_inspect;
     dataset_inspect.name = "dataset.inspect";

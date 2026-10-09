@@ -121,6 +121,26 @@ std::vector<common_chat_tool> common_filter_tools_by_families(
     return result;
 }
 
+std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
+        const std::vector<common_chat_tool> & tools,
+        const std::vector<std::string> & family_ids) {
+    auto result = common_filter_tools_by_families(tools, family_ids);
+    const std::set<std::string> selected(family_ids.begin(), family_ids.end());
+
+    // Dynamic OpenAPI admission consumes a host-owned resource produced by
+    // web.fetch. Expose that exact prerequisite instead of the whole web
+    // family, which also includes search.
+    if (selected.count("openapi")) {
+        const auto fetch = std::find_if(tools.begin(), tools.end(),
+            [](const common_chat_tool & tool) { return tool.name == "web.fetch"; });
+        if (fetch != tools.end() && std::none_of(result.begin(), result.end(),
+                [](const common_chat_tool & tool) { return tool.name == "web.fetch"; })) {
+            result.push_back(*fetch);
+        }
+    }
+    return result;
+}
+
 std::string common_tool_family_selection_schema() {
     return R"({"type":"object","additionalProperties":false,"required":["needs_tools","families"],"properties":{"needs_tools":{"type":"boolean"},"families":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}},"reason":{"type":"string","maxLength":256}}})";
 }

@@ -348,12 +348,34 @@ std::string render_input_fields(const std::vector<common_model_tool_field> & fie
     std::ostringstream out;
     for (const auto & field : fields) {
         out << "\n  " << field.name << " ("
-            << (field.required ? "required" : "optional")
+            << (field.required && !field.may_be_inferred ? "required" : "optional")
             << ", " << model_facing_type(field.display_type) << ')';
         if (field.may_be_inferred) out << " [host may infer]";
         if (!field.description.empty()) out << ": " << field.description;
     }
     return out.str();
+}
+
+std::string compact_tool_purpose(
+        const std::string & name,
+        const std::string & description,
+        const std::vector<common_model_tool_field> & outputs) {
+    const std::string prefix = name + ": ";
+    if (description.compare(0, prefix.size(), prefix) != 0) return description;
+
+    const std::string marker = " Returns: " + render_return_names(outputs) + ".";
+    const auto marker_pos = description.find(marker, prefix.size());
+    if (marker_pos == std::string::npos) return description;
+    const auto after_marker = marker_pos + marker.size();
+    if (after_marker < description.size() && description[after_marker] != '\n') {
+        return description;
+    }
+
+    // Tool providers already store a compact model contract in
+    // common_chat_tool::description. Planner/output prompt builders also
+    // render from the typed schemas; strip that known prefix before rendering
+    // again, or the model receives duplicated purpose, returns and fields.
+    return description.substr(prefix.size(), marker_pos - prefix.size());
 }
 
 } // namespace
@@ -447,7 +469,8 @@ std::string common_render_compact_tool_description(
         std::string & error) {
     error.clear();
     std::ostringstream out;
-    out << contract.name << ": " << contract.purpose
+    out << contract.name << ": " << compact_tool_purpose(
+            contract.name, contract.purpose, contract.outputs)
         << " Returns: " << render_return_names(contract.outputs) << '.';
     out << render_input_fields(contract.inputs);
     return out.str();

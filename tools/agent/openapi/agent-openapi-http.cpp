@@ -15,6 +15,8 @@
 #include <memory>
 #include <mutex>
 #include <limits>
+#include <iomanip>
+#include <ctime>
 
 namespace {
 struct url_parts { std::string scheme, host, base_path; int port = 0; };
@@ -23,6 +25,117 @@ struct oauth_token_cache {
     std::string access_token;
     std::chrono::steady_clock::time_point expires_at{};
 };
+
+bool parse_retry_after_seconds(const std::string & value, int64_t & seconds) {
+    if (value.empty()) return false;
+    char * end = nullptr;
+    const long long parsed = std::strtoll(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || parsed < 0) return false;
+    seconds = parsed;
+    return true;
+}
+
+bool parse_retry_after_date_seconds(const std::string & value, int64_t & seconds) {
+    std::tm parsed{};
+    std::istringstream input(value);
+    input >> std::get_time(&parsed, "%a, %d %b %Y %H:%M:%S GMT");
+    if (input.fail()) return false;
+#ifdef _WIN32
+    const std::time_t retry_at = _mkgmtime(&parsed);
+#else
+    const std::time_t retry_at = timegm(&parsed);
+#endif
+    if (retry_at < 0) return false;
+    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    seconds = std::max<int64_t>(0, static_cast<int64_t>(retry_at) - static_cast<int64_t>(now));
+    return true;
+}
+
+bool parse_rate_limit_reset_seconds(const std::string & value, bool epoch_value, int64_t & seconds) {
+    if (!parse_retry_after_seconds(value, seconds)) return false;
+    if (epoch_value && seconds > 1000000000) {
+        const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        seconds = std::max<int64_t>(0, seconds - static_cast<int64_t>(now));
+    }
+    return true;
+}
+
+bool parse_structured_rate_limit_reset_seconds(const std::string & value, int64_t & seconds) {
+    const auto key = value.find("reset=");
+    if (key == std::string::npos) return false;
+    const auto begin = key + 6;
+    const auto end = value.find_first_of(",; \t", begin);
+    return parse_rate_limit_reset_seconds(value.substr(begin,
+        end == std::string::npos ? std::string::npos : end - begin), false, seconds);
+}
+
+std::string openapi_http_status_summary(int status) {
+    switch (status) {
+        case 400: return "The API rejected the request as invalid; check parameter names, values, and request shape.";
+        case 401: return "The API requires valid authentication; check the host-configured credentials.";
+        case 403: return "The authenticated caller is not allowed to access this API operation.";
+        case 404: return "The API endpoint or requested resource was not found.";
+        case 405: return "The API does not allow this HTTP method for the requested endpoint.";
+        case 408: return "The API request timed out; retry after the indicated delay, if provided.";
+        case 409: return "The API rejected the request because it conflicts with the current resource state.";
+        case 410: return "The API resource is no longer available.";
+        case 413: return "The API rejected the request because its payload is too large.";
+        case 415: return "The API does not support the request content type.";
+        case 422: return "The API could not process the supplied parameter values.";
+        case 425: return "The API considers the request too early; retry after the indicated delay, if provided.";
+        case 429: return "The API rate limit was reached; retry when the response rate-limit headers allow it.";
+        default:
+            if (status >= 500) return "The API returned a server error; retry after any indicated rate-limit or retry delay.";
+            return "The API returned HTTP " + std::to_string(status) + ".";
+    }
+}
+
+common_tool_failure_class openapi_http_failure_class(int status) {
+    if (status == 401 || status == 403) return common_tool_failure_class::policy;
+    if (status == 404 || status == 410) return common_tool_failure_class::not_found;
+    if (status == 408) return common_tool_failure_class::timeout;
+    if (status == 400 || status == 405 || status == 415 || status == 422) return common_tool_failure_class::validation;
+    if (status == 413) return common_tool_failure_class::limit;
+    if (status == 425 || status == 429 || status >= 500) return common_tool_failure_class::network;
+    return common_tool_failure_class::execution;
+}
+
+bool openapi_http_failure_retryable(int status) {
+    return status == 408 || status == 425 || status == 429 || status >= 500;
+}
+
+std::string rate_limit_diagnostics(const httplib::Response & response) {
+    std::ostringstream out;
+    const auto retry_after = response.get_header_value("Retry-After");
+    int64_t retry_seconds = 0;
+    if (!retry_after.empty()) {
+        out << "Retry-After=" << retry_after;
+        if (parse_retry_after_seconds(retry_after, retry_seconds) ||
+                parse_retry_after_date_seconds(retry_after, retry_seconds)) {
+            out << " (retry_after_seconds=" << retry_seconds << ')';
+        }
+    }
+    constexpr const char * headers[] = {
+        "RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset",
+        "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset",
+        "X-Rate-Limit-Limit", "X-Rate-Limit-Remaining", "X-Rate-Limit-Reset"
+    };
+    for (const char * name : headers) {
+        const auto value = response.get_header_value(name);
+        if (value.empty()) continue;
+        if (out.tellp() > 0) out << "; ";
+        out << name << '=' << value;
+        const bool parsed_reset = retry_after.empty() &&
+            ((std::string(name) == "RateLimit" && parse_structured_rate_limit_reset_seconds(value, retry_seconds)) ||
+             ((std::string(name) == "RateLimit-Reset" || std::string(name) == "X-RateLimit-Reset" ||
+               std::string(name) == "X-Rate-Limit-Reset") &&
+              parse_rate_limit_reset_seconds(value, std::string(name) != "RateLimit-Reset", retry_seconds)));
+        if (parsed_reset) {
+            out << " (retry_after_seconds=" << retry_seconds << ')';
+        }
+    }
+    return out.str();
+}
 
 bool parse_url(const std::string & input, url_parts & url, std::string & error) {
     const auto scheme_end = input.find("://");
@@ -452,7 +565,19 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         if (result.mime_type.empty()) result.mime_type = "application/octet-stream";
         result.structured_content_json = response->body;
         result.text_content = response->body;
-        if (!result.ok) { result.failure_code = "openapi.http_status"; result.safe_summary = "The OpenAPI request returned an error status."; error = "OpenAPI request returned HTTP " + std::to_string(response->status); }
+        if (!result.ok) {
+            result.failure_code = "openapi.http_status";
+            result.failure_class = openapi_http_failure_class(response->status);
+            result.retryable = openapi_http_failure_retryable(response->status);
+            result.safe_summary = openapi_http_status_summary(response->status);
+            error = "OpenAPI request returned HTTP " + std::to_string(response->status);
+            result.raw_diagnostic = error;
+            const std::string rate_limit_info = rate_limit_diagnostics(*response);
+            if (!rate_limit_info.empty()) {
+                result.safe_summary += " " + rate_limit_info + ".";
+                result.raw_diagnostic += "; " + rate_limit_info;
+            }
+        }
         return true;
     };
 }

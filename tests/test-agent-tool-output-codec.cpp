@@ -230,6 +230,16 @@ void test_flat_paths_and_multiline_plan() {
     assert(plan["steps"][0]["args"]["measures"][0]["function"] == "sum");
     assert(plan["steps"][0]["args"]["measures"][0]["as"] == "total");
 
+    const std::string implicit_id_dsl =
+        "plan goal=\"Aggregate the selected dataset\"\n"
+        "step | open! data.aggregate\n"
+        "dataset: d1\n"
+        "measure: sum amount total";
+    assert(common_parse_compact_dsl_plan(implicit_id_dsl, tools, proposal, error));
+    const auto implicit_id_plan = nlohmann::json::parse(proposal);
+    assert(implicit_id_plan["steps"].size() == 1);
+    assert(implicit_id_plan["steps"][0]["tool"] == "data.aggregate");
+
     const common_chat_tool nested{
         "nested.tool", "Nested fields.",
         R"json({"type":"object","properties":{"operations":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string"},"column":{"type":"string"}}}}}})json",
@@ -332,6 +342,9 @@ void test_nested_tool_argument_schema_validation() {
         schema, normalized, error));
     assert(!common_schema_normalize_and_validate_object(
         R"({"operation":"unknown"})", schema, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"measures":[]})", schema, normalized, error));
+    assert(error == "required contract field is missing: operation");
 }
 
 } // namespace

@@ -37,5 +37,8 @@ inline common_agent_scope common_cli_make_agent_scope_with_matching_plan_scope(c
 }
 
 inline bool common_cli_supports_bootstrap_package_scope(const common_agent_scope & scope) {
-    return scope.memory_scope == common_memory_scope::session || scope.memory_scope == common_memory_scope::project;
+    // Bootstrap package scope is host-wide unless a project identity is
+    // supplied. It is independent of the turn's ordinary memory scope.
+    (void) scope;
+    return true;
 }

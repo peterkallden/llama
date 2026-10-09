@@ -208,7 +208,7 @@ bool common_agent_select_and_instantiate_blueprint(
             }
         }
         if (rejection.empty() &&
-                !common_plan_scope_matches(*blueprint, config.scope, request.namespace_id,
+                !common_plan_template_scope_matches(*blueprint, config.scope, request.namespace_id,
                     request.session_id, request.project_id, request.turn_id)) rejection = "blueprint is outside the current scope";
         if (!rejection.empty()) {
             result.rejections.push_back({candidate.logical_id, std::move(rejection)});
@@ -294,7 +294,7 @@ bool common_agent_select_and_instantiate_blueprint(
         if (!error.empty()) return false;
         const auto workflow = std::find_if(workflows.begin(), workflows.end(), [&](const auto & plan) {
             return plan.kind == common_plan_kind::workflow && plan.workflow_definition &&
-                common_plan_scope_matches(plan, config.scope, request.namespace_id,
+                common_plan_template_scope_matches(plan, config.scope, request.namespace_id,
                     request.session_id, request.project_id, request.turn_id) &&
                 plan.workflow_definition->workflow_ref == config.selected_workflow->workflow_ref &&
                 plan.workflow_definition->workflow_revision == config.selected_workflow->workflow_revision;

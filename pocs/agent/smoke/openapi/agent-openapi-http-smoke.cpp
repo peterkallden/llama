@@ -5,7 +5,10 @@
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 namespace {
@@ -37,6 +40,17 @@ agent_openapi_catalog make_get_sale_catalog(const agent_host_openapi_provider_co
     get_sale.access = agent_openapi_access::read;
     get_sale.read_only = true;
     catalog.operations.push_back(std::move(get_sale));
+    agent_openapi_operation get_error;
+    get_error.operation_id = "getHttpError";
+    get_error.method = "get";
+    get_error.path = "/errors/{code}";
+    get_error.summary = "Exercise HTTP error handling";
+    get_error.description = get_error.summary;
+    get_error.input_schema_json = R"({"type":"object"})";
+    get_error.path_parameters = {"code"};
+    get_error.access = agent_openapi_access::read;
+    get_error.read_only = true;
+    catalog.operations.push_back(std::move(get_error));
     return catalog;
 }
 
@@ -49,6 +63,31 @@ int main() {
         ++sale_requests;
         assert(request.get_param_value("limit") == (sale_requests == 1 ? "5" : "10"));
         response.set_content(R"({"id":42,"total":7})", "application/json");
+    });
+    server.Get(R"(/errors/([a-zA-Z0-9-]+))", [](const httplib::Request & request, httplib::Response & response) {
+        const std::string token = request.matches[1];
+        const int status = std::stoi(token.substr(0, 3));
+        response.status = status;
+        if (token == "429") {
+            response.set_header("Retry-After", "7");
+            response.set_header("RateLimit", "limit=100, remaining=0, reset=11");
+            response.set_header("X-RateLimit-Remaining", "0");
+            response.set_header("X-RateLimit-Reset", "11");
+        } else if (token == "429-date") {
+            const std::time_t retry_at = std::time(nullptr) + 30;
+            std::tm retry_tm{};
+#ifdef _WIN32
+            gmtime_s(&retry_tm, &retry_at);
+#else
+            gmtime_r(&retry_at, &retry_tm);
+#endif
+            std::ostringstream retry_header;
+            retry_header << std::put_time(&retry_tm, "%a, %d %b %Y %H:%M:%S GMT");
+            response.set_header("Retry-After", retry_header.str());
+        } else if (token == "429-reset") {
+            response.set_header("RateLimit-Reset", "13");
+        }
+        response.set_content(R"({"error":"test status"})", "application/json");
     });
     server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
         assert(request.get_header_value("Authorization") == "Basic dXNlcjpwYXNz");
@@ -114,6 +153,48 @@ int main() {
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);
     assert(observed_mime == "application/json");
+    const struct {
+        int status;
+        common_tool_failure_class failure_class;
+        bool retryable;
+    } expected_errors[] = {
+        {400, common_tool_failure_class::validation, false},
+        {401, common_tool_failure_class::policy, false},
+        {403, common_tool_failure_class::policy, false},
+        {404, common_tool_failure_class::not_found, false},
+        {405, common_tool_failure_class::validation, false},
+        {408, common_tool_failure_class::timeout, true},
+        {409, common_tool_failure_class::execution, false},
+        {410, common_tool_failure_class::not_found, false},
+        {413, common_tool_failure_class::limit, false},
+        {415, common_tool_failure_class::validation, false},
+        {422, common_tool_failure_class::validation, false},
+        {425, common_tool_failure_class::network, true},
+        {429, common_tool_failure_class::network, true},
+        {500, common_tool_failure_class::network, true},
+    };
+    for (const auto & expected : expected_errors) {
+        const auto failure = view->call({"http-error", "sales.getHttpError",
+            "{\"code\":\"" + std::to_string(expected.status) + "\"}"}, error);
+        assert(!failure.ok);
+        assert(failure.failure_class == expected.failure_class);
+        assert(failure.retryable == expected.retryable);
+        assert(failure.failure_code == "openapi.http_status");
+        assert(!failure.safe_summary.empty());
+        if (expected.status == 429) {
+            assert(failure.safe_summary.find("retry_after_seconds=7") != std::string::npos);
+            assert(failure.raw_diagnostic.find("RateLimit=limit=100, remaining=0, reset=11") != std::string::npos);
+            assert(failure.raw_diagnostic.find("X-RateLimit-Remaining=0") != std::string::npos);
+        }
+    }
+    const auto dated_retry = view->call(
+        {"http-error-date", "sales.getHttpError", R"({"code":"429-date"})"}, error);
+    assert(!dated_retry.ok && dated_retry.retryable);
+    assert(dated_retry.safe_summary.find("retry_after_seconds=") != std::string::npos);
+    const auto reset_retry = view->call(
+        {"http-error-reset", "sales.getHttpError", R"({"code":"429-reset"})"}, error);
+    assert(!reset_retry.ok && reset_retry.retryable);
+    assert(reset_retry.safe_summary.find("retry_after_seconds=13") != std::string::npos);
     const auto capped_result = view->call({"http-1-capped", "sales.getSale", R"({"id":"42","limit":99})"}, error);
     assert(capped_result.ok);
 

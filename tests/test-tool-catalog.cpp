@@ -61,6 +61,9 @@ int main() {
     }
     assert(web_search->executor_id == "builtin.web_search");
     assert(web_fetch->executor_id == "builtin.web_fetch");
+    const auto web_fetch_schema = nlohmann::json::parse(web_fetch->input_schema_json);
+    assert(web_fetch_schema["required"] == nlohmann::json::array({"url"}));
+    assert(!web_fetch_schema["properties"].contains("extract"));
 
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
@@ -223,9 +226,26 @@ int main() {
     assert(compact_error.empty());
     assert(compact_read.find("resource.read:") != std::string::npos);
     assert(compact_read.find("Returns: result.") != std::string::npos);
+    const auto compact_read_again = common_render_compact_tool_description(
+        resource_read->name,
+        compact_read,
+        resource_read->model_input_schema_json,
+        resource_read->result_schema_json,
+        compact_error);
+    assert(compact_error.empty());
+    assert(compact_read_again == compact_read);
     assert(compact_read.find("id (required, string)") != std::string::npos);
     assert(compact_read.find("representation (optional, text|bytes)") != std::string::npos);
     assert(compact_read.find("max_bytes (optional, integer[1..32768])") != std::string::npos);
+    const auto * openapi_connect = catalog.find_definition("openapi_connect");
+    assert(openapi_connect != nullptr);
+    const auto openapi_contract = common_render_compact_tool_description(
+        "openapi.connect", openapi_connect->description, openapi_connect->input_schema_json,
+        openapi_connect->result_schema_json, compact_error);
+    assert(compact_error.empty());
+    assert(openapi_contract.find("spec_resource (optional, resource_ref) [host may infer]") != std::string::npos);
+    const auto openapi_schema = nlohmann::json::parse(openapi_connect->input_schema_json);
+    assert(openapi_schema["required"] == nlohmann::json::array({"spec_resource"}));
     const auto aggregate_compact = common_render_compact_tool_description(
         data_aggregate->name,
         data_aggregate->description,
