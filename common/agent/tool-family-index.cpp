@@ -36,10 +36,11 @@ std::string family_description_for_id(const std::string & id) {
         {"repository", "Search and inspect repository-backed content"},
         {"math",       "Perform bounded arithmetic calculations"},
         {"memory",     "Search and manage scoped runtime memory"},
+        {"openapi",    "Load a fetched OpenAPI spec and expose its permitted API operations"},
         {"resource",   "Inspect and read host-owned resources"},
         {"statistics", "Describe datasets and compute summaries"},
         {"time",       "Read current time and date information"},
-        {"web",        "Search and retrieve information from the public web"},
+        {"web",        "Search and fetch public web content, including API specifications"},
     };
     const auto it = descriptions.find(id);
     return it != descriptions.end()

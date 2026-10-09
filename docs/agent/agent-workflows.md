@@ -44,6 +44,18 @@ requirements generically. The starter library covers these host-tool domains:
   structured document tables.
 - Web research, gated by the host's network policy and limited to the safe
   search/fetch tools.
+- OpenAPI onboarding, which fetches a JSON specification into a host resource,
+  admits anonymous read-only operations, and exposes those operations on the
+  next turn. The route's optional `openapi.read` capability resolves against
+  the newly registered provider so the same workflow can continue safely.
+
+The starter blueprint, procedure and workflow for this path are imported from
+[`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).
+The blueprint binds `workflow://openapi/resource-onboarding`; the workflow
+requires `web.fetch` and `openapi.connect`, and adds available read-only API
+operations through an optional capability after admission. The model receives
+the fetched resource handle from `web.fetch`; the host owns operation discovery,
+policy filtering and the next-turn tool view.
 
 Dataset analysis/quality/join, resource/document analysis and web research
 declare `artifact.export` as an optional capability. The route receives it only

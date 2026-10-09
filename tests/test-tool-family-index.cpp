@@ -1,6 +1,9 @@
 #include "agent/tool-family-index.h"
 #include "agent/tool-workflow-index.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 
 int main() {
@@ -15,16 +18,29 @@ int main() {
         {"memory_search", "search memory", "{}", "{}"},
         {"statistics.describe", "describe", "{}", "{}"},
         {"document.tables", "list document tables", "{}", "{}"},
+        {"openapi.connect", "admit fetched OpenAPI spec", "{}", "{}"},
     };
 
     const auto families = common_generate_tool_family_index(tools);
-    assert(families.size() == 9);
+    assert(families.size() == 10);
     const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == id) return &family;
         return nullptr;
     };
     const auto * data_family = find_family("data");
     assert(data_family && data_family->description == "Query and transform datasets");
+    const auto * web_family = [&families]() -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == "web") return &family;
+        return nullptr;
+    }();
+    const auto * openapi_family = [&families]() -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == "openapi") return &family;
+        return nullptr;
+    }();
+    assert(web_family && web_family->description ==
+        "Search and fetch public web content, including API specifications");
+    assert(openapi_family && openapi_family->description ==
+        "Load a fetched OpenAPI spec and expose its permitted API operations");
     const auto configured = common_generate_tool_family_index(
         tools, {{"data", "Query approved datasets from the configured API"}});
     const auto configured_data = [&configured]() -> const common_tool_family_index * {
@@ -37,7 +53,8 @@ int main() {
     assert(rendered.find("data: Query and transform datasets") != std::string::npos);
     assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);
     assert(rendered.find("diagnostics: Analyze compiler and test failures, native crashes and debugger dumps") != std::string::npos);
-    assert(rendered.find("web: Search and retrieve information from the public web") != std::string::npos);
+    assert(rendered.find("web: Search and fetch public web content, including API specifications") != std::string::npos);
+    assert(rendered.find("openapi: Load a fetched OpenAPI spec and expose its permitted API operations") != std::string::npos);
     assert(rendered.find("time: Read current time and date information") != std::string::npos);
     assert(rendered.find("math: Perform bounded arithmetic calculations") != std::string::npos);
     assert(rendered.find("memory: Search and manage scoped runtime memory") != std::string::npos);
@@ -75,7 +92,7 @@ int main() {
     assert(required_repair_prompt.find("previous family selection was invalid") != std::string::npos);
     assert(required_repair_prompt.find("non-empty families array") != std::string::npos);
     assert(required_schema.find("\"minItems\":1") != std::string::npos);
-    assert(required_schema.find("\"maxItems\":9") != std::string::npos);
+    assert(required_schema.find("\"maxItems\":10") != std::string::npos);
     assert(required_schema.find("\"needs_tools\"") == std::string::npos);
     assert(required_schema.find("\"enum\"") != std::string::npos);
     assert(common_parse_tool_family_required_selection(

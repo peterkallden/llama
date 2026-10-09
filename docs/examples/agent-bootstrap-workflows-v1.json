@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v3",
+  "version": "v4",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -57,6 +57,13 @@
       "summary": "web source evidence",
       "content": "Use search results for discovery, then fetch the source that directly supports each material claim. Prefer primary sources, check publication or update dates when relevant, and separate retrieved facts from inference.",
       "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "summary": "connect to a public API from its OpenAPI document",
+      "content": "Use web.fetch to retrieve the official JSON OpenAPI document as a host resource, then pass its returned resource_ref to openapi.connect. The host admits only anonymous read-only HTTPS operations. The provider is available on the next turn: wait for the updated tool view, choose an operation from its exposed schema, and keep arguments and results within the host's bounds. Never invent a server URL, operation name, credentials, or raw HTTP request. If the user provided an API base URL but no spec URL, search for the official OpenAPI document first and fetch that document.",
+      "importance": 0.9,
       "confidence": 1.0
     }
   ],
@@ -134,6 +141,17 @@
       "graph_revision": "web-research-graph@v2",
       "required_capabilities": ["web.search", "web.fetch"],
       "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.network.allowed"]
+    },
+    {
+      "id": "openapi-resource-onboarding-path-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "workflow_ref": "workflow://openapi/resource-onboarding",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openapi-resource-onboarding-graph@v1",
+      "required_capabilities": ["web.fetch", "openapi.connect"],
+      "optional_capabilities": ["web.search", "openapi.read", "artifact.export"],
       "required_context": ["context.network.allowed"]
     },
     {
@@ -344,6 +362,37 @@
         {"id": "retrieve-evidence", "title": "Retrieve evidence", "objective": "Fetch candidate sources and inspect the supporting content.", "depends_on": ["discover-sources"]},
         {"id": "verify-claims", "title": "Verify claims", "objective": "Match material claims to retrieved evidence and note dates or uncertainty.", "depends_on": ["retrieve-evidence"]},
         {"id": "answer", "title": "Answer", "objective": "Provide a sourced answer and distinguish any inference.", "depends_on": ["verify-claims"]}
+      ]
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "selection_description": "Connect to a public read-only API from its OpenAPI document and use a permitted operation.",
+      "purpose": "Turn a user-provided API or documentation URL into bounded, host-validated API tools.",
+      "goal": "Answer the API request using an admitted OpenAPI operation and its verified response.",
+      "success_criteria": "The OpenAPI document is fetched into a host resource, admitted by openapi.connect, and a permitted operation is used with bounded arguments and response evidence.",
+      "required_capabilities": ["workflow.openapi"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["openapi-resource-onboarding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openapi/resource-onboarding", "workflow_revision": "v1"}
+      ],
+      "next_action": "locate-specification",
+      "constraints": [
+        {"id": "admitted-spec-only", "description": "Use only operations exposed from the admitted OpenAPI document; do not issue raw HTTP requests.", "hard": true},
+        {"id": "anonymous-read-only", "description": "Use only anonymous read-only HTTPS operations permitted by the host.", "hard": true},
+        {"id": "host-resource-identity", "description": "Pass only the host-returned resource_ref to openapi.connect.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "network-authorized", "statement": "The host has enabled public HTTPS access for this request.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "locate-specification", "title": "Locate specification", "objective": "Use the provided spec URL, or find the official JSON OpenAPI document for the requested API."},
+        {"id": "fetch-specification", "title": "Fetch specification", "objective": "Fetch the OpenAPI document with web.fetch and retain its host resource_ref.", "depends_on": ["locate-specification"]},
+        {"id": "admit-provider", "title": "Admit provider", "objective": "Pass the returned resource_ref to openapi.connect and use its admission result.", "depends_on": ["fetch-specification"]},
+        {"id": "invoke-operation", "title": "Invoke operation", "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.", "depends_on": ["admit-provider"]},
+        {"id": "verify-response", "title": "Verify response", "objective": "Ground the answer in the bounded API response and report relevant limitations.", "depends_on": ["invoke-operation"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer the user from the verified API result.", "depends_on": ["verify-response"]}
       ]
     }
   ]

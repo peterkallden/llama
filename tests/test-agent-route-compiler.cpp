@@ -210,6 +210,67 @@ int main() {
         tooling, "", catalog, error));
     assert(catalog.candidates.size() == 1 && catalog.candidates.front().id == "normal-plan");
 
+    // OpenAPI onboarding first fetches and admits a specification. Read
+    // operations are optional because the dynamic provider is resolved on
+    // the following turn, after openapi.connect has admitted it.
+    common_plan_state openapi_workflow;
+    openapi_workflow.id = "bootstrap:local:session:s:workflow:openapi-onboarding";
+    openapi_workflow.namespace_id = "local";
+    openapi_workflow.session_id = "s";
+    openapi_workflow.kind = common_plan_kind::workflow;
+    openapi_workflow.scope = common_plan_scope::session;
+    openapi_workflow.workflow_definition = common_plan_workflow_definition{
+        "workflow://openapi/resource-onboarding", "v1", "openapi",
+        "graph-openapi-onboarding-v1", {},
+        {"web.fetch", "openapi.connect"},
+        {"web.search", "openapi.read", "artifact.export"},
+        {"context.network.allowed"}};
+    assert(store.create(openapi_workflow, error));
+
+    common_plan_state openapi_blueprint = make_blueprint(true);
+    openapi_blueprint.id = "bootstrap:local:session:s:blueprint:openapi-onboarding";
+    openapi_blueprint.goal = "Fetch an OpenAPI specification and use its read-only API";
+    openapi_blueprint.required_capabilities = {"workflow.openapi"};
+    openapi_blueprint.workflow_bindings = {
+        {"workflow://openapi/resource-onboarding", "v1"}};
+    assert(store.create(openapi_blueprint, error));
+
+    common_blueprint_candidate openapi_candidate = make_candidate();
+    openapi_candidate.logical_id = "openapi-onboarding";
+    openapi_candidate.persisted_id = openapi_blueprint.id;
+    openapi_candidate.description = openapi_blueprint.goal;
+    tooling.capabilities = {"workflow.openapi", "web.fetch", "openapi.connect"};
+    tooling.capability_tools = {
+        {"web.fetch", {"web.fetch"}},
+        {"openapi.connect", {"openapi.connect"}}};
+    tooling.tools = {
+        {"web.fetch", "Fetch a public resource", R"({"type":"object"})"},
+        {"openapi.connect", "Admit a fetched OpenAPI specification", R"({"type":"object"})"}};
+    tooling.available_context = {"context.network.allowed"};
+    assert(compile_agent_route_catalog(request, store, scope, {openapi_candidate},
+        tooling, "", catalog, error));
+    assert(catalog.candidates.size() == 2);
+    const auto & openapi_route = catalog.candidates[1];
+    assert(openapi_route.kind == common_agent_route_kind::blueprint_workflow);
+    assert(openapi_route.resolved_tools.size() == 2);
+    assert(std::find(openapi_route.resolved_optional_capabilities.begin(),
+        openapi_route.resolved_optional_capabilities.end(), "openapi.read") ==
+        openapi_route.resolved_optional_capabilities.end());
+
+    tooling.capabilities.push_back("openapi.read");
+    tooling.capability_tools["openapi.read"] = {"openalex.listWorks"};
+    tooling.tools.push_back({"openalex.listWorks", "List works", R"({"type":"object"})"});
+    assert(compile_agent_route_catalog(request, store, scope, {openapi_candidate},
+        tooling, "", catalog, error));
+    assert(catalog.candidates.size() == 2);
+    const auto & admitted_openapi_route = catalog.candidates[1];
+    assert(std::find(admitted_openapi_route.resolved_optional_capabilities.begin(),
+        admitted_openapi_route.resolved_optional_capabilities.end(), "openapi.read") !=
+        admitted_openapi_route.resolved_optional_capabilities.end());
+    assert(std::find(admitted_openapi_route.resolved_tools.begin(),
+        admitted_openapi_route.resolved_tools.end(), "openalex.listWorks") !=
+        admitted_openapi_route.resolved_tools.end());
+
     common_agent_route_candidate document_route;
     document_route.id = "route:document-analysis";
     document_route.kind = common_agent_route_kind::blueprint_workflow;

@@ -759,6 +759,7 @@ bool resolve_agent_host_tool_selection(
         mcp_providers.push_back(std::move(provider));
     }
 
+    std::vector<std::string> openapi_read_tools;
     for (const auto & provider_config : request.openapi_providers) {
         if (!provider_config.enabled) continue;
         const std::filesystem::path configured_spec_path(provider_config.spec_path);
@@ -791,6 +792,11 @@ bool resolve_agent_host_tool_selection(
                 return false;
             }
             continue;
+        }
+        for (const auto & operation : catalog.operations) {
+            if (operation.read_only && !operation.auth_required) {
+                openapi_read_tools.push_back(agent_openapi_exposed_tool_name(catalog, operation));
+            }
         }
         const std::string provider_id = provider_config.id;
         common_agent_data_store * openapi_data_store = request.data_store != nullptr
@@ -947,6 +953,12 @@ bool resolve_agent_host_tool_selection(
 
     if (request.dynamic_openapi_registry != nullptr) {
         for (const auto & registration : request.dynamic_openapi_registry->snapshot()) {
+            for (const auto & operation : registration.catalog.operations) {
+                if (operation.read_only && !operation.auth_required) {
+                    openapi_read_tools.push_back(
+                        agent_openapi_exposed_tool_name(registration.catalog, operation));
+                }
+            }
             const auto provider_id = registration.config.id;
             const auto materializer = [resource_store, provider_id](
                     const agent_tool_context & context,
@@ -1019,6 +1031,19 @@ bool resolve_agent_host_tool_selection(
             return false;
         }
         selection.tooling.tools = selection.tool_view->chat_tools();
+        for (const auto & name : openapi_read_tools) {
+            if (std::any_of(selection.tooling.tools.begin(), selection.tooling.tools.end(),
+                    [&](const common_chat_tool & tool) { return tool.name == name; })) {
+                selection.tooling.capability_tools["openapi.read"].push_back(name);
+            }
+        }
+        if (!selection.tooling.capability_tools["openapi.read"].empty()) {
+            selection.tooling.capabilities.push_back("openapi.read");
+        }
+        std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
+        selection.tooling.capabilities.erase(std::unique(
+            selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()),
+            selection.tooling.capabilities.end());
         selection.tooling.profile_tools_active = true;
         selection.tooling.tool_view = selection.tool_view.get();
         error.clear();

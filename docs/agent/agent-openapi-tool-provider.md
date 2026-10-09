@@ -47,6 +47,34 @@ boundary. They are removed when the session is reset or closed and are not
 persisted across process restarts. Results from dynamic operations are
 materialized as bounded host resources with provider/operation provenance.
 
+The model-facing family index describes `web` as able to fetch public content,
+including API specifications, and `openapi` as loading a fetched spec and
+exposing its permitted operations. The starter package also includes an
+OpenAPI-onboarding blueprint and workflow. Its optional `openapi.read`
+capability resolves to the admitted provider's anonymous read-only operations,
+so the route can resume with those tools on the next turn.
+
+## Fetch and connector smokes
+
+The offline runtime smoke verifies that a stubbed `web.fetch` result is
+materialized and can be read through `resource.read`. The OpenAPI host smoke
+feeds a fetched-result-shaped resource into `openapi.connect`, resolves the
+provider on the next turn, and invokes a mocked operation. Both are part of the
+normal agent CTest set.
+
+The opt-in live smoke exercises the two network paths independently:
+
+```sh
+cmake --build build-agent-vulkan-cozo --target llama-agent-web-openapi-live-smoke --parallel 3
+./build-agent-vulkan-cozo/bin/llama-agent-web-openapi-live-smoke --mode resource
+./build-agent-vulkan-cozo/bin/llama-agent-web-openapi-live-smoke --mode openapi
+```
+
+`resource` fetches and reads a public page. `openapi` fetches the checked-in
+OpenAlex contract from the public repository, admits it, then performs a
+bounded live OpenAlex request through the newly exposed operation. These live
+smokes need network access and are not registered as default CTests.
+
 ## Eurostat example
 
 Eurostat's public Statistics API is documented with WADL rather than OpenAPI.

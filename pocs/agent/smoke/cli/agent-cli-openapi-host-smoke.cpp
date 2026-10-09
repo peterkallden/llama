@@ -153,6 +153,13 @@ int main() {
         std::cerr << "host selection returned no tools\n";
         return 1;
     }
+    const auto connect_capability = selection.tooling.capability_tools.find("openapi.connect");
+    if (connect_capability == selection.tooling.capability_tools.end() ||
+            std::find(connect_capability->second.begin(), connect_capability->second.end(),
+                "openapi.connect") == connect_capability->second.end()) {
+        std::cerr << "openapi.connect was not bound to its workflow capability\n";
+        return 1;
+    }
     std::vector<std::string> expected_host_tool_names;
     for (const auto & operation : catalog_check.operations) {
         expected_host_tool_names.push_back(
@@ -189,7 +196,16 @@ int main() {
     spec_resource_request.name = "dynamic-openapi.json";
     spec_resource_request.description = "Fetched OpenAPI document";
     spec_resource_request.mime_type = "application/json";
-    spec_resource_request.text = dynamic_spec.dump();
+    // Match the host resource payload produced by web.fetch: the opaque ref
+    // points to a bounded JSON envelope whose text field contains the spec.
+    spec_resource_request.text = nlohmann::json({
+        {"url", "https://spec.example.invalid/openapi.json"},
+        {"final_url", "https://spec.example.invalid/openapi.json"},
+        {"status", 200},
+        {"content_type", "application/json"},
+        {"text", dynamic_spec.dump()},
+        {"truncated", false},
+    }).dump();
     spec_resource_request.scope = common_runtime_resource_scope::turn;
     spec_resource_request.namespace_id = "local";
     spec_resource_request.session_id = "session-1";
@@ -238,6 +254,13 @@ int main() {
     if (!next_turn_selection.tool_view || !next_turn_selection.tool_view->exposes_tool(expected_dynamic_tool)) {
         std::cerr << "session dynamic OpenAPI tool was not exposed on the next turn: "
                   << expected_dynamic_tool << "\n";
+        return 1;
+    }
+    const auto read_capability = next_turn_selection.tooling.capability_tools.find("openapi.read");
+    if (read_capability == next_turn_selection.tooling.capability_tools.end() ||
+            std::find(read_capability->second.begin(), read_capability->second.end(),
+                expected_dynamic_tool) == read_capability->second.end()) {
+        std::cerr << "dynamic read-only operation was not bound to openapi.read capability\n";
         return 1;
     }
     const auto dynamic_result = next_turn_selection.tool_view->call({

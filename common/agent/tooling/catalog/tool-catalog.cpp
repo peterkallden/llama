@@ -133,6 +133,7 @@ std::vector<common_tool_definition> builtin_definitions() {
     bind_capability("document.inspect", {"document.tables", "document.table"});
     bind_capability("web.search", {"web.search"});
     bind_capability("web.fetch", {"web.fetch"});
+    bind_capability("openapi.connect", {"openapi.connect"});
     bind_capability("development.build", {"development.build"});
     bind_capability("development.test", {"development.test"});
     bind_capability("diagnostics.compile", {"diagnostics.compile"});

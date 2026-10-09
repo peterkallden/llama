@@ -49,6 +49,22 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Opt-in live checks for ordinary web resource retrieval and the complete
+# web.fetch -> openapi.connect -> public API operation path.
+set(TARGET llama-agent-web-openapi-live-smoke)
+add_executable(${TARGET}
+    smoke/cli/agent-cli-web-openapi-live-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/cli
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource
+    ${PROJECT_SOURCE_DIR}/tools/server
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Smoke-only model-format probe. It uses the resident server-context path and
 # renders the existing OpenAPI-derived model-facing contract, but deliberately
 # leaves the native production tool parser disabled. This target never changes
