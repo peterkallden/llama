@@ -8,7 +8,7 @@
     "profile": "all-configured",
     "families": {
       "openalex": {
-        "description": "Search and retrieve scholarly works from the public OpenAlex API"
+        "description": "Search and verify scholarly work metadata through the host-configured public OpenAlex API"
       }
     },
       "providers": [
@@ -22,11 +22,14 @@
         "prefix": "openalex",
         "policy": {
           "access": "read_only",
-          "exposure": "auto",
+          "exposure": "include",
           "operations": {
             "listWorks": {
               "default_projection": "id,display_name",
               "required_parameters": ["search"]
+            },
+            "getWork": {
+              "default_projection": "id,display_name,publication_year,doi"
             }
           }
         },

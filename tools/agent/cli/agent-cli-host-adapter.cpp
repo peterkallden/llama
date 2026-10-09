@@ -1039,11 +1039,16 @@ bool resolve_agent_host_tool_selection(
         }
         if (!selection.tooling.capability_tools["openapi.read"].empty()) {
             selection.tooling.capabilities.push_back("openapi.read");
+            selection.tooling.available_context.push_back("context.openapi.available");
         }
         std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
         selection.tooling.capabilities.erase(std::unique(
             selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()),
             selection.tooling.capabilities.end());
+        std::sort(selection.tooling.available_context.begin(), selection.tooling.available_context.end());
+        selection.tooling.available_context.erase(std::unique(
+            selection.tooling.available_context.begin(), selection.tooling.available_context.end()),
+            selection.tooling.available_context.end());
         selection.tooling.profile_tools_active = true;
         selection.tooling.tool_view = selection.tool_view.get();
         error.clear();

@@ -50,6 +50,10 @@ bool has_host_capability(
             has_tool_name(tooling, "workspace.search") ||
             has_tool_name(tooling, "workspace.read");
     }
+    if (capability == "tool.openapi") {
+        const auto binding = tooling.capability_tools.find("openapi.read");
+        return binding != tooling.capability_tools.end() && !binding->second.empty();
+    }
     return false;
 }
 

@@ -48,6 +48,9 @@ requirements generically. The starter library covers these host-tool domains:
   admits anonymous read-only operations, and exposes those operations on the
   next turn. The route's optional `openapi.read` capability resolves against
   the newly registered provider so the same workflow can continue safely.
+- Configured scholarly research through OpenAlex. A static provider is exposed
+  at host startup; its workflows therefore require `context.openapi.available`
+  and do not repeat dynamic API onboarding.
 
 The starter blueprint, procedure and workflow for this path are imported from
 [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).
@@ -72,6 +75,52 @@ template scope. Supplying a `project_id` installs the package in that project
 instead. Global template visibility does not make task plans global; instantiated
 plans still use the caller's requested turn/session/project scope. The plan
 scope matcher for active task plans remains exact.
+
+## OpenAlex starter library
+
+[`agent-host-config-openalex.json`](../examples/agent-host-config-openalex.json)
+is a least-privilege static provider example: it loads the checked-in
+OpenAlex contract at host startup and exposes only `openalex.listWorks` and
+`openalex.getWork`. This is distinct from `workflow://openapi/resource-onboarding`,
+which remains the path for an API supplied during a conversation.
+
+For a host that wants both the static provider and the starter library, use
+the host config together with the package import. With no project identity the
+package import is host-wide in its namespace; the OpenAlex provider itself is
+also host configuration, not a session registration.
+
+```sh
+llama-agent --config docs/examples/agent-host-config-openalex.json \
+  --agent-import docs/examples/agent-bootstrap-workflows-v1.json \
+  --agent-runtime "Find recent work on retrieval-augmented generation"
+```
+
+The starter package supplies three configured-OpenAlex workflows and matching
+blueprints:
+
+- `workflow://openalex/work-search` for bounded scholarly-work discovery.
+- `workflow://openalex/work-lookup` for an OpenAlex ID or DOI-backed metadata
+  check.
+- `workflow://openalex/literature-review` for a transparent candidate set that
+  remains available as a host resource and can optionally be exported.
+
+They share the OpenAPI read capability but carry different procedures,
+constraints and plan steps. In particular, search ranking is not treated as a
+quality judgement, and a bounded result page is never presented as an
+exhaustive literature review. The route compiler admits them only when the
+host has already registered an OpenAPI read tool; a host without OpenAlex sees
+neither route as executable.
+
+The live smoke has three independent modes: resource acquisition,
+conversation-time OpenAPI admission, and automatic configured-provider
+startup. The last proves that a host configuration loads the OpenAlex contract
+and exposes `openalex.*` tools before a model turn:
+
+```sh
+./build-agent-vulkan-cozo/bin/llama-agent-web-openapi-live-smoke \
+  --mode configured \
+  --config docs/examples/agent-host-config-openalex.json
+```
 
 Dataset analysis/quality/join, resource/document analysis and web research
 declare `artifact.export` as an optional capability. The route receives it only

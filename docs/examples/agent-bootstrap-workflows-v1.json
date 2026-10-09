@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v4",
+  "version": "v5",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -63,6 +63,27 @@
       "id": "openapi-resource-onboarding-v1",
       "summary": "connect to a public API from its OpenAPI document",
       "content": "Use web.fetch to retrieve the official JSON OpenAPI document as a host resource, then pass its returned resource_ref to openapi.connect. The host admits only anonymous read-only HTTPS operations. The provider is available on the next turn: wait for the updated tool view, choose an operation from its exposed schema, and keep arguments and results within the host's bounds. Never invent a server URL, operation name, credentials, or raw HTTP request. If the user provided an API base URL but no spec URL, search for the official OpenAPI document first and fetch that document.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "scholarly-search-evidence-v1",
+      "summary": "scholarly search evidence",
+      "content": "For a scholarly search, state the question, search terms and material limits before querying. Keep the returned record identity, title, publication year and source provenance separate from interpretation. Treat a bounded OpenAlex result as discovery evidence, not proof that the literature is exhaustive.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "bibliographic-record-validation-v1",
+      "summary": "bibliographic record validation",
+      "content": "When identifying a scholarly work, use a host-returned OpenAlex work identifier or a user-provided DOI. Verify title, authorship and publication metadata from the retrieved record before citing it. Do not merge similarly named works or infer unavailable full text, citation context or study conclusions from metadata alone.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "literature-review-boundaries-v1",
+      "summary": "literature review boundaries",
+      "content": "For a literature overview, make the search scope, query terms, date limits, returned page size and selection criteria visible. Use a bounded candidate set, distinguish search ranking from research quality, and preserve the returned records as a resource or exported artifact when the user needs to continue the analysis.",
       "importance": 0.9,
       "confidence": 1.0
     }
@@ -153,6 +174,39 @@
       "required_capabilities": ["web.fetch", "openapi.connect"],
       "optional_capabilities": ["web.search", "openapi.read", "artifact.export"],
       "required_context": ["context.network.allowed"]
+    },
+    {
+      "id": "openalex-work-search-path-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "workflow_ref": "workflow://openalex/work-search",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-work-search-graph@v1",
+      "required_capabilities": ["openapi.read", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available"]
+    },
+    {
+      "id": "openalex-work-lookup-path-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "workflow_ref": "workflow://openalex/work-lookup",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-work-lookup-graph@v1",
+      "required_capabilities": ["openapi.read", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available"]
+    },
+    {
+      "id": "openalex-literature-review-path-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "workflow_ref": "workflow://openalex/literature-review",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-literature-review-graph@v1",
+      "required_capabilities": ["openapi.read", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available"]
     },
     {
       "id": "repository-regression-repair-path-v1",
@@ -393,6 +447,82 @@
         {"id": "invoke-operation", "title": "Invoke operation", "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.", "depends_on": ["admit-provider"]},
         {"id": "verify-response", "title": "Verify response", "objective": "Ground the answer in the bounded API response and report relevant limitations.", "depends_on": ["invoke-operation"]},
         {"id": "answer", "title": "Answer", "objective": "Answer the user from the verified API result.", "depends_on": ["verify-response"]}
+      ]
+    },
+    {
+      "id": "openalex-work-search-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
+      "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
+      "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
+      "success_criteria": "The search terms, bounded result set, record identities and material limitations are explicit before presenting candidates.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["scholarly-search-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/work-search", "workflow_revision": "v1"}
+      ],
+      "next_action": "scope-search",
+      "constraints": [
+        {"id": "configured-provider-only", "description": "Use only OpenAlex operations already exposed by the host provider.", "hard": true},
+        {"id": "bounded-result-set", "description": "Keep each API request within the host page and projection bounds.", "hard": true},
+        {"id": "ranking-is-not-quality", "description": "Do not present OpenAlex search ranking as a quality or relevance judgement without separate evidence.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-search", "title": "Scope search", "objective": "Make the scholarly question and material search terms explicit."},
+        {"id": "search-works", "title": "Search works", "objective": "Use the configured OpenAlex works search with bounded projection and page size.", "depends_on": ["scope-search"]},
+        {"id": "inspect-records", "title": "Inspect records", "objective": "Retain returned work identities and inspect the metadata needed for the answer.", "depends_on": ["search-works"]},
+        {"id": "answer", "title": "Answer", "objective": "Present retrieved candidates, search boundaries and any inference separately.", "depends_on": ["inspect-records"]}
+      ]
+    },
+    {
+      "id": "openalex-work-lookup-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "selection_description": "Verify a known scholarly work from an OpenAlex ID or DOI through the configured provider.",
+      "purpose": "Establish bibliographic metadata for one identified scholarly work without relying on guessed citations.",
+      "goal": "Retrieve and verify the requested OpenAlex work record.",
+      "success_criteria": "A host-validated identifier is used and the returned title, authorship and publication metadata are distinguished from unavailable content or interpretation.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["bibliographic-record-validation-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/work-lookup", "workflow_revision": "v1"}
+      ],
+      "next_action": "resolve-identifier",
+      "constraints": [
+        {"id": "identifier-evidence", "description": "Use a user-provided identifier or one returned by an earlier host operation; do not invent work identities.", "hard": true},
+        {"id": "metadata-boundary", "description": "Do not infer full-text claims, study conclusions or citation context from bibliographic metadata alone.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-identifier", "title": "Resolve identifier", "objective": "Use the supplied DOI/OpenAlex identifier or a host-returned candidate identity."},
+        {"id": "retrieve-work", "title": "Retrieve work", "objective": "Call the configured OpenAlex work lookup operation with its validated identifier.", "depends_on": ["resolve-identifier"]},
+        {"id": "verify-metadata", "title": "Verify metadata", "objective": "Verify the requested bibliographic fields against the returned record.", "depends_on": ["retrieve-work"]},
+        {"id": "answer", "title": "Answer", "objective": "Return verified metadata and state what the record does not establish.", "depends_on": ["verify-metadata"]}
+      ]
+    },
+    {
+      "id": "openalex-literature-review-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "selection_description": "Build a bounded, reproducible literature-review candidate set from configured OpenAlex search.",
+      "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
+      "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
+      "success_criteria": "Search scope, returned record identities, coverage limits and any exported artifact are grounded in the configured provider response.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["scholarly-search-evidence-v1", "literature-review-boundaries-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/literature-review", "workflow_revision": "v1"}
+      ],
+      "next_action": "define-review-scope",
+      "constraints": [
+        {"id": "bounded-review", "description": "A single bounded OpenAlex retrieval is a candidate set, not a claim of exhaustive coverage.", "hard": true},
+        {"id": "preserve-provenance", "description": "Retain the returned provider resource or a user-requested exported artifact for follow-up work.", "hard": true}
+      ],
+      "steps": [
+        {"id": "define-review-scope", "title": "Define review scope", "objective": "State the question, search terms and intended limits for the candidate set."},
+        {"id": "retrieve-candidates", "title": "Retrieve candidates", "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.", "depends_on": ["define-review-scope"]},
+        {"id": "preserve-results", "title": "Preserve results", "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.", "depends_on": ["retrieve-candidates"]},
+        {"id": "answer", "title": "Answer", "objective": "Summarize the candidate set and make the review boundary explicit.", "depends_on": ["preserve-results"]}
       ]
     }
   ]

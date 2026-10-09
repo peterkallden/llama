@@ -134,6 +134,13 @@ the upstream OpenAPI document declares a global apiKey requirement. A
 deployment that requires a key should use the downloaded upstream document
 and configure the provider's `api_key` auth instead.
 
+This host config is a static-provider example: startup resolves the local
+contract and exposes only those two read-only operations. It is suited to
+recurring scholarly work and does not require a turn to call `web.fetch` or
+`openapi.connect`. The starter workflow package adds OpenAlex search,
+work-lookup and bounded literature-review routes; they are eligible only when
+the configured provider is present.
+
 The model-free live client smoke is opt-in:
 
 ```sh

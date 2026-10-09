@@ -271,6 +271,53 @@ int main() {
         admitted_openapi_route.resolved_tools.end(), "openalex.listWorks") !=
         admitted_openapi_route.resolved_tools.end());
 
+    // A host-configured provider is available immediately; it does not need
+    // the resource-onboarding workflow used for an unknown API. OpenAlex
+    // research routes are therefore eligible only after the host has exposed
+    // its read-only operations and declared the corresponding context fact.
+    common_plan_state openalex_workflow;
+    openalex_workflow.id = "bootstrap:local:session:s:workflow:openalex-work-search";
+    openalex_workflow.namespace_id = "local";
+    openalex_workflow.session_id = "s";
+    openalex_workflow.kind = common_plan_kind::workflow;
+    openalex_workflow.scope = common_plan_scope::session;
+    openalex_workflow.workflow_definition = common_plan_workflow_definition{
+        "workflow://openalex/work-search", "v1", "openapi", "openalex-work-search-graph@v1", {},
+        {"openapi.read", "resource.read"}, {"artifact.export"}, {"context.openapi.available"}};
+    assert(store.create(openalex_workflow, error));
+    common_plan_state openalex_blueprint = make_blueprint(true);
+    openalex_blueprint.id = "bootstrap:local:session:s:blueprint:openalex-work-search";
+    openalex_blueprint.goal = "Find scholarly work candidates through configured OpenAlex";
+    openalex_blueprint.required_capabilities = {"tool.openapi", "workflow.openapi"};
+    openalex_blueprint.workflow_bindings = {{"workflow://openalex/work-search", "v1"}};
+    assert(store.create(openalex_blueprint, error));
+    common_blueprint_candidate openalex_candidate = make_candidate();
+    openalex_candidate.logical_id = "openalex-work-search";
+    openalex_candidate.persisted_id = openalex_blueprint.id;
+    openalex_candidate.description = openalex_blueprint.goal;
+    tooling.capabilities = {"openapi.read", "resource.read"};
+    tooling.capability_tools = {
+        {"openapi.read", {"openalex.listWorks", "openalex.getWork"}},
+        {"resource.read", {"resource.read"}},
+    };
+    tooling.tools = {
+        {"openalex.listWorks", "List OpenAlex works", R"({"type":"object"})"},
+        {"openalex.getWork", "Get OpenAlex work", R"({"type":"object"})"},
+        {"resource.read", "Read host resource", R"({"type":"object"})"},
+    };
+    tooling.available_context = {"context.openapi.available"};
+    assert(compile_agent_route_catalog(request, store, scope, {openalex_candidate},
+        tooling, "", catalog, error));
+    assert(catalog.candidates.size() == 2);
+    assert(catalog.candidates[1].kind == common_agent_route_kind::blueprint_workflow);
+    assert(std::find(catalog.candidates[1].resolved_tools.begin(),
+        catalog.candidates[1].resolved_tools.end(), "openalex.listWorks") !=
+        catalog.candidates[1].resolved_tools.end());
+    tooling.available_context.clear();
+    assert(compile_agent_route_catalog(request, store, scope, {openalex_candidate},
+        tooling, "", catalog, error));
+    assert(catalog.candidates.size() == 1);
+
     common_agent_route_candidate document_route;
     document_route.id = "route:document-analysis";
     document_route.kind = common_agent_route_kind::blueprint_workflow;
