@@ -13,6 +13,7 @@
 enum class common_plan_scope { turn, session, project, global };
 enum class common_plan_kind { task, blueprint, workflow };
 enum class common_plan_workflow_policy { preferred, required };
+enum class common_plan_workflow_resource_read_policy { single_range, chunked };
 enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
 // A plan step either invokes one registered tool, asks the model for a bounded
@@ -197,6 +198,10 @@ struct common_plan_workflow_definition {
     // Host facts required before this workflow can be materialized, e.g.
     // "dataset.available". They are checked independently of tool authority.
     std::vector<std::string> required_context;
+    // Full-text reads remain a single bounded range unless the workflow
+    // explicitly opts into host-managed chunk continuation.
+    common_plan_workflow_resource_read_policy resource_read_policy =
+        common_plan_workflow_resource_read_policy::single_range;
     // Empty preserves the v1 one-action workflow behaviour.  Non-empty
     // definitions are a bounded directed graph evaluated by the generic
     // workflow transition runtime.

@@ -39,6 +39,9 @@ struct common_agent_result {
     std::optional<common_agent_research_result> research_result;
     std::optional<common_agent_research_workspace_checkpoint> research_workspace_checkpoint;
     std::optional<common_agent_research_verification> research_verification;
+    // Host handoff requested by an opted-in workflow after a successful text
+    // resource.read. The runtime driver owns chunk planning and continuation.
+    std::optional<common_runtime_resource_ref> chunk_resource_request;
     std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
 };

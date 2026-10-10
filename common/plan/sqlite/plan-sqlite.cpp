@@ -45,6 +45,9 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
         {"family", definition.family}, {"graph_revision", definition.graph_revision},
         {"allowed_tools", definition.allowed_tools}, {"required_capabilities", definition.required_capabilities},
         {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context}};
+    if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
+        value["resource_read_policy"] = "chunked";
+    }
     if (!definition.transitions.empty()) {
         value["start_state"] = definition.start_state;
         value["terminal_states"] = definition.terminal_states;
@@ -68,6 +71,9 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
     value.required_capabilities = definition.value("required_capabilities", std::vector<std::string>{});
     value.optional_capabilities = definition.value("optional_capabilities", std::vector<std::string>{});
     value.required_context = definition.value("required_context", std::vector<std::string>{});
+    if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") {
+        value.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
+    }
     value.start_state = definition.value("start_state", std::string{});
     value.terminal_states = definition.value("terminal_states", std::vector<std::string>{});
     for (const auto & item : definition.value("transitions", json::array())) value.transitions.push_back({

@@ -958,7 +958,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     if (request.deliberation_policy.mode == common_agent_thinking_mode::research) {
         request.plan_id = plan.id;
         research_deferred_for_workflow = plan.workflow_definition.has_value() &&
-            plan_has_pending_mandatory_tool_step(plan);
+            (plan_has_pending_mandatory_tool_step(plan) || request_has_active_resource_chunk(request));
         if (!research_deferred_for_workflow && !run_common_agent_research_phase(turn)) return result;
     }
     result.plan_id = plan.id;
@@ -1589,10 +1589,27 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
+            if (plan.workflow_definition &&
+                    plan.workflow_definition->resource_read_policy ==
+                        common_plan_workflow_resource_read_policy::chunked &&
+                    (tool_call->name == "resource.read" || tool_call->name == "resource_read") &&
+                    execution.resource_refs.size() == 1 &&
+                    execution.resource_refs.front().size_bytes > context_budgets.resource_chunk_max_bytes) {
+                result.chunk_resource_request = execution.resource_refs.front();
+                result.response_generation_status = common_agent_generation_status::completed;
+                result.response_stop_reason = common_agent_generation_stop_reason::none;
+                append_trace(result, common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::updated,
+                    "yielding to host chunk continuation before final synthesis",
+                    plan.id, tool_step_id, tool_call->name, observed.observation->id,
+                    execution.resource_refs.front().uri);
+                return result;
+            }
         }
 
         if (research_deferred_for_workflow &&
-                !plan_has_pending_mandatory_tool_step(plan)) {
+                !plan_has_pending_mandatory_tool_step(plan) &&
+                !request_has_active_resource_chunk(request)) {
             if (!common_agent_runtime_transition_cognitive_mode(
                     turn, common_agent_cognitive_mode::reflect,
                     "workflow evidence is ready for bounded research", "host",

@@ -29,6 +29,8 @@ int main() {
         plan.workflow_definition->required_capabilities = {"dataset.resolve", "dataset.inspect"};
         plan.workflow_definition->optional_capabilities = {"data.aggregate"};
         plan.workflow_definition->required_context = {"context.dataset.available"};
+        plan.workflow_definition->resource_read_policy =
+            common_plan_workflow_resource_read_policy::chunked;
         common_plan_workflow_transition choose_depth{
             "choose-depth", "record", "full", common_plan_workflow_transition_kind::model_choice,
             {}, "{}", {}, 1.0f};
@@ -76,6 +78,8 @@ int main() {
             plan->workflow_bindings.size() == 1 && plan->selected_workflow &&
             plan->selected_workflow->workflow_ref == "workflow://dataset/analysis" &&
             plan->workflow_definition && plan->workflow_definition->family == "dataset" &&
+            plan->workflow_definition->resource_read_policy ==
+                common_plan_workflow_resource_read_policy::chunked &&
             plan->workflow_definition->required_capabilities ==
                 std::vector<std::string>({"dataset.resolve", "dataset.inspect"}) &&
             plan->workflow_definition->optional_capabilities ==

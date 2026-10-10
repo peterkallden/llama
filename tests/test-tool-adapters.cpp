@@ -21,15 +21,26 @@ public:
         out.scope = request.scope;
         return true;
     }
-    bool read_text(const std::string &, const agent_resource_read_authority &, size_t, std::string &, std::string &) const override { return false; }
+    bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t max_bytes,
+            std::string & out, std::string & error) const override {
+        if (uri != "resource://session/long-text") {
+            error = "resource was not found";
+            return false;
+        }
+        out.assign(std::min<size_t>(max_bytes, 16000), 'x');
+        return true;
+    }
     bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
         if (available_uris.count(uri) == 0) {
             error = "resource was not found";
             return false;
         }
         out.uri = uri;
-        out.name = "sales.xlsx";
-        out.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        out.name = uri == "resource://session/long-text" ? "long.txt" : "sales.xlsx";
+        out.mime_type = uri == "resource://session/long-text"
+            ? "text/plain"
+            : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        out.size_bytes = uri == "resource://session/long-text" ? 16000 : 0;
         return true;
     }
     bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
@@ -245,6 +256,7 @@ int main() {
         {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
         {"openapi.connect", 1, true, "{}"},
+        {"resource.read", 1, true, "{}"},
     };
     foundation_profile.allow_policy_gated_writes = true;
     std::map<std::string, common_tool_profile> foundation_profiles;
@@ -256,6 +268,7 @@ int main() {
     test_resource_store foundation_resources;
     foundation_bindings.resource_runtime.store = &foundation_resources;
     foundation_resources.available_uris.insert("resource://uploads/sales.xlsx");
+    foundation_resources.available_uris.insert("resource://session/long-text");
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
     foundation_bindings.openapi_connect = [](const std::string & input) {
@@ -290,6 +303,10 @@ int main() {
     result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
     assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&
            result.output.find("available_next_turn") != std::string::npos);
+    result = foundation_registry.execute({"resource.read", R"({"uri":"resource://session/long-text","representation":"text"})"});
+    assert(result.ok && result.resource_refs.size() == 1);
+    assert(result.resource_refs.front().uri == "resource://session/long-text");
+    assert(result.resource_refs.front().size_bytes == 16000);
     result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
     assert(result.ok && result.output.find("content_hash") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});

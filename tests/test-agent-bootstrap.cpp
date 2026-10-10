@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v9");
+        checked_in_starter.version == "v10");
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));
@@ -256,6 +256,9 @@ int main() {
                 "workflow://openalex/full-text-evidence";
         });
     assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v2");
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
     assert(checked_in_starter.procedures.size() == 15 &&
@@ -268,6 +271,8 @@ int main() {
             "data.filter", "data.aggregate", "data.transform", "statistics.describe",
             "statistics.outliers", "statistics.value_counts"}));
     assert(checked_in_starter.workflows[0].definition.workflow_revision == "v2");
+    assert(checked_in_starter.workflows[0].definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::single_range);
     assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
         std::vector<std::string>({"artifact.export"}));
     const auto checked_in_openalex_full_text_workflow = std::find_if(
@@ -351,15 +356,19 @@ int main() {
         std::vector<std::string>({"data.filter", "data.aggregate", "data.transform",
             "statistics.describe", "statistics.outliers", "statistics.value_counts",
             "artifact.export"}));
-    assert(resource_workflow->definition.workflow_revision == "v3");
+    assert(resource_workflow->definition.workflow_revision == "v4");
+    assert(resource_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
     const auto web_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://web/research";
         });
     assert(web_workflow != checked_in_starter.workflows.end());
-    assert(web_workflow->definition.workflow_revision == "v2");
+    assert(web_workflow->definition.workflow_revision == "v3");
+    assert(web_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
     assert(web_workflow->definition.optional_capabilities ==
-        std::vector<std::string>({"artifact.export"}));
+        std::vector<std::string>({"resource.read", "artifact.export"}));
     const auto openapi_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://openapi/resource-onboarding";
@@ -399,7 +408,7 @@ int main() {
         std::vector<std::string>({"scholarly-search-evidence-v1", "analysis-evidence-v1"}));
     const auto openalex_full_text_blueprint = std::find_if(
         checked_in_starter.blueprints.begin(), checked_in_starter.blueprints.end(),
-        [](const auto & blueprint) { return blueprint.id == "openalex-full-text-evidence-v1"; });
+        [](const auto & blueprint) { return blueprint.id == "openalex-full-text-evidence-v2"; });
     assert(openalex_full_text_blueprint != checked_in_starter.blueprints.end());
     assert(openalex_full_text_blueprint->workflow_policy == common_plan_workflow_policy::required);
     assert(openalex_full_text_blueprint->procedure_refs ==

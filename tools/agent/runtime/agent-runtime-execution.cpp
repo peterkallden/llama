@@ -412,7 +412,8 @@ bool prepare_resource_chunk_observations(
     const size_t input_count = execution.input_resources.size();
     for (size_t input_index = 0; input_index < input_count; ++input_index) {
         const auto & input = execution.input_resources[input_index];
-        if (input.resource.uri.empty() || !input.resource.lineage.parent_uri.empty() ||
+        if (input.resource.uri.empty() ||
+                common_runtime_resource_lineage_is_chunk(input.resource.lineage) ||
                 input.resource.size_bytes <= policy.max_bytes) {
             continue;
         }
@@ -609,6 +610,7 @@ void append_runtime_result(common_agent_result & aggregate, const common_agent_r
     aggregate.research_workspace_checkpoint = slice.research_workspace_checkpoint;
     aggregate.research_verification = slice.research_verification;
     aggregate.continuation_checkpoint = slice.continuation_checkpoint;
+    aggregate.chunk_resource_request = slice.chunk_resource_request;
 }
 
 std::string make_continuation_prompt(
@@ -1074,6 +1076,58 @@ bool run_agent_runtime_driver(
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
+        if (slice.chunk_resource_request &&
+                execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
+            const auto & current = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
+            if (current.parent.uri != slice.chunk_resource_request->uri) {
+                error = "workflow requested a second chunked resource while another resource is active";
+                return false;
+            }
+        }
+        if (slice.chunk_resource_request &&
+                execution.active_resource_chunk_plan == static_cast<size_t>(-1)) {
+            const auto & resource = *slice.chunk_resource_request;
+            std::string plan_error;
+            const auto plan_id = slice.plan_id.value_or(execution.current_plan_id);
+            const auto active_plan = execution.plan_store.get(plan_id, plan_error);
+            if (!active_plan) {
+                error = plan_error.empty() ? "workflow chunk handoff requires an active plan" : plan_error;
+                return false;
+            }
+            execution.current_plan_id = active_plan->id;
+            for (const auto & observation : active_plan->observations) {
+                if (observation.source != "resource_chunk" || observation.resource_refs.size() != 1) continue;
+                if (observation.resource_refs.front().lineage.parent_uri != resource.uri) {
+                    error = "workflow requested a second chunked resource in one plan; start a new plan for " + resource.uri;
+                    return false;
+                }
+            }
+            if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
+                const auto & current = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
+                if (current.parent.uri != resource.uri) {
+                    error = "workflow requested a second chunked resource while another resource is active";
+                    return false;
+                }
+            } else {
+                execution.input_resources.push_back({resource, "workflow_full_text", true});
+                execution.resource_chunk_observations_prepared = false;
+                if (!prepare_resource_chunk_observations(execution, error)) return false;
+            }
+            if (continuation_count >= execution.runtime_config.max_continuations) {
+                aggregate.limit_reached = true;
+                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                result = std::move(aggregate);
+                break;
+            }
+            execution.orchestration_config.prompt =
+                execution.active_resource_chunk_plan != static_cast<size_t>(-1)
+                    ? "Continue the same workflow using the next bounded resource slice.\n"
+                      "Treat each slice as evidence; do not produce the final answer until all slices are processed.\n"
+                    : "Continue the same workflow from the completed bounded resource read.\n"
+                      "Use the recorded resource observation and continue the existing plan.\n";
+            ++continuation_count;
+            continue;
+        }
         bool resource_chunk_chain_completed = false;
         const bool has_next_resource_chunk = record_and_advance_resource_chunk(
             execution, slice, resource_chunk_chain_completed, error);

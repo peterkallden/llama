@@ -12,6 +12,14 @@
 } while (false)
 
 int main() {
+    common_runtime_resource_lineage processor_lineage{
+        "resource://source/pdf", 0, 1, 0, 5018540, 0,
+        "resource.process:pdf-page-image-v1>tesseract-ocr-v1"};
+    assert(!common_runtime_resource_lineage_is_chunk(processor_lineage));
+    common_runtime_resource_lineage chunk_lineage{
+        "resource://derived/ocr-text", 0, 6, 0, 4096, 0, "host.chunk.text.v1"};
+    assert(common_runtime_resource_lineage_is_chunk(chunk_lineage));
+
     common_agent_dataset_ref provenance_ref;
     provenance_ref.uri = "dataset://local/orders";
     provenance_ref.name = "orders";

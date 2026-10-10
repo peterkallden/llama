@@ -89,7 +89,14 @@ bool common_try_register_resource_tool_adapter(
         } else if (!bindings.resource_runtime.store->read_text_range(descriptor.uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) {
             return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource content could not be read.");
         }
-        return common_adapter_success_json(common_tool_resource_read_result_to_json({descriptor, representation, content, encoding}));
+        auto output = common_tool_resource_read_result_to_json({descriptor, representation, content, encoding});
+        if (representation == "text") {
+            std::vector<common_runtime_resource_ref> refs{
+                static_cast<const common_runtime_resource_ref &>(descriptor)};
+            return common_tool_execution_result::success(
+                output.dump(), "Readable text resource materialized.", std::move(refs));
+        }
+        return common_adapter_success_json(output);
     }, error);
     return installed;
 }

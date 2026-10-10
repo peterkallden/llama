@@ -3491,12 +3491,15 @@ session lane. The current implementation rejects non-text-oriented resources
 and treats the original resource as the only source of truth.
 
 After plan and blueprint selection, the agent runtime may perform this
-preflight for oversized host-imported input resources. The resolved host
-tooling supplies the resource-store pointer and scope; the runtime records a
-bounded `resource_chunk_planned` observation in the existing plan and replaces
-the model-facing input view with the first chunk. The original descriptor stays
-authoritative in the resource store and plan evidence; it is not rendered a
-second time beside the active chunk.
+preflight for oversized host-imported input resources. A workflow may also
+explicitly opt into chunking text returned by `resource.read`. In that case,
+the tool adapter returns a typed reference to the actual text descriptor (also
+when it was derived from PDF/OCR); the runtime records the tool observation,
+then yields to the session-lane driver before final synthesis. The driver
+preflights that descriptor with the same chunker and feeds bounded slices into
+the existing plan. The original descriptor stays authoritative in the
+resource store and plan evidence; its identity is never extracted by parsing
+the serialized tool JSON.
 
 The existing session-lane driver then advances one chunk at a time. After a
 slice returns, the driver records a `resource_chunk` observation containing a
@@ -3521,6 +3524,12 @@ complete the final-response plan step by itself. The synthesis slice is gated
 by the ordered plan observations and retains the original resource as the
 authoritative source. This is an internal continuation of the existing turn,
 not a second daemon command or chunk queue.
+
+Workflow-produced text uses this exact continuation path only when the
+workflow definition declares `resource_read_policy: chunked`; the backward-
+compatible default is `single_range`. A plan may have one chunked parent at a
+time. Requesting another distinct parent fails explicitly so that the existing
+single-parent observation and checkpoint contracts remain valid.
 
 If native validation finds conflicting parent-linked chunk observations, the
 active synthesis step is blocked through the existing plan `block_step`

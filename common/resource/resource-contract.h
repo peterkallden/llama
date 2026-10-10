@@ -180,6 +180,15 @@ inline bool common_runtime_resource_lineage_is_valid(
     return true;
 }
 
+// Processor-derived resources also carry parent lineage, but they are still
+// complete resources eligible for a later chunking pass. Only chunk views
+// emitted by the host chunker must bypass recursive chunk planning.
+inline bool common_runtime_resource_lineage_is_chunk(
+        const common_runtime_resource_lineage & lineage) {
+    return lineage.derivation == "host.chunk.text.v1" &&
+        !lineage.parent_uri.empty() && lineage.chunk_count > 0;
+}
+
 struct common_runtime_resource_ref {
     std::string uri;
     std::string name;

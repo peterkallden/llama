@@ -106,7 +106,7 @@ args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-fulltext-smoke
     --plan-backend in-memory
-    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-full-text-evidence-v1
+    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-full-text-evidence-v2
     --thinking-mode "$thinking_mode"
     --max-tool-rounds 12
     --require-tool-execution --agent-trace --generation-trace --plan-show-summary
@@ -149,6 +149,14 @@ grep -Eq 'stage=tool kind=(succeeded|completed|failed).*tool=resource\.inspect' 
 }
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=resource\.read' "$log_path" || {
     echo "OpenAlex full-text model smoke did not successfully read a text representation; log=$log_path" >&2
+    exit 1
+}
+grep -Fq 'detail=bounded resource chunk plan attached' "$log_path" || {
+    echo "OpenAlex full-text smoke did not hand the workflow-read text resource to the chunker; log=$log_path" >&2
+    exit 1
+}
+grep -Fq 'detail=bounded resource chunk processed' "$log_path" || {
+    echo "OpenAlex full-text smoke did not process any bounded text chunks; log=$log_path" >&2
     exit 1
 }
 grep -Eq 'route_selection_evaluated.*openalex-full-text-evidence|selected_route_id.*openalex-full-text-evidence' "$log_path" || {

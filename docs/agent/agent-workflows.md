@@ -68,31 +68,35 @@ PDF text layer first; where the host explicitly configures both the page-image
 renderer and Tesseract plus a nonzero page cap, it falls back to sequential OCR
 only when direct text is unavailable. Partial page coverage is reported as a
 limitation on the derived resource; if no text is recovered, the read remains
-unavailable rather than fabricating evidence. `resource.read` itself returns
-one bounded slice (the workflow requests 8 KiB); it does not yet iterate over
-the full derived text. Runtime chunk continuation currently applies to large
-text resources attached as turn/plan inputs, not resources produced by a
-workflow transition. Do not treat one successful read as complete full-text
-coverage when the derived resource is larger than the returned slice.
+unavailable rather than fabricating evidence. The workflow opts into
+`resource_read_policy: chunked`: after a successful text read whose derived
+resource exceeds the chunk budget, the runtime yields before final synthesis,
+then feeds the host chunker one bounded slice at a time and synthesizes only
+after all slices have been observed. The typed resource reference comes from
+the read adapter's actual text descriptor (including PDF/OCR-derived text),
+not by parsing the tool's JSON output. Small resources retain the ordinary
+single-read path.
 
 Chunking applicability is intentionally about text consumption, not every
 workflow that happens to produce a resource:
 
-- OpenAlex full-text evidence is the first workflow that needs workflow-owned
-  chunk continuation: `resource.read(text)` may materialize a long PDF/OCR text
-  representation, and the current single 8 KiB read is only a preview of that
-  representation.
-- Resource/document analysis should use the same continuation when its
-  selected text representation exceeds the configured chunk budget. Binary
-  inputs such as PDF or DOCX must first pass through their configured text
-  processor.
-- Web research is a candidate only when its path reads the fetched resource.
-  A bounded `web.fetch` excerpt alone is not a full-resource read and does not
+- OpenAlex full-text evidence and resource/document analysis explicitly opt in
+  to `chunked` text reads. Binary inputs such as PDF or DOCX first pass through
+  their configured text processor; the resulting text descriptor is chunked.
+- Web research optionally resolves `resource.read`; if the model actually
+  reads a fetched resource and that workflow is configured for chunked reads,
+  the same continuation applies. A bounded `web.fetch` excerpt alone does not
   start chunk continuation.
 - Dataset analysis, OpenAlex record/search workflows, and OpenAPI onboarding
   remain structured: use dataset operations, bounded API projections/pages,
   and the OpenAPI catalog builder rather than splitting their JSON or tabular
   contracts into text chunks.
+
+Workflow definitions default to `resource_read_policy: single_range`. Only a
+workflow that explicitly declares `chunked` can trigger full-text continuation
+from `resource.read`; each plan is limited to one chunked parent resource. If a
+second distinct resource is requested for chunking, the runtime fails with a
+clear new-plan requirement rather than mixing evidence or checkpoint lineage.
 
 The current implementation boundary remains the one above: workflow-produced
 resources are not yet automatically fed into the chunk controller. Chunk

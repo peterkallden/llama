@@ -80,6 +80,13 @@ bool workflow_transition_kind(const json & value, common_plan_workflow_transitio
 }
 
 bool workflow_graph(const json & item, common_plan_workflow_definition & definition, std::string & error) {
+    const auto read_policy = item.value("resource_read_policy", std::string("single_range"));
+    if (read_policy == "chunked") {
+        definition.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
+    } else if (read_policy != "single_range") {
+        error = "workflow resource_read_policy must be single_range or chunked";
+        return false;
+    }
     if (!item.contains("transitions")) return true;
     if (!item["transitions"].is_array() || !item.contains("start_state") || !item["start_state"].is_string() ||
             !item.contains("terminal_states") || !strings(item["terminal_states"], definition.terminal_states)) {
@@ -359,6 +366,9 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         if (!workflow.definition.required_capabilities.empty()) value["required_capabilities"] = workflow.definition.required_capabilities;
         if (!workflow.definition.optional_capabilities.empty()) value["optional_capabilities"] = workflow.definition.optional_capabilities;
         if (!workflow.definition.required_context.empty()) value["required_context"] = workflow.definition.required_context;
+        if (workflow.definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
+            value["resource_read_policy"] = "chunked";
+        }
         if (!workflow.definition.transitions.empty()) {
             value["start_state"] = workflow.definition.start_state;
             value["terminal_states"] = workflow.definition.terminal_states;
