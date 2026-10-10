@@ -346,7 +346,7 @@ int main() {
     if (!research_view->begin_call_async({
             "call-2d",
             "web.fetch",
-            R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+            R"({"url":"https://example.com/stub","max_bytes":64000})",
         }, pending_fetch, error)) {
         std::fprintf(stderr, "web_fetch async start failed: %s\n", error.c_str());
         return 1;
@@ -379,7 +379,7 @@ int main() {
     if (!research_view->begin_call_async({
             "call-2f",
             "web.fetch",
-            R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+            R"({"url":"https://example.com/stub","max_bytes":64000})",
         }, cancelled_fetch, error)) {
         std::fprintf(stderr, "web_fetch cancellation async start failed: %s\n", error.c_str());
         return 1;
@@ -412,7 +412,7 @@ int main() {
     const auto sync_fetch_result = research_view->call({
         "call-2d",
         "web.fetch",
-        R"({"url":"https://example.com/stub","max_bytes":64000,"extract":"text"})",
+        R"({"url":"https://example.com/stub","max_bytes":64000})",
     }, error);
     if (!sync_fetch_result.ok) {
         std::fprintf(stderr, "web_fetch sync call failed: %s\n", sync_fetch_result.content_json.c_str());

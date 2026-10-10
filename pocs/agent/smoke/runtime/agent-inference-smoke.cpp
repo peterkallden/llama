@@ -415,6 +415,9 @@ static void test_runtime_assembly_helpers() {
 static common_agent_request make_request() {
     common_agent_request request;
     request.prompt = "Check status";
+    // This smoke's fake planner fixtures use the JSON plan surface; select it
+    // explicitly rather than inheriting the production compact-DSL default.
+    request.tool_output_format = common_agent_tool_output_format::native;
     request.session_id = "session-42";
     request.turn_id = "turn-7";
     request.namespace_id = "tenant-a";
@@ -699,6 +702,7 @@ static void test_planner_applies_host_bound_openalex_arguments() {
     common_agent_request request = make_request();
     request.prompt = "Search OpenAlex for machine learning works.";
     request.require_tool_execution = true;
+    request.tool_output_format = common_agent_tool_output_format::native;
     request.tool_argument_bindings.push_back({
         "openalex.listWorks",
         R"({"search":"machine learning","per_page":1,"select":"id,display_name"})",
@@ -711,6 +715,16 @@ static void test_planner_applies_host_bound_openalex_arguments() {
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
+    bool saw_host_binding_instruction = false;
+    bool saw_bound_query = false;
+    if (!inference.seen.empty()) {
+        for (const auto & message : inference.seen[0].messages) {
+            saw_host_binding_instruction = saw_host_binding_instruction ||
+                message.content.find("Host-provided fixed arguments are authoritative") != std::string::npos;
+            saw_bound_query = saw_bound_query ||
+                message.content.find("machine learning") != std::string::npos;
+        }
+    }
     if (!error.empty() || proposal.operations.size() != 1 ||
             !proposal.operations[0].step || !proposal.operations[0].step->tool_call ||
             proposal.operations[0].step->tool_call->name != "openalex.listWorks" ||
@@ -722,8 +736,7 @@ static void test_planner_applies_host_bound_openalex_arguments() {
             inference.seen[0].tools.size() != 1 ||
             inference.seen[0].tools[0].name != "openalex.listWorks" ||
             inference.seen[0].tools[0].parameters.find("\"required\":[\"search\"]") != std::string::npos ||
-            inference.seen[0].messages[0].content.find("Host-provided fixed arguments are authoritative") == std::string::npos ||
-            inference.seen[0].messages[1].content.find("machine learning") == std::string::npos) {
+            !saw_host_binding_instruction || !saw_bound_query) {
         std::fprintf(stderr, "host-bound OpenAlex planner contract failed: %s ops=%zu calls=%zu",
             error.c_str(), proposal.operations.size(), inference.seen.size());
         if (!proposal.operations.empty() && proposal.operations[0].step &&
@@ -783,6 +796,12 @@ static void test_planner_repairs_invalid_resource_binding() {
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
     std::string error;
     const auto proposal = planner->create_plan_result(request, error);
+    if (!error.empty() || proposal.operations.size() != 1 ||
+            !proposal.operations[0].step || !proposal.operations[0].step->tool_call) {
+        std::fprintf(stderr, "resource binding planner failed: %s ops=%zu calls=%zu\n",
+            error.c_str(), proposal.operations.size(), inference.seen.size());
+        std::exit(1);
+    }
     assert(error.empty());
     assert(proposal.operations.size() == 1);
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
@@ -1235,7 +1254,7 @@ static void test_agent_runtime_smoke() {
         make_success(R"(not-json)"),
         make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
-        make_success(R"({"decision":"accept"})", 3),
+        make_success("reflect accept", 3),
     };
 
     common_memory_in_memory_store memories;
@@ -1295,10 +1314,20 @@ static void test_agent_runtime_smoke() {
     assert(result.response == "draft-content");
     assert(result.plan_id);
     assert(!result.plan_id->empty());
-    if (inference.seen.size() < 1 || inference.seen[0].messages.size() < 2 ||
-            inference.seen[0].messages[1].content.find("<runtime_dataset_inventory>") == std::string::npos ||
-            inference.seen[0].messages[1].content.find("ref=$datasets.datasets[0].dataset") == std::string::npos ||
-            inference.seen[0].messages[1].content.find("uri=dataset://seed/orders") == std::string::npos) {
+    bool saw_runtime_dataset_inventory = false;
+    bool saw_dataset_reference = false;
+    bool saw_dataset_uri = false;
+    if (!inference.seen.empty()) {
+        for (const auto & message : inference.seen[0].messages) {
+            saw_runtime_dataset_inventory = saw_runtime_dataset_inventory ||
+                message.content.find("<runtime_dataset_inventory>") != std::string::npos;
+            saw_dataset_reference = saw_dataset_reference ||
+                message.content.find("ref=$datasets.datasets[0].dataset") != std::string::npos;
+            saw_dataset_uri = saw_dataset_uri ||
+                message.content.find("uri=dataset://seed/orders") != std::string::npos;
+        }
+    }
+    if (!saw_runtime_dataset_inventory || !saw_dataset_reference || !saw_dataset_uri) {
         std::fprintf(stderr, "runtime planner request did not contain the host dataset inventory\n");
         std::abort();
     }

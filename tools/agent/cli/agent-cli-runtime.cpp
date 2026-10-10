@@ -1735,6 +1735,10 @@ public:
             [&](const auto & candidate) {
                 const size_t attempt = ++planner_attempt;
                 parse_error.clear();
+                // Each bounded-regeneration candidate starts from its own
+                // parse state. JSON/native text is already the shared plan
+                // representation; compact DSL must first pass its parser.
+                parsed = !compact_dsl_output;
                 // Keep each regeneration attempt isolated.  A rejected
                 // candidate must not partially replace the proposal that will
                 // be returned or become input state for the next attempt.

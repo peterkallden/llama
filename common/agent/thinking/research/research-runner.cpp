@@ -49,7 +49,7 @@ bool build_call(
         return true;
     }
     if (tool_name == "web.fetch" || tool_name == "web_fetch") {
-        call.arguments_json = json{{"url", instruction}, {"max_bytes", 32768}, {"extract", "text"}}.dump();
+        call.arguments_json = json{{"url", instruction}, {"max_bytes", 32768}}.dump();
         return true;
     }
     return false;
