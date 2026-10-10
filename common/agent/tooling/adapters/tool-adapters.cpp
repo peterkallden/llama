@@ -196,6 +196,45 @@ bool persist_tool_resource(
     return true;
 }
 
+bool persist_tool_bytes(
+        const common_native_tool_bindings & bindings,
+        const std::string & name,
+        const std::string & description,
+        const std::string & mime_type,
+        const std::string & bytes,
+        const std::string & source_tool,
+        const common_runtime_resource_metadata & metadata,
+        common_runtime_resource_ref & resource,
+        std::string & error,
+        common_runtime_resource_lineage lineage = {}) {
+    if (bindings.resource_runtime.store == nullptr) {
+        error = "resource store is unavailable";
+        return false;
+    }
+
+    agent_resource_put_request request;
+    request.name = name;
+    request.description = description;
+    request.mime_type = mime_type;
+    request.bytes = bytes;
+    request.bytes_are_authoritative = true;
+    request.scope = common_runtime_resource_scope::turn;
+    request.source_provider = "native";
+    request.source_tool = source_tool;
+    request.metadata = metadata;
+    request.lineage = std::move(lineage);
+    apply_agent_resource_runtime(bindings.resource_runtime, request);
+
+    agent_resource_descriptor descriptor;
+    if (!bindings.resource_runtime.store->put_bytes(request, descriptor, error)) {
+        return false;
+    }
+
+    resource = descriptor;
+    error.clear();
+    return true;
+}
+
 agent_resource_read_authority make_resource_read_authority(
         const common_native_tool_bindings & bindings) {
     return make_agent_resource_read_authority(bindings.resource_runtime, std::time(nullptr));
@@ -939,32 +978,35 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     const auto url = trim_copy(arguments["url"].get<std::string>());
                     const auto extract = arguments.value("extract", std::string("text"));
                     const int max_bytes = arguments.value("max_bytes", 64000);
-                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 500000) {
+                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 8 * 1024 * 1024) {
                         return tool_validation_failure("tool.web_fetch.out_of_bounds", "web_fetch arguments are out of bounds", "Web fetch arguments are out of bounds.");
                     }
                     json fetched;
-                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err)) {
+                    std::string raw_body;
+                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err, &raw_body)) {
                         return tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
                     }
 
+                    const std::string mime_type = common_normalize_resource_media_type(
+                        fetched.value("content_type", std::string{}));
+                    const bool text_like = common_resource_media_type_is_text_like(mime_type);
                     common_tool_web_fetch_result fetch_result{
                         fetched.value("url", url),
                         fetched.value("final_url", url),
                         fetched.value("status", 0),
-                        fetched.value("content_type", std::string{}),
-                        fetched.value("title", std::string{}),
-                        fetched.value("text", std::string{}),
+                        mime_type.empty() ? "application/octet-stream" : mime_type,
+                        text_like ? fetched.value("title", std::string{}) : std::string{},
+                        text_like ? fetched.value("text", std::string{}) : std::string{},
                         fetched.value("truncated", false),
                     };
-                    const std::string full_payload = common_tool_web_fetch_result_to_json(fetch_result).dump();
                     const std::string title = trim_copy(fetch_result.title);
                     const std::string text = fetch_result.text;
                     const bool truncated = fetch_result.truncated;
-                    // Always materialize fetched content when the host resource
-                    // store is available. Follow-up host operations such as
-                    // OpenAPI admission need a stable handle even for small
-                    // documents; size-based externalization made those paths
-                    // depend on response length.
+                    // Always materialize the authoritative fetched body when
+                    // the host resource store is available. This preserves a
+                    // PDF, XML or JSON representation for later document
+                    // processing instead of storing only an extracted-text
+                    // JSON wrapper.
                     const bool should_externalize = bindings.resource_runtime.store != nullptr;
                     if (!should_externalize) {
                         return common_tool_execution_result::success(
@@ -981,22 +1023,22 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     }
 
                     common_runtime_resource_ref resource_ref;
-                    if (!persist_tool_resource(
+                    if (!persist_tool_bytes(
                             bindings,
-                            "web-fetch-result.json",
-                            "Full bounded web fetch payload for the current turn.",
-                            "application/json",
-                            full_payload,
+                            "web-fetch-content",
+                            "Bounded fetched web content for the current turn.",
+                            fetch_result.content_type,
+                            raw_body,
                             "web_fetch",
                             make_tool_resource_metadata(
-                                "Preserve the full bounded web fetch result outside the inline model context.",
+                                "Preserve the authoritative bounded fetched body outside the inline model context.",
                                 title.empty()
-                                    ? "Fetched bounded page text from " + url + "."
-                                    : "Fetched bounded page text for \"" + title + "\".",
-                                "Use this resource when a later step needs the full fetched text or metadata rather than the inline excerpt.",
+                                    ? "Fetched bounded content from " + url + "."
+                                    : "Fetched bounded content for \"" + title + "\".",
+                                "Use this resource for bounded reads or host-provided document text processing; the inline result is only a preview.",
                                 truncated
-                                    ? "The fetched body was truncated by the configured byte limit and the text field contains extracted text only."
-                                    : "The text field contains extracted text only; raw HTML is not preserved in this native payload.",
+                                    ? "The fetched body was truncated by the configured byte limit; do not treat it as a complete source."
+                                    : "The resource is the fetched response body; derived text remains subject to the selected host processor.",
                                 std::move(keywords)),
                             resource_ref,
                             err)) {

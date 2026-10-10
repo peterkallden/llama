@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v6",
+  "version": "v9",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -98,6 +98,13 @@
       "id": "openalex-filtered-work-retrieval-v1",
       "summary": "bounded OpenAlex filtered work retrieval",
       "content": "Use works search for text across titles, abstracts and other text fields. Use filter for structured constraints such as publication_year:2024, author.id:A…, institutions.id:I… and topics.id:T…. The topics filter matches assigned topics; primary_topic is the top-ranked topic. Request a bounded page and include display_name, publication_year and relevant topic metadata in the projection. A bounded result set is not exhaustive coverage or a quality judgment.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-full-text-evidence-v1",
+      "summary": "OpenAlex abstract and full-text evidence",
+      "content": "First verify the OpenAlex work record and interpret its abstract when available. Treat the abstract as author-supplied summary evidence, not a substitute for methods, results or limitations. Only when the question requires more, use a host-returned open-access content_url or best_oa_location URL with web.fetch. The returned resource_ref is the authoritative fetched body: inspect/read it before making claims. For a PDF, request its text representation through resource.read; report when the body is truncated, text extraction is unavailable, or only metadata/abstract is available. Read conclusions for the authors' stated claim, then results and methods to assess support; use discussion for interpretation and limitations.",
       "importance": 0.9,
       "confidence": 1.0
     }
@@ -259,6 +266,35 @@
         {"id": "retrieve-author-works", "from": "author_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"author.id:$choice\"}"},
         {"id": "retrieve-institution-works", "from": "institution_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"institutions.id:$choice\"}"},
         {"id": "retrieve-topic-works", "from": "topic_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"topics.id:$choice\"}"}
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-path-v1",
+      "source_revision": "agent-workflows-starter@v9",
+      "workflow_ref": "workflow://openalex/full-text-evidence",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-full-text-evidence-graph@v1",
+      "required_capabilities": ["openapi.read", "web.fetch", "resource.inspect", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available", "context.network.allowed"],
+      "start_state": "identifier_pending",
+      "terminal_states": ["abstract_complete", "text_read"],
+      "transitions": [
+        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"},
+        {"id": "choose-evidence-depth", "from": "work_retrieved", "to": "full_text_pending", "kind": "model_choice", "choices": [
+          {"id": "answer_from_abstract", "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.", "to": "abstract_complete"},
+          {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract.", "to": "full_text_pending", "requires": ["/result/best_oa_location/pdf_url"]}
+        ]},
+        {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":8388608}", "bindings": [
+          {"target": "/url", "from": "get-work", "source": "/result/best_oa_location/pdf_url"}
+        ]},
+        {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [
+          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
+        ]},
+        {"id": "read-full-text", "from": "resource_inspected", "to": "text_read", "tool": "resource.read", "arguments": "{\"representation\":\"text\",\"max_bytes\":32768}", "optional": true, "bindings": [
+          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
+        ]}
       ]
     },
     {
@@ -601,6 +637,32 @@
         {"id": "bind-filters", "title": "Bind filters", "objective": "Combine any returned entity identity with explicit year and other requested works filters.", "depends_on": ["resolve-entity"]},
         {"id": "retrieve-works", "title": "Retrieve works", "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.", "depends_on": ["bind-filters"]},
         {"id": "answer", "title": "Answer", "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.", "depends_on": ["retrieve-works"]}
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-v1",
+      "source_revision": "agent-workflows-starter@v9",
+      "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
+      "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
+      "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
+      "success_criteria": "The work identity is verified; abstract limits are explicit; any full-text resource is fetched from a returned open-access location and inspected before its claims are used.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["bibliographic-record-validation-v1", "openalex-full-text-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://openalex/full-text-evidence", "workflow_revision": "v1"}],
+      "next_action": "resolve-work",
+      "constraints": [
+        {"id": "abstract-first", "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.", "hard": true},
+        {"id": "returned-open-location-only", "description": "Fetch only a content URL or open-access location returned by the verified work record, using host-authorized web.fetch.", "hard": true},
+        {"id": "full-text-provenance", "description": "Ground full-text claims in the returned host resource and disclose truncation or unavailable text representation.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-work", "title": "Resolve work", "objective": "Use a user-provided DOI/OpenAlex ID or a host-returned work identity."},
+        {"id": "retrieve-record", "title": "Retrieve record", "objective": "Retrieve the configured OpenAlex work record including abstract and declared open-access locations.", "depends_on": ["resolve-work"]},
+        {"id": "interpret-abstract", "title": "Interpret abstract", "objective": "Establish what the metadata and abstract directly support, and whether that answers the question.", "depends_on": ["retrieve-record"]},
+        {"id": "acquire-full-text", "title": "Acquire full text when needed", "objective": "If abstract evidence is insufficient and an open location is returned, fetch that exact URL into a host resource.", "depends_on": ["interpret-abstract"]},
+        {"id": "inspect-full-text", "title": "Inspect full text", "objective": "Read the host-materialized text representation; assess conclusions against results and methods, using discussion for interpretation and limitations.", "depends_on": ["acquire-full-text"]},
+        {"id": "answer", "title": "Answer", "objective": "State which claims come from metadata, abstract or full text, and disclose unavailable or truncated evidence.", "depends_on": ["interpret-abstract", "inspect-full-text"]}
       ]
     }
   ]

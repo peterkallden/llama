@@ -68,11 +68,30 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
     if (!definition.transitions.empty()) {
         value["start_state"] = definition.start_state; value["terminal_states"] = definition.terminal_states;
         value["transitions"] = json::array();
-        for (const auto & transition : definition.transitions) value["transitions"].push_back({
-            {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
-            {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
-            {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
-            {"candidates", transition.candidate_json_pointer}, {"cost", transition.cost}});
+        for (const auto & transition : definition.transitions) {
+            json item = {
+                {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
+                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+                {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
+                {"candidates", transition.candidate_json_pointer}, {"cost", transition.cost},
+                {"optional", transition.optional}};
+            if (!transition.choices.empty()) {
+                item["choices"] = json::array();
+                for (const auto & choice : transition.choices) {
+                    item["choices"].push_back({{"id", choice.id}, {"description", choice.description},
+                        {"to", choice.to_state}, {"requires", choice.required_observation_json_pointers}});
+                }
+            }
+            if (!transition.argument_bindings.empty()) {
+                item["bindings"] = json::array();
+                for (const auto & binding : transition.argument_bindings) {
+                    item["bindings"].push_back({{"target", binding.target_json_pointer},
+                        {"from", binding.source_transition_id}, {"source", binding.source_json_pointer},
+                        {"required", binding.required}});
+                }
+            }
+            value["transitions"].push_back(std::move(item));
+        }
     }
     return value;
 }
@@ -84,7 +103,36 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
     value.allowed_tools=definition.value("allowed_tools",std::vector<std::string>{}); value.required_capabilities=definition.value("required_capabilities",std::vector<std::string>{});
     value.optional_capabilities=definition.value("optional_capabilities",std::vector<std::string>{}); value.required_context=definition.value("required_context",std::vector<std::string>{});
     value.start_state=definition.value("start_state",std::string{}); value.terminal_states=definition.value("terminal_states",std::vector<std::string>{});
-    for (const auto & item : definition.value("transitions",json::array())) value.transitions.push_back({item.value("id",std::string{}),item.value("from",std::string{}),item.value("to",std::string{}),item.value("kind",std::string("tool")) == "model_choice" ? common_plan_workflow_transition_kind::model_choice : common_plan_workflow_transition_kind::tool,item.value("tool",std::string{}),item.value("arguments",std::string("{}")),item.value("candidates",std::string{}),item.value("cost",1.0f)});
+    for (const auto & item : definition.value("transitions",json::array())) {
+        common_plan_workflow_transition transition;
+        transition.id = item.value("id", std::string{});
+        transition.from_state = item.value("from", std::string{});
+        transition.to_state = item.value("to", std::string{});
+        transition.kind = item.value("kind", std::string("tool")) == "model_choice"
+            ? common_plan_workflow_transition_kind::model_choice
+            : common_plan_workflow_transition_kind::tool;
+        transition.tool_name = item.value("tool", std::string{});
+        transition.arguments_template_json = item.value("arguments", std::string("{}"));
+        transition.candidate_json_pointer = item.value("candidates", std::string{});
+        transition.cost = item.value("cost", 1.0f);
+        transition.optional = item.value("optional", false);
+        for (const auto & choice_json : item.value("choices", json::array())) {
+            common_plan_workflow_transition::choice choice;
+            choice.id = choice_json.value("id", std::string{});
+            choice.description = choice_json.value("description", std::string{});
+            choice.to_state = choice_json.value("to", std::string{});
+            choice.required_observation_json_pointers = choice_json.value("requires", std::vector<std::string>{});
+            transition.choices.push_back(std::move(choice));
+        }
+        for (const auto & binding_json : item.value("bindings", json::array())) {
+            transition.argument_bindings.push_back({
+                binding_json.value("target", std::string{}),
+                binding_json.value("from", std::string{}),
+                binding_json.value("source", std::string{}),
+                binding_json.value("required", true)});
+        }
+        value.transitions.push_back(std::move(transition));
+    }
     return value;
 }
 

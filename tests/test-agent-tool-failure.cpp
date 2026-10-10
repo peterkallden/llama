@@ -8,13 +8,15 @@
 
 class planner final : public common_planner {
 public:
+    explicit planner(bool optional = false) : optional_(optional) {}
     common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
         error.clear();
         common_plan_proposal proposal;
-        proposal.plan.id = "tool-failure";
+        proposal.plan.id = optional_ ? "optional-tool-failure" : "tool-failure";
         proposal.plan.status = common_plan_status::active;
         common_plan_step fetch{"fetch", "Fetch", "Fetch an unavailable resource"};
         fetch.status = common_plan_step_status::active;
+        fetch.optional = optional_;
         fetch.selected_tool = "failing_lookup";
         fetch.tool_call = common_plan_tool_call{"failing_lookup", R"({"id":"missing"})"};
         common_plan_step answer{"answer", "Answer", "Report the failed evidence honestly"};
@@ -23,6 +25,8 @@ public:
         proposal.plan.active_step_id = "fetch";
         return proposal;
     }
+private:
+    bool optional_;
 };
 
 class executor final : public common_action_executor {
@@ -86,5 +90,16 @@ int main() {
     assert(adaptation.called);
     const auto plan = store.get("tool-failure", error);
     assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporarily unavailable") != std::string::npos);
+
+    common_plan_in_memory_store optional_store;
+    assert(optional_store.open("", error));
+    planner optional_p(true);
+    common_agent_runtime optional_runtime(optional_store, optional_p, e, r, &tool_runtime);
+    const auto optional_result = optional_runtime.run(request);
+    assert(optional_result.error.empty());
+    assert(optional_result.response == "The lookup failed; no result was claimed.");
+    const auto optional_plan = optional_store.get("optional-tool-failure", error);
+    assert(optional_plan && optional_plan->steps[0].optional &&
+        optional_plan->steps[0].status == common_plan_step_status::failed);
     return 0;
 }

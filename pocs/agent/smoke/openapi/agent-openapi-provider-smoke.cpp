@@ -96,9 +96,9 @@ int main() {
     assert(view->chat_tools()[0].description.find("per-page") != std::string::npos);
     assert(view->chat_tools()[0].description.find("cursor") != std::string::npos);
     assert(view->chat_tools()[0].description.find("select") != std::string::npos);
-    assert(view->chat_tools()[0].description.find("returns: results:{") != std::string::npos);
-    assert(view->chat_tools()[0].description.find("display_name?:string") != std::string::npos);
-    assert(view->chat_tools()[0].result_schema.find("display_name") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("Returns: result, resources") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("display_name") == std::string::npos);
+    assert(view->chat_tools()[0].result_schema.find("resources") != std::string::npos);
     assert(view->chat_tools()[0].parameters.find(R"("required":["limit"])" ) != std::string::npos);
     common_plan_state invalid_plan;
     invalid_plan.steps.push_back({});

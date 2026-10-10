@@ -75,6 +75,49 @@ bool bridge_research_result_to_plan(
     return true;
 }
 
+bool seed_research_from_workflow_resources(
+        common_agent_runtime_turn_context & context,
+        common_agent_research_workspace & workspace) {
+    if (context.outer_plan == nullptr || !context.outer_plan->route_binding) return true;
+
+    for (const auto & step : context.outer_plan->steps) {
+        if (step.status != common_plan_step_status::completed || !step.tool_call ||
+                (step.tool_call->name != "openalex.getWork" &&
+                 step.tool_call->name != "web.fetch" &&
+                 step.tool_call->name != "resource.read")) continue;
+        const std::string observation_prefix = "tool:" + step.id + ":";
+        for (const auto & observation : context.outer_plan->observations) {
+            if (observation.id.rfind(observation_prefix, 0) != 0) continue;
+            for (size_t index = 0; index < observation.resource_refs.size(); ++index) {
+                const auto & ref = observation.resource_refs[index];
+                if (ref.uri.empty() || std::any_of(workspace.sources.begin(), workspace.sources.end(),
+                        [&](const auto & source) {
+                            return source.resource_ref && source.resource_ref->uri == ref.uri;
+                        })) continue;
+                common_agent_research_source source;
+                source.source_id = workspace.workspace_id + ":workflow:" + step.title + ":" +
+                    std::to_string(index + 1);
+                source.title = ref.name.empty() ? step.tool_call->name : ref.name;
+                source.origin = step.tool_call->name;
+                source.authority = "host-tool-runtime";
+                source.kind = step.tool_call->name.rfind("openalex.", 0) == 0
+                    ? common_agent_research_source_kind::api_result
+                    : step.tool_call->name == "web.fetch"
+                        ? common_agent_research_source_kind::web_page
+                        : common_agent_research_source_kind::documentation;
+                source.resource_ref = ref;
+                source.quality_score = step.tool_call->name == "openalex.getWork" ? 0.85 : 0.75;
+                source.primary_source = true;
+                source.role = "workflow_evidence";
+                if (!common_agent_research_add_source(workspace, std::move(source), context.error)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 common_agent_research_lifecycle_sink make_common_agent_research_lifecycle_sink(
@@ -170,6 +213,11 @@ bool run_common_agent_research_phase(
     context.research_workspace.emplace();
     if (!common_agent_research_create_workspace(
             context.request, *context.research_workspace, context.error)) {
+        context.result.error = context.error;
+        return false;
+    }
+    if (!seed_research_from_workflow_resources(
+            context, *context.research_workspace)) {
         context.result.error = context.error;
         return false;
     }

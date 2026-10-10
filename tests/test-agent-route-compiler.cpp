@@ -486,5 +486,67 @@ int main() {
     continuation_steps.clear(); error.clear();
     assert(!rejected_graph_continuation(graph_plan, "resolve", candidates, continuation_steps, error));
     assert(error.find("outside the host observation") != std::string::npos);
+
+    // Fixed host choices can depend on a structured observation, and a
+    // selected tool transition binds only the declared scalar result field.
+    common_plan_workflow_definition evidence_definition;
+    evidence_definition.workflow_ref = "workflow://openalex/full-text-evidence";
+    evidence_definition.workflow_revision = "v1";
+    evidence_definition.family = "openapi";
+    evidence_definition.graph_revision = "openalex-full-text@v1";
+    evidence_definition.start_state = "identifier_pending";
+    evidence_definition.terminal_states = {"abstract_complete", "full_text_fetched"};
+    evidence_definition.transitions = {
+        {"get-work", "identifier_pending", "work_retrieved", common_plan_workflow_transition_kind::tool,
+            "openalex.getWork", "{}", {}, 1.0f},
+        {"choose-depth", "work_retrieved", "full_text_pending", common_plan_workflow_transition_kind::model_choice,
+            {}, "{}", {}, 1.0f},
+        {"fetch-full-text", "full_text_pending", "full_text_fetched", common_plan_workflow_transition_kind::tool,
+            "web.fetch", "{}", {}, 1.0f},
+    };
+    evidence_definition.transitions[1].choices = {
+        {"answer_from_abstract", "Abstract is sufficient", "abstract_complete", {}},
+        {"fetch_full_text", "Need full text", "full_text_pending", {"/result/best_oa_location/pdf_url"}},
+    };
+    evidence_definition.transitions[2].argument_bindings = {
+        {"/url", "get-work", "/result/best_oa_location/pdf_url", true},
+    };
+    common_agent_route_candidate evidence_route;
+    evidence_route.id = "route:openalex-full-text";
+    evidence_route.workflow_definition = evidence_definition;
+    evidence_route.resolved_tools = {"openalex.getWork", "web.fetch"};
+    common_plan_state evidence_plan;
+    evidence_plan.id = "openalex-evidence-plan";
+    evidence_plan.route_binding = common_plan_route_binding{evidence_route.id, "openalex-full-text", "bp-v1",
+        evidence_definition.workflow_ref, evidence_definition.workflow_revision,
+        evidence_definition.graph_revision, "env-v1", "policy-v1"};
+    evidence_plan.workflow_definition = evidence_definition;
+    common_plan_step get_work_step{"get-work-step", "Get work", "Retrieve OpenAlex work"};
+    get_work_step.status = common_plan_step_status::completed;
+    get_work_step.semantic_alias = "workflow-transition:get-work";
+    evidence_plan.steps.push_back(get_work_step);
+    common_plan_observation openalex_observation;
+    openalex_observation.id = "tool:get-work-step:1";
+    openalex_observation.source = "openalex.getWork";
+    openalex_observation.summary = R"({"ok":true,"result":{"best_oa_location":{"pdf_url":"https://example.org/paper.pdf"},"abstract_text":"Short abstract"}})";
+    evidence_plan.observations.push_back(openalex_observation);
+    auto evidence_continuation = make_agent_workflow_graph_continuation(evidence_route,
+        [](const common_plan_observation &, const common_plan_workflow_transition &, std::string & id, std::string & selection_error) {
+            id = "fetch_full_text"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(evidence_continuation(evidence_plan, "get-work-step", openalex_observation, continuation_steps, error));
+    assert(error.empty() && continuation_steps.size() == 1);
+    assert(continuation_steps.front().tool_call && continuation_steps.front().tool_call->name == "web.fetch");
+    const auto fetch_arguments = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
+    assert(fetch_arguments["url"] == "https://example.org/paper.pdf");
+    assert(continuation_steps.front().semantic_alias &&
+        *continuation_steps.front().semantic_alias == "workflow-transition:choose-depth=fetch_full_text,fetch-full-text");
+
+    auto missing_url_observation = openalex_observation;
+    missing_url_observation.summary = R"({"ok":true,"result":{"abstract_text":"Short abstract"}})";
+    continuation_steps.clear(); error.clear();
+    assert(!evidence_continuation(evidence_plan, "get-work-step", missing_url_observation, continuation_steps, error));
+    assert(error.find("outside the host observation") != std::string::npos);
     return 0;
 }

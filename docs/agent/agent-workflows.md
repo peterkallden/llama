@@ -50,6 +50,22 @@ terminal states have no outgoing transition, and every declared state must
 have a path to a terminal state. Route compilation then rejects any graph tool
 outside the resolved execution envelope.
 
+Model choices may instead declare a bounded, host-owned `choices` array. Each
+choice has an `id`, a short description, a destination state, and optional
+`requires` JSON pointers that must exist in the preceding observation. Tool
+transitions may bind scalar strings from the current or a named completed
+transition observation into argument JSON pointers. A missing required source
+fails closed; it never becomes a model-invented value. Bindings can name the
+source transition with `from` and mark an unavailable value optional with
+`required: false`.
+
+The OpenAlex full-text evidence workflow uses this seam after `getWork`: the
+model chooses between answering from the abstract and fetching full text. The
+fetch option is offered only when the returned work record contains an
+open-access PDF URL. Fetch, inspect and read are then host-materialized steps;
+the model does not repeat or construct the URL. PDF text extraction can still
+be unavailable, in which case the answer must state that limitation.
+
 At runtime, bounded Dijkstra search (A* with a zero admissible heuristic)
 chooses the least-cost host-declared path. A `model_choice` is the only model
 decision inside that path: it receives a bounded list of IDs from the previous
@@ -126,7 +142,7 @@ llama-agent --config docs/examples/agent-host-config-openalex.json \
   --agent-runtime "Find recent work on retrieval-augmented generation"
 ```
 
-The starter package supplies four configured-OpenAlex workflows and matching
+The starter package supplies five configured-OpenAlex workflows and matching
 blueprints:
 
 - `workflow://openalex/work-search` for bounded scholarly-work discovery.
@@ -137,6 +153,9 @@ blueprints:
 - `workflow://openalex/entity-filtered-work-search` for title/text discovery
   and bounded works search by a resolved author, institution or research topic,
   optionally combined with publication-year filters.
+- `workflow://openalex/full-text-evidence` for a known work where metadata and
+  abstract are interpreted first, followed only when needed by a fetch of an
+  OpenAlex-returned open-access location into a host resource.
 
 The entity workflow resolves a human name through the corresponding OpenAlex
 collection and uses only an ID returned by that operation. For research areas,
@@ -146,6 +165,39 @@ Work records expose up to three assigned `topics` plus `primary_topic`; use
 topic. The works `search` parameter searches title, abstract and other text,
 and `display_name` is the returned work title. The host bounds each request and
 the workflow reports that the resulting candidate set is not exhaustive.
+
+The full-text workflow is deliberately layered. `openalex.getWork` supplies
+identity, bibliographic metadata, the OpenAlex abstract representation and
+declared open-access locations. A bounded host choice lets the model decide
+whether the abstract answers the request or whether the question requires
+methods, results, conclusions or limitations. The full-text choice is offered
+only when the returned record contains `best_oa_location.pdf_url`; the host
+binds that exact value to `web.fetch` rather than asking the model to repeat or
+invent a URL. Fetch, inspect and read are then workflow-materialized steps.
+`web.fetch` stores the authoritative fetched body as a typed host resource,
+rather than a text-preview wrapper. Text/HTML/XML can be read directly; a PDF
+can use the existing host text-representation processor through
+`resource.read`. A truncated body or unavailable text representation remains a
+reported limitation, never evidence of an unobserved section.
+
+The model-backed continuation smoke can be run in either runtime mode:
+
+```sh
+LLAMA_AGENT_THINKING_MODE=deliberate ./scripts/test-agent-openalex-fulltext-model-smoke.sh
+LLAMA_AGENT_THINKING_MODE=research ./scripts/test-agent-openalex-fulltext-model-smoke.sh
+```
+
+Both keep full agent/generation traces. The research run additionally verifies
+that resource-backed observations from the selected workflow are seeded into
+the existing research workspace and become recorded evidence. It requires an
+extractable source representation to meet research evidence coverage; if a
+fetched PDF has no bounded text representation, the run must fail closed rather
+than report research evidence. With the current live OpenAlex fixture, the
+full-text PDF fetch and inspection succeed, but `resource.read` reports
+`tool.resource_read.representation_unavailable`, so the research-mode run exits
+incomplete. The deliberate-mode run can still report that limitation without
+making claims about unreadable content. These outcomes are distinct from a
+successful research end-to-end run.
 
 They share the OpenAPI read capability but carry different procedures,
 constraints and plan steps. In particular, search ranking is not treated as a

@@ -6,6 +6,21 @@
 
 namespace {
 
+// An OpenAPI document can declare a very wide response object.  The full
+// schema remains authoritative for host validation and result handling, but
+// serializing it into every model tool catalog needlessly turns a simple
+// operation choice into a provider-specific schema-reading task.  All
+// OpenAPI calls are wrapped by the common tool result contract: `result`
+// carries the bounded response and `resources` carries host-owned materialized
+// representations when available.
+constexpr const char * openapi_model_result_schema = R"({
+    "type":"object",
+    "properties":{
+        "result":{"description":"Bounded provider response."},
+        "resources":{"type":"array","description":"Host-owned materialized result resources.","items":{"type":"object"}}
+    }
+})";
+
 std::string paging_description(const agent_openapi_operation & operation) {
     const auto & paging = operation.paging;
     if (paging.kind == agent_openapi_paging_kind::none) return {};
@@ -72,10 +87,7 @@ public:
                 return false;
             }
             definition.result_schema_json = operation.result_schema_json;
-            // OpenAPI response schemas are already provider-declared and are
-            // therefore the model-facing result contract until a narrower
-            // projection is supplied by the provider configuration.
-            definition.model_result_schema_json = operation.result_schema_json;
+            definition.model_result_schema_json = openapi_model_result_schema;
             definition.read_only = operation.read_only;
             definition.requires_confirmation = operation.requires_confirmation;
             definition.uses_network = true;

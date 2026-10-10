@@ -32,12 +32,63 @@
 #include <ctime>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
 
 namespace {
+
+// Some public APIs legally expose an abstract as an inverted index rather than
+// plaintext. Add a bounded, deterministic model-facing view while retaining
+// the unmodified provider response in the materialized resource.
+bool add_inverted_index_text_views(json & value) {
+    bool changed = false;
+    if (value.is_array()) {
+        for (auto & item : value) changed = add_inverted_index_text_views(item) || changed;
+        return changed;
+    }
+    if (!value.is_object()) return false;
+    const auto abstract = value.find("abstract_inverted_index");
+    if (abstract != value.end() && abstract->is_object() && !value.contains("abstract_text")) {
+        std::map<size_t, std::string> words;
+        for (const auto & entry : abstract->items()) {
+            if (!entry.value().is_array() || entry.key().empty()) continue;
+            for (const auto & position : entry.value()) {
+                if (!position.is_number_integer() && !position.is_number_unsigned()) continue;
+                if (position.is_number_integer() && position.get<int64_t>() < 0) continue;
+                const auto index = position.is_number_unsigned()
+                    ? position.get<size_t>()
+                    : static_cast<size_t>(position.get<int64_t>());
+                if (index > 65535 || words.size() >= 16384) continue;
+                words.emplace(index, entry.key());
+            }
+        }
+        std::string text;
+        for (const auto & word : words) {
+            if (!text.empty()) text.push_back(' ');
+            if (text.size() + word.second.size() > 32768) break;
+            text += word.second;
+        }
+        if (!text.empty()) {
+            value["abstract_text"] = std::move(text);
+            changed = true;
+        }
+    }
+    for (auto & entry : value.items()) {
+        if (entry.key() != "abstract_inverted_index") {
+            changed = add_inverted_index_text_views(entry.value()) || changed;
+        }
+    }
+    return changed;
+}
+
+std::string model_facing_openapi_json(const std::string & raw) {
+    auto value = json::parse(raw, nullptr, false);
+    if (value.is_discarded() || !add_inverted_index_text_views(value)) return raw;
+    return value.dump();
+}
 
 class cli_agent_embedding_provider final : public agent_embedding_provider {
 public:
@@ -908,6 +959,7 @@ bool resolve_agent_host_tool_selection(
                 materializer_error = "OpenAPI result materialization requires a resource store";
                 return false;
             }
+            const std::string raw_response = result.structured_content_json;
             agent_resource_put_request request;
             request.name = provider_id + "-" + operation.operation_id + ".result";
             request.description = "Bounded result from OpenAPI operation " + operation.operation_id;
@@ -930,16 +982,17 @@ bool resolve_agent_host_tool_selection(
             const bool text_payload = json_response || result.mime_type.rfind("text/", 0) == 0;
             bool stored = false;
             if (text_payload) {
-                request.text = result.structured_content_json;
+                request.text = raw_response;
                 stored = resource_store->put_text(request, descriptor, materializer_error);
             } else {
-                request.bytes = result.structured_content_json;
+                request.bytes = raw_response;
                 request.bytes_are_authoritative = true;
                 stored = resource_store->put_bytes(request, descriptor, materializer_error);
             }
             if (!stored) return false;
             descriptor.metadata.content_hash = descriptor.sha256;
             result.resource_refs.push_back(std::move(descriptor));
+            if (json_response) result.structured_content_json = model_facing_openapi_json(raw_response);
             return true;
         };
         auto executor = make_agent_openapi_http_executor(provider_config);
@@ -1114,12 +1167,23 @@ make_agent_host_openapi_argument_bindings(
         if (!provider.enabled) continue;
         const std::string prefix = provider.prefix.empty() ? provider.id : provider.prefix;
         for (const auto & operation : provider.operations) {
-            if (!operation.second.enabled || operation.second.bound_arguments_json == "{}") continue;
-            const auto bound = json::parse(operation.second.bound_arguments_json, nullptr, false);
-            if (bound.is_discarded() || !bound.is_object() || bound.empty()) continue;
+            if (!operation.second.enabled) continue;
             const std::string tool_name = prefix.empty()
                 ? operation.first
                 : prefix + "." + operation.first;
+            // A provider default projection is host policy, not an argument
+            // the model should reconstruct or override.  Keep it separate
+            // from explicitly model-visible workflow bindings.
+            if (!operation.second.default_projection.empty()) {
+                bindings.push_back({
+                    tool_name,
+                    json({{"select", operation.second.default_projection}}).dump(),
+                    "config://openapi/" + provider.id + "/" + operation.first + "/default-projection",
+                    false});
+            }
+            if (operation.second.bound_arguments_json == "{}") continue;
+            const auto bound = json::parse(operation.second.bound_arguments_json, nullptr, false);
+            if (bound.is_discarded() || !bound.is_object() || bound.empty()) continue;
             bindings.push_back({
                 tool_name,
                 bound.dump(),

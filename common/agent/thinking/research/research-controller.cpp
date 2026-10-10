@@ -225,7 +225,13 @@ common_agent_research_action schedule_next_gap(
             task.preferred_tools = {"memory_get"};
             break;
         }
-        if (source.kind == common_agent_research_source_kind::user_supplied && source.resource_ref &&
+        const bool resource_backed_source =
+            source.kind == common_agent_research_source_kind::user_supplied ||
+            source.kind == common_agent_research_source_kind::documentation ||
+            source.kind == common_agent_research_source_kind::web_page ||
+            source.kind == common_agent_research_source_kind::api_result ||
+            source.kind == common_agent_research_source_kind::remote_agent_result;
+        if (resource_backed_source && source.resource_ref &&
                 !source_used_for_gap(workspace, *selected, source.source_id)) {
             task.instruction = source.resource_ref->uri;
             task.preferred_tools = {"resource_read"};

@@ -29,6 +29,22 @@ int main() {
         plan.workflow_definition->required_capabilities = {"dataset.resolve", "dataset.inspect"};
         plan.workflow_definition->optional_capabilities = {"data.aggregate"};
         plan.workflow_definition->required_context = {"context.dataset.available"};
+        common_plan_workflow_transition choose_depth{
+            "choose-depth", "record", "full", common_plan_workflow_transition_kind::model_choice,
+            {}, "{}", {}, 1.0f};
+        choose_depth.choices = {
+            {"abstract", "Use the abstract", "complete", {}},
+            {"full-text", "Read full text", "full", {"/result/best_oa_location/pdf_url"}},
+        };
+        common_plan_workflow_transition fetch_full_text{
+            "fetch-full-text", "full", "complete", common_plan_workflow_transition_kind::tool,
+            "web.fetch", R"({"max_bytes":8388608})", {}, 1.0f};
+        fetch_full_text.argument_bindings = {
+            {"/url", "get-work", "/result/best_oa_location/pdf_url", true},
+        };
+        plan.workflow_definition->start_state = "record";
+        plan.workflow_definition->terminal_states = {"complete"};
+        plan.workflow_definition->transitions = {choose_depth, fetch_full_text};
         plan.route_binding = common_plan_route_binding{
             "blueprint:dataset-analysis:workflow:workflow://dataset/analysis@v1",
             "dataset-analysis", "bp-v1", "workflow://dataset/analysis", "v1",
@@ -66,6 +82,11 @@ int main() {
                 std::vector<std::string>({"data.aggregate"}) &&
             plan->workflow_definition->required_context ==
                 std::vector<std::string>({"context.dataset.available"}) &&
+            plan->workflow_definition->transitions.size() == 2 &&
+            plan->workflow_definition->transitions[0].choices.size() == 2 &&
+            plan->workflow_definition->transitions[0].choices[1].id == "full-text" &&
+            plan->workflow_definition->transitions[1].argument_bindings.size() == 1 &&
+            plan->workflow_definition->transitions[1].argument_bindings[0].source_transition_id == "get-work" &&
             plan->route_binding && plan->route_binding->route_id.find("blueprint:dataset-analysis") == 0 &&
             plan->route_binding->execution_envelope_fingerprint == "env-v1");
         auto events = store.history("p", error);

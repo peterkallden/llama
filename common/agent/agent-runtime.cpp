@@ -954,9 +954,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     const bool completed_plan_resume = plan.status == common_plan_status::completed;
     turn.plan_store = &store;
     turn.outer_plan = &plan;
+    bool research_deferred_for_workflow = false;
     if (request.deliberation_policy.mode == common_agent_thinking_mode::research) {
         request.plan_id = plan.id;
-        if (!run_common_agent_research_phase(turn)) return result;
+        research_deferred_for_workflow = plan.workflow_definition.has_value() &&
+            plan_has_pending_mandatory_tool_step(plan);
+        if (!research_deferred_for_workflow && !run_common_agent_research_phase(turn)) return result;
     }
     result.plan_id = plan.id;
     if (!turn.research_synthesis_context.empty()) {
@@ -1102,7 +1105,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     const auto block_unrepaired_tool_failure = [&]() -> bool {
         for (const auto & step : plan.steps) {
             if (step.status == common_plan_step_status::failed &&
-                    common_plan_step_effective_mode(step) == common_plan_step_mode::tool) {
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
+                    !step.optional) {
                 result.error = "final synthesis is blocked by an unrepaired failed tool step: " + step.id;
                 error = result.error;
                 append_trace(result, common_runtime_trace_stage::response,
@@ -1585,6 +1589,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
+        }
+
+        if (research_deferred_for_workflow &&
+                !plan_has_pending_mandatory_tool_step(plan)) {
+            if (!common_agent_runtime_transition_cognitive_mode(
+                    turn, common_agent_cognitive_mode::reflect,
+                    "workflow evidence is ready for bounded research", "host",
+                    common_runtime_trace_stage::research)) {
+                result.error = "invalid cognitive-mode transition before workflow research";
+                return result;
+            }
+            if (!run_common_agent_research_phase(turn)) return result;
+            research_deferred_for_workflow = false;
+            if (!common_agent_runtime_transition_cognitive_mode(
+                    turn, common_agent_cognitive_mode::execute,
+                    "bounded research evidence is ready for synthesis", "host",
+                    common_runtime_trace_stage::research)) {
+                result.error = "invalid cognitive-mode transition after workflow research";
+                return result;
+            }
         }
 
         if (request.require_tool_execution) {

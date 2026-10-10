@@ -242,10 +242,25 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v6");
-    assert(checked_in_starter.procedures.size() == 14 &&
-        checked_in_starter.blueprints.size() == 12);
-    assert(checked_in_starter.workflows.size() == 13);
+        checked_in_starter.version == "v9");
+    std::string checked_in_roundtrip_json;
+    assert(common_agent_package_to_json(checked_in_starter,
+        checked_in_roundtrip_json, error, false));
+    common_agent_bootstrap_package checked_in_roundtrip;
+    assert(common_agent_package_parse_json(checked_in_roundtrip_json,
+        checked_in_roundtrip, error));
+    const auto roundtrip_full_text_workflow = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/full-text-evidence";
+        });
+    assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
+    assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
+    assert(checked_in_starter.procedures.size() == 15 &&
+        checked_in_starter.blueprints.size() == 13);
+    assert(checked_in_starter.workflows.size() == 14);
     assert(checked_in_starter.workflows[0].definition.workflow_ref ==
         "workflow://dataset/analysis");
     assert(checked_in_starter.workflows[0].definition.required_capabilities ==
@@ -255,6 +270,39 @@ int main() {
     assert(checked_in_starter.workflows[0].definition.workflow_revision == "v2");
     assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
         std::vector<std::string>({"artifact.export"}));
+    const auto checked_in_openalex_full_text_workflow = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/full-text-evidence";
+        });
+    assert(checked_in_openalex_full_text_workflow != checked_in_starter.workflows.end());
+    assert(checked_in_openalex_full_text_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"openapi.read", "web.fetch", "resource.inspect", "resource.read"}));
+    assert(checked_in_openalex_full_text_workflow->definition.required_context ==
+        std::vector<std::string>({"context.openapi.available", "context.network.allowed"}));
+    assert(checked_in_openalex_full_text_workflow->definition.start_state == "identifier_pending");
+    assert(checked_in_openalex_full_text_workflow->definition.transitions.size() == 5);
+    const auto depth_choice = std::find_if(
+        checked_in_openalex_full_text_workflow->definition.transitions.begin(),
+        checked_in_openalex_full_text_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "choose-evidence-depth"; });
+    assert(depth_choice != checked_in_openalex_full_text_workflow->definition.transitions.end());
+    assert(depth_choice->choices.size() == 2 &&
+        depth_choice->choices[0].id == "answer_from_abstract" &&
+        depth_choice->choices[1].id == "fetch_full_text" &&
+        depth_choice->choices[1].required_observation_json_pointers ==
+            std::vector<std::string>({"/result/best_oa_location/pdf_url"}));
+    const auto fetch_transition = std::find_if(
+        checked_in_openalex_full_text_workflow->definition.transitions.begin(),
+        checked_in_openalex_full_text_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "fetch-full-text"; });
+    assert(fetch_transition != checked_in_openalex_full_text_workflow->definition.transitions.end());
+    assert(fetch_transition->argument_bindings.size() == 1 &&
+        fetch_transition->argument_bindings.front().source_transition_id == "get-work" &&
+        fetch_transition->argument_bindings.front().target_json_pointer == "/url" &&
+        fetch_transition->argument_bindings.front().source_json_pointer ==
+            "/result/best_oa_location/pdf_url");
     const auto checked_in_openalex_entity_workflow = std::find_if(
         checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
         [](const auto & workflow) {
@@ -349,6 +397,14 @@ int main() {
     assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);
     assert(openalex_search_blueprint->procedure_refs ==
         std::vector<std::string>({"scholarly-search-evidence-v1", "analysis-evidence-v1"}));
+    const auto openalex_full_text_blueprint = std::find_if(
+        checked_in_starter.blueprints.begin(), checked_in_starter.blueprints.end(),
+        [](const auto & blueprint) { return blueprint.id == "openalex-full-text-evidence-v1"; });
+    assert(openalex_full_text_blueprint != checked_in_starter.blueprints.end());
+    assert(openalex_full_text_blueprint->workflow_policy == common_plan_workflow_policy::required);
+    assert(openalex_full_text_blueprint->procedure_refs ==
+        std::vector<std::string>({"bibliographic-record-validation-v1",
+            "openalex-full-text-evidence-v1", "analysis-evidence-v1"}));
     const auto openalex_entity_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref ==
@@ -384,9 +440,9 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 14 &&
-        checked_in_import.installed_blueprint_ids.size() == 12);
-    assert(checked_in_import.installed_workflow_ids.size() == 13);
+    assert(checked_in_import.installed_memory_ids.size() == 15 &&
+        checked_in_import.installed_blueprint_ids.size() == 13);
+    assert(checked_in_import.installed_workflow_ids.size() == 14);
     const auto checked_in_openapi_blueprint = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:openapi-resource-onboarding-v1", error);
     assert(checked_in_openapi_blueprint &&
@@ -418,7 +474,7 @@ int main() {
     assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
     assert(reparsed_starter.blueprints[3].selection_description ==
         checked_in_starter.blueprints[3].selection_description);
-    assert(reparsed_starter.workflows.size() == 13 &&
+    assert(reparsed_starter.workflows.size() == 14 &&
         reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
@@ -437,7 +493,7 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         partial_memory, partial_plans, config, partial_package, embed,
         partial_import, error));
-    assert(partial_import.installed_blueprint_ids.size() == 11 &&
+    assert(partial_import.installed_blueprint_ids.size() == 12 &&
         partial_import.rejected_items.size() == 1 &&
         partial_import.rejected_items.front().id == "dataset-analysis-v2");
 

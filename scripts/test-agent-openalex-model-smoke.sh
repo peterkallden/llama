@@ -44,16 +44,10 @@ pathlib.Path(output).write_text(json.dumps({
     "schema_version": 1,
     "model": {"backend": "server-context", "path": model},
     "tools": {
-        "profile": "openalex-smoke",
+        "profile": "analysis",
         "families": {
             "openalex": {
                 "description": "Search OpenAlex works by title, author, institution, topic and year"
-            }
-        },
-        "profiles": {
-            "openalex-smoke": {
-                "allow_network": True,
-                "allow_policy_gated_writes": False
             }
         },
         "providers": [provider],
@@ -71,7 +65,7 @@ log_path="$work_dir/openalex-model.log"
 prompt="Call exactly openalex.listWorks (same lowercase spelling), and no other tool, to search for machine learning. The host already supplies search, page size and projection; emit no fields. After it succeeds, answer with the first work id and display name. Do not invent a result."
 args=(
     run --config "$config" --model "$model"
-    --agent-profile default --tool-profile openalex-smoke
+    --agent-profile default --tool-profile analysis
     --plan-backend in-memory
     --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-work-search-v1
     --thinking-mode deliberate

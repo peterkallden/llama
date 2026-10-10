@@ -155,6 +155,27 @@ struct common_plan_workflow_transition {
     // observation that yields the bounded candidate array.
     std::string candidate_json_pointer;
     float cost = 1.0f;
+    // Optional fixed choices owned by the host. When present, the selector
+    // chooses among these values using the bounded observation and request.
+    struct choice {
+        std::string id;
+        std::string description;
+        std::string to_state;
+        std::vector<std::string> required_observation_json_pointers;
+    };
+    std::vector<choice> choices;
+    // For tool transitions, bind target argument JSON pointers from the
+    // immediately preceding structured observation.
+    struct argument_binding {
+        std::string target_json_pointer;
+        // Empty or "$previous" binds from the observation that triggered
+        // this continuation; otherwise names a stable workflow transition id.
+        std::string source_transition_id;
+        std::string source_json_pointer;
+        bool required = true;
+    };
+    std::vector<argument_binding> argument_bindings;
+    bool optional = false;
 };
 
 // Workflow definitions describe a host-validated family of work. They never

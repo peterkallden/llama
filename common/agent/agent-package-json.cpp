@@ -97,6 +97,33 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.arguments_template_json = source.value("arguments", std::string("{}"));
         transition.candidate_json_pointer = source.value("candidates", std::string{});
         transition.cost = source.value("cost", 1.0f);
+        transition.optional = source.value("optional", false);
+        if (source.contains("choices")) {
+            if (!source["choices"].is_array()) { error = "workflow transition choices must be an array"; return false; }
+            for (const auto & choice_source : source["choices"]) {
+                if (!choice_source.is_object()) { error = "workflow choice must be an object"; return false; }
+                common_plan_workflow_transition::choice choice;
+                choice.id = choice_source.value("id", std::string{});
+                choice.description = choice_source.value("description", std::string{});
+                choice.to_state = choice_source.value("to", std::string{});
+                if (choice_source.contains("requires") &&
+                        !strings(choice_source["requires"], choice.required_observation_json_pointers)) {
+                    error = "workflow choice requires must be JSON pointer strings"; return false;
+                }
+                transition.choices.push_back(std::move(choice));
+            }
+        }
+        if (source.contains("bindings")) {
+            if (!source["bindings"].is_array()) { error = "workflow transition bindings must be an array"; return false; }
+            for (const auto & binding_source : source["bindings"]) {
+                if (!binding_source.is_object()) { error = "workflow argument binding must be an object"; return false; }
+                transition.argument_bindings.push_back({
+                    binding_source.value("target", std::string{}),
+                    binding_source.value("from", std::string("$previous")),
+                    binding_source.value("source", std::string{}),
+                    binding_source.value("required", true)});
+            }
+        }
         if (source.contains("kind") && !workflow_transition_kind(source["kind"], transition.kind)) {
             error = "workflow transition kind must be tool or model_choice";
             return false;
@@ -164,14 +191,48 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
             std::map<std::string, std::vector<std::string>> predecessors;
             for (const auto & transition : definition.transitions) {
                 const auto arguments = json::parse(transition.arguments_template_json, nullptr, false);
+                const bool invalid_model_choice =
+                    transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                    (!transition.tool_name.empty() ||
+                     (transition.choices.empty() &&
+                        (transition.candidate_json_pointer.empty() ||
+                         transition.candidate_json_pointer.front() != '/')) ||
+                     (!transition.choices.empty() && !transition.candidate_json_pointer.empty()));
                 if (!valid_id(transition.id) || !transition_ids.insert(transition.id).second ||
                         !valid_id(transition.from_state) || !valid_id(transition.to_state) ||
                         !arguments.is_object() || transition.cost <= 0.0f || transition.cost > 1000.0f ||
                         (transition.kind == common_plan_workflow_transition_kind::tool && transition.tool_name.empty()) ||
-                        (transition.kind == common_plan_workflow_transition_kind::model_choice &&
-                            (!transition.tool_name.empty() || transition.candidate_json_pointer.empty() ||
-                             transition.candidate_json_pointer.front() != '/'))) {
+                        invalid_model_choice) {
                     error = "workflow graph has an invalid transition"; return false;
+                }
+                if (transition.kind == common_plan_workflow_transition_kind::tool &&
+                        (!transition.choices.empty() || !transition.candidate_json_pointer.empty())) {
+                    error = "tool transitions cannot declare model choices"; return false;
+                }
+                std::set<std::string> choice_ids;
+                for (const auto & choice : transition.choices) {
+                    if (!valid_id(choice.id) || !choice_ids.insert(choice.id).second ||
+                            choice.description.empty() || !valid_id(choice.to_state)) {
+                        error = "workflow transition has an invalid or duplicate fixed choice"; return false;
+                    }
+                    states.insert(choice.to_state);
+                    predecessors[choice.to_state].push_back(transition.from_state);
+                    for (const auto & pointer : choice.required_observation_json_pointers) {
+                        if (pointer.empty() || pointer.front() != '/') {
+                            error = "workflow choice requirement must be an RFC-6901 JSON pointer"; return false;
+                        }
+                    }
+                }
+                std::set<std::string> targets;
+                for (const auto & binding : transition.argument_bindings) {
+                    if (transition.kind != common_plan_workflow_transition_kind::tool ||
+                            binding.target_json_pointer.empty() || binding.target_json_pointer.front() != '/' ||
+                            binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/' ||
+                            (!binding.source_transition_id.empty() && binding.source_transition_id != "$previous" &&
+                                !valid_id(binding.source_transition_id)) ||
+                            !targets.insert(binding.target_json_pointer).second) {
+                        error = "workflow argument binding requires unique target and source JSON pointers"; return false;
+                    }
                 }
                 states.insert(transition.from_state); states.insert(transition.to_state);
                 predecessors[transition.to_state].push_back(transition.from_state);
@@ -307,6 +368,25 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                     {"kind", workflow_transition_kind_name(transition.kind)}, {"arguments", transition.arguments_template_json}, {"cost", transition.cost}};
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
                 if (!transition.candidate_json_pointer.empty()) item["candidates"] = transition.candidate_json_pointer;
+                if (!transition.choices.empty()) {
+                    item["choices"] = json::array();
+                    for (const auto & choice : transition.choices) {
+                        json choice_json = {{"id", choice.id}, {"description", choice.description}, {"to", choice.to_state}};
+                        if (!choice.required_observation_json_pointers.empty()) {
+                            choice_json["requires"] = choice.required_observation_json_pointers;
+                        }
+                        item["choices"].push_back(std::move(choice_json));
+                    }
+                }
+                if (!transition.argument_bindings.empty()) {
+                    item["bindings"] = json::array();
+                    for (const auto & binding : transition.argument_bindings) {
+                        item["bindings"].push_back({{"target", binding.target_json_pointer},
+                            {"from", binding.source_transition_id},
+                            {"source", binding.source_json_pointer}, {"required", binding.required}});
+                    }
+                }
+                if (transition.optional) item["optional"] = true;
                 value["transitions"].push_back(std::move(item));
             }
         }

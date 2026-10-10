@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "$0")/agent-model-smoke-common.sh"
+
+repo_root=$(agent_smoke_repo_root)
+build_dir=$(agent_smoke_build_dir)
+model="${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"
+embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-v1.5.Q4_K_M.gguf}"
+spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-openapi.json}"
+provider_fragment="${LLAMA_AGENT_OPENALEX_PROVIDER:-${repo_root}/docs/examples/openalex-provider.d/openalex.json}"
+workflow_package="${LLAMA_AGENT_WORKFLOW_PACKAGE:-${repo_root}/docs/examples/agent-bootstrap-workflows-v1.json}"
+thinking_mode="${LLAMA_AGENT_THINKING_MODE:-deliberate}"
+case "$thinking_mode" in
+    deliberate|research) ;;
+    *) echo "thinking mode must be deliberate or research" >&2; exit 2 ;;
+esac
+work_dir=$(agent_smoke_prepare_workdir "openalex-fulltext-${thinking_mode}")
+agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
+gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
+
+agent_smoke_require_file "$model" "chat model"
+agent_smoke_require_file "$embedding_model" "embedding model"
+agent_smoke_require_file "$spec" "generated OpenAlex OpenAPI spec"
+agent_smoke_require_file "$provider_fragment" "generated OpenAlex provider fragment"
+agent_smoke_require_file "$workflow_package" "workflow starter package"
+agent_smoke_require_executable "$agent_bin" "llama-agent"
+agent_smoke_build_if_requested
+
+config="$work_dir/openalex-fulltext-host-config.json"
+python3 - "$config" "$model" "$spec" "$provider_fragment" <<'PY'
+import json
+import pathlib
+import sys
+
+output, model, spec, provider_fragment = sys.argv[1:]
+provider = json.loads(pathlib.Path(provider_fragment).read_text(encoding="utf-8"))
+provider["spec_path"] = str(pathlib.Path(spec).resolve())
+operations = provider.setdefault("policy", {}).setdefault("operations", {})
+get_work = operations["getWork"]
+provider["policy"]["operations"] = {"getWork": get_work}
+pathlib.Path(output).write_text(json.dumps({
+    "schema_version": 1,
+    "model": {"backend": "server-context", "path": model},
+    "tools": {
+        "profile": "openalex-fulltext-smoke",
+        "capabilities": {
+            "web.fetch": ["web.fetch"],
+            "resource.inspect": ["resource.inspect"],
+            "resource.read": ["resource.read"]
+        },
+        "families": {
+            "openalex": {
+                "description": "Retrieve verified OpenAlex work metadata, abstract evidence and declared open-access locations"
+            }
+        },
+        "profiles": {
+            "openalex-fulltext-smoke": {
+                "include_capabilities": ["web.fetch", "resource.inspect", "resource.read"],
+                "allow_network": True,
+                "allow_policy_gated_writes": False
+            }
+        },
+        "providers": [provider],
+    },
+    "limits": {"tool_timeout_ms": 60000},
+}) + "\n", encoding="utf-8")
+PY
+
+log_path="$work_dir/openalex-fulltext-model.log"
+prompt='Use the configured OpenAlex full-text evidence workflow for work W3038568908. First call openalex.getWork with id W3038568908 and no select field. Use its abstract_text as the initial evidence. Then call web.fetch only with the exact HTTPS best_oa_location.pdf_url returned by that record. Inspect the returned resource with resource.inspect. Try resource.read with representation text. Report whether full text was available, and do not invent conclusions if its text representation is unavailable.'
+args=(
+    run --config "$config" --model "$model"
+    --agent-profile default --tool-profile openalex-fulltext-smoke
+    --plan-backend in-memory
+    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-full-text-evidence-v1
+    --thinking-mode "$thinking_mode"
+    --max-tool-rounds 12
+    --require-tool-execution --agent-trace --generation-trace
+    --agent-inference-backend server-context
+    --prompt "$prompt"
+    --n-predict "${LLAMA_AGENT_N_PREDICT:-512}"
+    --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-8192}"
+    --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "$gpu_layers"
+)
+if [[ -n "${LLAMA_AGENT_PLANNER_N_PREDICT:-}" ]]; then
+    args+=(--planner-n-predict "$LLAMA_AGENT_PLANNER_N_PREDICT")
+fi
+if [[ -n "$embedding_model" ]]; then
+    args+=(--embedding-model "$embedding_model")
+fi
+
+LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
+    agent_smoke_run_logged "$log_path" "$agent_bin" "${args[@]}"
+if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
+    grep -Fq "requested_gpu_layers=$gpu_layers effective_gpu_layers=-1 fit_params=true workspace_reservation=true legacy_full_offload_fit=true" "$log_path" || {
+        echo "OpenAlex full-text model smoke did not prove the resident GPU auto-fit path; log=$log_path" >&2
+        exit 1
+    }
+fi
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=openalex\.getWork' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not execute openalex.getWork; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not execute web.fetch; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'agent workflow-choice trace: transition=choose-evidence-depth.*selected_id=fetch_full_text' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not record the host-bounded full-text choice; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'stage=tool kind=(succeeded|completed|failed).*tool=resource\.inspect' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not attempt resource.inspect; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'stage=tool kind=(succeeded|completed|failed).*tool=resource\.read' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not attempt resource.read; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'route_selection_evaluated.*openalex-full-text-evidence|selected_route_id.*openalex-full-text-evidence' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not select the imported full-text workflow route; log=$log_path" >&2
+    exit 1
+}
+if [[ "$thinking_mode" == research ]]; then
+    grep -Fq 'research acquisition started' "$log_path" || {
+        echo "OpenAlex full-text research smoke did not enter the research controller; log=$log_path" >&2
+        exit 1
+    }
+    grep -Fq 'research source recorded' "$log_path" || {
+        echo "OpenAlex full-text research smoke did not seed a workflow source; log=$log_path" >&2
+        exit 1
+    }
+    grep -Fq 'research evidence recorded' "$log_path" || {
+        echo "OpenAlex full-text research smoke did not produce research evidence; log=$log_path" >&2
+        exit 1
+    }
+fi
+echo "openalex_fulltext_model_smoke=passed"
+echo "thinking_mode=$thinking_mode"
+echo "log=$log_path"

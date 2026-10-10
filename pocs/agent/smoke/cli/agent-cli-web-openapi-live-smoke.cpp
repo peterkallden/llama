@@ -300,6 +300,102 @@ bool run_configured_openalex_smoke(
     return true;
 }
 
+bool run_configured_openalex_full_text_smoke(
+        common_memory_store & memory,
+        live_smoke_data_store & data,
+        agent_resource_store & resource_store,
+        const std::string & config_path) {
+    std::string error;
+    agent_host_config config;
+    if (!load_agent_host_config(config_path, config, error)) {
+        std::cerr << "configured OpenAlex full-text smoke could not load host config: " << error << "\n";
+        return false;
+    }
+
+    agent_host_tool_selection_request request;
+    request.resource_store_config.blob_backend = "in-memory";
+    request.resource_store_config.metadata_backend = "in-memory";
+    request.tool_context.profile_id = config.tool_profile;
+    request.tool_context.allow_network = true;
+    request.tool_context.default_timeout_ms = 60000;
+    request.tool_context.scope.namespace_id = "local";
+    request.tool_context.scope.session_id = "configured-openalex-full-text-session";
+    request.tool_context.scope.project_id = "configured-openalex-full-text-project";
+    request.tool_context.scope.turn_id = "turn-1";
+    request.openapi_providers = config.openapi_providers;
+    request.tool_profiles = config.tool_profiles;
+    request.tool_capabilities = config.tool_capabilities;
+    request.tool_family_descriptions = config.tool_family_descriptions;
+
+    common_agent_cli_tool_selection selection;
+    if (!resolve_selection(memory, data, resource_store, request, selection, error) || !selection.tool_view) {
+        std::cerr << "configured OpenAlex full-text tool resolution failed: " << error << "\n";
+        return false;
+    }
+    for (const auto & name : {"openalex.getWork", "web.fetch", "resource.inspect", "resource.read"}) {
+        if (!selection.tool_view->exposes_tool(name)) {
+            std::cerr << "configured OpenAlex full-text smoke omitted tool " << name << "\n";
+            return false;
+        }
+    }
+
+    // This OpenAlex record currently declares an openly reachable PDF. The
+    // smoke intentionally derives the URL from the returned work record and
+    // never hard-codes it into web.fetch.
+    const auto record_result = selection.tool_view->call({
+        "configured-openalex-full-text-work", "openalex.getWork", R"({"id":"W3038568908"})"}, error);
+    if (!record_result.ok || record_result.resource_refs.size() != 1) {
+        std::cerr << "configured OpenAlex full-text work lookup failed: "
+                  << record_result.safe_summary << " " << record_result.raw_diagnostic << "\n";
+        return false;
+    }
+    auto record = nlohmann::json::parse(record_result.content_json, nullptr, false);
+    if (record.is_object() && record.contains("result")) record = record["result"];
+    const auto location = record.value("best_oa_location", nlohmann::json::object());
+    const auto pdf_url = location.value("pdf_url", std::string{});
+    if (!record.is_object() || !record.contains("abstract_inverted_index") ||
+            !record.contains("abstract_text") || pdf_url.empty()) {
+        std::cerr << "configured OpenAlex full-text work did not expose a readable abstract and open PDF location: "
+                  << record_result.content_json.substr(0, 1000) << "\n";
+        return false;
+    }
+
+    const auto fetched = selection.tool_view->call({
+        "configured-openalex-full-text-fetch", "web.fetch",
+        nlohmann::json({{"url", pdf_url}, {"max_bytes", 8 * 1024 * 1024}}).dump()}, error);
+    if (!fetched.ok || fetched.resource_refs.size() != 1) {
+        std::cerr << "OpenAlex-returned full-text URL could not be fetched: "
+                  << fetched.safe_summary << " " << fetched.raw_diagnostic << "\n";
+        return false;
+    }
+    const auto inspected = selection.tool_view->call({
+        "configured-openalex-full-text-inspect", "resource.inspect",
+        nlohmann::json({{"uri", fetched.resource_refs.front().uri}}).dump()}, error);
+    if (!inspected.ok || inspected.content_json.find("application/pdf") == std::string::npos) {
+        std::cerr << "OpenAlex full text was not preserved as a PDF host resource: "
+                  << inspected.content_json.substr(0, 1000) << "\n";
+        return false;
+    }
+    const auto text = selection.tool_view->call({
+        "configured-openalex-full-text-read", "resource.read",
+        nlohmann::json({{"uri", fetched.resource_refs.front().uri},
+            {"representation", "text"}, {"max_bytes", 8192}}).dump()}, error);
+    if (text.ok && !text.content_json.empty()) {
+        std::cout << "configured_openalex_full_text_representation=passed\n";
+    } else if (text.failure_code == "tool.resource_read.representation_unavailable") {
+        // This proves the safe boundary for a PDF without an extractable text
+        // layer. The abstract is still available above; callers must report
+        // this limitation rather than infer unobserved sections.
+        std::cout << "configured_openalex_full_text_representation=unavailable\n";
+    } else {
+        std::cerr << "OpenAlex PDF text materialization failed unexpectedly: "
+                  << text.safe_summary << " " << text.raw_diagnostic << "\n";
+        return false;
+    }
+    std::cout << "configured_openalex_abstract_to_full_text_resource=passed\n";
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -312,12 +408,12 @@ int main(int argc, char ** argv) {
         else if (argument == "--spec-url" && i + 1 < argc) spec_url = argv[++i];
         else if (argument == "--config" && i + 1 < argc) config_path = argv[++i];
         else {
-            std::cerr << "usage: llama-agent-web-openapi-live-smoke --mode resource|openapi|configured [--spec-url URL] [--config PATH]\n";
+            std::cerr << "usage: llama-agent-web-openapi-live-smoke --mode resource|openapi|configured|openalex-fulltext [--spec-url URL] [--config PATH]\n";
             return 2;
         }
     }
-    if (mode != "resource" && mode != "openapi" && mode != "configured") {
-        std::cerr << "choose --mode resource, openapi or configured\n";
+    if (mode != "resource" && mode != "openapi" && mode != "configured" && mode != "openalex-fulltext") {
+        std::cerr << "choose --mode resource, openapi, configured or openalex-fulltext\n";
         return 2;
     }
 
@@ -334,6 +430,8 @@ int main(int argc, char ** argv) {
     bool passed = false;
     if (mode == "configured") {
         passed = run_configured_openalex_smoke(memory, data, resource_store, config_path);
+    } else if (mode == "openalex-fulltext") {
+        passed = run_configured_openalex_full_text_smoke(memory, data, resource_store, config_path);
     } else {
         agent_host_tool_selection_request request;
         configure_request(request);
