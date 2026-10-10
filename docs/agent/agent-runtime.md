@@ -3196,7 +3196,8 @@ The current processor catalog is intentionally small:
 | Processor | Input | Representation | Status | Configurable processor arguments |
 | --- | --- | --- | --- | --- |
 | `pdf-text-local-v1` | `application/pdf` with a direct text layer | `text` | Implemented | No external command arguments; existing host limits apply |
-| `pdf.page_image` | `application/pdf` | `page-image` | Command-contract foundation | Page, DPI, image format, colorspace and pixel/output limits |
+| `pdf-ocr-text-v1` | `application/pdf` | `text` | Explicitly configured lazy fallback | Direct text first; otherwise page rendering and OCR up to host-configured `max_pages` |
+| `pdf.page_image` | `application/pdf` | `page-image` | Implemented; local page-image E2E verified | Page, DPI, image format, colorspace and pixel/output limits |
 | `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 | `pandoc-docx-text-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `text` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, plain-text output and bounded output bytes |
 | `pandoc-docx-document-json-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
@@ -3206,23 +3207,40 @@ The current processor catalog is intentionally small:
 | `pandoc-html-document-json-v1` | `text/html` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
 | `xlsx-workbook-json-v1` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `workbook-json` with `application/json` target | Generic processor contract and bounded normalizer provided | Configured external XLSX normalizer, worksheet selection and bounded dataset materialization |
 
-The first processor is a bounded local implementation used for the current
-contract smoke. It is not a complete PDF parser: it does not render pages,
-run OCR, select individual pages, or invoke an external executable. Its
-processing request is bounded by `max_source_bytes`, `max_output_bytes`,
+The direct text processor is a bounded local implementation, not a complete
+PDF parser. It does not render pages or run OCR. When both `pdf.page_image`
+and `ocr.tesseract` are explicitly configured and `pdf.page_image.max_pages`
+is nonzero, `pdf-ocr-text-v1` wraps that direct-text attempt and lazily invokes
+rendering plus OCR only when direct text reports that a text representation is
+unavailable. Other failures do not trigger OCR. Page count comes from the
+configured renderer, pages are processed sequentially, and a page cap or
+per-page failure returns marked partial text with coverage in resource
+limitations. If no page text is recovered, the read fails. Processing remains
+bounded by `max_source_bytes`, `max_output_bytes`,
 `max_generated_resources`, `max_duration_ms`, `max_pages` and
-`max_page_bytes`; the resource service and store remain authoritative for
-scope, reads and lineage.
+`max_page_bytes`; sandbox staging separately bounds each input resource at
+`max_input_resource_bytes` (16 MiB by default), so a source PDF may be larger
+than the rendered-image output cap. OCR output is normalized to valid UTF-8
+before it is persisted, replacing malformed OCR byte sequences. The resource
+service and store remain authoritative for scope, reads and lineage.
+
+`resource.read` returns one caller-bounded range at a time (up to 32 KiB per
+call, subject to the runtime tool-result budget). The runtime's automatic
+resource-chunk continuation currently applies to large text resources attached
+as turn/plan inputs; it does not yet continue over text resources materialized
+by a workflow tool such as `web.fetch` followed by PDF OCR. Workflow consumers
+must not interpret one successful bounded read as proof that the entire
+derived resource was read.
 
 External processor arguments must be introduced as typed processor options,
-not as arbitrary command-line text. The `pdf.page_image` command-contract
-foundation now validates bounded values such as `page`, `dpi`, `format`,
+not as arbitrary command-line text. The `pdf.page_image` command validates
+bounded values such as `page`, `dpi`, `format`,
 `colorspace`, `width`, `height` and `max_output_bytes`, and builds a
 host-owned `common_agent_sandbox_request` for a selected local renderer. The
 command smoke verifies MuPDF and Ghostscript argument construction, safe source
 filenames, output limits and fail-closed validation without requiring either
-executable to be installed. This is not yet actual page rendering: execution,
-binary resource staging and sandbox-provider integration remain open. The
+executable to be installed. Its command also provides bounded page-count
+discovery for the composed OCR fallback. The
 `tesseract-ocr-v1` maps bounded values such as `language`,
 `fallback_language`, `oem`, `psm` and output format to an external Tesseract
 executable. `language` may be explicit or `auto`. In auto mode, accepted
@@ -3316,7 +3334,8 @@ The active execution-policy fields are representation-independent:
         "execution": "sandbox_required",
         "backend": "kubernetes",
         "image": "registry.example/pdf-worker@sha256:replace-me",
-        "expected_version": "mupdf-1.26"
+        "expected_version": "mupdf-1.26",
+        "max_pages": 20
       },
       "ocr.tesseract": {
         "execution": "local_preferred",
@@ -3362,14 +3381,14 @@ compatibility expectation. Version mismatches must produce bounded warning
 and status information. Required policies fail closed when the selected
 execution requirement is unavailable.
 
-`resource_read` remains a semantic tool. For a configured sandbox-backed
+`resource_read` remains a semantic tool. For a configured processor
 representation, host assembly may install an operation-scoped processing
 factory. Each read then creates the existing registry/service with the current
 resource authority, operation id, workspace and sandbox host context. The
 factory is short-lived for that read; it does not introduce a second queue,
 store or scheduler, and the model still cannot select a processor executable.
 The static provider path remains the fallback when no compatible explicit
-processor policy and sandbox execution class are available. The current
+processor policy is available. The current
 operation-scoped assembly covers the CLI, daemon and MCP host seams for the
 configured PDF page-image and Tesseract processor families; general automatic
 backend resolution for all future processors remains open.

@@ -31,3 +31,17 @@ bool make_agent_pdf_page_image_request(
         const agent_pdf_page_image_options & options,
         common_agent_sandbox_request & request,
         std::string & error);
+
+bool make_agent_pdf_page_count_request(
+        const std::string & executable,
+        const std::string & operation_id,
+        const std::string & project_id,
+        const std::string & workspace_id,
+        const common_runtime_resource_ref & source,
+        common_agent_sandbox_request & request,
+        std::string & error);
+
+bool parse_agent_pdf_page_count(
+        const std::string & renderer_output,
+        size_t & page_count,
+        std::string & error);

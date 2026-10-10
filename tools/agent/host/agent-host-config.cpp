@@ -675,6 +675,7 @@ bool parse_agent_host_config_json(
                 read_optional(it.value(), "script", policy.script);
                 read_optional(it.value(), "image", policy.image);
                 read_optional(it.value(), "expected_version", policy.expected_version);
+                read_optional(it.value(), "max_pages", policy.max_pages);
                 config.resource_processor_policies.emplace(it.key(), std::move(policy));
             }
         }
@@ -1375,6 +1376,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"script", entry.second.script},
                         {"image", entry.second.image},
                         {"expected_version", entry.second.expected_version},
+                        {"max_pages", entry.second.max_pages},
                     };
                 }
                 return policies;
@@ -1806,6 +1808,10 @@ bool validate_agent_host_config(
         if (policy.execution == "local_required" &&
                 (policy.backend == "docker" || policy.backend == "kubernetes" || policy.backend == "lxc")) {
             error = "local_required resource processor policy cannot use a sandbox backend: " + entry.first;
+            return false;
+        }
+        if (entry.first == "pdf.page_image" && policy.max_pages > 100) {
+            error = "pdf.page_image max_pages must not exceed 100";
             return false;
         }
     }

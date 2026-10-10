@@ -144,7 +144,8 @@ int main(int argc, char ** argv) {
     }, error);
     if (!pdf_read_result.ok ||
             pdf_read_result.content_json.find("CLI PDF text") == std::string::npos ||
-            pdf_read_result.content_json.find("resource.process:pdf-text-local-v1") == std::string::npos) {
+            pdf_read_result.content_json.find("resource.process:pdf-text-local-v1") == std::string::npos ||
+            pdf_read_result.content_json.find("%PDF-1.7") != std::string::npos) {
         std::fprintf(stderr, "CLI resource_read did not materialize PDF text: %s\n", pdf_read_result.content_json.c_str());
         return 1;
     }

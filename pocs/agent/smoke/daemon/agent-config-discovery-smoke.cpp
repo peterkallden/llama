@@ -244,6 +244,7 @@ int main() {
                     {"backend", "kubernetes"},
                     {"image", "registry.example/pdf-worker@sha256:test"},
                     {"expected_version", "mupdf-1.26"},
+                    {"max_pages", 20},
                 }},
                 {"pdf.text", {
                     {"execution", "local_preferred"},
@@ -275,6 +276,7 @@ int main() {
             processor_config.resource_processor_policies.size() != 5 ||
             processor_config.resource_processor_policies.at("pdf.page_image").execution != "sandbox_required" ||
             processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes" ||
+            processor_config.resource_processor_policies.at("pdf.page_image").max_pages != 20 ||
             processor_config.resource_processor_policies.at("odt.text").executable != "pandoc" ||
             processor_config.resource_processor_policies.at("html.text").backend != "docker" ||
             processor_config.resource_processor_policies.at("xlsx.workbook").script != "scripts/agent-xlsx-to-json.py") {
@@ -284,7 +286,8 @@ int main() {
     const auto serialized = agent_host_config_to_json(processor_config);
     if (!serialized.contains("resources") ||
             !serialized["resources"].contains("processor_policies") ||
-            serialized["resources"]["processor_policies"]["pdf.text"]["executable"] != "mutool") {
+            serialized["resources"]["processor_policies"]["pdf.text"]["executable"] != "mutool" ||
+            serialized["resources"]["processor_policies"]["pdf.page_image"]["max_pages"] != 20) {
         std::fprintf(stderr, "resource processor execution policy was not serialized\n");
         return 1;
     }

@@ -3,6 +3,7 @@
 #include "tools/agent/resource/agent-resource-processing-host.h"
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
 #include "tools/agent/resource/processors/agent-pdf-page-image-processor.h"
+#include "tools/agent/resource/processors/agent-pdf-ocr-text-processor.h"
 #include "tools/agent/resource/processors/agent-tesseract-ocr-processor.h"
 #include "tools/agent/resource/processors/agent-xlsx-workbook-json-processor.h"
 
@@ -17,11 +18,11 @@ class assembled_resource_processing_provider final
         : public agent_resource_processing_provider {
 public:
     assembled_resource_processing_provider(
-            std::shared_ptr<agent_resource_processing_host> host,
+            std::vector<std::shared_ptr<agent_resource_processing_host>> hosts,
             std::vector<std::shared_ptr<agent_resource_processor>> processors,
             std::shared_ptr<agent_resource_processor_registry> registry,
             std::shared_ptr<agent_resource_processing_service> service)
-        : host_(std::move(host)),
+        : hosts_(std::move(hosts)),
           processors_(std::move(processors)),
           registry_(std::move(registry)),
           service_(std::move(service)) {}
@@ -34,7 +35,7 @@ public:
 private:
     // The registry stores non-owning processor pointers. Keep all assembled
     // objects alive for the complete operation-scoped provider lifetime.
-    std::shared_ptr<agent_resource_processing_host> host_;
+    std::vector<std::shared_ptr<agent_resource_processing_host>> hosts_;
     std::vector<std::shared_ptr<agent_resource_processor>> processors_;
     std::shared_ptr<agent_resource_processor_registry> registry_;
     std::shared_ptr<agent_resource_processing_service> service_;
@@ -117,6 +118,30 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
         assembly, dispatch.execution_class, dispatch.policy.image);
     auto host = make_processing_host(assembly, dispatch.execution_backend, policy, binding);
     if (!host) return {};
+    std::vector<std::shared_ptr<agent_resource_processing_host>> hosts{host};
+
+    const auto resolve_processor_host = [&](agent_resource_processor_kind kind,
+            const char * execution_class) -> std::shared_ptr<agent_resource_processing_host> {
+        const auto & selected = dispatch.policy_for(kind);
+        if (!selected) return {};
+        const agent_resource_processor_dispatch_request processor_request{
+            assembly.policies,
+            source_type,
+            assembly.sandbox_backend,
+            assembly.local_runtime != nullptr,
+            assembly.sandbox_backend != "none"};
+        const auto backend = resolve_agent_resource_processor_backend(*selected, processor_request);
+        if (backend.empty()) return {};
+        auto processor_policy = make_sandbox_policy(assembly, execution_class, selected->image);
+        auto processor_host = make_processing_host(assembly, backend, processor_policy, binding);
+        if (processor_host) hosts.push_back(processor_host);
+        return processor_host;
+    };
+
+    auto page_host = resolve_processor_host(
+        agent_resource_processor_kind::page_image, "resource.processor.pdf.page_image");
+    auto ocr_host = resolve_processor_host(
+        agent_resource_processor_kind::ocr, "resource.processor.ocr.tesseract");
 
     auto registry = std::make_shared<agent_resource_processor_registry>();
     std::vector<std::shared_ptr<agent_resource_processor>> processors;
@@ -127,18 +152,32 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
         return true;
     };
 
+    if (source_type == "application/pdf" && page_host && ocr_host &&
+            dispatch.policy_for(agent_resource_processor_kind::page_image)->max_pages > 0) {
+        const auto & page_policy = *dispatch.policy_for(agent_resource_processor_kind::page_image);
+        const auto & ocr_policy = *dispatch.policy_for(agent_resource_processor_kind::ocr);
+        if (!add(std::make_shared<agent_pdf_ocr_text_processor>(
+                *assembly.resource_store,
+                *page_host,
+                *ocr_host,
+                execution,
+                page_policy.executable.empty() ? "mutool" : page_policy.executable,
+                ocr_policy.executable.empty() ? "tesseract" : ocr_policy.executable,
+                page_policy.max_pages))) return {};
+    }
+
     const auto page = agent_resource_processor_kind::page_image;
-    if (dispatch.has_policy(page)) {
+    if (page_host && dispatch.has_policy(page)) {
         const auto & selected = *dispatch.policy_for(page);
         if (!add(std::make_shared<agent_pdf_page_image_processor>(
-                *host, execution, agent_resource_backend_kind::local_mupdf,
+                *page_host, execution, agent_resource_backend_kind::local_mupdf,
                 selected.executable.empty() ? "mutool" : selected.executable))) return {};
     }
     const auto ocr = agent_resource_processor_kind::ocr;
-    if (dispatch.has_policy(ocr)) {
+    if (ocr_host && dispatch.has_policy(ocr)) {
         const auto & selected = *dispatch.policy_for(ocr);
         if (!add(std::make_shared<agent_tesseract_ocr_processor>(
-                *host, execution, agent_resource_backend_kind::local_tesseract,
+                *ocr_host, execution, agent_resource_backend_kind::local_tesseract,
                 selected.executable.empty() ? "tesseract" : selected.executable))) return {};
     }
     const auto pandoc = agent_resource_processor_kind::pandoc;
@@ -181,7 +220,7 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
     auto service = std::make_shared<agent_resource_processing_service>(
         *assembly.resource_store, *registry);
     return std::make_shared<assembled_resource_processing_provider>(
-        std::move(host), std::move(processors), std::move(registry), std::move(service));
+        std::move(hosts), std::move(processors), std::move(registry), std::move(service));
 }
 
 } // namespace

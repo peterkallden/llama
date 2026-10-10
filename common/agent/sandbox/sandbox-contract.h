@@ -89,6 +89,7 @@ struct common_agent_sandbox_limits {
     uint32_t cpu_count = 1;
     uint32_t process_count = 0;
     size_t max_output_bytes = 65536;
+    size_t max_input_resource_bytes = 16 * 1024 * 1024;
 };
 
 struct common_agent_sandbox_command {

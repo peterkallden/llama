@@ -1,5 +1,8 @@
 #include "agent-pdf-page-image-command.h"
 
+#include <charconv>
+#include <cctype>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -127,6 +130,75 @@ bool make_agent_pdf_page_image_request(
             error = "sandbox backend must be resolved to a concrete PDF renderer before command construction";
             return false;
     }
+    error.clear();
+    return true;
+}
+
+bool make_agent_pdf_page_count_request(
+        const std::string & executable,
+        const std::string & operation_id,
+        const std::string & project_id,
+        const std::string & workspace_id,
+        const common_runtime_resource_ref & source,
+        common_agent_sandbox_request & request,
+        std::string & error) {
+    if (executable.empty() || operation_id.empty() || workspace_id.empty() ||
+            source.uri.empty() || source.name.empty() ||
+            common_normalize_resource_media_type(source.mime_type) != "application/pdf") {
+        error = "PDF page-count request requires executable, operation, workspace and PDF source identity";
+        return false;
+    }
+    const std::string input_name = safe_file_name(source.name);
+    if (input_name.empty()) {
+        error = "PDF source name cannot be represented as a safe staged filename";
+        return false;
+    }
+    request = {};
+    request.operation_id = operation_id;
+    request.project_id = project_id;
+    request.workspace_id = workspace_id;
+    request.execution_class = "resource.processor.pdf.page_image";
+    request.workspace.input_resources.push_back(source);
+    request.limits.timeout_ms = 120000;
+    request.limits.max_output_bytes = 65536;
+    request.network = common_agent_sandbox_network_scope::none;
+    request.filesystem = common_agent_sandbox_filesystem_scope::readonly;
+    request.artifacts.collect = false;
+    request.command.program = executable;
+    request.command.working_directory = "/workspace/source";
+    request.command.arguments = {"info", "/workspace/source/" + input_name};
+    error.clear();
+    return true;
+}
+
+bool parse_agent_pdf_page_count(
+        const std::string & renderer_output,
+        size_t & page_count,
+        std::string & error) {
+    constexpr std::string_view marker = "Pages:";
+    size_t position = renderer_output.find(marker);
+    if (position == std::string::npos) {
+        error = "PDF renderer output did not include a page count";
+        return false;
+    }
+    position += marker.size();
+    while (position < renderer_output.size() &&
+            std::isspace(static_cast<unsigned char>(renderer_output[position]))) ++position;
+    const size_t begin = position;
+    while (position < renderer_output.size() &&
+            std::isdigit(static_cast<unsigned char>(renderer_output[position]))) ++position;
+    if (position == begin) {
+        error = "PDF renderer returned an invalid page count";
+        return false;
+    }
+    size_t parsed = 0;
+    const auto conversion = std::from_chars(
+        renderer_output.data() + begin, renderer_output.data() + position, parsed);
+    if (conversion.ec != std::errc{} || parsed == 0) {
+        error = "PDF renderer returned an invalid page count";
+        return false;
+    }
+    page_count = parsed;
     error.clear();
     return true;
 }

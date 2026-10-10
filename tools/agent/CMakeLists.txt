@@ -39,6 +39,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-ocr-text-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-processing-service.cpp
@@ -238,6 +239,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-ocr-text-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-factory.cpp
@@ -262,6 +264,7 @@ add_library(llama-agent-resource
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-xlsx-workbook-json-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-page-image-processor.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-pdf-ocr-text-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-command.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
 )

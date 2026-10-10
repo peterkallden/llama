@@ -376,6 +376,9 @@ struct agent_resource_processor_execution_policy {
     std::string script;
     std::string image;
     std::string expected_version;
+    // Required by bounded multi-page PDF OCR fallback. Zero disables the
+    // composed fallback even when the individual processors are configured.
+    size_t max_pages = 0;
 };
 
 struct agent_resource_processing_request {

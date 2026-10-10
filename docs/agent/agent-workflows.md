@@ -63,8 +63,42 @@ The OpenAlex full-text evidence workflow uses this seam after `getWork`: the
 model chooses between answering from the abstract and fetching full text. The
 fetch option is offered only when the returned work record contains an
 open-access PDF URL. Fetch, inspect and read are then host-materialized steps;
-the model does not repeat or construct the URL. PDF text extraction can still
-be unavailable, in which case the answer must state that limitation.
+the model does not repeat or construct the URL. `resource.read(text)` tries the
+PDF text layer first; where the host explicitly configures both the page-image
+renderer and Tesseract plus a nonzero page cap, it falls back to sequential OCR
+only when direct text is unavailable. Partial page coverage is reported as a
+limitation on the derived resource; if no text is recovered, the read remains
+unavailable rather than fabricating evidence. `resource.read` itself returns
+one bounded slice (the workflow requests 8 KiB); it does not yet iterate over
+the full derived text. Runtime chunk continuation currently applies to large
+text resources attached as turn/plan inputs, not resources produced by a
+workflow transition. Do not treat one successful read as complete full-text
+coverage when the derived resource is larger than the returned slice.
+
+Chunking applicability is intentionally about text consumption, not every
+workflow that happens to produce a resource:
+
+- OpenAlex full-text evidence is the first workflow that needs workflow-owned
+  chunk continuation: `resource.read(text)` may materialize a long PDF/OCR text
+  representation, and the current single 8 KiB read is only a preview of that
+  representation.
+- Resource/document analysis should use the same continuation when its
+  selected text representation exceeds the configured chunk budget. Binary
+  inputs such as PDF or DOCX must first pass through their configured text
+  processor.
+- Web research is a candidate only when its path reads the fetched resource.
+  A bounded `web.fetch` excerpt alone is not a full-resource read and does not
+  start chunk continuation.
+- Dataset analysis, OpenAlex record/search workflows, and OpenAPI onboarding
+  remain structured: use dataset operations, bounded API projections/pages,
+  and the OpenAPI catalog builder rather than splitting their JSON or tabular
+  contracts into text chunks.
+
+The current implementation boundary remains the one above: workflow-produced
+resources are not yet automatically fed into the chunk controller. Chunk
+continuation for multiple large resources within one plan also requires
+per-resource checkpoint/provenance; the present plan invariant tracks one
+chunk parent at a time.
 
 At runtime, bounded Dijkstra search (A* with a zero admissible heuristic)
 chooses the least-cost host-declared path. A `model_choice` is the only model
@@ -192,12 +226,12 @@ that resource-backed observations from the selected workflow are seeded into
 the existing research workspace and become recorded evidence. It requires an
 extractable source representation to meet research evidence coverage; if a
 fetched PDF has no bounded text representation, the run must fail closed rather
-than report research evidence. With the current live OpenAlex fixture, the
-full-text PDF fetch and inspection succeed, but `resource.read` reports
-`tool.resource_read.representation_unavailable`, so the research-mode run exits
-incomplete. The deliberate-mode run can still report that limitation without
-making claims about unreadable content. These outcomes are distinct from a
-successful research end-to-end run.
+than report research evidence. With OCR configured, its bounded derived text
+can enter the same evidence path; capped or failed OCR remains explicitly
+partial and must not be described as complete coverage. The model smoke
+configures the bounded local PDF/OCR processors so it exercises the production
+`resource.read` chain rather than manually invoking renderer and OCR as separate
+smoke-only steps.
 
 They share the OpenAPI read capability but carry different procedures,
 constraints and plan steps. In particular, search ranking is not treated as a

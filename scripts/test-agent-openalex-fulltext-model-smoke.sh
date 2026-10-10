@@ -39,6 +39,14 @@ provider["spec_path"] = str(pathlib.Path(spec).resolve())
 operations = provider.setdefault("policy", {}).setdefault("operations", {})
 get_work = operations["getWork"]
 provider["policy"]["operations"] = {"getWork": get_work}
+work_root = pathlib.Path(output).with_name("resource-workspaces")
+processor_sandbox = {
+    "timeout_ms": 120000,
+    "max_output_bytes": 4194304,
+    "network": "none",
+    "filesystem": "artifact_write",
+    "allow_artifacts": True,
+}
 pathlib.Path(output).write_text(json.dumps({
     "schema_version": 1,
     "model": {"backend": "server-context", "path": model},
@@ -63,7 +71,32 @@ pathlib.Path(output).write_text(json.dumps({
         },
         "providers": [provider],
     },
-    "limits": {"tool_timeout_ms": 60000},
+    "resources": {
+        "processor_policies": {
+            "pdf.page_image": {
+                "execution": "local_required",
+                "backend": "local",
+                "executable": "mutool",
+                "max_pages": 20
+            },
+            "ocr.tesseract": {
+                "execution": "local_required",
+                "backend": "local",
+                "executable": "tesseract"
+            }
+        }
+    },
+    "sandbox": {
+        "workspace": {
+            "root": str(work_root / "workspaces"),
+            "artifact_root": str(work_root / "artifacts"),
+        },
+        "classes": {
+            "resource.processor.pdf.page_image": processor_sandbox,
+            "resource.processor.ocr.tesseract": processor_sandbox,
+        },
+    },
+    "limits": {"tool_timeout_ms": 300000, "max_continuations": 8},
 }) + "\n", encoding="utf-8")
 PY
 
@@ -76,7 +109,7 @@ args=(
     --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-full-text-evidence-v1
     --thinking-mode "$thinking_mode"
     --max-tool-rounds 12
-    --require-tool-execution --agent-trace --generation-trace
+    --require-tool-execution --agent-trace --generation-trace --plan-show-summary
     --agent-inference-backend server-context
     --prompt "$prompt"
     --n-predict "${LLAMA_AGENT_N_PREDICT:-512}"
@@ -114,8 +147,8 @@ grep -Eq 'stage=tool kind=(succeeded|completed|failed).*tool=resource\.inspect' 
     echo "OpenAlex full-text model smoke did not attempt resource.inspect; log=$log_path" >&2
     exit 1
 }
-grep -Eq 'stage=tool kind=(succeeded|completed|failed).*tool=resource\.read' "$log_path" || {
-    echo "OpenAlex full-text model smoke did not attempt resource.read; log=$log_path" >&2
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=resource\.read' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not successfully read a text representation; log=$log_path" >&2
     exit 1
 }
 grep -Eq 'route_selection_evaluated.*openalex-full-text-evidence|selected_route_id.*openalex-full-text-evidence' "$log_path" || {

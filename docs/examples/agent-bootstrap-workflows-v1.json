@@ -292,7 +292,7 @@
         {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [
           {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
         ]},
-        {"id": "read-full-text", "from": "resource_inspected", "to": "text_read", "tool": "resource.read", "arguments": "{\"representation\":\"text\",\"max_bytes\":32768}", "optional": true, "bindings": [
+        {"id": "read-full-text", "from": "resource_inspected", "to": "text_read", "tool": "resource.read", "arguments": "{\"representation\":\"text\",\"max_bytes\":8192}", "optional": true, "bindings": [
           {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
         ]}
       ]

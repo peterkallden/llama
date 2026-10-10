@@ -86,7 +86,7 @@ bool common_try_register_resource_tool_adapter(
         if (representation == "bytes") {
             if (!bindings.resource_runtime.store->read_bytes_range(uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource bytes could not be read.");
             content = base64::encode(content); encoding = "base64";
-        } else if (!bindings.resource_runtime.store->read_text_range(uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) {
+        } else if (!bindings.resource_runtime.store->read_text_range(descriptor.uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) {
             return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource content could not be read.");
         }
         return common_adapter_success_json(common_tool_resource_read_result_to_json({descriptor, representation, content, encoding}));

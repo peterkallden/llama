@@ -179,7 +179,7 @@ private:
                         *resource_store,
                         resource_authority,
                         file_name,
-                        request.artifacts.max_bytes,
+                        request.limits.max_input_resource_bytes,
                         materialized_path,
                         error)) {
                     error = "sandbox resource materialization failed: " + error;
