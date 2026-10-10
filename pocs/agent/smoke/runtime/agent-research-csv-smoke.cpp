@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 namespace {
 
@@ -133,10 +134,20 @@ int main() {
         resource.mime_type = "text/csv";
         resource.size_bytes = source.content.size();
         resource.scope = common_runtime_resource_scope::turn;
-        if (!common_agent_research_add_source(workspace, {
-                source.title, source.title, source.path, "checked-in CSV fixture", "now",
-                source.uri, common_agent_research_source_kind::user_supplied, resource,
-                0.9, true, {}, "reference", true}, error)) {
+        common_agent_research_source research_source;
+        research_source.source_id = source.title;
+        research_source.title = source.title;
+        research_source.origin = source.path;
+        research_source.authority = "checked-in CSV fixture";
+        research_source.retrieved_at = "now";
+        research_source.content_hash = source.uri;
+        research_source.kind = common_agent_research_source_kind::user_supplied;
+        research_source.resource_ref = resource;
+        research_source.quality_score = 0.9;
+        research_source.primary_source = true;
+        research_source.role = "reference";
+        research_source.required = true;
+        if (!common_agent_research_add_source(workspace, std::move(research_source), error)) {
             return std::fprintf(stderr, "%s\n", error.c_str()), 1;
         }
     }

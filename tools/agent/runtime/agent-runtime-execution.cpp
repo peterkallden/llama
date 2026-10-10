@@ -1,4 +1,5 @@
 #include "agent-runtime-execution.h"
+#include "common/agent/resource-chunk-extraction.h"
 #include "agent/context-compaction.h"
 #include "agent/input-resources.h"
 #include "agent/tool-family-index.h"
@@ -483,7 +484,8 @@ bool prepare_resource_chunk_observations(
             *plan = std::move(updated);
             execution.pre_turn_events.push_back({
                 common_agent_event_type::resource_chunk_planned,
-                "bounded resource chunk plan attached",
+                "bounded resource chunk plan attached chunk_count=" +
+                    std::to_string(execution.resource_chunk_plans.back().ranges.size()),
                 {},
                 plan->id,
                 {},
@@ -501,9 +503,74 @@ bool prepare_resource_chunk_observations(
     return true;
 }
 
+bool extract_active_resource_chunk(
+        common_agent_runtime_driver_execution & execution,
+        const std::string & task,
+        common_agent_resource_chunk_context & context,
+        common_agent_resource_chunk_extraction & extraction,
+        std::string & error) {
+    if (execution.active_resource_chunk_plan >= execution.resource_chunk_plans.size() ||
+            execution.active_resource_chunk_index >=
+                execution.resource_chunk_plans[execution.active_resource_chunk_plan].ranges.size() ||
+            execution.tooling.resource_runtime.store == nullptr) {
+        error = "resource chunk extraction context is invalid";
+        return false;
+    }
+    const auto & plan = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
+    const size_t index = execution.active_resource_chunk_index;
+    const auto & range = plan.ranges[index];
+    context = {};
+    context.source = make_agent_resource_chunk_ref(plan, range);
+    context.chunk_index = range.chunk_index;
+    context.chunk_count = range.chunk_count;
+    context.byte_offset = range.byte_offset;
+    context.byte_length = range.byte_length;
+    const auto authority = make_agent_resource_read_authority(
+        execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    if (!read_agent_resource_chunk(*execution.tooling.resource_runtime.store,
+            authority, plan, index, context.text, error)) {
+        error = "host could not read active resource chunk: " + error;
+        return false;
+    }
+
+    const auto & config = execution.runtime_config.generation_config;
+    for (size_t attempt = 0; attempt < 2; ++attempt) {
+        common_agent_generation_options options;
+        options.n_predict = 128;
+        options.n_threads = config.n_threads;
+        options.generation_trace = config.generation_trace;
+        const std::string correction = attempt == 0 ? "" :
+            "the previous attempt failed because " + error +
+            ". Try once more: return one exact contiguous quote from the resource text, at most 20 words. "
+            "Do not summarize or paraphrase. Return status: no_findings if no quote helps answer the task.";
+        auto request = common_agent_make_resource_chunk_extraction_request(
+            task,
+            context,
+            execution.scope,
+            options,
+            execution.scope.turn_id + ":resource_chunk:" + std::to_string(index) +
+                ":attempt:" + std::to_string(attempt + 1),
+            correction);
+        const auto generated = execution.inference.generate_result(request);
+        if (!common_agent_generation_succeeded(generated)) {
+            error = "resource chunk extraction generation failed: " + generated.error_message;
+            if (generated.error_message.empty()) error += " model did not return a completed result";
+            return false;
+        }
+        if (common_agent_parse_resource_chunk_extraction(
+                generated.content, context.text, extraction, error)) {
+            error.clear();
+            return true;
+        }
+    }
+    error = "resource chunk extraction remained invalid after one repair attempt: " + error;
+    return false;
+}
+
 bool record_and_advance_resource_chunk(
         common_agent_runtime_driver_execution & execution,
-        const common_agent_result & slice,
+        const common_agent_resource_chunk_context & context,
+        const common_agent_resource_chunk_extraction & extraction,
         bool & chunk_chain_completed,
         std::string & error) {
     chunk_chain_completed = false;
@@ -525,11 +592,18 @@ bool record_and_advance_resource_chunk(
         error = plan_error.empty() ? "resource chunk completion requires an active plan" : plan_error;
         return false;
     }
-    const auto chunk_ref = make_agent_resource_chunk_ref(chunk_plan, chunk_plan.ranges[chunk_index]);
-    std::string summary = slice.response;
-    constexpr size_t max_summary_chars = 1024;
-    if (summary.size() > max_summary_chars) summary.resize(max_summary_chars);
-    if (summary.empty()) summary = "The bounded resource slice was presented to the runtime.";
+    const auto chunk_ref = context.source;
+    std::ostringstream summary;
+    summary << "Validated resource chunk evidence; parent=" << chunk_plan.parent.uri
+            << "; chunk=" << (chunk_index + 1) << "/" << chunk_plan.ranges.size()
+            << "; bytes=" << context.byte_offset << "+" << context.byte_length
+            << "; derivation=" << chunk_ref.lineage.derivation << ".\n";
+    if (extraction.no_findings) {
+        summary << "No task-relevant findings in this chunk.\n";
+    }
+    for (const auto & finding : extraction.findings) {
+        summary << "finding: " << finding.finding << "\nevidence: " << finding.evidence << "\n";
+    }
     common_plan_operation observed;
     observed.kind = common_plan_operation_kind::record_observation;
     observed.plan_id = plan->id;
@@ -538,7 +612,7 @@ bool record_and_advance_resource_chunk(
     observed.observation = common_plan_observation{
         "resource_chunk:" + chunk_plan.parent.uri + ":" + std::to_string(chunk_index),
         "resource_chunk",
-        summary,
+        summary.str(),
         1.0f,
         {chunk_plan.parent.uri},
         {chunk_ref},
@@ -549,7 +623,8 @@ bool record_and_advance_resource_chunk(
     *plan = std::move(updated);
     execution.pre_turn_events.push_back({
         common_agent_event_type::resource_chunk_processed,
-        "bounded resource chunk processed",
+        "bounded resource chunk processed chunk_index=" + std::to_string(chunk_index) +
+            " chunk_count=" + std::to_string(chunk_plan.ranges.size()),
         {},
         plan->id,
         {},
@@ -562,7 +637,11 @@ bool record_and_advance_resource_chunk(
         execution.active_resource_chunk_plan = static_cast<size_t>(-1);
         execution.active_resource_chunk_input = static_cast<size_t>(-1);
         execution.active_resource_chunk_index = 0;
-        execution.input_resources = execution.resource_chunk_original_inputs;
+        execution.active_resource_chunk_context.reset();
+        execution.input_resources.clear();
+        for (const auto & input : execution.resource_chunk_original_inputs) {
+            if (input.resource.uri != chunk_plan.parent.uri) execution.input_resources.push_back(input);
+        }
         return false;
     }
     ++execution.active_resource_chunk_index;
@@ -1023,6 +1102,46 @@ bool run_agent_runtime_driver(
 
     while (true) {
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
+        if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
+            if (continuation_count >= execution.runtime_config.max_continuations) {
+                aggregate.limit_reached = true;
+                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                result = std::move(aggregate);
+                break;
+            }
+            common_agent_resource_chunk_context context;
+            common_agent_resource_chunk_extraction extraction;
+            if (!extract_active_resource_chunk(
+                    execution, original_prompt, context, extraction, error)) {
+                return false;
+            }
+            execution.active_resource_chunk_context = context;
+            bool chunk_chain_completed = false;
+            const bool has_next_chunk = record_and_advance_resource_chunk(
+                execution, context, extraction, chunk_chain_completed, error);
+            if (!error.empty()) return false;
+            ++continuation_count;
+            if (has_next_chunk) {
+                execution.orchestration_config.prompt =
+                    "Continue the same task. The host is processing the next bounded resource slice; "
+                    "do not ask the model to read or locate it.\n";
+                continue;
+            }
+            if (chunk_chain_completed) {
+                if (continuation_count >= execution.runtime_config.max_continuations) {
+                    aggregate.limit_reached = true;
+                    aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                    result = std::move(aggregate);
+                    break;
+                }
+                execution.orchestration_config.prompt =
+                    "Synthesize the validated resource-chunk findings from the active plan in chunk order. "
+                    "Use the exact evidence and source provenance recorded by the host. The source text has "
+                    "already been read and processed; do not claim it still needs to be fetched or read. "
+                    "State uncertainty or incomplete coverage if any chunk is missing.\n";
+                continue;
+            }
+        }
         const auto & model_tools = execution.model_tools.empty()
             ? execution.tooling.tools
             : execution.model_tools;
@@ -1128,41 +1247,6 @@ bool run_agent_runtime_driver(
             ++continuation_count;
             continue;
         }
-        bool resource_chunk_chain_completed = false;
-        const bool has_next_resource_chunk = record_and_advance_resource_chunk(
-            execution, slice, resource_chunk_chain_completed, error);
-        if (!error.empty()) return false;
-
-        if (has_next_resource_chunk) {
-            if (continuation_count >= execution.runtime_config.max_continuations) {
-                aggregate.limit_reached = true;
-                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
-                result = std::move(aggregate);
-                break;
-            }
-            execution.orchestration_config.prompt =
-                "Continue the same task using the next bounded resource slice.\n"
-                "Treat the previous slice observation as evidence; do not restart the plan.\n"
-                "Inspect and synthesize the currently attached resource_chunk, then produce the next bounded result.\n";
-            ++continuation_count;
-            continue;
-        }
-
-        if (resource_chunk_chain_completed) {
-            if (continuation_count >= execution.runtime_config.max_continuations) {
-                aggregate.limit_reached = true;
-                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
-                result = std::move(aggregate);
-                break;
-            }
-            execution.orchestration_config.prompt =
-                "Synthesize the completed bounded resource observations in deterministic chunk order.\n"
-                "Use the plan observations as working evidence and retain references to the authoritative resource.\n"
-                "Do not treat an individual chunk response as the final answer; produce the bounded synthesis result.\n";
-            ++continuation_count;
-            continue;
-        }
-
         if (slice.response_stop_reason != common_agent_generation_stop_reason::limit ||
                 !slice.plan_id ||
                 continuation_count >= execution.runtime_config.max_continuations) {

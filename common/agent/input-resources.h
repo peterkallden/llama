@@ -76,7 +76,7 @@ inline std::string common_agent_render_input_resource_context(
         } else {
             out << " inspection=resource_inspect,resource_read";
         }
-        if (!resource.lineage.parent_uri.empty()) {
+        if (common_runtime_resource_lineage_is_chunk(resource.lineage)) {
             out << " chunk_index=" << resource.lineage.chunk_index
                 << " chunk_count=" << resource.lineage.chunk_count
                 << " byte_offset=" << resource.lineage.byte_offset

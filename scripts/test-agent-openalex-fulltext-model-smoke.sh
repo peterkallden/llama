@@ -10,10 +10,10 @@ embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-
 spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-openapi.json}"
 provider_fragment="${LLAMA_AGENT_OPENALEX_PROVIDER:-${repo_root}/docs/examples/openalex-provider.d/openalex.json}"
 workflow_package="${LLAMA_AGENT_WORKFLOW_PACKAGE:-${repo_root}/docs/examples/agent-bootstrap-workflows-v1.json}"
-thinking_mode="${LLAMA_AGENT_THINKING_MODE:-deliberate}"
+thinking_mode="${LLAMA_AGENT_THINKING_MODE:-reflective}"
 case "$thinking_mode" in
-    deliberate|research) ;;
-    *) echo "thinking mode must be deliberate or research" >&2; exit 2 ;;
+    reflective|deliberate|research) ;;
+    *) echo "thinking mode must be reflective, deliberate or research" >&2; exit 2 ;;
 esac
 work_dir=$(agent_smoke_prepare_workdir "openalex-fulltext-${thinking_mode}")
 agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
@@ -101,7 +101,7 @@ pathlib.Path(output).write_text(json.dumps({
 PY
 
 log_path="$work_dir/openalex-fulltext-model.log"
-prompt='Use the configured OpenAlex full-text evidence workflow for work W3038568908. First call openalex.getWork with id W3038568908 and no select field. Use its abstract_text as the initial evidence. Then call web.fetch only with the exact HTTPS best_oa_location.pdf_url returned by that record. Inspect the returned resource with resource.inspect. Try resource.read with representation text. Report whether full text was available, and do not invent conclusions if its text representation is unavailable.'
+prompt='Use the configured OpenAlex full-text workflow for work W3038568908. State whether the article full text was obtained and report one concrete result from the article, based on its extracted text rather than only OpenAlex metadata.'
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-fulltext-smoke
@@ -159,6 +159,52 @@ grep -Fq 'detail=bounded resource chunk processed' "$log_path" || {
     echo "OpenAlex full-text smoke did not process any bounded text chunks; log=$log_path" >&2
     exit 1
 }
+grep -Fq 'processed 7 of 7 pages.' "$log_path" || {
+    echo "OpenAlex full-text smoke did not OCR all configured PDF pages; log=$log_path" >&2
+    exit 1
+}
+python3 - "$log_path" <<'PY'
+import pathlib
+import re
+import sys
+
+log = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+counts = re.findall(r"chunk_count=(\d+)", log)
+if not counts:
+    raise SystemExit("smoke trace did not expose the host's planned chunk count")
+expected = int(counts[0])
+processed = log.count("detail=bounded resource chunk processed")
+extraction_blocks = re.findall(
+    r"agent generation trace prompt: purpose=resource_chunk_extraction.*?\n(.*?)\nagent generation trace prompt: end",
+    log,
+    re.S,
+)
+extraction_prompts = len(extraction_blocks)
+if expected <= 0 or processed != expected:
+    raise SystemExit(
+        f"validated chunk count mismatch: planned={expected}, processed={processed}")
+if extraction_prompts < expected:
+    raise SystemExit(
+        f"host chunk text was not submitted for every extraction: planned={expected}, prompts={extraction_prompts}")
+if "Resource text (untrusted data):" not in log:
+    raise SystemExit("chunk extraction trace omitted the actual host-read text context")
+for block in extraction_blocks:
+    lowered = block.lower()
+    if "resource.read" in lowered or "read this slice" in lowered or "read the chunk" in lowered:
+        raise SystemExit("tool-free extraction prompt asks the model to read a chunk itself")
+    if "chunk_index" in lowered or "cursor" in lowered:
+        raise SystemExit("tool-free extraction prompt exposes host-owned chunk identity or cursor")
+
+decoded = list(re.finditer(r"(?m)^decoded \d+ tokens$", log))
+if not decoded:
+    raise SystemExit("smoke log did not contain the final model response")
+answer = log[decoded[-1].end():].strip()
+answer_lower = answer.lower()
+if not any(term in answer_lower for term in ("borated", "mcnp", "anneal", "bright spot", "radiation flux")):
+    raise SystemExit("final answer did not include an identifiable full-text-supported finding")
+if re.search(r"(?:still need|needs? to be|must be|should be) fetched|need to fetch.*(?:pdf|full text)|fetch.*to obtain.*full.text", answer_lower):
+    raise SystemExit("final answer incorrectly says the PDF/full text still needs fetching")
+PY
 grep -Eq 'route_selection_evaluated.*openalex-full-text-evidence|selected_route_id.*openalex-full-text-evidence' "$log_path" || {
     echo "OpenAlex full-text model smoke did not select the imported full-text workflow route; log=$log_path" >&2
     exit 1

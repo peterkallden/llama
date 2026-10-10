@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 
+using common_agent_resource_chunk_context = common_agent_generation_resource_chunk;
+
 struct common_agent_runtime_policy {
     std::string agent_inference_backend = "cli";
     std::string tool_profile;
@@ -133,6 +135,7 @@ struct common_agent_runtime_driver_execution {
     size_t active_resource_chunk_plan = static_cast<size_t>(-1);
     size_t active_resource_chunk_input = static_cast<size_t>(-1);
     size_t active_resource_chunk_index = 0;
+    std::optional<common_agent_resource_chunk_context> active_resource_chunk_context;
     // A successful family preflight makes ordinary answer-only fallback
     // invalid until at least one selected tool has completed.
     bool require_tool_execution = false;

@@ -22,6 +22,13 @@ bool common_agent_research_record_evidence(
         common_agent_research_evidence evidence,
         std::string & error);
 
+// Carry host-validated resource-chunk findings into research as preliminary
+// evidence. This does not mark any research gap as answered.
+bool common_agent_research_seed_chunk_observations(
+        common_agent_research_workspace & workspace,
+        const std::vector<common_plan_observation> & observations,
+        std::string & error);
+
 bool common_agent_research_add_comparison(
         common_agent_research_workspace & workspace,
         common_agent_research_source_comparison comparison,

@@ -36,6 +36,7 @@ enum class common_agent_generation_purpose {
     reasoning,
     reflection,
     memory_learning,
+    resource_chunk_extraction,
 };
 
 inline const char * common_agent_generation_purpose_name(common_agent_generation_purpose purpose) {
@@ -53,6 +54,7 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
         case common_agent_generation_purpose::reasoning:           return "reasoning";
         case common_agent_generation_purpose::reflection:          return "reflection";
         case common_agent_generation_purpose::memory_learning:     return "memory_learning";
+        case common_agent_generation_purpose::resource_chunk_extraction: return "resource_chunk_extraction";
     }
     return "draft";
 }
@@ -83,6 +85,18 @@ struct common_agent_generation_resource {
     std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_text_fallback;
 };
 
+// Transient host-read text for one bounded resource chunk. Chunk identity and
+// byte provenance remain host-owned; backends receive this context only for
+// the dedicated extraction generation and do not acquire resource access.
+struct common_agent_generation_resource_chunk {
+    std::string text;
+    common_runtime_resource_ref source;
+    size_t chunk_index = 0;
+    size_t chunk_count = 0;
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+};
+
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(
         common_agent_generation_options options,
         int n_predict) {
@@ -103,6 +117,7 @@ struct common_agent_generation_request {
     // bounded compact-DSL workflow action selector.
     std::string grammar;
     std::vector<common_agent_generation_resource> input_resources;
+    std::optional<common_agent_generation_resource_chunk> resource_chunk;
     // Immutable host-prepared activation for this turn. The shared snapshot
     // avoids copying potentially large cvec data across continuation steps.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;

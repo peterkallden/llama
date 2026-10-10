@@ -104,6 +104,9 @@ int main() {
         {"data.transform", "transform", R"({"type":"object"})"},
         {"artifact.export", "export", R"({"type":"object"})"},
         {"web.fetch", "fetch", R"({"type":"object"})"},
+        {"memory.search", "Search scoped memory", R"({"type":"object"})"},
+        {"memory.get", "Read scoped memory", R"({"type":"object"})"},
+        {"memory.remember", "Propose memory", R"({"type":"object"})"},
     };
     common_agent_dataset_descriptor dataset;
     dataset.ref.uri = "dataset://local/sales";
@@ -130,6 +133,14 @@ int main() {
         envelope, common_agent_execution_phase::normal, "web.fetch"));
     assert(common_agent_execution_envelope_allows(
         envelope, common_agent_execution_phase::normal, "artifact.export"));
+    assert(common_agent_execution_envelope_allows(
+        envelope, common_agent_execution_phase::normal, "memory.search"));
+    assert(common_agent_execution_envelope_allows(
+        envelope, common_agent_execution_phase::reflection, "memory.get"));
+    assert(common_agent_execution_envelope_allows(
+        envelope, common_agent_execution_phase::research, "memory.search"));
+    assert(!common_agent_execution_envelope_allows(
+        envelope, common_agent_execution_phase::normal, "memory.remember"));
     assert(common_agent_execution_envelope_allows(
         envelope, common_agent_execution_phase::research, "web.fetch"));
     assert(!envelope.fingerprint.empty());

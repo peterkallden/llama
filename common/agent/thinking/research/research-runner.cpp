@@ -282,6 +282,7 @@ common_agent_research_result common_agent_research_runner::run(
         return result;
     };
     const auto started_at = std::chrono::steady_clock::now();
+    std::string terminal_task_failure;
     auto action = controller.begin(workspace, error);
     if (!error.empty()) return controller.finalize(workspace);
 
@@ -341,6 +342,11 @@ common_agent_research_result common_agent_research_runner::run(
         }
         ++workspace.tool_calls;
         if (dependencies_ready && !executor.execute(action, workspace, event, error)) return controller.finalize(workspace);
+        if (event.type == common_agent_research_event_type::task_failed && !event.retryable) {
+            terminal_task_failure = event.failure_code.empty()
+                ? event.failure_summary
+                : event.failure_code + ": " + event.failure_summary;
+        }
         emit_lifecycle({
             event.type == common_agent_research_event_type::task_failed
                 ? common_agent_research_lifecycle_event_type::task_failed
@@ -370,5 +376,8 @@ common_agent_research_result common_agent_research_runner::run(
     result.stop_reason = action.stop_reason;
     result.complete = action.stop_reason == common_agent_research_stop_reason::sufficient_coverage ||
         action.stop_reason == common_agent_research_stop_reason::success_criteria_met;
+    if (!result.complete && error.empty() && !terminal_task_failure.empty()) {
+        error = std::move(terminal_task_failure);
+    }
     return result;
 }

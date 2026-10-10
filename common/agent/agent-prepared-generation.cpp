@@ -40,6 +40,12 @@ bool common_agent_prepare_chat_generation(
             COMMON_GRAMMAR_TYPE_USER,
             request.grammar,
         };
+        // Custom grammars define the entire response contract. Do not leave
+        // chat-template tool-call triggers attached: a tool-free DSL response
+        // may not begin with any of those trigger strings, which would leave
+        // the grammar inactive and let malformed text through unchanged.
+        prepared.grammar_lazy = false;
+        prepared.grammar_triggers.clear();
         // The server's streaming validator is intentionally JSON-specific.
         // Custom grammars are completed by the sampler and collected as a
         // normal response, then validated by their owning DSL/parser.

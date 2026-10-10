@@ -41,6 +41,7 @@ struct common_agent_research_task {
 };
 
 enum class common_agent_research_source_kind { repository_file, documentation, web_page, api_result, issue, pull_request, memory, user_supplied, remote_agent_result };
+enum class common_agent_research_source_availability { materialized_context, requires_acquisition };
 struct common_agent_research_source {
     std::string source_id, title, origin, authority, retrieved_at, content_hash;
     common_agent_research_source_kind kind = common_agent_research_source_kind::documentation;
@@ -48,6 +49,9 @@ struct common_agent_research_source {
     double quality_score = 0.0;
     bool primary_source = false;
     std::string memory_id;
+    common_memory_kind memory_kind = common_memory_kind::episode;
+    common_agent_research_source_availability availability =
+        common_agent_research_source_availability::requires_acquisition;
     std::string role = "reference";
     bool required = false;
 };

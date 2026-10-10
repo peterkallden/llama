@@ -40,7 +40,7 @@ static void add_tool_learning_metadata(
 static bool request_has_active_resource_chunk(const common_agent_request & request) {
     return std::any_of(request.input_resources.begin(), request.input_resources.end(),
         [](const common_agent_input_resource & input) {
-            return !input.resource.lineage.parent_uri.empty();
+            return common_runtime_resource_lineage_is_chunk(input.resource.lineage);
         });
 }
 

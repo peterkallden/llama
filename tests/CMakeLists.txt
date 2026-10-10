@@ -366,6 +366,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
+        test-agent-resource-chunker.cpp
         test-agent-loop.cpp
         test-agent-tool-failure.cpp
         test-agent-tool-rounds.cpp
@@ -470,7 +471,7 @@ test-agent-flydelta-alpha-response-search.cpp
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|plan-cozo|tool-catalog|agent-tool-output-codec)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-resource-chunker|plan-cozo|tool-catalog|agent-tool-output-codec)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()
@@ -479,6 +480,9 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-resource-chunker")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-oracles")
             target_include_directories(${TEST_NAME} PRIVATE

@@ -1,12 +1,27 @@
 #include "agent/agent-runtime-context.h"
 
 #include "agent/thinking/research/research-workspace-factory.h"
+#include "agent/thinking/research/research-assessor.h"
 
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
 
 namespace {
+
+const char * research_stop_reason_name(common_agent_research_stop_reason reason) {
+    switch (reason) {
+        case common_agent_research_stop_reason::success_criteria_met: return "success_criteria_met";
+        case common_agent_research_stop_reason::sufficient_coverage: return "sufficient_coverage";
+        case common_agent_research_stop_reason::budget_exhausted: return "budget_exhausted";
+        case common_agent_research_stop_reason::deadline_exceeded: return "deadline_exceeded";
+        case common_agent_research_stop_reason::cancelled: return "cancelled";
+        case common_agent_research_stop_reason::no_progress: return "no_progress";
+        case common_agent_research_stop_reason::source_access_blocked: return "source_access_blocked";
+        case common_agent_research_stop_reason::policy_blocked: return "policy_blocked";
+    }
+    return "unknown";
+}
 
 bool bridge_research_result_to_plan(
         common_agent_runtime_turn_context & context,
@@ -79,6 +94,11 @@ bool seed_research_from_workflow_resources(
         common_agent_runtime_turn_context & context,
         common_agent_research_workspace & workspace) {
     if (context.outer_plan == nullptr || !context.outer_plan->route_binding) return true;
+
+    // Reuse only host-validated compact findings. The helper deliberately
+    // leaves multi-gap research unseeded rather than guessing claim mapping.
+    if (!common_agent_research_seed_chunk_observations(
+            workspace, context.outer_plan->observations, context.error)) return false;
 
     for (const auto & step : context.outer_plan->steps) {
         if (step.status != common_plan_step_status::completed || !step.tool_call ||
@@ -222,6 +242,13 @@ bool run_common_agent_research_phase(
         return false;
     }
 
+    context.research_assessor = std::make_unique<common_agent_research_bounded_assessor>();
+    if (!common_agent_research_assess_materialized_evidence(
+            *context.research_workspace, *context.research_assessor, context.error)) {
+        context.result.error = "materialized research evidence assessment failed: " + context.error;
+        return false;
+    }
+
     context.emit_event(
         common_agent_event_type::research_started,
         "research acquisition started plan_id=" + context.request.plan_id.value_or(""));
@@ -232,7 +259,6 @@ bool run_common_agent_research_phase(
         context.request.plan_id.value_or(""),
         context.research_workspace->workspace_id);
 
-    context.research_assessor = std::make_unique<common_agent_research_bounded_assessor>();
     context.research_adapter = std::make_unique<common_agent_research_runtime_adapter>(
         *context.tools, context.research_assessor.get());
     context.research_runner = std::make_unique<common_agent_research_runner>();
@@ -308,9 +334,18 @@ bool run_common_agent_research_phase(
             "research incomplete",
             {},
             context.research_workspace->workspace_id);
-        context.result.error = context.error.empty()
-            ? "research did not meet its evidence coverage requirement"
-            : context.error;
+        std::ostringstream failure;
+        failure << (context.error.empty()
+                ? "research did not meet its evidence coverage requirement"
+                : context.error)
+                << " [stop_reason=" << research_stop_reason_name(research_result.stop_reason)
+                << " coverage=" << research_result.coverage.answered_gaps << "/"
+                << research_result.coverage.total_gaps
+                << " evidence=" << research_result.evidence.size()
+                << " sources=" << research_result.sources.size()
+                << " iterations=" << context.research_workspace->iterations_completed
+                << " tool_calls=" << context.research_workspace->tool_calls << "]";
+        context.result.error = failure.str();
         return false;
     }
 

@@ -22,6 +22,15 @@ struct common_agent_research_assessment {
     std::string summary;
 };
 
+class common_agent_research_assessor;
+
+// Assess evidence already materialized by the host before scheduling another
+// research acquisition task.
+bool common_agent_research_assess_materialized_evidence(
+        common_agent_research_workspace & workspace,
+        const common_agent_research_assessor & assessor,
+        std::string & error);
+
 struct common_agent_research_event {
     common_agent_research_event_type type = common_agent_research_event_type::task_completed;
     std::string task_id;

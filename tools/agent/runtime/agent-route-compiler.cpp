@@ -106,6 +106,13 @@ void append_unique(std::vector<std::string> & values, const std::string & value)
     }
 }
 
+bool is_ambient_memory_read_tool(const std::string & name) {
+    return name == "memory.search" || name == "memory_search" ||
+        name == "memory.get" || name == "memory_get" ||
+        name == "memory.inspect" || name == "memory_inspect" ||
+        name == "memory.conflict_check" || name == "memory_conflict_check";
+}
+
 bool has_context_fact(
         const common_agent_request & request,
         const common_agent_runtime_tooling & tooling,
@@ -271,7 +278,9 @@ bool build_agent_execution_envelope(
         const bool route_allows = route.kind != common_agent_route_kind::blueprint_workflow ||
             std::find(route.resolved_tools.begin(), route.resolved_tools.end(), tool.name) !=
                 route.resolved_tools.end();
-        if (route_allows) append_unique(envelope.resolved_allowed_tools, tool.name);
+        if (route_allows || is_ambient_memory_read_tool(tool.name)) {
+            append_unique(envelope.resolved_allowed_tools, tool.name);
+        }
     }
     if (route.kind == common_agent_route_kind::blueprint_workflow &&
             envelope.resolved_allowed_tools.empty()) {

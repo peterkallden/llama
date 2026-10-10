@@ -197,11 +197,17 @@ The first execution slice now exists beside the controller. A research runner
 drives the controller sequentially through the existing
 `common_agent_tool_runtime`; its adapter selects a host-approved research tool,
 normalizes the successful result into a workspace source and evidence item,
-and feeds the typed event back to the controller. User-supplied resources and
-memory hits are represented as sources and can be selected through bounded
-`resource_read` and `memory_get` tasks. Multiple objective success criteria
-become separate research gaps. The normalized result preserves source,
-evidence, comparison and provenance data for later verification.
+and feeds the typed event back to the controller. User-supplied resources are
+acquisition candidates and can be selected through bounded `resource_read`
+tasks. Memory hits already attached to the request are materialized context,
+not acquisition candidates: they are retained with their memory kind and
+role, and the controller never schedules `memory_get` to reread them. Procedure,
+constraint and decision memories are methodological context, not factual
+evidence for answering a research gap. Read-only memory tools remain available
+to research when the host tool catalog exposes them; memory writes remain
+subject to their existing policy. Multiple objective success criteria become
+separate research gaps. The normalized result preserves source, evidence,
+comparison and provenance data for later verification.
 
 The bounded research slice now also includes source comparison, a bounded
 synthesis context, and a separate answer-verification contract. Tool success
@@ -3507,9 +3513,9 @@ bounded result summary and the parent-linked chunk reference. If another range
 exists, it replaces the active input view and continues the same plan and lane.
 There is no chunk-specific queue, worker, or cancellation path. Cancellation,
 deadlines, continuation limits, and checkpoint creation therefore remain the
-responsibility of the normal turn driver. The input-resource renderer exposes
-the parent URI and byte range so the model can use the existing `resource_read`
-tool contract to retrieve the active slice.
+responsibility of the normal turn driver. The input-resource renderer does not
+ask the model to retrieve chunk contents: the host reads the active byte range
+and supplies its actual text to a dedicated, tool-free extraction generation.
 
 The runtime event stream distinguishes `resource_chunk_planned` from
 `resource_chunk_processed`. The daemon projects these into typed
@@ -3517,13 +3523,26 @@ The runtime event stream distinguishes `resource_chunk_planned` from
 observation remains the durable progress record. This keeps live tracing useful
 without making the event stream a second progress store.
 
-When the final bounded chunk has been processed, the controller restores the
-original resource input and schedules one bounded synthesis slice in the same
-session lane. An active parent-linked chunk is therefore never allowed to
-complete the final-response plan step by itself. The synthesis slice is gated
-by the ordered plan observations and retains the original resource as the
-authoritative source. This is an internal continuation of the existing turn,
-not a second daemon command or chunk queue.
+Each extraction returns flat `status: findings` with one exact, task-relevant
+`finding` quote (at most 20 words), or `status: no_findings`. The host parser
+enforces the DSL and word limit, then checks the quote against the actual slice
+after whitespace normalization. The host stores the verified quote as both
+finding and evidence; synthesis performs the interpretation. Malformed
+output, process chatter, or a quote not present in the chunk gets one bounded
+repair attempt and never advances the cursor. Only validated findings, their
+evidence, and parent/range provenance are persisted; raw OCR/text remains
+transient. Once all chunks are validated, the controller removes the full source from
+model-facing inputs and schedules a bounded synthesis slice from ordered plan
+observations. This is an internal continuation of the existing turn, not a
+second daemon command or chunk queue.
+
+If reflection later escalates this same plan into research, the research
+workspace may reuse the validated finding/quote pairs as preliminary,
+model-selected excerpts tied to the host resource and byte range. This carries
+forward existing work without rereading or persisting raw OCR. It does not mark
+a research gap answered: the ordinary research assessor and coverage policy
+still decide whether the evidence is sufficient. When more than one research
+gap is open, the runtime does not guess which gap a chunk finding supports.
 
 Workflow-produced text uses this exact continuation path only when the
 workflow definition declares `resource_read_policy: chunked`; the backward-
@@ -3554,9 +3573,9 @@ The current chunking path is deliberately bounded and text-oriented:
 3. The original resource descriptor remains the source of truth. Each chunk is
    only a parent-linked range view carrying its byte offset, length, overlap,
    and chunk index.
-4. The existing session lane exposes one active chunk at a time to the model.
-   After the slice returns, the runtime records a bounded `resource_chunk`
-   observation and advances the same plan to the next range.
+4. The host reads one active chunk at a time and supplies its text to a
+   tool-free extractor. Only valid DSL with quotes verified against
+   that chunk creates a `resource_chunk` observation and advances the plan.
 5. Resume uses the plan's completed chunk observations and starts at the first
    missing index. Typed daemon events expose planning and processing progress,
    while the plan remains the durable progress record.

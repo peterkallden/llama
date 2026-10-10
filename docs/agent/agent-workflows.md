@@ -22,6 +22,14 @@ when the host can resolve them in the active tool view; those resolved tools
 are part of the route envelope and its fingerprint from route selection.
 Context requirements are checked separately and do not grant tool authority.
 
+Host-provided read-only memory tools (`memory.search`, `memory.get`,
+`memory.inspect`, and `memory.conflict_check`) remain ambient in a scoped route
+when they are present in the host's tool catalog. They are not workflow write
+authority; memory mutation tools remain subject to the route and memory policy.
+This tool availability is separate from memory hits already attached to the
+request, which research treats as materialized context rather than work that
+must be reacquired.
+
 `allowed_tools` remains accepted for v1 package compatibility. When semantic
 capabilities are also present, `allowed_tools` can only narrow the resolved
 tool set. New workflow packages should prefer capabilities.
@@ -70,12 +78,26 @@ only when direct text is unavailable. Partial page coverage is reported as a
 limitation on the derived resource; if no text is recovered, the read remains
 unavailable rather than fabricating evidence. The workflow opts into
 `resource_read_policy: chunked`: after a successful text read whose derived
-resource exceeds the chunk budget, the runtime yields before final synthesis,
-then feeds the host chunker one bounded slice at a time and synthesizes only
-after all slices have been observed. The typed resource reference comes from
-the read adapter's actual text descriptor (including PDF/OCR-derived text),
-not by parsing the tool's JSON output. Small resources retain the ordinary
-single-read path.
+resource exceeds the chunk budget, the runtime yields before final synthesis.
+The host reads each byte range and gives its actual text to a separate,
+tool-free extraction generation with a bounded token budget. The model returns
+flat `status: no_findings` or one exact, task-relevant `finding` quote (up to 20
+words). The host verifies that quote against the active slice and stores it as
+both the finding and its evidence; later synthesis makes the interpretation.
+The host parser enforces the DSL and word limit; only a verified quote can be
+recorded or advance the cursor. Generic process chatter, invalid DSL, and a
+quote absent from the active slice do not count as processed. Final synthesis uses
+the ordered validated findings and source provenance instead of reattaching
+the complete text. The typed resource reference comes from the read adapter's
+actual text descriptor (including PDF/OCR-derived text), not by parsing the
+tool's JSON output. Small resources retain the ordinary single-read path.
+
+If reflection subsequently requests research, the runtime can seed its
+research workspace with those validated finding/quote pairs and their source
+byte ranges. Before any new acquisition is scheduled, the bounded research
+assessor evaluates this materialized evidence against the open gaps and the
+normal source-count/comparison requirements. Unaccepted findings leave the gap
+open for research; ambiguous multi-gap findings are not assigned automatically.
 
 Chunking applicability is intentionally about text consumption, not every
 workflow that happens to produce a resource:
@@ -83,10 +105,10 @@ workflow that happens to produce a resource:
 - OpenAlex full-text evidence and resource/document analysis explicitly opt in
   to `chunked` text reads. Binary inputs such as PDF or DOCX first pass through
   their configured text processor; the resulting text descriptor is chunked.
-- Web research optionally resolves `resource.read`; if the model actually
-  reads a fetched resource and that workflow is configured for chunked reads,
-  the same continuation applies. A bounded `web.fetch` excerpt alone does not
-  start chunk continuation.
+- Web research optionally resolves `resource.read`; if the workflow reads a
+  fetched resource and is configured for chunked reads, the same host-read
+  extraction path applies. A bounded `web.fetch` excerpt alone does not start
+  chunk continuation.
 - Dataset analysis, OpenAlex record/search workflows, and OpenAPI onboarding
   remain structured: use dataset operations, bounded API projections/pages,
   and the OpenAPI catalog builder rather than splitting their JSON or tabular
@@ -98,11 +120,10 @@ from `resource.read`; each plan is limited to one chunked parent resource. If a
 second distinct resource is requested for chunking, the runtime fails with a
 clear new-plan requirement rather than mixing evidence or checkpoint lineage.
 
-The current implementation boundary remains the one above: workflow-produced
-resources are not yet automatically fed into the chunk controller. Chunk
-continuation for multiple large resources within one plan also requires
-per-resource checkpoint/provenance; the present plan invariant tracks one
-chunk parent at a time.
+Workflow-produced text resources are handed to the same host-owned chunk
+controller as attached text resources. Multiple chunk parents within one plan
+remain unsupported because checkpoint/provenance currently tracks one parent
+at a time.
 
 At runtime, bounded Dijkstra search (A* with a zero admissible heuristic)
 chooses the least-cost host-declared path. A `model_choice` is the only model

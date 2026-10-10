@@ -1,14 +1,31 @@
 #include "agent/thinking/research/research-contract.h"
 #include "agent/thinking/research/research-controller.h"
 #include "agent/thinking/research/research-workspace-factory.h"
-#include "agent/thinking/research/research-workspace.h"
 #include "agent/thinking/research/research-assessor.h"
+#include "agent/thinking/research/research-workspace.h"
+#include "agent/thinking/research/research-runner.h"
 #include "agent/input-resources.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 #include <cassert>
+
+class terminal_failure_executor final : public common_agent_research_tool_executor {
+public:
+    bool execute(
+            const common_agent_research_action & action,
+            common_agent_research_workspace &,
+            common_agent_research_event & event,
+            std::string &) const override {
+        event.type = common_agent_research_event_type::task_failed;
+        event.task_id = action.task_id;
+        event.gap_id = action.gap_id;
+        event.failure_code = "tool.route_denied";
+        event.failure_summary = "resource.read is outside the active envelope";
+        return true;
+    }
+};
 
 int main() {
     common_agent_request factory_request;
@@ -50,6 +67,57 @@ int main() {
         factory_workspace.sources.front().content_hash.empty());
     assert(factory_workspace.sources.back().kind == common_agent_research_source_kind::memory);
     assert(factory_workspace.sources.back().memory_id == memory_hit.memory.id);
+    assert(factory_workspace.sources.back().memory_kind == common_memory_kind::procedure);
+    assert(factory_workspace.sources.back().availability ==
+        common_agent_research_source_availability::materialized_context);
+    assert(factory_workspace.sources.back().role == "method_context");
+
+    common_agent_research_workspace chunk_workspace;
+    chunk_workspace.workspace_id = "research:chunk-turn";
+    chunk_workspace.objective.objective_id = "chunk-objective";
+    chunk_workspace.objective.question = "What result did the paper report?";
+    chunk_workspace.scope.namespace_id = "chunk-namespace";
+    chunk_workspace.scope.session_id = "chunk-session";
+    chunk_workspace.budget.max_sources = 4;
+    chunk_workspace.gaps.push_back({"chunk-gap", "What result did the paper report?", "", "the question", 1});
+    common_runtime_resource_ref chunk_ref;
+    chunk_ref.uri = "agent-resource://chunk-turn/paper-text";
+    chunk_ref.name = "paper-text";
+    chunk_ref.lineage = {"agent-resource://chunk-turn/paper-text", 2, 3, 4096, 4096, 256,
+        "host.chunk.text.v1"};
+    std::vector<common_plan_observation> chunk_observations{
+        {"chunk-2", "resource_chunk",
+            "Validated resource chunk evidence.\nfinding: Radiation increased.\nevidence: radiation flux increased",
+            1.0f, {}, {chunk_ref}, 0}};
+    assert(common_agent_research_seed_chunk_observations(
+        chunk_workspace, chunk_observations, factory_error));
+    assert(chunk_workspace.sources.size() == 1 && chunk_workspace.evidence.size() == 1);
+    assert(chunk_workspace.evidence.front().origin == common_agent_research_evidence_origin::model_inference);
+    assert(chunk_workspace.evidence.front().model_inferred);
+    assert(chunk_workspace.evidence.front().source_location.find("#bytes=4096+4096") != std::string::npos);
+    assert(chunk_workspace.gaps.front().evidence_ids.size() == 1);
+    assert(chunk_workspace.gaps.front().status == common_agent_research_gap_status::open);
+    common_agent_research_bounded_assessor bounded_assessor;
+    assert(common_agent_research_assess_materialized_evidence(
+        chunk_workspace, bounded_assessor, factory_error));
+    assert(chunk_workspace.gaps.front().status == common_agent_research_gap_status::sufficiently_answered);
+    common_agent_research_controller chunk_controller;
+    const auto assessed_action = chunk_controller.begin(chunk_workspace, factory_error);
+    assert(assessed_action.kind == common_agent_research_action_kind::complete);
+    assert(assessed_action.stop_reason == common_agent_research_stop_reason::sufficient_coverage);
+
+    auto ambiguous_chunk_workspace = chunk_workspace;
+    ambiguous_chunk_workspace.sources.clear();
+    ambiguous_chunk_workspace.evidence.clear();
+    ambiguous_chunk_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    ambiguous_chunk_workspace.gaps.front().evidence_ids.clear();
+    ambiguous_chunk_workspace.gaps.push_back(
+        {"chunk-gap-2", "What method was used?", "", "", 1});
+    assert(common_agent_research_seed_chunk_observations(
+        ambiguous_chunk_workspace, chunk_observations, factory_error));
+    assert(ambiguous_chunk_workspace.sources.empty() && ambiguous_chunk_workspace.evidence.empty());
+    assert(ambiguous_chunk_workspace.gaps.front().status == common_agent_research_gap_status::open);
+
     const auto input_context = common_agent_render_input_resource_context(factory_request.input_resources);
     assert(input_context.find("id=r1") != std::string::npos);
     assert(input_context.find("agent-resource://factory-turn/upload-1") == std::string::npos);
@@ -69,8 +137,9 @@ int main() {
     factory_workspace.sources.front().resource_ref.reset();
     const auto memory_action = factory_controller.begin(factory_workspace, factory_error);
     assert(memory_action.kind == common_agent_research_action_kind::schedule_task);
-    assert(memory_action.preferred_tools.size() == 1 && memory_action.preferred_tools.front() == "memory_get");
-    assert(memory_action.instruction == memory_hit.memory.id);
+    assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
+        "memory_get") == memory_action.preferred_tools.end());
+    assert(memory_action.instruction == factory_workspace.gaps.front().question);
 
     common_agent_research_workspace workspace;
     workspace.workspace_id = "research-1";
@@ -214,6 +283,24 @@ int main() {
     assert(retry_action.task_id != retry_start.task_id);
     assert(retry_action.instruction != retry_start.instruction);
     assert(retry_action.preferred_tools != retry_start.preferred_tools);
+
+    auto failed_workspace = factory_workspace;
+    failed_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    failed_workspace.gaps.front().evidence_ids.clear();
+    failed_workspace.tasks.clear();
+    failed_workspace.evidence.clear();
+    failed_workspace.budget.max_iterations = 1;
+    failed_workspace.budget.max_tool_calls = 1;
+    failed_workspace.no_progress_iterations = 0;
+    failed_workspace.coverage = {};
+    terminal_failure_executor failure_executor;
+    common_agent_research_runner research_runner;
+    std::string run_error;
+    const auto failed_result = research_runner.run(
+        failed_workspace, failure_executor, run_error);
+    assert(!failed_result.complete);
+    assert(run_error.find("tool.route_denied") != std::string::npos);
+    assert(run_error.find("outside the active envelope") != std::string::npos);
 
     auto confidence_workspace = workspace;
     confidence_workspace.gaps.front().status = common_agent_research_gap_status::open;

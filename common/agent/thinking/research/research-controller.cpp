@@ -1,6 +1,8 @@
 #include "agent/thinking/research/research-controller.h"
+#include "agent/thinking/research/research-assessor.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace {
 
@@ -219,19 +221,14 @@ common_agent_research_action schedule_next_gap(
     task.priority = selected->priority;
     task.max_attempts = std::max(1, workspace.budget.max_iterations);
     for (const auto & source : workspace.sources) {
-        if (source.kind == common_agent_research_source_kind::memory && !source.memory_id.empty() &&
-                !source_used_for_gap(workspace, *selected, source.source_id)) {
-            task.instruction = source.memory_id;
-            task.preferred_tools = {"memory_get"};
-            break;
-        }
         const bool resource_backed_source =
             source.kind == common_agent_research_source_kind::user_supplied ||
             source.kind == common_agent_research_source_kind::documentation ||
             source.kind == common_agent_research_source_kind::web_page ||
             source.kind == common_agent_research_source_kind::api_result ||
             source.kind == common_agent_research_source_kind::remote_agent_result;
-        if (resource_backed_source && source.resource_ref &&
+        if (resource_backed_source && source.availability ==
+                common_agent_research_source_availability::requires_acquisition && source.resource_ref &&
                 !source_used_for_gap(workspace, *selected, source.source_id)) {
             task.instruction = source.resource_ref->uri;
             task.preferred_tools = {"resource_read"};
@@ -258,6 +255,54 @@ common_agent_research_action schedule_next_gap(
 }
 
 } // namespace
+
+bool common_agent_research_assess_materialized_evidence(
+        common_agent_research_workspace & workspace,
+        const common_agent_research_assessor & assessor,
+        std::string & error) {
+    for (auto & gap : workspace.gaps) {
+        if (gap.status != common_agent_research_gap_status::open) continue;
+        std::unordered_set<std::string> source_identities;
+        bool has_acceptable_evidence = false;
+        for (const auto & evidence_id : gap.evidence_ids) {
+            const auto evidence = std::find_if(workspace.evidence.begin(), workspace.evidence.end(),
+                [&](const auto & item) { return item.evidence_id == evidence_id; });
+            if (evidence == workspace.evidence.end() ||
+                    evidence->relation == common_agent_research_evidence_relation::contradicts) continue;
+            const auto assessment = assessor.assess(gap, *evidence);
+            if (assessment.status == common_agent_research_assessment_status::insufficient ||
+                    assessment.status == common_agent_research_assessment_status::contradicted ||
+                    std::max(evidence->confidence, assessment.confidence) < workspace.budget.minimum_confidence) {
+                continue;
+            }
+            const auto source = std::find_if(workspace.sources.begin(), workspace.sources.end(),
+                [&](const auto & item) { return item.source_id == evidence->source_id; });
+            if (source == workspace.sources.end()) continue;
+            const auto identity = source->content_hash.empty()
+                ? (source->resource_ref ? source->resource_ref->uri : source->origin + ":" + source->title)
+                : source->content_hash;
+            source_identities.insert(identity);
+            has_acceptable_evidence = true;
+        }
+        if (!has_acceptable_evidence ||
+                source_identities.size() < static_cast<size_t>(std::max(1, workspace.budget.minimum_sources))) {
+            continue;
+        }
+        if (workspace.budget.minimum_sources >= 2 && std::none_of(
+                workspace.comparisons.begin(), workspace.comparisons.end(),
+                [&](const auto & comparison) { return comparison.gap_id == gap.gap_id; })) {
+            continue;
+        }
+        if (!common_agent_research_transition_gap(
+                workspace, gap.gap_id,
+                common_agent_research_gap_status::investigating, error) ||
+                !common_agent_research_transition_gap(
+                    workspace, gap.gap_id,
+                    common_agent_research_gap_status::sufficiently_answered, error)) return false;
+    }
+    error.clear();
+    return true;
+}
 
 common_agent_research_action common_agent_research_controller::begin(
         common_agent_research_workspace & workspace,

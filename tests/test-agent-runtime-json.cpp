@@ -1,14 +1,17 @@
 #include "agent/runtime-json-contracts.h"
+#include "agent/resource-chunk-extraction.h"
 #include "agent/input-resources.h"
+#include "agent/agent-inference.h"
 #include "agent/dataset-contracts.h"
 #include "plan/plan-json.h"
 
 #include <cassert>
+#include <cstdio>
 
 #define TEST_ASSERT(expr) do { \
     const bool test_result = static_cast<bool>(expr); \
     assert(test_result); \
-    if (!test_result) return 1; \
+    if (!test_result) { std::fprintf(stderr, "TEST_ASSERT failed at line %d: %s\n", __LINE__, #expr); return 1; } \
 } while (false)
 
 int main() {
@@ -19,6 +22,104 @@ int main() {
     common_runtime_resource_lineage chunk_lineage{
         "resource://derived/ocr-text", 0, 6, 0, 4096, 0, "host.chunk.text.v1"};
     assert(common_runtime_resource_lineage_is_chunk(chunk_lineage));
+
+    common_agent_resource_chunk_extraction chunk_extraction;
+    std::string chunk_error;
+    const std::string chunk_text = "Radiation flux increased.\nThe camera remained operational during the campaign.";
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: Radiation flux increased.\n"
+        "finding: The camera remained operational during the campaign.",
+        chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.size() == 2);
+    TEST_ASSERT(chunk_extraction.findings.front().finding == "Radiation flux increased.");
+    TEST_ASSERT(chunk_extraction.findings.front().evidence == "Radiation flux increased.");
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: findings",
+        chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("does not occur") != std::string::npos);
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: no_findings", chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.no_findings && chunk_extraction.findings.empty());
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "I will read this slice now.", chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: not in this resource",
+        chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("does not occur") != std::string::npos);
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding:", chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("must not be empty") != std::string::npos);
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: This finding has more than twenty words and should be rejected by the host parser because it is too long to be a concise evidence excerpt.",
+        chunk_text, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("at most 20 words") != std::string::npos);
+    const std::string twenty_word_evidence =
+        "status: findings\nfinding: The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment period.";
+    const std::string twenty_word_chunk =
+        "The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment period.";
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        twenty_word_evidence, twenty_word_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(common_agent_resource_chunk_word_count(chunk_extraction.findings[0].evidence) == 20);
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment across all operating shifts.",
+        "The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment across all operating shifts.",
+        chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("at most 20 words") != std::string::npos);
+    const std::string quoted_repeated_status =
+        "status: findings\n"
+        "finding: \"The cameras are installed in lead shield boxes.\"\n"
+        "status: findings\n"
+        "finding: \"Radiation flux was modeled by MCNP-6.\"";
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        quoted_repeated_status,
+        "The cameras are installed in lead shield boxes. Radiation flux was modeled by MCNP-6.",
+        chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.size() == 2);
+    TEST_ASSERT(chunk_extraction.findings[1].evidence == "Radiation flux was modeled by MCNP-6.");
+    common_agent_input_resource processor_resource;
+    processor_resource.resource.uri = "resource://derived/ocr";
+    processor_resource.resource.lineage = processor_lineage;
+    const auto processor_context = common_agent_render_input_resource_context({processor_resource});
+    TEST_ASSERT(processor_context.find("chunk_index=") == std::string::npos);
+    common_agent_input_resource chunk_resource;
+    chunk_resource.resource.uri = "resource://derived/ocr";
+    chunk_resource.resource.lineage = chunk_lineage;
+    const auto chunk_context = common_agent_render_input_resource_context({chunk_resource});
+    TEST_ASSERT(chunk_context.find("chunk_index=0 chunk_count=6") != std::string::npos);
+
+    common_agent_generation_resource_chunk generation_chunk;
+    generation_chunk.text = chunk_text;
+    generation_chunk.source.uri = "resource://derived/ocr";
+    generation_chunk.chunk_index = 2;
+    generation_chunk.chunk_count = 6;
+    generation_chunk.byte_offset = 8192;
+    generation_chunk.byte_length = chunk_text.size();
+    common_agent_generation_request generation_request;
+    generation_request.resource_chunk = generation_chunk;
+    TEST_ASSERT(generation_request.resource_chunk->text == chunk_text);
+    TEST_ASSERT(generation_request.resource_chunk->chunk_index == 2);
+    common_agent_generation_options extraction_options;
+    extraction_options.n_predict = 128;
+    auto extraction_request = common_agent_make_resource_chunk_extraction_request(
+        "Summarize the camera result.", generation_chunk, common_agent_scope{},
+        extraction_options, "chunk-test");
+    TEST_ASSERT(extraction_request.purpose == common_agent_generation_purpose::resource_chunk_extraction);
+    TEST_ASSERT(extraction_request.tools.empty());
+    TEST_ASSERT(extraction_request.tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE);
+    TEST_ASSERT(extraction_request.messages.size() == 2);
+    TEST_ASSERT(extraction_request.messages[1].content.find(chunk_text) != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[1].content.find("Select a quote only if it helps answer the task.") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[1].content.find("resource.read") == std::string::npos);
+    TEST_ASSERT(extraction_request.grammar.empty());
+    TEST_ASSERT(extraction_request.messages[0].content.find("status: findings") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("finding: <exact contiguous quote") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("at most 20 words") != std::string::npos);
+    auto repair_request = common_agent_make_resource_chunk_extraction_request(
+        "Summarize the camera result.", generation_chunk, common_agent_scope{},
+        extraction_options, "chunk-repair-test",
+        "return one exact quote that appears in the resource text.");
+    TEST_ASSERT(repair_request.messages[0].content.find("Correction:") != std::string::npos);
+    TEST_ASSERT(extraction_request.resource_chunk->byte_offset == 8192);
 
     common_agent_dataset_ref provenance_ref;
     provenance_ref.uri = "dataset://local/orders";

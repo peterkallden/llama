@@ -192,6 +192,8 @@ void test_prepare_bounded_custom_grammar_generation() {
     assert(common_agent_prepare_chat_generation(templates.get(), request, prepared));
     assert(prepared.grammar.type == COMMON_GRAMMAR_TYPE_USER);
     assert(prepared.grammar.grammar == request.grammar);
+    assert(!prepared.grammar_lazy);
+    assert(prepared.grammar_triggers.empty());
     assert(!prepared.ignore_eos && !prepared.suppress_eog && !prepared.stream);
     assert(!prepared.parse_tool_calls);
 }

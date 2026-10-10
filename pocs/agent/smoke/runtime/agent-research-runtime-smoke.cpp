@@ -23,16 +23,20 @@ public:
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         ++calls;
         if (call.name == "memory_get") {
+            ++memory_get_calls;
             return common_tool_execution_result::success(
                 "{\"memory\":{\"id\":\"memory-smoke-1\",\"summary\":\"Use the existing runtime contract.\"}}",
                 "memory_get returned one deterministic memory record");
         }
+        ++repository_search_calls;
         return common_tool_execution_result::success(
             "{\"matches\":[{\"path\":\"common/agent\",\"line\":1}]}",
             "repository.search returned one deterministic repository match");
     }
 
     mutable int calls = 0;
+    mutable int memory_get_calls = 0;
+    mutable int repository_search_calls = 0;
 };
 
 class retryable_research_tools final : public common_agent_tool_runtime {
@@ -436,7 +440,8 @@ int main() {
     for (const auto & event : permanent_failure_events) {
         permanent_failure_retry_scheduled = permanent_failure_retry_scheduled || event.retry;
     }
-    if (!error.empty() || permanent_failure_result.complete || permanent_failure_tools.calls != 1 ||
+    if (error.find("tool.repository.search.transient") == std::string::npos ||
+            permanent_failure_result.complete || permanent_failure_tools.calls != 1 ||
             permanent_failure_workspace.tool_calls != 1 || permanent_failure_workspace.tasks.size() != 1 ||
             permanent_failure_workspace.tasks.front().status != common_agent_research_task_status::failed ||
             permanent_failure_workspace.gaps.front().status != common_agent_research_gap_status::blocked ||
@@ -606,14 +611,20 @@ int main() {
             !research_trace_context || !research_trace_completed ||
             !research_trace_task || !research_trace_source ||
             !research_trace_evidence || !research_trace_comparison ||
-            !research_task_started || !research_task_completed || !research_sources_compared || tools.calls != 4 ||
+            !research_task_started || !research_task_completed || !research_sources_compared ||
+            tools.calls != 4 || tools.memory_get_calls != 0 || tools.repository_search_calls != 4 ||
             runtime_result.research_result->established_claim_ids.empty() ||
-            runtime_result.research_result->sources.size() != 2 ||
+            runtime_result.research_result->sources.size() != 3 ||
             runtime_result.research_result->evidence.size() != 2 ||
             !runtime_result.research_verification ||
             runtime_result.research_verification->decision != common_agent_research_verification_decision::accept ||
             !runtime_result.research_verification->answer_sufficient) {
-        std::fprintf(stderr, "research agent runtime integration failed: %s\n", runtime_result.error.c_str());
+        std::fprintf(stderr,
+            "research agent runtime integration failed: %s calls=%d memory_get=%d repository_search=%d sources=%zu evidence=%zu\n",
+            runtime_result.error.c_str(), tools.calls, tools.memory_get_calls,
+            tools.repository_search_calls,
+            runtime_result.research_result ? runtime_result.research_result->sources.size() : 0,
+            runtime_result.research_result ? runtime_result.research_result->evidence.size() : 0);
         return 1;
     }
     const auto bridged_plan = plan_store.get(runtime_result.plan_id.value_or(""), error);

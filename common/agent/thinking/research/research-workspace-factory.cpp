@@ -74,6 +74,12 @@ bool common_agent_research_create_workspace(
         source.origin = "memory";
         source.authority = "host-memory-store";
         source.kind = common_agent_research_source_kind::memory;
+        source.memory_kind = hit.memory.kind;
+        source.availability = common_agent_research_source_availability::materialized_context;
+        source.role = hit.memory.kind == common_memory_kind::procedure ||
+                hit.memory.kind == common_memory_kind::constraint ||
+                hit.memory.kind == common_memory_kind::decision
+            ? "method_context" : "memory_context";
         source.quality_score = hit.final_score > 0.0f ? std::min(1.0f, hit.final_score) : hit.memory.confidence;
         source.primary_source = false;
         if (!common_agent_research_add_source(workspace, std::move(source), error)) return false;
