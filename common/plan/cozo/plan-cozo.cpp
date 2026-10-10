@@ -60,21 +60,43 @@ static common_runtime_resource_ref parse_resource_ref(const json & value) {
     return resource;
 }
 
-static json serialize(const common_plan_state & p) { json steps=json::array(), observations=json::array(), constraints=json::array(), assumptions=json::array(), bindings=json::array(); for(const auto & s:p.steps) { json step={{"id",s.id},{"title",s.title},{"objective",s.objective},{"intended_contribution",s.intended_contribution},{"mode",step_mode_name(common_plan_step_effective_mode(s))},{"status",step_status_name(s.status)},{"depends_on",s.depends_on},{"blocked_by",s.blocked_by},{"required_evidence",s.required_evidence},{"source_memory_ids",s.source_memory_ids},{"optional",s.optional},{"generated_from_memory",s.generated_from_memory},{"created_at",s.created_at},{"updated_at",s.updated_at}}; if(s.selected_tool)step["selected_tool"]=*s.selected_tool; if(s.result_summary)step["result_summary"]=*s.result_summary; if(s.tool_call)step["tool_call"]={{"name",s.tool_call->name},{"arguments_json",s.tool_call->arguments_json}}; steps.push_back(std::move(step)); } for(const auto & binding:p.workflow_bindings) bindings.push_back({{"workflow_ref",binding.workflow_ref},{"workflow_revision",binding.workflow_revision}}); for(const auto & observation:p.observations) { json resources = json::array(); for (const auto & resource : observation.resource_refs) resources.push_back(serialize_resource_ref(resource)); json datasets = json::array(); for (const auto & dataset : observation.dataset_refs) datasets.push_back({{"uri",dataset.uri},{"name",dataset.name},{"row_count",dataset.row_count},{"column_count",dataset.column_count},{"source_resource_uri",dataset.source_resource_uri},{"source_representation",dataset.source_representation}}); observations.push_back({{"id",observation.id},{"source",observation.source},{"summary",observation.summary},{"confidence",observation.confidence},{"evidence_ids",observation.evidence_ids},{"resource_refs",resources},{"dataset_refs",datasets},{"created_at",observation.created_at}}); } for(const auto & constraint:p.constraints) constraints.push_back({{"id",constraint.id},{"description",constraint.description},{"hard",constraint.hard}}); for(const auto & assumption:p.assumptions) assumptions.push_back({{"id",assumption.id},{"statement",assumption.statement},{"confidence",assumption.confidence},{"valid",assumption.valid},{"evidence_ids",assumption.evidence_ids}}); json out={{"id",p.id},{"namespace_id",p.namespace_id},{"session_id",p.session_id},{"project_id",p.project_id},{"turn_id",p.turn_id},{"source_revision",p.source_revision},{"selection_description",p.selection_description},{"kind",kind_name(p.kind)},{"derived_from_plan_id",p.derived_from_plan_id},{"scope",scope_name(p.scope)},{"status",status_name(p.status)},{"purpose",p.purpose},{"goal",p.goal},{"success_criteria",p.success_criteria},{"required_capabilities",p.required_capabilities},{"steps",steps},{"observations",observations},{"constraints",constraints},{"assumptions",assumptions},{"workflow_bindings",bindings},{"active_step_id",p.active_step_id},{"next_action",p.next_action},{"version",p.version},{"created_at",p.created_at},{"updated_at",p.updated_at}}; if(p.workflow_definition)out["workflow_definition"]={{"workflow_ref",p.workflow_definition->workflow_ref},{"workflow_revision",p.workflow_definition->workflow_revision},{"family",p.workflow_definition->family},{"graph_revision",p.workflow_definition->graph_revision},{"allowed_tools",p.workflow_definition->allowed_tools}}; return out; }
+static json serialize_workflow_definition(const common_plan_workflow_definition & definition) {
+    json value = {{"workflow_ref", definition.workflow_ref}, {"workflow_revision", definition.workflow_revision},
+        {"family", definition.family}, {"graph_revision", definition.graph_revision},
+        {"allowed_tools", definition.allowed_tools}, {"required_capabilities", definition.required_capabilities},
+        {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context}};
+    if (!definition.transitions.empty()) {
+        value["start_state"] = definition.start_state; value["terminal_states"] = definition.terminal_states;
+        value["transitions"] = json::array();
+        for (const auto & transition : definition.transitions) value["transitions"].push_back({
+            {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
+            {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+            {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
+            {"candidates", transition.candidate_json_pointer}, {"cost", transition.cost}});
+    }
+    return value;
+}
+
+static common_plan_workflow_definition parse_workflow_definition(const json & definition) {
+    common_plan_workflow_definition value;
+    value.workflow_ref=definition.value("workflow_ref",std::string{}); value.workflow_revision=definition.value("workflow_revision",std::string{});
+    value.family=definition.value("family",std::string{}); value.graph_revision=definition.value("graph_revision",std::string{});
+    value.allowed_tools=definition.value("allowed_tools",std::vector<std::string>{}); value.required_capabilities=definition.value("required_capabilities",std::vector<std::string>{});
+    value.optional_capabilities=definition.value("optional_capabilities",std::vector<std::string>{}); value.required_context=definition.value("required_context",std::vector<std::string>{});
+    value.start_state=definition.value("start_state",std::string{}); value.terminal_states=definition.value("terminal_states",std::vector<std::string>{});
+    for (const auto & item : definition.value("transitions",json::array())) value.transitions.push_back({item.value("id",std::string{}),item.value("from",std::string{}),item.value("to",std::string{}),item.value("kind",std::string("tool")) == "model_choice" ? common_plan_workflow_transition_kind::model_choice : common_plan_workflow_transition_kind::tool,item.value("tool",std::string{}),item.value("arguments",std::string("{}")),item.value("candidates",std::string{}),item.value("cost",1.0f)});
+    return value;
+}
+
+static json serialize(const common_plan_state & p) { json steps=json::array(), observations=json::array(), constraints=json::array(), assumptions=json::array(), bindings=json::array(); for(const auto & s:p.steps) { json step={{"id",s.id},{"title",s.title},{"objective",s.objective},{"intended_contribution",s.intended_contribution},{"mode",step_mode_name(common_plan_step_effective_mode(s))},{"status",step_status_name(s.status)},{"depends_on",s.depends_on},{"blocked_by",s.blocked_by},{"required_evidence",s.required_evidence},{"source_memory_ids",s.source_memory_ids},{"optional",s.optional},{"generated_from_memory",s.generated_from_memory},{"created_at",s.created_at},{"updated_at",s.updated_at}}; if(s.selected_tool)step["selected_tool"]=*s.selected_tool; if(s.result_summary)step["result_summary"]=*s.result_summary; if(s.semantic_alias)step["semantic_alias"]=*s.semantic_alias; if(s.tool_call)step["tool_call"]={{"name",s.tool_call->name},{"arguments_json",s.tool_call->arguments_json}}; steps.push_back(std::move(step)); } for(const auto & binding:p.workflow_bindings) bindings.push_back({{"workflow_ref",binding.workflow_ref},{"workflow_revision",binding.workflow_revision}}); for(const auto & observation:p.observations) { json resources = json::array(); for (const auto & resource : observation.resource_refs) resources.push_back(serialize_resource_ref(resource)); json datasets = json::array(); for (const auto & dataset : observation.dataset_refs) datasets.push_back({{"uri",dataset.uri},{"name",dataset.name},{"row_count",dataset.row_count},{"column_count",dataset.column_count},{"source_resource_uri",dataset.source_resource_uri},{"source_representation",dataset.source_representation}}); observations.push_back({{"id",observation.id},{"source",observation.source},{"summary",observation.summary},{"confidence",observation.confidence},{"evidence_ids",observation.evidence_ids},{"resource_refs",resources},{"dataset_refs",datasets},{"created_at",observation.created_at}}); } for(const auto & constraint:p.constraints) constraints.push_back({{"id",constraint.id},{"description",constraint.description},{"hard",constraint.hard}}); for(const auto & assumption:p.assumptions) assumptions.push_back({{"id",assumption.id},{"statement",assumption.statement},{"confidence",assumption.confidence},{"valid",assumption.valid},{"evidence_ids",assumption.evidence_ids}}); json out={{"id",p.id},{"namespace_id",p.namespace_id},{"session_id",p.session_id},{"project_id",p.project_id},{"turn_id",p.turn_id},{"source_revision",p.source_revision},{"selection_description",p.selection_description},{"kind",kind_name(p.kind)},{"derived_from_plan_id",p.derived_from_plan_id},{"scope",scope_name(p.scope)},{"status",status_name(p.status)},{"purpose",p.purpose},{"goal",p.goal},{"success_criteria",p.success_criteria},{"required_capabilities",p.required_capabilities},{"steps",steps},{"observations",observations},{"constraints",constraints},{"assumptions",assumptions},{"workflow_bindings",bindings},{"active_step_id",p.active_step_id},{"next_action",p.next_action},{"version",p.version},{"created_at",p.created_at},{"updated_at",p.updated_at}}; if(p.workflow_definition)out["workflow_definition"]={{"workflow_ref",p.workflow_definition->workflow_ref},{"workflow_revision",p.workflow_definition->workflow_revision},{"family",p.workflow_definition->family},{"graph_revision",p.workflow_definition->graph_revision},{"allowed_tools",p.workflow_definition->allowed_tools}}; return out; }
 static json serialize_with_route_fields(const common_plan_state & p) {
     auto value = serialize(p);
+    // Keep the graph contract intact on the Cozo path as well.  The compact
+    // legacy serializer above predates capability-first workflow definitions.
+    if (p.workflow_definition) value["workflow_definition"] = serialize_workflow_definition(*p.workflow_definition);
     value["workflow_policy"] = workflow_policy_name(p.workflow_policy);
     value["procedure_refs"] = p.procedure_refs;
-    if (p.workflow_definition) value["workflow_definition"] = {
-        {"workflow_ref", p.workflow_definition->workflow_ref},
-        {"workflow_revision", p.workflow_definition->workflow_revision},
-        {"family", p.workflow_definition->family},
-        {"graph_revision", p.workflow_definition->graph_revision},
-        {"allowed_tools", p.workflow_definition->allowed_tools},
-        {"required_capabilities", p.workflow_definition->required_capabilities},
-        {"optional_capabilities", p.workflow_definition->optional_capabilities},
-        {"required_context", p.workflow_definition->required_context}
-    };
+    if (p.workflow_definition) value["workflow_definition"] = serialize_workflow_definition(*p.workflow_definition);
     if (p.selected_workflow) value["selected_workflow"] = {
         {"workflow_ref", p.selected_workflow->workflow_ref},
         {"workflow_revision", p.selected_workflow->workflow_revision}
@@ -116,7 +138,7 @@ static bool deserialize(const std::string & text, common_plan_state & p) {
     p.procedure_refs = j.value("procedure_refs", std::vector<std::string>{});
     for (const auto & binding : j.value("workflow_bindings", json::array())) p.workflow_bindings.push_back({binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{})});
     if (j.contains("selected_workflow") && j["selected_workflow"].is_object()) p.selected_workflow = common_plan_workflow_binding{j["selected_workflow"].value("workflow_ref", std::string{}), j["selected_workflow"].value("workflow_revision", std::string{})};
-    if (j.contains("workflow_definition") && j["workflow_definition"].is_object()) { const auto & definition=j["workflow_definition"]; p.workflow_definition=common_plan_workflow_definition{definition.value("workflow_ref",std::string{}),definition.value("workflow_revision",std::string{}),definition.value("family",std::string{}),definition.value("graph_revision",std::string{}),definition.value("allowed_tools",std::vector<std::string>{}),definition.value("required_capabilities",std::vector<std::string>{}),definition.value("optional_capabilities",std::vector<std::string>{}),definition.value("required_context",std::vector<std::string>{})}; }
+    if (j.contains("workflow_definition") && j["workflow_definition"].is_object()) p.workflow_definition=parse_workflow_definition(j["workflow_definition"]);
     if (j.contains("route_binding") && j["route_binding"].is_object()) { const auto & binding=j["route_binding"]; p.route_binding=common_plan_route_binding{binding.value("route_id",std::string{}),binding.value("blueprint_ref",std::string{}),binding.value("blueprint_revision",std::string{}),binding.value("workflow_ref",std::string{}),binding.value("workflow_revision",std::string{}),binding.value("graph_revision",std::string{}),binding.value("execution_envelope_fingerprint",std::string{}),binding.value("policy_revision",std::string{})}; }
     if (j.contains("active_step_id") && !j["active_step_id"].is_null()) p.active_step_id = j["active_step_id"].get<std::string>();
     if (j.contains("next_action") && !j["next_action"].is_null()) p.next_action = j["next_action"].get<std::string>();
@@ -143,6 +165,7 @@ static bool deserialize(const std::string & text, common_plan_state & p) {
             x.updated_at = s.value("updated_at", int64_t(0));
             if (s.contains("selected_tool") && s["selected_tool"].is_string()) x.selected_tool = s["selected_tool"].get<std::string>();
             if (s.contains("result_summary") && s["result_summary"].is_string()) x.result_summary = s["result_summary"].get<std::string>();
+            if (s.contains("semantic_alias") && s["semantic_alias"].is_string()) x.semantic_alias = s["semantic_alias"].get<std::string>();
             if (s.contains("tool_call") && s["tool_call"].is_object() && s["tool_call"].value("name", std::string{}).size()) {
                 x.tool_call = common_plan_tool_call{
                     s["tool_call"].value("name", std::string{}),

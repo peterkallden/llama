@@ -131,6 +131,32 @@ struct common_plan_workflow_binding {
     std::string workflow_revision;
 };
 
+// A workflow graph is host-owned method structure.  It deliberately names
+// only registered tools and JSON-pointer dataflow; request-specific values
+// remain in task observations and never in an imported definition.
+enum class common_plan_workflow_transition_kind {
+    tool,
+    model_choice,
+};
+
+struct common_plan_workflow_transition {
+    std::string id;
+    std::string from_state;
+    std::string to_state;
+    common_plan_workflow_transition_kind kind = common_plan_workflow_transition_kind::tool;
+    // Exact host-registered tool name for tool transitions.  Empty only for
+    // model_choice, whose candidate values are derived from an observation.
+    std::string tool_name;
+    // Canonical JSON object. Values may use {$from_step, $json_pointer}; the
+    // normal plan binding materializer resolves those only after the source
+    // observation exists.
+    std::string arguments_template_json = "{}";
+    // For model_choice, an RFC-6901 pointer into the immediately preceding
+    // observation that yields the bounded candidate array.
+    std::string candidate_json_pointer;
+    float cost = 1.0f;
+};
+
 // Workflow definitions describe a host-validated family of work. They never
 // contain request-specific resource ids or tool arguments.
 struct common_plan_workflow_definition {
@@ -150,6 +176,12 @@ struct common_plan_workflow_definition {
     // Host facts required before this workflow can be materialized, e.g.
     // "dataset.available". They are checked independently of tool authority.
     std::vector<std::string> required_context;
+    // Empty preserves the v1 one-action workflow behaviour.  Non-empty
+    // definitions are a bounded directed graph evaluated by the generic
+    // workflow transition runtime.
+    std::string start_state;
+    std::vector<std::string> terminal_states;
+    std::vector<common_plan_workflow_transition> transitions;
 };
 
 // Host-owned route provenance for a concrete task plan.  This is deliberately

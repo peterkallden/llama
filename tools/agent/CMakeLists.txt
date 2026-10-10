@@ -17,11 +17,9 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-client.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-event-collector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-host-config.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-http.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-sandbox-assembly.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-client.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-transport.cpp
@@ -122,6 +120,8 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ENGINE_SOURCES})
 # dependency direction; these pieces compose the engine and CLI providers and
 # must not be split back across support in static builds.
 set(AGENT_RUNTIME_HOST_SOURCES
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-chat-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
@@ -132,6 +132,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-execution.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-assembly.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-plan-orchestration.cpp
 )
 

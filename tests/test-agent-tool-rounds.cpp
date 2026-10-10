@@ -5,6 +5,8 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cstdio>
+#include <nlohmann/json.hpp>
 
 class repair_test_runtime final : public test_tool_runtime_registry_adapter {
 public:
@@ -149,6 +151,77 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+
+    // A large structured result remains valid JSON when it crosses the
+    // model-observation budget.  Raw byte truncation used to make this
+    // evidence disappear from the model-facing projection.
+    common_registered_tool large_tool;
+    large_tool.name = "large";
+    large_tool.arguments_schema = R"({"type":"object","additionalProperties":false})";
+    large_tool.handler = [](const std::string &) {
+        return common_tool_execution_result::success(
+            nlohmann::json{{"results", nlohmann::json::array({
+                nlohmann::json{{"id", "W1"}, {"display_name", std::string(2048, 'x')}},
+                nlohmann::json{{"id", "W2"}, {"display_name", std::string(2048, 'y')}}
+            })}}.dump());
+    };
+    if (!registry.register_tool(std::move(large_tool), error)) return 205;
+    class large_result_planner final : public common_planner {
+    public:
+        common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+            common_plan_proposal proposal;
+            proposal.plan.id = "large-result";
+            proposal.plan.goal = "Keep a bounded structured result";
+            common_plan_step tool_step{"large", "Large result", "Fetch the bounded structured result"};
+            tool_step.status = common_plan_step_status::active;
+            tool_step.mode = common_plan_step_mode::tool;
+            tool_step.selected_tool = "large";
+            tool_step.tool_call = common_plan_tool_call{"large", "{}"};
+            common_plan_step answer{"answer", "Answer", "Use the bounded result"};
+            answer.mode = common_plan_step_mode::final_response;
+            answer.depends_on = {"large"};
+            proposal.plan.steps = {tool_step, answer};
+            proposal.plan.active_step_id = "large";
+            proposal.plan.status = common_plan_status::active;
+            error.clear();
+            return proposal;
+        }
+    } large_result_plan;
+    class accepting_reflector final : public common_reflection_engine {
+    public:
+        common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
+                const std::string &, std::string & error) override {
+            error.clear();
+            common_reflection_result result;
+            result.decision = common_reflection_decision::accept;
+            result.ready_to_answer = true;
+            return result;
+        }
+    } accepting_reflector_instance;
+    common_plan_in_memory_store large_result_store;
+    if (!large_result_store.open("", error)) return 206;
+    executor large_result_executor;
+    common_agent_context_budget_config large_result_budgets;
+    large_result_budgets.tool_observation_chars = 512;
+    common_agent_runtime large_result_runtime(
+        large_result_store, large_result_plan, large_result_executor,
+        accepting_reflector_instance, &tool_runtime, nullptr, nullptr,
+        large_result_budgets);
+    common_agent_request large_result_request;
+    large_result_request.prompt = "return one bounded result";
+    large_result_request.max_iterations = 1;
+    large_result_request.max_reflection_rounds = 1;
+    large_result_request.max_tool_batches = 1;
+    const auto large_runtime_result = large_result_runtime.run(large_result_request);
+    if (!large_runtime_result.error.empty()) {
+        std::fprintf(stderr, "large-result runtime error: %s\n", large_runtime_result.error.c_str());
+        return 201;
+    }
+    const auto large_result = large_result_store.get("large-result", error);
+    if (!large_result || large_result->observations.size() != 1) return 202;
+    const auto bounded_observation = nlohmann::json::parse(large_result->observations.front().summary, nullptr, false);
+    if (bounded_observation.is_discarded()) return 203;
+    if (!bounded_observation.value("result_truncated", false)) return 204;
 
     common_plan_in_memory_store continuation_store;
     assert(continuation_store.open("", error));

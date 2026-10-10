@@ -4,6 +4,7 @@
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "agent-dataset-workflow-adapter.h"
+#include "agent-workflow-transition.h"
 #include "agent/agent-bootstrap.h"
 #include "agent/learning/blueprint-selector.h"
 
@@ -40,6 +41,12 @@ std::string lowercase(std::string value) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
+}
+
+bool tool_has_required_arguments(const common_chat_tool & tool) {
+    const auto schema = nlohmann::ordered_json::parse(tool.parameters, nullptr, false);
+    return schema.is_object() && schema.contains("required") && schema["required"].is_array() &&
+        !schema["required"].empty();
 }
 
 std::vector<common_chat_tool> task_relevant_workflow_tools(
@@ -555,6 +562,21 @@ bool maybe_select_agent_route(
         }
         const auto route_tools = task_relevant_workflow_tools(
             resolved_route_tools, selected_route, request.prompt);
+        std::vector<common_chat_tool> graph_entry_tools;
+        if (selected_route.workflow_definition && !selected_route.workflow_definition->transitions.empty()) {
+            for (const auto & transition : selected_route.workflow_definition->transitions) {
+                if (transition.from_state != selected_route.workflow_definition->start_state ||
+                        transition.kind != common_plan_workflow_transition_kind::tool) continue;
+                const auto found = std::find_if(resolved_route_tools.begin(), resolved_route_tools.end(),
+                    [&](const auto & tool) { return tool.name == transition.tool_name; });
+                if (found == resolved_route_tools.end()) {
+                    error = "workflow graph entry tool is outside the route envelope";
+                    return false;
+                }
+                graph_entry_tools.push_back(*found);
+            }
+            if (graph_entry_tools.empty()) { error = "workflow graph has no materializable tool entry transition"; return false; }
+        }
         std::vector<std::string> host_resolved_dataset_tools;
         if (selected_route.workflow_definition &&
                 selected_route.workflow_definition->family == "dataset") {
@@ -567,16 +589,33 @@ bool maybe_select_agent_route(
                 }
             }
         }
-        std::string action_error;
-        const auto action = select_llama_cli_workflow_action(
-            context.inference, context.generation_config, request, route_tools,
-            request.tool_argument_bindings, host_resolved_dataset_tools,
-            context.tool_output_format, action_error);
-        if (!action.action) {
-            error = "workflow action selection failed: " + action_error;
-            return false;
+        const auto selected_tools = graph_entry_tools.empty() ? route_tools : graph_entry_tools;
+        const bool deterministic_graph_entry = graph_entry_tools.size() == 1 &&
+            selected_route.workflow_definition &&
+            std::any_of(selected_route.workflow_definition->transitions.begin(),
+                selected_route.workflow_definition->transitions.end(), [&](const auto & transition) {
+                    const auto arguments = nlohmann::ordered_json::parse(
+                        transition.arguments_template_json, nullptr, false);
+                    return transition.from_state == selected_route.workflow_definition->start_state &&
+                        transition.kind == common_plan_workflow_transition_kind::tool &&
+                        transition.tool_name == graph_entry_tools.front().name && arguments.is_object() &&
+                        arguments.empty();
+                }) && !tool_has_required_arguments(graph_entry_tools.front());
+        if (deterministic_graph_entry) {
+            workflow_action = common_agent_tool_argument_binding{
+                graph_entry_tools.front().name, "{}", "workflow-graph-entry", false};
+        } else {
+            std::string action_error;
+            const auto action = select_llama_cli_workflow_action(
+                context.inference, context.generation_config, request, selected_tools,
+                request.tool_argument_bindings, host_resolved_dataset_tools,
+                context.tool_output_format, action_error);
+            if (!action.action) {
+                error = "workflow action selection failed: " + action_error;
+                return false;
+            }
+            workflow_action = *action.action;
         }
-        workflow_action = *action.action;
         request.tool_argument_bindings.push_back(*workflow_action);
         context.pre_turn_trace.push_back({
             common_runtime_trace_stage::plan,
@@ -584,8 +623,9 @@ bool maybe_select_agent_route(
             nlohmann::ordered_json{
                 {"type", "workflow_action_selected"},
                 {"tool", workflow_action->tool_name},
-                {"selection_mode", context.tool_output_format == common_agent_tool_output_format::compact_dsl
-                    ? "compact_dsl_grammar" : "json_schema"},
+                {"selection_mode", deterministic_graph_entry ? "deterministic_graph_entry" :
+                    (context.tool_output_format == common_agent_tool_output_format::compact_dsl
+                        ? "compact_dsl_grammar" : "json_schema")},
                 {"route_id", selected_route.id},
             }.dump(),
             context.current_plan_id,
@@ -600,12 +640,20 @@ bool maybe_select_agent_route(
     if (selected_route.kind == common_agent_route_kind::blueprint_workflow && workflow_action) {
         const auto workflow_materializer = selection_config.materialize_instance;
         const auto action = *workflow_action;
-        selection_config.materialize_instance = [workflow_materializer, action](
+        const auto graph_definition = selected_route.workflow_definition;
+        selection_config.materialize_instance = [workflow_materializer, action, graph_definition](
                 const common_agent_request & materialization_request,
                 const common_plan_state & instance,
                 common_plan_state & materialized,
                 std::string & materialization_error) {
-            if (workflow_materializer) {
+            // A declared workflow graph is the authoritative materialization
+            // contract.  The dataset materializer predates graphs and is a
+            // compatibility fallback for graph-less dataset workflows only;
+            // letting it run first can turn a graph entry into an already
+            // completed legacy step before the generic runner sees it.
+            const bool has_workflow_graph = graph_definition &&
+                !graph_definition->transitions.empty();
+            if (!has_workflow_graph && workflow_materializer) {
                 const auto outcome = workflow_materializer(
                     materialization_request, instance, materialized, materialization_error);
                 if (outcome != common_blueprint_materialization_outcome::not_applicable) {
@@ -623,10 +671,26 @@ bool maybe_select_agent_route(
             operation.title = action.tool_name;
             operation.objective = "Execute the selected workflow action.";
             operation.intended_contribution = operation.objective;
-            operation.status = common_plan_step_status::active;
+            // The runtime scheduler owns activation.  Persisting an entry
+            // transition as pending ensures it is validated and activated in
+            // the same dependency gate as every later graph transition.
+            operation.status = common_plan_step_status::pending;
             operation.mode = common_plan_step_mode::tool;
             operation.selected_tool = action.tool_name;
             operation.tool_call = common_plan_tool_call{action.tool_name, action.arguments_json};
+            if (graph_definition && !graph_definition->transitions.empty()) {
+                const auto transition = std::find_if(graph_definition->transitions.begin(), graph_definition->transitions.end(),
+                    [&](const auto & value) { return value.from_state == graph_definition->start_state &&
+                        value.kind == common_plan_workflow_transition_kind::tool && value.tool_name == action.tool_name; });
+                if (transition == graph_definition->transitions.end()) {
+                    materialization_error = "workflow graph entry action is inconsistent with the selected tool";
+                    return common_blueprint_materialization_outcome::failed_safely;
+                }
+                operation.semantic_alias = "workflow-transition:" + transition->id;
+                operation.title = transition->id;
+                operation.objective = "Execute workflow transition " + transition->id + ".";
+                operation.intended_contribution = operation.objective;
+            }
             operation.created_at = instance.created_at;
             operation.updated_at = instance.updated_at;
             out.steps.push_back(operation);
@@ -643,7 +707,7 @@ bool maybe_select_agent_route(
             answer.created_at = instance.created_at;
             answer.updated_at = instance.updated_at;
             out.steps.push_back(std::move(answer));
-            out.active_step_id = operation.id;
+            out.active_step_id.reset();
             out.next_action = operation.id;
             materialized = std::move(out);
             materialization_error.clear();

@@ -586,6 +586,61 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     return result;
 }
 
+bool select_llama_cli_workflow_candidate(
+        common_agent_inference & inference,
+        const common_agent_generation_config & generation_config,
+        const common_agent_request & request,
+        const common_plan_observation & observation,
+        const common_plan_workflow_transition & transition,
+        std::string & candidate_id,
+        std::string & error) {
+    candidate_id.clear(); error.clear();
+    const auto observed = json::parse(observation.summary, nullptr, false);
+    if ((!observed.is_object() && !observed.is_array()) || transition.candidate_json_pointer.empty()) {
+        error = "workflow candidate selection requires a JSON observation and candidate pointer";
+        return false;
+    }
+    const json::json_pointer location(transition.candidate_json_pointer);
+    if (!observed.contains(location)) {
+        error = "workflow candidate pointer is absent from the host observation";
+        return false;
+    }
+    const auto & candidates = observed.at(location);
+    if (!candidates.is_array()) { error = "workflow candidate pointer is not an array"; return false; }
+    std::vector<std::string> ids;
+    json display = json::array();
+    for (const auto & candidate : candidates) {
+        if (!candidate.is_object() || !candidate.contains("id") || !candidate["id"].is_string()) continue;
+        const auto id = candidate["id"].get<std::string>();
+        ids.push_back(id);
+        display.push_back({{"id", id}, {"display_name", candidate.value("display_name", std::string{})}});
+    }
+    if (ids.empty() || ids.size() > 32) { error = "workflow candidate selection has no bounded ids"; return false; }
+    json schema = {{"type", "object"}, {"additionalProperties", false},
+        {"required", json::array({"id"})}, {"properties", {{"id", {{"type", "string"}, {"enum", ids}}}}}};
+    common_chat_msg system{"system", "Choose one exact id from the host-returned candidates. Return only JSON with id."};
+    common_chat_msg user{"user", "[Task]\n" + request.prompt + "\n[Candidates]\n" + display.dump()};
+    const auto generated = inference.generate_result(make_agent_cli_generation_request(
+        request, common_agent_generation_purpose::operation_selection, {system, user},
+        make_agent_cli_generation_options(generation_config, 96), schema.dump()));
+    if (!common_agent_generation_succeeded(generated)) {
+        error = describe_agent_cli_generation_failure("workflow candidate selection", generated);
+        return false;
+    }
+    const auto selected = json::parse(generated.content, nullptr, false);
+    candidate_id = selected.is_object() ? selected.value("id", std::string{}) : std::string{};
+    if (std::find(ids.begin(), ids.end(), candidate_id) == ids.end()) {
+        error = "workflow candidate selector returned an id outside the host observation";
+        candidate_id.clear();
+        return false;
+    }
+    if (generation_config.generation_trace) {
+        std::fprintf(stderr, "agent workflow-choice trace: transition=%s observation=%s selected_id=%s response=<<<%s>>>\n",
+            transition.id.c_str(), observation.id.c_str(), candidate_id.c_str(), generated.content.substr(0, 2048).c_str());
+    }
+    return true;
+}
+
 common_agent_route_selection_result select_llama_cli_route(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,

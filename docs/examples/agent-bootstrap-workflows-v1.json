@@ -196,9 +196,14 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-work-search-graph@v1",
-      "required_capabilities": ["openapi.read", "resource.read"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.openapi.available"]
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "search_pending",
+      "terminal_states": ["works_retrieved"],
+      "transitions": [
+        {"id": "search-works", "from": "search_pending", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+      ]
     },
     {
       "id": "openalex-work-lookup-path-v1",
@@ -207,9 +212,14 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-work-lookup-graph@v1",
-      "required_capabilities": ["openapi.read", "resource.read"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.openapi.available"]
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "identifier_pending",
+      "terminal_states": ["work_retrieved"],
+      "transitions": [
+        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"}
+      ]
     },
     {
       "id": "openalex-literature-review-path-v1",
@@ -218,9 +228,14 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-literature-review-graph@v1",
-      "required_capabilities": ["openapi.read", "resource.read"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.openapi.available"]
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "review_pending",
+      "terminal_states": ["candidates_retrieved"],
+      "transitions": [
+        {"id": "retrieve-candidates", "from": "review_pending", "to": "candidates_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+      ]
     },
     {
       "id": "openalex-entity-filtered-search-path-v1",
@@ -229,9 +244,22 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-entity-filtered-work-search-graph@v1",
-      "required_capabilities": ["openapi.read", "resource.read"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.openapi.available"]
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "entity_pending",
+      "terminal_states": ["works_retrieved"],
+      "transitions": [
+        {"id": "resolve-author", "from": "entity_pending", "to": "author_candidates", "tool": "openalex.listAuthors", "arguments": "{}"},
+        {"id": "resolve-institution", "from": "entity_pending", "to": "institution_candidates", "tool": "openalex.listInstitutions", "arguments": "{}"},
+        {"id": "resolve-topic", "from": "entity_pending", "to": "topic_candidates", "tool": "openalex.listTopics", "arguments": "{}"},
+        {"id": "choose-author", "from": "author_candidates", "to": "author_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "choose-institution", "from": "institution_candidates", "to": "institution_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "choose-topic", "from": "topic_candidates", "to": "topic_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "retrieve-author-works", "from": "author_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"author.id:$choice\"}"},
+        {"id": "retrieve-institution-works", "from": "institution_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"institutions.id:$choice\"}"},
+        {"id": "retrieve-topic-works", "from": "topic_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"topics.id:$choice\"}"}
+      ]
     },
     {
       "id": "repository-regression-repair-path-v1",

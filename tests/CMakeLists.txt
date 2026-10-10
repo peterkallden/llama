@@ -501,7 +501,8 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_sources(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
-                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp)
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp)
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
         if (TEST_NAME STREQUAL "test-agent-execution-envelope")

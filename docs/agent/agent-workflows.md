@@ -11,10 +11,9 @@ This page describes runtime workflows (not GitHub Actions workflows).
   workflow identity and revision.
 - A **procedure** is reusable methodology or guidance; it does not itself grant
   tool access or define an executable path.
-- A **domain adapter** binds a workflow to request-specific host state and may
-  materialize a task plan. Dataset inventory selection is the first such
-  adapter; other domains should add adapters without adding domain branches to
-  route compilation.
+- A **workflow graph** is a bounded host-owned transition system. It may name
+  only route-resolved tools, terminal states and dataflow from recorded host
+  observations. It is not a new domain-specific planner.
 
 Workflow definitions declare semantic `required_capabilities`, optional
 `optional_capabilities`, and host-state `required_context`. Required
@@ -26,6 +25,38 @@ Context requirements are checked separately and do not grant tool authority.
 `allowed_tools` remains accepted for v1 package compatibility. When semantic
 capabilities are also present, `allowed_tools` can only narrow the resolved
 tool set. New workflow packages should prefer capabilities.
+
+## Bounded workflow graphs
+
+A workflow without `transitions` retains the v1 one-action behavior. A graph
+adds `start_state`, `terminal_states`, and transitions with an `id`, `from`,
+`to`, `cost`, and either a `tool` or `kind: "model_choice"`.
+
+```json
+{
+  "start_state": "author_candidates",
+  "terminal_states": ["works_retrieved"],
+  "transitions": [
+    {"id":"choose-author","from":"author_candidates","to":"author_selected",
+     "kind":"model_choice","candidates":"/results"},
+    {"id":"retrieve-author-works","from":"author_selected","to":"works_retrieved",
+     "tool":"openalex.listWorks","arguments":"{\"filter\":\"author.id:$choice\"}"}
+  ]
+}
+```
+
+The host validates the graph at import: IDs and JSON templates must be valid,
+terminal states have no outgoing transition, and every declared state must
+have a path to a terminal state. Route compilation then rejects any graph tool
+outside the resolved execution envelope.
+
+At runtime, bounded Dijkstra search (A* with a zero admissible heuristic)
+chooses the least-cost host-declared path. A `model_choice` is the only model
+decision inside that path: it receives a bounded list of IDs from the previous
+host observation and must return one of them. The selected ID is recorded on
+the next tool step and may replace `$choice`; `$from_step: "$previous"` binds
+the preceding completed host step. The model cannot invent an identifier,
+tool, URL, or transition.
 
 ## Current implementation boundary
 
@@ -161,11 +192,17 @@ the same route and envelope.
 
 Repository and web workflows currently use the common route compiler and
 execution envelope, with ordinary planning for request-specific paths.
+Dataset and document continuation remain compatibility bridges while their
+request-specific inventory/materialization facts are moved into graph
+definitions; the execution envelope and generic graph runner are already
+shared with OpenAlex.
 
 ## Next adapter seams
 
-When adding another domain, keep its domain-specific context resolution,
-transition graph and materialization in its adapter. The common route compiler
-should only validate declared capability/context requirements, resolve tools
-from the active host view, and produce the execution envelope. Tool execution
-remains host-validated regardless of how a candidate path was proposed.
+When adding another domain, put reusable method structure in the workflow
+graph. Add a small domain validator only where the host must establish an
+inventory, materialize a typed resource, or verify a domain invariant. The
+common route compiler validates capability/context requirements, resolves the
+tool view, and produces the envelope; it never gains a domain branch. Tool
+execution remains host-validated regardless of how a candidate path was
+proposed.

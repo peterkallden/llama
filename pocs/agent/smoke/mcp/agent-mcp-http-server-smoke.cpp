@@ -174,7 +174,7 @@ int main() {
     server_options.path = "/mcp";
     server_options.authenticator = authenticator;
     server_options.max_body_bytes = 4096;
-    server_options.max_result_bytes = 4096;
+    server_options.max_result_bytes = 16 * 1024;
     server_options.server_name = "http-inbound-smoke";
     server_options.server_version = "1";
     server_options.protocol_version = "2025-11-25";

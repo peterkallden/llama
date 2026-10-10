@@ -15,6 +15,7 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <set>
 #include <utility>
@@ -236,10 +237,16 @@ static common_agent_failure tool_failure(
 }
 
 static bool plan_has_completed_tool_step(const common_plan_state & plan) {
-    return std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
-        return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
-            step.status == common_plan_step_status::completed &&
-            step.tool_call.has_value();
+    return std::any_of(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & step) {
+        if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool ||
+                step.status != common_plan_step_status::completed || !step.tool_call) {
+            return false;
+        }
+        const std::string observation_prefix = "tool:" + step.id + ":";
+        return std::any_of(plan.observations.begin(), plan.observations.end(),
+            [&](const common_plan_observation & observation) {
+                return observation.id.rfind(observation_prefix, 0) == 0;
+            });
     });
 }
 
@@ -280,6 +287,59 @@ static std::string tool_observation_payload(const common_tool_execution_result &
     if (!result.content_summary.empty()) fallback["summary"] = result.content_summary;
     else if (!result.safe_summary.empty()) fallback["summary"] = result.safe_summary;
     return fallback.dump();
+}
+
+static json bounded_tool_observation_json(
+        const json & value, size_t depth, size_t max_depth,
+        size_t max_object_fields, size_t max_array_items, size_t max_string_chars) {
+    if (value.is_string()) {
+        auto text = value.get<std::string>();
+        if (text.size() > max_string_chars) text.resize(max_string_chars);
+        return text;
+    }
+    if (value.is_primitive() || value.is_null()) return value;
+    if (depth >= max_depth) return value.is_array() ? json::array() : json::object();
+    if (value.is_array()) {
+        json out = json::array();
+        size_t count = 0;
+        for (const auto & item : value) {
+            if (count++ >= max_array_items) break;
+            out.push_back(bounded_tool_observation_json(item, depth + 1, max_depth,
+                max_object_fields, max_array_items, max_string_chars));
+        }
+        return out;
+    }
+    json out = json::object();
+    size_t count = 0;
+    for (const auto & item : value.items()) {
+        if (count++ >= max_object_fields) break;
+        out[item.key()] = bounded_tool_observation_json(item.value(), depth + 1, max_depth,
+            max_object_fields, max_array_items, max_string_chars);
+    }
+    return out;
+}
+
+static std::string bounded_tool_observation_payload(std::string payload, size_t char_budget) {
+    if (payload.size() <= char_budget) return payload;
+    const auto parsed = json::parse(payload, nullptr, false);
+    if (parsed.is_discarded()) {
+        return json{{"summary", "Tool output exceeded the observation budget and was not structured JSON."},
+                    {"result_truncated", true}}.dump();
+    }
+    // Never cut raw JSON at a byte boundary: the observation is subsequently
+    // both a persistence record and model-facing evidence.  Keep a shallow,
+    // valid projection instead, progressively reducing its shape until it
+    // fits the configured budget.
+    for (const auto limits : {std::array<size_t, 4>{4, 24, 4, 384},
+                              std::array<size_t, 4>{3, 16, 2, 192},
+                              std::array<size_t, 4>{2, 8, 1, 96}}) {
+        auto bounded = bounded_tool_observation_json(parsed, 0, limits[0], limits[1], limits[2], limits[3]);
+        if (bounded.is_object()) bounded["result_truncated"] = true;
+        const auto rendered = bounded.dump();
+        if (rendered.size() <= char_budget) return rendered;
+    }
+    return json{{"summary", "Tool result exceeded the bounded observation projection."},
+                {"result_truncated", true}}.dump();
 }
 
 static std::string tool_repair_context_json(const common_agent_tool_repair_context & context) {
@@ -820,6 +880,58 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "initial plan operation applied", plan.id,
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
+        }
+    }
+    // A workflow graph may only advance from host-verified observations.  In
+    // particular, do not trust a persisted `completed` tool step unless its
+    // own execution observation survived persistence.  This both fails safe
+    // for interrupted legacy materializers and prevents a graph route from
+    // falling through to drafting without having called its entry tool.
+    const bool has_workflow_transition_step = std::any_of(
+        plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+            return step.semantic_alias &&
+                step.semantic_alias->rfind("workflow-transition:", 0) == 0;
+        });
+    if ((plan.workflow_definition && !plan.workflow_definition->transitions.empty()) ||
+            has_workflow_transition_step) {
+        // The persisted graph, rather than a transient route snapshot, is
+        // authoritative once execution begins.  A graph with an executable
+        // tool transition must never be allowed to draft an answer before a
+        // host-verified tool observation exists.
+        const bool graph_declares_tool = plan.workflow_definition && std::any_of(
+            plan.workflow_definition->transitions.begin(),
+            plan.workflow_definition->transitions.end(),
+            [](const common_plan_workflow_transition & transition) {
+                return transition.kind == common_plan_workflow_transition_kind::tool;
+            });
+        if (graph_declares_tool || has_workflow_transition_step) {
+            request.require_tool_execution = true;
+        }
+        for (const auto & step : plan.steps) {
+            if (step.status != common_plan_step_status::completed ||
+                    common_plan_step_effective_mode(step) != common_plan_step_mode::tool ||
+                    !step.tool_call) continue;
+            const std::string observation_prefix = "tool:" + step.id + ":";
+            const bool has_execution_observation = std::any_of(
+                plan.observations.begin(), plan.observations.end(),
+                [&](const auto & observation) {
+                    return observation.id.rfind(observation_prefix, 0) == 0;
+                });
+            if (has_execution_observation) continue;
+
+            common_plan_operation reset;
+            reset.kind = common_plan_operation_kind::reset_step;
+            reset.plan_id = plan.id;
+            reset.expected_version = plan.version;
+            reset.step_id = step.id;
+            reset.reason_summary = "workflow tool completion lacked a verified observation";
+            if (!store.apply(reset, plan, error)) { result.error = error; return result; }
+            append_event(result, request, {common_agent_event_type::plan_updated,
+                "workflow tool step reset because its verified observation is missing", {}, plan.id});
+            append_trace(result, common_runtime_trace_stage::step,
+                common_runtime_trace_kind::updated,
+                "workflow tool completion lacked a verified observation; step reset for execution",
+                plan.id, step.id, step.tool_call->name);
         }
     }
     if (tools && !tools->validate_plan(plan, error)) {
@@ -1373,8 +1485,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
-            std::string tool_result = tool_observation_payload(execution);
-            if (tool_result.size() > context_budgets.tool_observation_chars) tool_result.resize(context_budgets.tool_observation_chars);
+            std::string tool_result = bounded_tool_observation_payload(
+                tool_observation_payload(execution), context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
             common_plan_operation observed;
             observed.kind = common_plan_operation_kind::record_observation;

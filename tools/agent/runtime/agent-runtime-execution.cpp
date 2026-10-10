@@ -5,9 +5,11 @@
 #include "../runtime/agent-runtime-chat-driver.h"
 #include "../runtime/agent-route-compiler.h"
 #include "agent-dataset-workflow-adapter.h"
+#include "agent-workflow-transition.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
+#include "../cli/agent-cli-selection.h"
 
 #include <nlohmann/json.hpp>
 
@@ -858,6 +860,18 @@ common_agent_request make_agent_runtime_driver_request(
         request.workflow_continuation = make_agent_resource_document_workflow_continuation(
             execution.selected_route, execution.tool_argument_bindings);
     }
+    // A graph with a declared tool transition is an executable host contract,
+    // not an optional planning hint.  Preserve that requirement even when a
+    // caller reached the route through a compatibility entry point that did
+    // not carry --require-tool-execution into the driver state.
+    if (execution.selected_route.workflow_definition &&
+            std::any_of(execution.selected_route.workflow_definition->transitions.begin(),
+                execution.selected_route.workflow_definition->transitions.end(),
+                [](const common_plan_workflow_transition & transition) {
+                    return transition.kind == common_plan_workflow_transition_kind::tool;
+                })) {
+        request.require_tool_execution = true;
+    }
     apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
 }
@@ -1010,7 +1024,20 @@ bool run_agent_runtime_driver(
         const auto & model_tools = execution.model_tools.empty()
             ? execution.tooling.tools
             : execution.model_tools;
-        const common_agent_request request = make_agent_runtime_driver_request(execution);
+        common_agent_request request = make_agent_runtime_driver_request(execution);
+        if (execution.route_selected && execution.selected_route.workflow_definition &&
+                !execution.selected_route.workflow_definition->transitions.empty()) {
+            const auto route = execution.selected_route;
+            const auto choice_request = request;
+            request.workflow_continuation = make_agent_workflow_graph_continuation(route,
+                [&execution, choice_request](const common_plan_observation & observation,
+                        const common_plan_workflow_transition & transition,
+                        std::string & candidate_id, std::string & choice_error) {
+                    return select_llama_cli_workflow_candidate(execution.inference,
+                        execution.runtime_config.generation_config, choice_request,
+                        observation, transition, candidate_id, choice_error);
+                });
+        }
         auto assembly = make_agent_runtime_assembly(
             execution.memory_store,
             execution.plan_store,

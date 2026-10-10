@@ -255,6 +255,34 @@ int main() {
     assert(checked_in_starter.workflows[0].definition.workflow_revision == "v2");
     assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
         std::vector<std::string>({"artifact.export"}));
+    const auto checked_in_openalex_entity_workflow = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/entity-filtered-work-search";
+        });
+    assert(checked_in_openalex_entity_workflow != checked_in_starter.workflows.end());
+    assert(checked_in_openalex_entity_workflow->definition.start_state == "entity_pending");
+    assert(checked_in_openalex_entity_workflow->definition.terminal_states ==
+        std::vector<std::string>({"works_retrieved"}));
+    assert(std::any_of(checked_in_openalex_entity_workflow->definition.transitions.begin(),
+        checked_in_openalex_entity_workflow->definition.transitions.end(), [](const auto & transition) {
+            return transition.id == "choose-author" &&
+                transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                transition.candidate_json_pointer == "/results";
+        }));
+    auto invalid_graph_package = checked_in_starter;
+    auto & invalid_definition = invalid_graph_package.workflows.back().definition;
+    invalid_definition.start_state = "loop-a";
+    invalid_definition.terminal_states = {"finished"};
+    invalid_definition.transitions = {
+        {"loop", "loop-a", "loop-b", common_plan_workflow_transition_kind::tool,
+            "openalex.listWorks", "{}", {}, 1.0f},
+        {"loop-back", "loop-b", "loop-a", common_plan_workflow_transition_kind::tool,
+            "openalex.listWorks", "{}", {}, 1.0f},
+    };
+    assert(!common_agent_package_to_json(invalid_graph_package, package_json, error));
+    assert(error.find("terminal path") != std::string::npos);
     for (const auto & workflow : checked_in_starter.workflows) {
         if (workflow.definition.family == "dataset" ||
                 workflow.definition.family == "resource" ||
@@ -308,7 +336,9 @@ int main() {
         });
     assert(openalex_search_workflow != checked_in_starter.workflows.end());
     assert(openalex_search_workflow->definition.required_capabilities ==
-        std::vector<std::string>({"openapi.read", "resource.read"}));
+        std::vector<std::string>({"openapi.read"}));
+    assert(openalex_search_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"resource.read", "artifact.export"}));
     assert(openalex_search_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
     const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
@@ -326,7 +356,7 @@ int main() {
         });
     assert(openalex_entity_workflow != checked_in_starter.workflows.end());
     assert(openalex_entity_workflow->definition.required_capabilities ==
-        std::vector<std::string>({"openapi.read", "resource.read"}));
+        std::vector<std::string>({"openapi.read"}));
     assert(openalex_entity_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
     const auto openalex_entity_blueprint = std::find_if(checked_in_starter.blueprints.begin(),

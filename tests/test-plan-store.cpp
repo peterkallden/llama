@@ -4,6 +4,21 @@
 static common_plan_operation op(common_plan_operation_kind kind, const common_plan_state & plan, const std::string & step = {}) { common_plan_operation out; out.kind = kind; out.plan_id = plan.id; out.expected_version = plan.version; if (!step.empty()) out.step_id = step; out.reason_summary = "unit test"; return out; }
 int main() {
     common_plan_in_memory_store store; std::string error; assert(store.open("", error));
+
+    // Initial state is subject to the same evidence invariant as later
+    // operations: a materializer cannot claim a tool ran merely by setting
+    // the step status before the plan is stored.
+    common_plan_state forged_initial;
+    forged_initial.id = "forged-initial-tool";
+    forged_initial.status = common_plan_status::active;
+    common_plan_step forged_step{"tool", "Tool", "Run the tool"};
+    forged_step.status = common_plan_step_status::completed;
+    forged_step.mode = common_plan_step_mode::tool;
+    forged_step.tool_call = common_plan_tool_call{"lookup", "{}"};
+    forged_initial.steps.push_back(forged_step);
+    assert(!store.create(forged_initial, error));
+    assert(error == "initial completed tool step requires its verified tool observation");
+
     common_plan_state plan; plan.id = "plan-1"; plan.goal = "test"; plan.status = common_plan_status::proposed; assert(store.create(plan, error));
     auto add_first = op(common_plan_operation_kind::add_step, plan); common_plan_step first; first.id = "first"; first.title = "First"; first.required_evidence = {"memory:one"}; add_first.step = first; assert(store.apply(add_first, plan, error));
     auto activate = op(common_plan_operation_kind::activate_step, plan, "first"); assert(store.apply(activate, plan, error));

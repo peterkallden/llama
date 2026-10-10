@@ -437,6 +437,19 @@ bool compile_agent_route_catalog(
                     std::move(resolution_reason));
                 continue;
             }
+            const auto graph_tool = std::find_if(
+                definition.transitions.begin(), definition.transitions.end(),
+                [&](const auto & transition) {
+                    return transition.kind == common_plan_workflow_transition_kind::tool &&
+                        std::find(resolved_tools.begin(), resolved_tools.end(), transition.tool_name) ==
+                            resolved_tools.end();
+                });
+            if (graph_tool != definition.transitions.end()) {
+                append_rejection(catalog, candidate,
+                    binding.workflow_ref + "@" + binding.workflow_revision,
+                    "workflow graph tool is unavailable: " + graph_tool->tool_name);
+                continue;
+            }
             const auto missing_capability = std::find_if(
                 definition.required_capabilities.begin(), definition.required_capabilities.end(),
                 [&](const auto & capability) {

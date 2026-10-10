@@ -132,6 +132,21 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
                 if (!observed) return deny("tool step requires a successful tool observation");
             }
         }
+        // A tool-backed step is a host-execution claim.  It may never be
+        // completed merely because a planner or reflection response names
+        // it: the completing operation must carry the observation emitted by
+        // that exact tool step.
+        if (target == common_plan_step_status::completed && step->tool_call) {
+            const std::string tool_observation_prefix = "tool:" + step->id + ":";
+            const bool has_tool_observation = std::any_of(
+                op.evidence_ids.begin(), op.evidence_ids.end(),
+                [&](const std::string & evidence_id) {
+                    return evidence_id.rfind(tool_observation_prefix, 0) == 0;
+                });
+            if (!has_tool_observation) {
+                return deny("tool step completion requires its verified tool observation");
+            }
+        }
     }
     if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) return deny("mandatory steps remain incomplete"); }
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");

@@ -1,5 +1,6 @@
 #include "tools/agent/runtime/agent-route-compiler.h"
 #include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
+#include "tools/agent/runtime/agent-workflow-transition.h"
 #include "plan/plan-in-memory.h"
 
 #include <algorithm>
@@ -426,5 +427,64 @@ int main() {
     assert(denied_continuation(document_plan, "query", query_observation,
         continuation_steps, error));
     assert(error.empty() && continuation_steps.empty());
+
+    // The generic graph runner is not OpenAPI-specific: it takes the next
+    // host-declared path, lets the model choose only among observed IDs, and
+    // binds that ID into the following host-approved tool call.
+    common_plan_workflow_definition graph_definition;
+    graph_definition.workflow_ref = "workflow://research/entity-lookup";
+    graph_definition.workflow_revision = "v1";
+    graph_definition.family = "research";
+    graph_definition.graph_revision = "entity-lookup-graph@v1";
+    graph_definition.required_capabilities = {"catalog.read"};
+    graph_definition.start_state = "resolve";
+    graph_definition.terminal_states = {"complete"};
+    graph_definition.transitions = {
+        {"resolve-author", "resolve", "candidates", common_plan_workflow_transition_kind::tool,
+            "catalog.listAuthors", "{}", {}, 1.0f},
+        {"choose-author", "candidates", "selected", common_plan_workflow_transition_kind::model_choice,
+            {}, "{}", "/results", 1.0f},
+        {"retrieve-works", "selected", "complete", common_plan_workflow_transition_kind::tool,
+            "catalog.listWorks", R"({"filter":"author.id:$choice","source":{"$from_step":"$previous"}})", {}, 1.0f},
+    };
+    common_agent_route_candidate graph_route;
+    graph_route.id = "route:entity-lookup";
+    graph_route.workflow_definition = graph_definition;
+    graph_route.resolved_tools = {"catalog.listAuthors", "catalog.listWorks"};
+    common_plan_state graph_plan;
+    graph_plan.id = "entity-lookup-plan";
+    graph_plan.route_binding = common_plan_route_binding{graph_route.id, "entity-lookup", "bp-v1",
+        graph_definition.workflow_ref, graph_definition.workflow_revision, graph_definition.graph_revision,
+        "env-v1", "policy-v1"};
+    graph_plan.workflow_definition = graph_definition;
+    common_plan_step resolved_step{"resolve", "Resolve author", "Find candidate authors"};
+    resolved_step.status = common_plan_step_status::completed;
+    resolved_step.semantic_alias = "workflow-transition:resolve-author";
+    graph_plan.steps = {resolved_step};
+    common_plan_observation candidates;
+    candidates.id = "author-candidates";
+    candidates.source = "catalog.listAuthors";
+    candidates.summary = R"({"results":[{"id":"A1","display_name":"Ada Lovelace"}]})";
+    auto graph_continuation = make_agent_workflow_graph_continuation(graph_route,
+        [](const common_plan_observation &, const common_plan_workflow_transition &, std::string & id, std::string & selection_error) {
+            id = "A1"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear();
+    assert(graph_continuation(graph_plan, "resolve", candidates, continuation_steps, error));
+    assert(error.empty() && continuation_steps.size() == 1);
+    assert(continuation_steps.front().tool_call &&
+        continuation_steps.front().tool_call->name == "catalog.listWorks" &&
+        continuation_steps.front().semantic_alias &&
+        *continuation_steps.front().semantic_alias == "workflow-transition:choose-author,retrieve-works");
+    const auto graph_arguments = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
+    assert(graph_arguments["filter"] == "author.id:A1");
+    assert(graph_arguments["source"].value("$from_step", "") == "resolve");
+    auto rejected_graph_continuation = make_agent_workflow_graph_continuation(graph_route,
+        [](const common_plan_observation &, const common_plan_workflow_transition &, std::string & id, std::string & selection_error) {
+            id = "invented-author"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(!rejected_graph_continuation(graph_plan, "resolve", candidates, continuation_steps, error));
+    assert(error.find("outside the host observation") != std::string::npos);
     return 0;
 }

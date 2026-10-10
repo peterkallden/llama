@@ -9,13 +9,16 @@ model="${LLAMA_AGENT_MODEL:-${HOME}/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf}"
 embedding_model="${LLAMA_AGENT_EMBEDDING_MODEL:-${HOME}/models/nomic-embed-text-v1.5.Q4_K_M.gguf}"
 spec="${LLAMA_AGENT_OPENALEX_SPEC:-${repo_root}/docs/examples/openalex-openapi.json}"
 provider_fragment="${LLAMA_AGENT_OPENALEX_PROVIDER:-${repo_root}/docs/examples/openalex-provider.d/openalex.json}"
+workflow_package="${LLAMA_AGENT_WORKFLOW_PACKAGE:-${repo_root}/docs/examples/agent-bootstrap-workflows-v1.json}"
 work_dir=$(agent_smoke_prepare_workdir openalex-model)
 agent_bin=$(agent_smoke_binary "$build_dir" llama-agent)
+gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
 
 agent_smoke_require_file "$model" "chat model"
 agent_smoke_require_file "$embedding_model" "embedding model"
 agent_smoke_require_file "$spec" "generated OpenAlex OpenAPI spec"
 agent_smoke_require_file "$provider_fragment" "generated OpenAlex provider fragment"
+agent_smoke_require_file "$workflow_package" "workflow starter package"
 agent_smoke_require_executable "$agent_bin" "llama-agent"
 agent_smoke_build_if_requested
 
@@ -69,6 +72,8 @@ prompt="Call exactly openalex.listWorks (same lowercase spelling), and no other 
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-smoke
+    --plan-backend in-memory
+    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-work-search-v1
     --thinking-mode deliberate
     --max-tool-rounds 4
     --require-tool-execution --agent-trace --generation-trace
@@ -76,7 +81,7 @@ args=(
     --prompt "$prompt"
     --n-predict "${LLAMA_AGENT_N_PREDICT:-256}"
     --context-size "${LLAMA_AGENT_CONTEXT_SIZE:-4096}"
-    --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "${LLAMA_AGENT_GPU_LAYERS:-0}"
+    --threads "${LLAMA_AGENT_THREADS:-4}" -ngl "$gpu_layers"
 )
 if [[ -n "${LLAMA_AGENT_PLANNER_N_PREDICT:-}" ]]; then
     args+=(--planner-n-predict "$LLAMA_AGENT_PLANNER_N_PREDICT")
@@ -85,9 +90,20 @@ if [[ -n "$embedding_model" ]]; then
     args+=(--embedding-model "$embedding_model")
 fi
 
-agent_smoke_run_logged "$log_path" "$agent_bin" "${args[@]}"
+LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
+    agent_smoke_run_logged "$log_path" "$agent_bin" "${args[@]}"
+if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
+    grep -Fq "requested_gpu_layers=$gpu_layers effective_gpu_layers=-1 fit_params=true workspace_reservation=true legacy_full_offload_fit=true" "$log_path" || {
+        echo "OpenAlex model smoke did not prove the resident GPU auto-fit path; log=${log_path}" >&2
+        exit 1
+    }
+fi
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=openalex\.listWorks' "$log_path" || {
     echo "OpenAlex model smoke did not execute openalex.listWorks; log=${log_path}" >&2
+    exit 1
+}
+grep -Eq 'route_selection_evaluated.*openalex-work-search|selected_route_id.*openalex-work-search' "$log_path" || {
+    echo "OpenAlex model smoke did not select the imported OpenAlex workflow route; log=${log_path}" >&2
     exit 1
 }
 echo "openalex_model_smoke=passed"

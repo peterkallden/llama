@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <functional>
+#include <map>
 #include <set>
 
 using json = nlohmann::ordered_json;
@@ -67,6 +68,44 @@ const char * workflow_policy_name(common_plan_workflow_policy policy) {
     return policy == common_plan_workflow_policy::required ? "required" : "preferred";
 }
 
+const char * workflow_transition_kind_name(common_plan_workflow_transition_kind kind) {
+    return kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool";
+}
+
+bool workflow_transition_kind(const json & value, common_plan_workflow_transition_kind & out) {
+    if (!value.is_string()) return false;
+    if (value.get<std::string>() == "tool") { out = common_plan_workflow_transition_kind::tool; return true; }
+    if (value.get<std::string>() == "model_choice") { out = common_plan_workflow_transition_kind::model_choice; return true; }
+    return false;
+}
+
+bool workflow_graph(const json & item, common_plan_workflow_definition & definition, std::string & error) {
+    if (!item.contains("transitions")) return true;
+    if (!item["transitions"].is_array() || !item.contains("start_state") || !item["start_state"].is_string() ||
+            !item.contains("terminal_states") || !strings(item["terminal_states"], definition.terminal_states)) {
+        error = "workflow graph requires start_state, terminal_states and transitions";
+        return false;
+    }
+    definition.start_state = item["start_state"].get<std::string>();
+    for (const auto & source : item["transitions"]) {
+        if (!source.is_object()) { error = "workflow transition must be an object"; return false; }
+        common_plan_workflow_transition transition;
+        transition.id = source.value("id", std::string{});
+        transition.from_state = source.value("from", std::string{});
+        transition.to_state = source.value("to", std::string{});
+        transition.tool_name = source.value("tool", std::string{});
+        transition.arguments_template_json = source.value("arguments", std::string("{}"));
+        transition.candidate_json_pointer = source.value("candidates", std::string{});
+        transition.cost = source.value("cost", 1.0f);
+        if (source.contains("kind") && !workflow_transition_kind(source["kind"], transition.kind)) {
+            error = "workflow transition kind must be tool or model_choice";
+            return false;
+        }
+        definition.transitions.push_back(std::move(transition));
+    }
+    return true;
+}
+
 bool validate(const common_agent_bootstrap_package & package, std::string & error) {
     if (package.name.empty() || package.name.size() > 128 || package.version.empty() || package.version.size() > 64) { error = "package name and version are required"; return false; }
     std::set<std::string> procedures, blueprints, workflows;
@@ -118,6 +157,45 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
         for (const auto & capability : definition.optional_capabilities) if (capability.empty() || capability.size() > 128 || required_capabilities.count(capability) || !optional_capabilities.insert(capability).second) { error = "invalid, duplicate, or required workflow optional capability"; return false; }
         std::set<std::string> required_context;
         for (const auto & requirement : definition.required_context) if (requirement.empty() || requirement.size() > 128 || !required_context.insert(requirement).second) { error = "invalid or duplicate workflow context requirement"; return false; }
+        if (!definition.transitions.empty()) {
+            if (!valid_id(definition.start_state) || definition.terminal_states.empty()) { error = "workflow graph has invalid start or terminal states"; return false; }
+            std::set<std::string> transition_ids, states{definition.start_state};
+            for (const auto & state : definition.terminal_states) if (!valid_id(state) || !states.insert(state).second) { error = "workflow graph has invalid or duplicate terminal state"; return false; }
+            std::map<std::string, std::vector<std::string>> predecessors;
+            for (const auto & transition : definition.transitions) {
+                const auto arguments = json::parse(transition.arguments_template_json, nullptr, false);
+                if (!valid_id(transition.id) || !transition_ids.insert(transition.id).second ||
+                        !valid_id(transition.from_state) || !valid_id(transition.to_state) ||
+                        !arguments.is_object() || transition.cost <= 0.0f || transition.cost > 1000.0f ||
+                        (transition.kind == common_plan_workflow_transition_kind::tool && transition.tool_name.empty()) ||
+                        (transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                            (!transition.tool_name.empty() || transition.candidate_json_pointer.empty() ||
+                             transition.candidate_json_pointer.front() != '/'))) {
+                    error = "workflow graph has an invalid transition"; return false;
+                }
+                states.insert(transition.from_state); states.insert(transition.to_state);
+                predecessors[transition.to_state].push_back(transition.from_state);
+            }
+            for (const auto & terminal : definition.terminal_states) {
+                if (std::any_of(definition.transitions.begin(), definition.transitions.end(), [&](const auto & transition) { return transition.from_state == terminal; })) {
+                    error = "workflow terminal state has outgoing transition"; return false;
+                }
+            }
+            // A bounded workflow must have a possible route to a terminal
+            // state from every declared state.  This rejects dead branches
+            // and closed cycles before a package becomes executable.
+            std::set<std::string> can_finish(definition.terminal_states.begin(), definition.terminal_states.end());
+            std::vector<std::string> pending(definition.terminal_states.begin(), definition.terminal_states.end());
+            while (!pending.empty()) {
+                const auto state = pending.back(); pending.pop_back();
+                for (const auto & predecessor : predecessors[state]) {
+                    if (can_finish.insert(predecessor).second) pending.push_back(predecessor);
+                }
+            }
+            for (const auto & state : states) if (!can_finish.count(state)) {
+                error = "workflow graph has a state with no terminal path"; return false;
+            }
+        }
     }
     return true;
 }
@@ -186,6 +264,7 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 if (item.contains("required_capabilities") && !strings(item["required_capabilities"], workflow.definition.required_capabilities)) { error = "workflow required_capabilities must be strings"; return false; }
                 if (item.contains("optional_capabilities") && !strings(item["optional_capabilities"], workflow.definition.optional_capabilities)) { error = "workflow optional_capabilities must be strings"; return false; }
                 if (item.contains("required_context") && !strings(item["required_context"], workflow.definition.required_context)) { error = "workflow required_context must be strings"; return false; }
+                if (!workflow_graph(item, workflow.definition, error)) return false;
                 package.workflows.push_back(std::move(workflow));
             }
         }
@@ -219,6 +298,18 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         if (!workflow.definition.required_capabilities.empty()) value["required_capabilities"] = workflow.definition.required_capabilities;
         if (!workflow.definition.optional_capabilities.empty()) value["optional_capabilities"] = workflow.definition.optional_capabilities;
         if (!workflow.definition.required_context.empty()) value["required_context"] = workflow.definition.required_context;
+        if (!workflow.definition.transitions.empty()) {
+            value["start_state"] = workflow.definition.start_state;
+            value["terminal_states"] = workflow.definition.terminal_states;
+            value["transitions"] = json::array();
+            for (const auto & transition : workflow.definition.transitions) {
+                json item = {{"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
+                    {"kind", workflow_transition_kind_name(transition.kind)}, {"arguments", transition.arguments_template_json}, {"cost", transition.cost}};
+                if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
+                if (!transition.candidate_json_pointer.empty()) item["candidates"] = transition.candidate_json_pointer;
+                value["transitions"].push_back(std::move(item));
+            }
+        }
         root["workflows"].push_back(std::move(value));
     }
     text = pretty ? root.dump(2) + "\n" : root.dump(); error.clear(); return true;

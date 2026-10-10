@@ -39,6 +39,17 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     common_agent_tool_output_format output_format,
     std::string & error);
 
+// Choose one exact entity id from a host-recorded observation.  The caller
+// validates the result against the same observation before binding it.
+bool select_llama_cli_workflow_candidate(
+    common_agent_inference & inference,
+    const common_agent_generation_config & generation_config,
+    const common_agent_request & request,
+    const common_plan_observation & observation,
+    const common_plan_workflow_transition & transition,
+    std::string & candidate_id,
+    std::string & error);
+
 struct common_agent_route_selection_result {
     std::optional<std::string> route_id;
     float confidence = 0.0f;

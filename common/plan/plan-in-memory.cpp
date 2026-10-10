@@ -2,10 +2,43 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+
+bool initial_plan_has_verified_tool_completions(
+        const common_plan_state & plan, std::string & error) {
+    for (const auto & step : plan.steps) {
+        if (step.status != common_plan_step_status::completed || !step.tool_call) continue;
+        const std::string prefix = "tool:" + step.id + ":";
+        const bool observed = std::any_of(plan.observations.begin(), plan.observations.end(),
+            [&](const common_plan_observation & observation) {
+                return observation.source == step.tool_call->name &&
+                    observation.id.rfind(prefix, 0) == 0;
+            });
+        if (!observed) {
+            error = "initial completed tool step requires its verified tool observation";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+} // namespace
+
 common_plan_in_memory_store::common_plan_in_memory_store(common_plan_policy policy) : policy(std::move(policy)) {}
 bool common_plan_in_memory_store::open(const std::string &, std::string & error) { opened = true; error.clear(); return true; }
 void common_plan_in_memory_store::close() { opened = false; plans.clear(); events.clear(); }
-bool common_plan_in_memory_store::create(const common_plan_state & plan, std::string & error) { if (!opened) { error = "plan store is not open"; return false; } if (plan.id.empty() || plans.count(plan.id)) { error = "plan id is empty or already exists"; return false; } plans.emplace(plan.id, plan); error.clear(); return true; }
+bool common_plan_in_memory_store::create(const common_plan_state & plan, std::string & error) {
+    if (!opened) { error = "plan store is not open"; return false; }
+    if (plan.id.empty() || plans.count(plan.id)) { error = "plan id is empty or already exists"; return false; }
+    // `create` is a persistence boundary too.  A materializer must not be
+    // able to seed an already-completed tool node and thereby bypass the
+    // operation policy that ordinarily requires host-produced evidence.
+    if (!initial_plan_has_verified_tool_completions(plan, error)) return false;
+    plans.emplace(plan.id, plan);
+    error.clear();
+    return true;
+}
 bool common_plan_in_memory_store::restore_history(const std::string & plan_id, std::vector<common_plan_event> history, std::string & error) { if (!opened || !plans.count(plan_id)) { error = "plan store is not open or plan is unavailable"; return false; } events[plan_id] = std::move(history); error.clear(); return true; }
 std::optional<common_plan_state> common_plan_in_memory_store::get(const std::string & id, std::string & error) { if (!opened) { error = "plan store is not open"; return std::nullopt; } error.clear(); auto it = plans.find(id); return it == plans.end() ? std::nullopt : std::optional<common_plan_state>(it->second); }
 std::vector<common_plan_state> common_plan_in_memory_store::list(std::string & error) { std::vector<common_plan_state> result; if (!opened) { error = "plan store is not open"; return result; } for (const auto & entry : plans) result.push_back(entry.second); error.clear(); return result; }

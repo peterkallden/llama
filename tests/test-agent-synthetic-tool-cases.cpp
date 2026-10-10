@@ -40,7 +40,7 @@ int main() {
     CHECK(cases.size() == 5);
     CHECK(cases.front().model_input_schema_json == definition.input_schema_json);
     CHECK(cases.front().model_facing_contract.find("dataset.inspect") != std::string::npos);
-    CHECK(cases.front().model_facing_contract.find("dataset:string") != std::string::npos);
+    CHECK(cases.front().model_facing_contract.find("dataset (required, string)") != std::string::npos);
     CHECK(cases.front().model_facing_prompt.find("Repair the invalid tool call") != std::string::npos);
 
     const auto first_json = common_synthetic_tool_case_to_json(cases.front());
