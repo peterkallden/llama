@@ -61,6 +61,10 @@ int main() {
     step.tool_call = common_plan_tool_call{"web.fetch", "{}"};
     plan.steps.push_back(step);
     assert(!runtime->validate_plan(plan, error));
+    plan.steps.front().status = common_plan_step_status::completed;
+    assert(runtime->validate_plan(plan, error));
+    plan.steps.front().status = common_plan_step_status::skipped;
+    assert(runtime->validate_plan(plan, error));
 
     assert(runtime->set_execution_phase(common_agent_execution_phase::research));
     assert(runtime->validate({"web.fetch", "{}"}, error));

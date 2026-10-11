@@ -150,6 +150,10 @@ struct common_agent_runtime_driver_execution {
     // Host-owned concrete tool arguments propagated into every request built
     // by the agent driver.
     std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    // Dataset descriptors produced by verified workflow observations during
+    // this host session. They augment, but do not replace, the host inventory.
+    std::vector<common_agent_dataset_descriptor> continuation_datasets;
+    bool dataset_handoff_attempted = false;
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
     common_agent_cognitive_state cognitive_state;
 };

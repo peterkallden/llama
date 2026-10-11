@@ -77,7 +77,25 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
         case common_plan_operation_kind::fail_step: find(*op.step_id)->status = common_plan_step_status::failed; if (next.active_step_id == op.step_id) next.active_step_id.reset(); break;
         case common_plan_operation_kind::skip_step: find(*op.step_id)->status = common_plan_step_status::skipped; break;
         case common_plan_operation_kind::complete_plan: next.status = common_plan_status::completed; break;
-        case common_plan_operation_kind::request_route_transition: next.route_binding = op.route_binding; next.status = common_plan_status::active; break;
+        case common_plan_operation_kind::request_route_transition:
+            next.route_binding = op.route_binding;
+            if (op.workflow_definition) {
+                next.workflow_definition = op.workflow_definition;
+                next.selected_workflow = common_plan_workflow_binding{
+                    op.workflow_definition->workflow_ref,
+                    op.workflow_definition->workflow_revision};
+                if (std::none_of(next.workflow_bindings.begin(), next.workflow_bindings.end(),
+                        [&](const auto & binding) {
+                            return binding.workflow_ref == next.selected_workflow->workflow_ref &&
+                                binding.workflow_revision == next.selected_workflow->workflow_revision;
+                        })) {
+                    next.workflow_bindings.push_back(*next.selected_workflow);
+                }
+            }
+            next.required_capabilities = op.route_required_capabilities;
+            next.procedure_refs = op.route_procedure_refs;
+            next.status = common_plan_status::active;
+            break;
         case common_plan_operation_kind::fail_plan: next.status = common_plan_status::failed; break;
         default: break;
     }

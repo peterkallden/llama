@@ -191,6 +191,8 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
         for (const auto & capability : definition.optional_capabilities) if (capability.empty() || capability.size() > 128 || required_capabilities.count(capability) || !optional_capabilities.insert(capability).second) { error = "invalid, duplicate, or required workflow optional capability"; return false; }
         std::set<std::string> required_context;
         for (const auto & requirement : definition.required_context) if (requirement.empty() || requirement.size() > 128 || !required_context.insert(requirement).second) { error = "invalid or duplicate workflow context requirement"; return false; }
+        std::set<std::string> continuation_targets;
+        for (const auto & target : definition.continuation_workflow_targets) if (target.empty() || target.size() > 256 || !continuation_targets.insert(target).second) { error = "invalid or duplicate workflow continuation target"; return false; }
         if (!definition.transitions.empty()) {
             if (!valid_id(definition.start_state) || definition.terminal_states.empty()) { error = "workflow graph has invalid start or terminal states"; return false; }
             std::set<std::string> transition_ids, states{definition.start_state};
@@ -332,6 +334,7 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 if (item.contains("required_capabilities") && !strings(item["required_capabilities"], workflow.definition.required_capabilities)) { error = "workflow required_capabilities must be strings"; return false; }
                 if (item.contains("optional_capabilities") && !strings(item["optional_capabilities"], workflow.definition.optional_capabilities)) { error = "workflow optional_capabilities must be strings"; return false; }
                 if (item.contains("required_context") && !strings(item["required_context"], workflow.definition.required_context)) { error = "workflow required_context must be strings"; return false; }
+                if (item.contains("continuation_workflow_targets") && !strings(item["continuation_workflow_targets"], workflow.definition.continuation_workflow_targets)) { error = "workflow continuation_workflow_targets must be strings"; return false; }
                 if (!workflow_graph(item, workflow.definition, error)) return false;
                 package.workflows.push_back(std::move(workflow));
             }
@@ -366,6 +369,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         if (!workflow.definition.required_capabilities.empty()) value["required_capabilities"] = workflow.definition.required_capabilities;
         if (!workflow.definition.optional_capabilities.empty()) value["optional_capabilities"] = workflow.definition.optional_capabilities;
         if (!workflow.definition.required_context.empty()) value["required_context"] = workflow.definition.required_context;
+        if (!workflow.definition.continuation_workflow_targets.empty()) value["continuation_workflow_targets"] = workflow.definition.continuation_workflow_targets;
         if (workflow.definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
             value["resource_read_policy"] = "chunked";
         }

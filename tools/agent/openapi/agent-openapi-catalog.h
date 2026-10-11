@@ -91,6 +91,9 @@ struct agent_openapi_result_projection {
     agent_openapi_result_projection_kind kind = agent_openapi_result_projection_kind::json_resource;
     size_t row_count = 0;
     std::vector<std::string> columns;
+    // Normalized rows from a top-level array or conventional API envelope.
+    std::string rows_json;
+    std::string source_pointer;
     std::string reason;
 };
 

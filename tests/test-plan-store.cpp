@@ -54,8 +54,18 @@ int main() {
     common_plan_state route_plan; route_plan.id = "route-plan"; route_plan.goal = "route"; route_plan.status = common_plan_status::active; route_plan.route_binding = initial_route; assert(store.create(route_plan, error));
     auto model_transition = op(common_plan_operation_kind::request_route_transition, route_plan); model_transition.route_binding = initial_route; assert(!store.apply(model_transition, route_plan, error));
     common_plan_route_binding migrated = initial_route; migrated.route_id = "route:v2"; migrated.execution_envelope_fingerprint = "env-v2";
-    assert(common_plan_request_route_transition(store, route_plan.id, migrated, "host evidence requires a new route", route_plan, error));
-    assert(route_plan.route_binding && route_plan.route_binding->route_id == "route:v2");
+    common_plan_workflow_definition migrated_workflow;
+    migrated_workflow.workflow_ref = "workflow://dataset/analysis";
+    migrated_workflow.workflow_revision = "wf-v1";
+    migrated_workflow.family = "dataset";
+    migrated_workflow.graph_revision = "graph-v1";
+    assert(common_plan_request_route_transition(store, route_plan.id, migrated,
+        migrated_workflow, {"dataset.inspect"}, {"data-understanding-v1"},
+        "host evidence requires a new route", route_plan, error));
+    assert(route_plan.route_binding && route_plan.route_binding->route_id == "route:v2" &&
+        route_plan.workflow_definition && route_plan.workflow_definition->workflow_ref == "workflow://dataset/analysis" &&
+        route_plan.required_capabilities == std::vector<std::string>{"dataset.inspect"} &&
+        route_plan.procedure_refs == std::vector<std::string>{"data-understanding-v1"});
 
     common_plan_state repairable; repairable.id = "repairable"; repairable.goal = "repair"; repairable.status = common_plan_status::active;
     common_plan_step failed; failed.id = "fetch"; failed.title = "Fetch"; failed.objective = "Fetch evidence"; failed.status = common_plan_step_status::failed; failed.selected_tool = "lookup"; failed.tool_call = common_plan_tool_call{"lookup", R"({"id":"old"})"};

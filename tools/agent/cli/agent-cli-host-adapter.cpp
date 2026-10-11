@@ -542,6 +542,7 @@ bool resolve_agent_host_tool_selection(
                 import.source_workbook_name = resource.name;
                 import.source_representation = "csv:dataset";
                 import.source_representation_uri = resource.uri;
+                import.origin_kind = "csv_resource";
                 import.import_processor_id = "csv-resource-import-v1";
                 import.import_processor_version = "1";
                 import.worksheet_json = std::move(worksheet_json);
@@ -557,9 +558,11 @@ bool resolve_agent_host_tool_selection(
                     for (const auto & column : dataset.columns) columns.push_back({
                         {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)},
                         {"nullable", column.nullable}});
-                    return common_tool_execution_result::success(json({
+                    auto result = common_tool_execution_result::success(json({
                         {"dataset", dataset.ref.uri}, {"source", dataset.ref.source_resource_uri},
                         {"columns", columns}}).dump());
+                    result.dataset_refs.push_back(dataset.ref);
+                    return result;
                 }
                 if (operation == "sample") {
                     json query = {{"dataset", dataset.ref.uri}, {"limit", 20},
@@ -570,12 +573,16 @@ bool resolve_agent_host_tool_selection(
                             "tool.dataset.sample_failed", common_tool_failure_class::execution, false,
                             "The CSV dataset sample could not be read.", std::move(error));
                     }
-                    return common_tool_execution_result::success(std::move(sample_json));
+                    auto result = common_tool_execution_result::success(std::move(sample_json));
+                    result.dataset_refs.push_back(dataset.ref);
+                    return result;
                 }
-                return common_tool_execution_result::success(json({
+                auto result = common_tool_execution_result::success(json({
                     {"dataset", dataset.ref.uri}, {"name", dataset.ref.name},
                     {"rows", dataset.ref.row_count}, {"columns", dataset.ref.column_count},
                     {"source", dataset.ref.source_resource_uri}}).dump());
+                result.dataset_refs.push_back(dataset.ref);
+                return result;
             };
             auto read_document_json = [resource_store, runtime](
                     const std::string & uri, std::string & document_json,
@@ -659,6 +666,7 @@ bool resolve_agent_host_tool_selection(
                 import.source_workbook_name = descriptor.name;
                 import.source_representation = "document:table";
                 import.source_representation_uri = descriptor.uri;
+                import.origin_kind = "document_table";
                 import.import_processor_id = "document-json-table-import-v1";
                 import.import_processor_version = "1";
                 import.worksheet_json = worksheet_json;
@@ -667,10 +675,12 @@ bool resolve_agent_host_tool_selection(
                 if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1)
                     return common_tool_execution_result::failure("tool.document.table.materialization_failed", common_tool_failure_class::execution, false,
                         "The selected document table could not be materialized.", std::move(error));
-                return common_tool_execution_result::success(json({
+                auto result = common_tool_execution_result::success(json({
                     {"table_index", selected.table_index}, {"name", selected.name},
                     {"node_id", selected.node_id}, {"dataset", imported.front().ref.uri},
                     {"source_resource", imported.front().ref.source_resource_uri}}).dump());
+                result.dataset_refs.push_back(imported.front().ref);
+                return result;
             };
         }
         bindings.memory_store = &store;
@@ -872,7 +882,7 @@ bool resolve_agent_host_tool_selection(
                         materializer_error = "OpenAPI dataset materialization requires a resource store";
                         return false;
                     }
-                    const auto value = json::parse(result.structured_content_json, nullptr, false);
+                    const auto value = json::parse(projection.rows_json, nullptr, false);
                     agent_resource_put_request source_request;
                     source_request.name = provider_id + "-" + operation.operation_id + ".json";
                     source_request.description = "Raw bounded response from OpenAPI operation " + operation.operation_id;
@@ -920,6 +930,7 @@ bool resolve_agent_host_tool_selection(
                     import.source_workbook_name = provider_id + "-" + operation.operation_id;
                     import.source_representation = "openapi:json";
                     import.source_representation_uri = import.source_resource_uri;
+                    import.origin_kind = "openapi_collection";
                     import.import_processor_id = "openapi-json-dataset-import-v1";
                     import.import_processor_version = "1";
                     import.worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();

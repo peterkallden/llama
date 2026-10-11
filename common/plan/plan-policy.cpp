@@ -152,8 +152,11 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");
     if (op.kind == common_plan_operation_kind::record_observation && (!op.observation || plan.observations.size() >= config.max_observations)) return deny("invalid or excessive observation");
     if (op.kind == common_plan_operation_kind::request_route_transition) {
-        if (!op.host_authorized || !op.route_binding) return deny("route transition is host-authorized only");
+        if (!op.host_authorized || !op.route_binding || !op.workflow_definition) return deny("route transition is host-authorized only");
         if (op.route_binding->route_id.empty() || op.route_binding->policy_revision.empty()) return deny("route transition requires a complete route binding");
+        if (op.route_binding->workflow_ref != op.workflow_definition->workflow_ref ||
+                op.route_binding->workflow_revision != op.workflow_definition->workflow_revision ||
+                op.route_binding->graph_revision != op.workflow_definition->graph_revision) return deny("route transition workflow identity does not match its binding");
     }
     return {true, {}};
 }

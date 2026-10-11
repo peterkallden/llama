@@ -10,6 +10,9 @@ inline bool common_plan_request_route_transition(
         common_plan_store & store,
         const std::string & plan_id,
         const common_plan_route_binding & binding,
+        const common_plan_workflow_definition & workflow_definition,
+        const std::vector<std::string> & required_capabilities,
+        const std::vector<std::string> & procedure_refs,
         const std::string & reason,
         common_plan_state & updated_plan,
         std::string & error) {
@@ -21,6 +24,9 @@ inline bool common_plan_request_route_transition(
     operation.expected_version = current->version;
     operation.reason_summary = reason;
     operation.route_binding = binding;
+    operation.workflow_definition = workflow_definition;
+    operation.route_required_capabilities = required_capabilities;
+    operation.route_procedure_refs = procedure_refs;
     operation.host_authorized = true;
     return store.apply(operation, updated_plan, error);
 }

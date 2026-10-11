@@ -336,10 +336,19 @@ int main() {
                         error);
                 }
                 common_runtime_resource_ref resource = descriptor;
-                return common_tool_execution_result::success(
+                common_agent_dataset_ref dataset;
+                dataset.uri = "dataset://runtime-smoke/search-results";
+                dataset.name = "runtime-search-results";
+                dataset.row_count = 1;
+                dataset.column_count = 1;
+                dataset.source_resource_uri = resource.uri;
+                dataset.source_representation = "smoke:json";
+                auto result = common_tool_execution_result::success(
                     R"({"results":[{"title":"stub runtime result"}],"provider":"stub"})",
                     "Web search returned one stub candidate; the full result set was stored as a turn resource.",
                     {resource});
+                result.dataset_refs.push_back(std::move(dataset));
+                return result;
             };
             return true;
         });
@@ -348,7 +357,7 @@ int main() {
     tool_context.request_id = "runtime-smoke";
     tool_context.turn_id = "turn-1";
     tool_context.profile_id = "research";
-    tool_context.max_calls = 2;
+    tool_context.max_calls = 3;
     tool_context.allow_network = true;
     tool_context.async_exposed_tool_names = {"web.search"};
     tool_context.scope.namespace_id = "runtime-smoke";
@@ -389,6 +398,17 @@ int main() {
     }
     if (!async_ready || !async_result.ok) {
         std::fprintf(stderr, "provider runtime adapter async call did not complete successfully\n");
+        return 1;
+    }
+    if (async_result.dataset_refs.size() != 1 ||
+            async_result.dataset_refs.front().uri != "dataset://runtime-smoke/search-results") {
+        std::fprintf(stderr, "provider runtime adapter async path dropped dataset references\n");
+        return 1;
+    }
+    const auto sync_result = tool_runtime->execute(async_call);
+    if (!sync_result.ok || sync_result.dataset_refs.size() != 1 ||
+            sync_result.dataset_refs.front().uri != "dataset://runtime-smoke/search-results") {
+        std::fprintf(stderr, "provider runtime adapter sync path dropped dataset references\n");
         return 1;
     }
     common_plan_in_memory_store plan_store;
@@ -436,6 +456,7 @@ int main() {
     bool saw_tool_success = false;
     bool saw_response_complete = false;
     bool saw_observation_resource = false;
+    bool saw_observation_dataset = false;
     for (const auto & event : result.events) {
         if (event.type == common_agent_event_type::plan_created &&
                 event.plan_id && *event.plan_id == "runtime-smoke-plan") {
@@ -478,12 +499,15 @@ int main() {
         return 1;
     }
     for (const auto & observation : stored_plan->observations) {
-        if (observation.source == "web.search" && !observation.resource_refs.empty()) {
-            saw_observation_resource = true;
-            break;
+        if (observation.source == "web.search") {
+            saw_observation_resource = !observation.resource_refs.empty();
+            saw_observation_dataset = observation.dataset_refs.size() == 1 &&
+                observation.dataset_refs.front().uri == "dataset://runtime-smoke/search-results";
+            if (saw_observation_resource && saw_observation_dataset) break;
         }
     }
-    if (!saw_plan_create || !saw_tool_success || !saw_response_complete || !saw_observation_resource) {
+    if (!saw_plan_create || !saw_tool_success || !saw_response_complete ||
+            !saw_observation_resource || !saw_observation_dataset) {
         std::fprintf(stderr, "runtime trace did not include expected plan/tool/response history\n");
         return 1;
     }

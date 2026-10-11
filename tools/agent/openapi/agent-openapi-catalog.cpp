@@ -389,6 +389,22 @@ bool operation_security(
     return true;
 }
 
+const nlohmann::json * result_collection(
+        const nlohmann::json & value,
+        std::string & source_pointer) {
+    source_pointer.clear();
+    if (value.is_array()) return &value;
+    if (!value.is_object()) return nullptr;
+    for (const char * field : {"results", "data", "items"}) {
+        const auto found = value.find(field);
+        if (found != value.end() && found->is_array()) {
+            source_pointer = std::string("/") + field;
+            return &*found;
+        }
+    }
+    return nullptr;
+}
+
 }
 
 bool classify_agent_openapi_result_json(
@@ -407,8 +423,10 @@ bool classify_agent_openapi_result_json(
         error = "OpenAPI structured result is not valid JSON";
         return false;
     }
-    if (!value.is_array() || value.empty() || value.size() > limits.max_rows) {
-        projection.reason = value.is_array() && value.size() > limits.max_rows
+    std::string source_pointer;
+    const auto * rows = result_collection(value, source_pointer);
+    if (rows == nullptr || rows->empty() || rows->size() > limits.max_rows) {
+        projection.reason = rows != nullptr && rows->size() > limits.max_rows
             ? "collection exceeds the materialization row limit"
             : "result is not a non-empty bounded JSON collection";
         error.clear();
@@ -416,7 +434,7 @@ bool classify_agent_openapi_result_json(
     }
     std::set<std::string> columns;
     size_t cells = 0;
-    for (const auto & row : value) {
+    for (const auto & row : *rows) {
         if (!row.is_object()) {
             projection.reason = "collection contains a non-object item";
             error.clear();
@@ -444,8 +462,10 @@ bool classify_agent_openapi_result_json(
         }
     }
     projection.kind = agent_openapi_result_projection_kind::dataset;
-    projection.row_count = value.size();
+    projection.row_count = rows->size();
     projection.columns.assign(columns.begin(), columns.end());
+    projection.rows_json = rows->dump();
+    projection.source_pointer = std::move(source_pointer);
     projection.reason = "bounded shallow JSON collection is dataset-compatible";
     error.clear();
     return true;
@@ -610,11 +630,13 @@ bool make_agent_openapi_item_references(
         return false;
     }
     const auto value = nlohmann::json::parse(structured_content_json, nullptr, false);
-    if (value.is_discarded() || !value.is_array()) {
+    std::string source_pointer;
+    const auto * rows = value.is_discarded() ? nullptr : result_collection(value, source_pointer);
+    if (rows == nullptr) {
         error = "OpenAPI item references require a JSON collection";
         return false;
     }
-    if (value.size() > limits.max_rows) {
+    if (rows->size() > limits.max_rows) {
         error = "OpenAPI collection exceeds the materialization row limit";
         return false;
     }
@@ -627,8 +649,8 @@ bool make_agent_openapi_item_references(
         error = "OpenAPI collection operation has no item relation";
         return false;
     }
-    for (size_t index = 0; index < value.size(); ++index) {
-        const auto & row = value[index];
+    for (size_t index = 0; index < rows->size(); ++index) {
+        const auto & row = (*rows)[index];
         if (!row.is_object()) continue;
         const auto item_it = row.find(relation_it->item_parameter);
         if (item_it == row.end() || item_it->is_null() ||

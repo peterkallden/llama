@@ -35,10 +35,12 @@ provider["spec_path"] = str(pathlib.Path(spec).resolve())
 operations = provider.setdefault("policy", {}).setdefault("operations", {})
 list_works = operations["listWorks"]
 provider["policy"]["operations"] = {"listWorks": list_works}
+scalar_projection = "id,display_name,publication_year"
+list_works["default_projection"] = scalar_projection
 list_works["bound_arguments"] = {
     "search": "machine learning",
     "per_page": 1,
-    "select": "id,display_name,publication_year,primary_topic,topics",
+    "select": scalar_projection,
 }
 pathlib.Path(output).write_text(json.dumps({
     "schema_version": 1,
@@ -62,12 +64,16 @@ pathlib.Path(output).write_text(json.dumps({
 PY
 
 log_path="$work_dir/openalex-model.log"
-prompt="Call exactly openalex.listWorks (same lowercase spelling), and no other tool, to search for machine learning. The host already supplies search, page size and projection; emit no fields. After it succeeds, answer with the first work id and display name. Do not invent a result."
+if [[ "${LLAMA_AGENT_OPENALEX_DATASET_CONTINUATION:-0}" == 1 ]]; then
+    prompt="Search the host-configured OpenAlex collection for machine learning. After retrieval, group the returned works by publication year and report each year's count. Use the dataset workflow for that analysis; do not invent results."
+else
+    prompt="Call exactly openalex.listWorks (same lowercase spelling), and no other tool, to search for machine learning. The host already supplies search, page size and projection; emit no fields. After it succeeds, answer with the first work id and display name. Do not invent a result."
+fi
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile analysis
     --plan-backend in-memory
-    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-work-search-v1
+    --agent-bootstrap none --agent-import "$workflow_package" --agent-blueprint openalex-work-search-v2
     --thinking-mode deliberate
     --max-tool-rounds 4
     --require-tool-execution --agent-trace --generation-trace
@@ -79,6 +85,13 @@ args=(
 )
 if [[ -n "${LLAMA_AGENT_PLANNER_N_PREDICT:-}" ]]; then
     args+=(--planner-n-predict "$LLAMA_AGENT_PLANNER_N_PREDICT")
+fi
+if [[ "${LLAMA_AGENT_OPENALEX_DATASET_CONTINUATION:-0}" == 1 ]]; then
+    # OpenAPI collection materialization requires the host dataset store. Keep
+    # its database inside this smoke's temporary work directory so this path
+    # exercises the same materialize -> route handoff -> dataset workflow seam
+    # without leaving durable test state behind.
+    args+=(--data-backend cozo --data-db "$work_dir/openalex-datasets.db")
 fi
 if [[ -n "$embedding_model" ]]; then
     args+=(--embedding-model "$embedding_model")
@@ -100,5 +113,29 @@ grep -Eq 'route_selection_evaluated.*openalex-work-search|selected_route_id.*ope
     echo "OpenAlex model smoke did not select the imported OpenAlex workflow route; log=${log_path}" >&2
     exit 1
 }
+if [[ "${LLAMA_AGENT_OPENALEX_DATASET_CONTINUATION:-0}" == 1 ]]; then
+    grep -Fq 'host transitioned to declared dataset workflow workflow://dataset/analysis' "$log_path" || {
+        echo "OpenAlex dataset-continuation smoke did not hand off to dataset analysis; log=${log_path}" >&2
+        exit 1
+    }
+    grep -Eq 'stage=tool kind=(succeeded|completed).*tool=data\.aggregate' "$log_path" || {
+        echo "OpenAlex dataset-continuation smoke did not run data.aggregate; log=${log_path}" >&2
+        exit 1
+    }
+    grep -Fq 'rows[1].publication_year: 1' "$log_path" || {
+        echo "OpenAlex dataset-continuation smoke did not retain the verified aggregate result; log=${log_path}" >&2
+        exit 1
+    }
+    final_response=$(awk '
+        /^\[Final response\]$/ { response = ""; collecting = 1; next }
+        collecting && /^\[/ { collecting = 0 }
+        collecting { response = response $0 "\n" }
+        END { printf "%s", response }
+    ' "$log_path")
+    if ! grep -Eiq '20[0-9]{2}[^0-9]{0,24}1|1[^0-9]{0,24}20[0-9]{2}' <<<"$final_response"; then
+        echo "OpenAlex dataset-continuation smoke did not answer with a year and the verified count; log=${log_path}" >&2
+        exit 1
+    fi
+fi
 echo "openalex_model_smoke=passed"
 echo "log=${log_path}"

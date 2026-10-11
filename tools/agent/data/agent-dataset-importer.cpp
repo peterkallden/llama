@@ -365,8 +365,7 @@ bool import_agent_worksheet_envelope(
         descriptor.source_sheet_index = worksheet_index;
         descriptor.source_range = worksheet.value("range", std::string());
         descriptor.source_object = worksheet.value("object", std::string());
-        descriptor.origin.kind = descriptor.ref.source_representation == "xlsx:worksheet"
-            ? "spreadsheet" : "document_table";
+        descriptor.origin.kind = request.origin_kind;
         descriptor.origin.source_representation_uri = worksheet.value(
             "semantic_resource_uri", request.source_representation_uri);
         descriptor.origin.source_node_id = worksheet.value("node_id", "document-node://table/" + std::to_string(worksheet_index.value_or(0)));

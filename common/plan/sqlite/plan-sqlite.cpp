@@ -44,7 +44,8 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
     json value = {{"workflow_ref", definition.workflow_ref}, {"workflow_revision", definition.workflow_revision},
         {"family", definition.family}, {"graph_revision", definition.graph_revision},
         {"allowed_tools", definition.allowed_tools}, {"required_capabilities", definition.required_capabilities},
-        {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context}};
+        {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context},
+        {"continuation_workflow_targets", definition.continuation_workflow_targets}};
     if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
         value["resource_read_policy"] = "chunked";
     }
@@ -71,6 +72,7 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
     value.required_capabilities = definition.value("required_capabilities", std::vector<std::string>{});
     value.optional_capabilities = definition.value("optional_capabilities", std::vector<std::string>{});
     value.required_context = definition.value("required_context", std::vector<std::string>{});
+    value.continuation_workflow_targets = definition.value("continuation_workflow_targets", std::vector<std::string>{});
     if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") {
         value.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
     }
@@ -176,6 +178,9 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
 json serialize_event(const common_plan_event & event, const common_plan_operation & operation) {
     json result = {{"sequence", event.sequence}, {"prior_version", event.prior_version}, {"new_version", event.new_version}, {"accepted", event.accepted}, {"reason_summary", event.reason_summary}, {"created_at", event.created_at}, {"operation", common_plan_operation_kind_name(operation.kind)}, {"plan_id", operation.plan_id}, {"expected_version", operation.expected_version}, {"step_id", operation.step_id}, {"target_id", operation.target_id}, {"value", operation.value}, {"evidence_ids", operation.evidence_ids}, {"host_authorized", operation.host_authorized}};
     if (operation.route_binding) result["route_binding"] = {{"route_id", operation.route_binding->route_id}, {"blueprint_ref", operation.route_binding->blueprint_ref}, {"blueprint_revision", operation.route_binding->blueprint_revision}, {"workflow_ref", operation.route_binding->workflow_ref}, {"workflow_revision", operation.route_binding->workflow_revision}, {"graph_revision", operation.route_binding->graph_revision}, {"execution_envelope_fingerprint", operation.route_binding->execution_envelope_fingerprint}, {"policy_revision", operation.route_binding->policy_revision}};
+    if (operation.workflow_definition) result["workflow_definition"] = serialize_workflow_definition(*operation.workflow_definition);
+    if (!operation.route_required_capabilities.empty()) result["route_required_capabilities"] = operation.route_required_capabilities;
+    if (!operation.route_procedure_refs.empty()) result["route_procedure_refs"] = operation.route_procedure_refs;
     return result;
 }
 
@@ -226,6 +231,9 @@ bool common_plan_sqlite_store::load_cache(std::string & error) {
         event.operation.evidence_ids = value.value("evidence_ids", std::vector<std::string>{});
         event.operation.host_authorized = value.value("host_authorized", false);
         if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; event.operation.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{})}; }
+        if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) event.operation.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
+        event.operation.route_required_capabilities = value.value("route_required_capabilities", std::vector<std::string>{});
+        event.operation.route_procedure_refs = value.value("route_procedure_refs", std::vector<std::string>{});
         histories[plan_id].push_back(std::move(event));
     }
     if (!error.empty()) return false;

@@ -183,6 +183,14 @@ int main() {
     assert(projection.kind == agent_openapi_result_projection_kind::dataset);
     assert(projection.row_count == 2);
     assert(projection.columns.size() == 2);
+    assert(projection.rows_json == R"([{"id":"s1","region":"north"},{"id":"s2","region":"south"}])");
+    assert(projection.source_pointer.empty());
+    assert(classify_agent_openapi_result_json(
+        R"({"meta":{"count":2},"results":[{"id":"s1","year":2024},{"id":"s2","year":2025}]})",
+        agent_openapi_result_projection_limits{}, projection, error));
+    assert(projection.kind == agent_openapi_result_projection_kind::dataset &&
+        projection.row_count == 2 && projection.source_pointer == "/results" &&
+        projection.rows_json == R"([{"id":"s1","year":2024},{"id":"s2","year":2025}])");
     assert(classify_agent_openapi_result_json(
         R"([{"id":"s1","details":{"amount":10}}])",
         agent_openapi_result_projection_limits{}, projection, error));
@@ -198,6 +206,10 @@ int main() {
     assert(references[0].item_parameter == "id");
     assert(references[0].provider_id == "sales-api");
     assert(references[1].row_index == 1);
+    assert(make_agent_openapi_item_references(
+        catalog, "listSales", R"({"results":[{"id":"s1"},{"id":"s2"}]})",
+        agent_openapi_result_projection_limits{}, references, error));
+    assert(references.size() == 2 && references[1].item_value == "s2");
 
     agent_openapi_result_projection_limits small_limits;
     small_limits.max_rows = 1;

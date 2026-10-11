@@ -21,6 +21,23 @@ capabilities gate route eligibility. Optional capabilities are included only
 when the host can resolve them in the active tool view; those resolved tools
 are part of the route envelope and its fingerprint from route selection.
 Context requirements are checked separately and do not grant tool authority.
+Workflows may also declare `continuation_workflow_targets`. These are workflow
+references the host may consider after a successful tool observation returns
+typed dataset references. The host recompiles only declared targets, then
+selects among eligible dataset workflows against the original task. It does
+not offer `normal-plan` as a competing choice after a workflow explicitly
+yielded a materialized dataset for continuation. If no declared target is
+eligible, or route selection is inconclusive, the existing route continues.
+The host attempts this handoff once per runtime execution. A selected route
+transition is host-authorized; the dataset reference remains in plan
+observations and is reconstructed into route context when the plan resumes. A
+join workflow is eligible only when at least two
+distinct datasets are present and the request selects that route.
+For a selected graph-less dataset workflow, the host uses the same bounded
+workflow-action selector and dataset A* materializer as initial planning. It
+adds those verified steps to the existing plan, preserves completed source
+steps as history, and makes the existing final-answer step wait for the new
+dataset path.
 
 Host-provided read-only memory tools (`memory.search`, `memory.get`,
 `memory.inspect`, and `memory.conflict_check`) remain ambient in a scoped route

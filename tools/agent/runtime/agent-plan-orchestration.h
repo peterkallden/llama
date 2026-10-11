@@ -95,3 +95,8 @@ bool maybe_select_agent_route(
     common_agent_route_candidate & selected_route,
     bool & route_selected,
     std::string & error);
+
+std::vector<common_chat_tool> common_agent_task_relevant_workflow_tools(
+    const std::vector<common_chat_tool> & route_tools,
+    const common_agent_route_candidate & route,
+    const std::string & prompt);

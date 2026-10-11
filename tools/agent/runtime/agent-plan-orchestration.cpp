@@ -49,7 +49,7 @@ bool tool_has_required_arguments(const common_chat_tool & tool) {
         !schema["required"].empty();
 }
 
-std::vector<common_chat_tool> task_relevant_workflow_tools(
+std::vector<common_chat_tool> task_relevant_workflow_tools_impl(
         const std::vector<common_chat_tool> & route_tools,
         const common_agent_route_candidate & route,
         const std::string & prompt) {
@@ -100,6 +100,13 @@ std::vector<common_chat_tool> task_relevant_workflow_tools(
 }
 
 } // namespace
+
+std::vector<common_chat_tool> common_agent_task_relevant_workflow_tools(
+        const std::vector<common_chat_tool> & route_tools,
+        const common_agent_route_candidate & route,
+        const std::string & prompt) {
+    return task_relevant_workflow_tools_impl(route_tools, route, prompt);
+}
 
 common_agent_orchestration_config make_agent_orchestration_config(
         common_agent_orchestration_build_config config) {
@@ -560,7 +567,7 @@ bool maybe_select_agent_route(
                 resolved_route_tools.push_back(tool);
             }
         }
-        const auto route_tools = task_relevant_workflow_tools(
+        const auto route_tools = common_agent_task_relevant_workflow_tools(
             resolved_route_tools, selected_route, request.prompt);
         std::vector<common_chat_tool> graph_entry_tools;
         if (selected_route.workflow_definition && !selected_route.workflow_definition->transitions.empty()) {

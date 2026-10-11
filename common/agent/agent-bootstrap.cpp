@@ -235,7 +235,8 @@ bool common_agent_install_bootstrap_package(
             if (!valid_unique_refs(definition.definition.allowed_tools) ||
                     !valid_unique_refs(definition.definition.required_capabilities) ||
                     !valid_unique_refs(definition.definition.optional_capabilities) ||
-                    !valid_unique_refs(definition.definition.required_context)) {
+                    !valid_unique_refs(definition.definition.required_context) ||
+                    !valid_unique_refs(definition.definition.continuation_workflow_targets)) {
                 error = "bootstrap workflow contains invalid or duplicate authority requirements";
                 return false;
             }

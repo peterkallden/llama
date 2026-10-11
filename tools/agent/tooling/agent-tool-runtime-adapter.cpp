@@ -134,6 +134,7 @@ public:
                 result.content_json,
                 result.content_summary,
                 result.resource_refs);
+            execution.dataset_refs = result.dataset_refs;
             execution.http = result.http;
             return execution;
         }
@@ -181,6 +182,7 @@ public:
                 result.content_json,
                 result.content_summary,
                 result.resource_refs);
+            output.dataset_refs = result.dataset_refs;
             output.http = result.http;
         } else {
             output = common_tool_execution_result::failure(
@@ -232,6 +234,11 @@ public:
     bool validate_plan(const common_plan_state & plan, std::string & error) const override {
         if (!provider->validate_plan(plan, error)) return false;
         for (const auto & step : plan.steps) {
+            // Completed steps are immutable execution history from a previous
+            // route binding. They remain on the plan for provenance, but are
+            // not executable under the currently selected envelope.
+            if (step.status == common_plan_step_status::completed ||
+                    step.status == common_plan_step_status::skipped) continue;
             const auto name = step.tool_call ? step.tool_call->name :
                 (step.selected_tool ? *step.selected_tool : std::string());
             if (!name.empty() && !allowed(name)) {

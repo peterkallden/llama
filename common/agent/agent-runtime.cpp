@@ -1613,6 +1613,30 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             if (plan.workflow_definition &&
+                    !plan.workflow_definition->continuation_workflow_targets.empty()) {
+                append_trace(result, common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::decided,
+                    "dataset continuation gate dataset_refs=" +
+                        std::to_string(observed.observation->dataset_refs.size()) +
+                        " declared_targets=" + std::to_string(
+                            plan.workflow_definition->continuation_workflow_targets.size()),
+                    plan.id, tool_step_id, tool_call->name, observed.observation->id);
+            }
+            if (!observed.observation->dataset_refs.empty() && plan.workflow_definition &&
+                    !plan.workflow_definition->continuation_workflow_targets.empty()) {
+                result.workflow_handoff_requested = true;
+                result.plan_id = plan.id;
+                result.plan_version = plan.version;
+                result.limit_reached = true;
+                result.response_generation_status = common_agent_generation_status::completed;
+                result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                append_trace(result, common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::decided,
+                    "yielding to host route selection for a declared dataset continuation",
+                    plan.id, tool_step_id, tool_call->name, observed.observation->id);
+                return result;
+            }
+            if (plan.workflow_definition &&
                     plan.workflow_definition->resource_read_policy ==
                         common_plan_workflow_resource_read_policy::chunked &&
                     (tool_call->name == "resource.read" || tool_call->name == "resource_read") &&

@@ -211,6 +211,9 @@ struct common_plan_workflow_definition {
     // Host facts required before this workflow can be materialized, e.g.
     // "dataset.available". They are checked independently of tool authority.
     std::vector<std::string> required_context;
+    // Workflow families that this workflow may hand off to after producing a
+    // typed host-owned output such as a materialized dataset.
+    std::vector<std::string> continuation_workflow_targets;
     // Full-text reads remain a single bounded range unless the workflow
     // explicitly opts into host-managed chunk continuation.
     common_plan_workflow_resource_read_policy resource_read_policy =
@@ -356,6 +359,9 @@ struct common_plan_operation {
     // Host-only route migration. Model-facing proposal parsing never sets
     // this flag; the plan store policy requires it for rebinding.
     std::optional<common_plan_route_binding> route_binding;
+    std::optional<common_plan_workflow_definition> workflow_definition;
+    std::vector<std::string> route_required_capabilities;
+    std::vector<std::string> route_procedure_refs;
     bool host_authorized = false;
 };
 struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version = 0; common_plan_operation operation; bool accepted = false; std::string reason_summary; int64_t created_at = 0; };

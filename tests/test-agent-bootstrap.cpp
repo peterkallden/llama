@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v10");
+        checked_in_starter.version == "v11");
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));
@@ -351,12 +351,12 @@ int main() {
         });
     assert(resource_workflow != checked_in_starter.workflows.end());
     assert(resource_workflow->definition.required_capabilities ==
-        std::vector<std::string>({"resource.inspect", "resource.read", "document.inspect", "data.query"}));
+        std::vector<std::string>({"resource.inspect", "resource.read", "document.inspect", "dataset.inspect"}));
     assert(resource_workflow->definition.optional_capabilities ==
-        std::vector<std::string>({"data.filter", "data.aggregate", "data.transform",
-            "statistics.describe", "statistics.outliers", "statistics.value_counts",
-            "artifact.export"}));
-    assert(resource_workflow->definition.workflow_revision == "v4");
+        std::vector<std::string>({"artifact.export"}));
+    assert(resource_workflow->definition.workflow_revision == "v5");
+    assert(resource_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     assert(resource_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
     const auto web_workflow = std::find_if(checked_in_starter.workflows.begin(),
@@ -364,11 +364,13 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://web/research";
         });
     assert(web_workflow != checked_in_starter.workflows.end());
-    assert(web_workflow->definition.workflow_revision == "v3");
+    assert(web_workflow->definition.workflow_revision == "v4");
     assert(web_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
     assert(web_workflow->definition.optional_capabilities ==
-        std::vector<std::string>({"resource.read", "artifact.export"}));
+        std::vector<std::string>({"resource.read", "dataset.inspect", "artifact.export"}));
+    assert(web_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     const auto openapi_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://openapi/resource-onboarding";
@@ -398,9 +400,12 @@ int main() {
         std::vector<std::string>({"resource.read", "artifact.export"}));
     assert(openalex_search_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
+    assert(openalex_search_workflow->definition.workflow_revision == "v2");
+    assert(openalex_search_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "openalex-work-search-v1";
+            return blueprint.id == "openalex-work-search-v2";
         });
     assert(openalex_search_blueprint != checked_in_starter.blueprints.end());
     assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);
@@ -420,13 +425,14 @@ int main() {
                 "workflow://openalex/entity-filtered-work-search";
         });
     assert(openalex_entity_workflow != checked_in_starter.workflows.end());
+    assert(openalex_entity_workflow->definition.workflow_revision == "v2");
     assert(openalex_entity_workflow->definition.required_capabilities ==
         std::vector<std::string>({"openapi.read"}));
     assert(openalex_entity_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
     const auto openalex_entity_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "openalex-entity-filtered-work-search-v1";
+            return blueprint.id == "openalex-entity-filtered-work-search-v2";
         });
     assert(openalex_entity_blueprint != checked_in_starter.blueprints.end());
     assert(openalex_entity_blueprint->workflow_policy ==

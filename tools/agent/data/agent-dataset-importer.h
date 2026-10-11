@@ -18,6 +18,9 @@ struct agent_dataset_import_request {
     // "document:table".
     std::string source_representation = "xlsx:worksheet";
     std::string source_representation_uri;
+    // Stable source family used for common dataset provenance. The source
+    // adapter supplies this while the shared importer owns validation/storage.
+    std::string origin_kind = "spreadsheet";
     std::string import_processor_id;
     std::string import_processor_version;
     std::string worksheet_json;
