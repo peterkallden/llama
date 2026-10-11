@@ -969,6 +969,7 @@ target_link_libraries(${TARGET} PRIVATE llama-agent-protocol cpp-httplib Threads
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(TARGETS llama-agent-cli llama-agent-mcp-stdio-server llama-agent-daemon llama-agent-adaptation-worker llama-agent-adaptation-admin llama-agent-web RUNTIME)
     install(PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/agent-adaptation-qlora-trainer.py DESTINATION bin)
+    install(PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/agent-adaptation-dpo-trainer.py DESTINATION bin)
     # The external QLoRA helper invokes this converter from the installed
     # package. Keep the helper, converter, and dependency manifests available
     # so a package does not require a source checkout at runtime.

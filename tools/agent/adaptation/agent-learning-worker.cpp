@@ -448,8 +448,20 @@ bool agent_learning_enqueue_job(
     error.clear();
     if (!common_learning_validate_training_job(job, error)) return false;
     if (corpus.id != job.corpus_revision_id || corpus.bundle_hash != job.corpus_bundle_hash ||
-            corpus.jsonl.empty() || corpus.manifest_json.empty()) {
+            corpus.jsonl.empty() || corpus.manifest_json.empty() ||
+            corpus.objective != job.objective) {
         error = "worker job bundle does not match corpus identity";
+        return false;
+    }
+    try {
+        const auto manifest = json::parse(corpus.manifest_json);
+        if (manifest.value("objective", std::string("sft")) !=
+                common_learning_objective_name(job.objective)) {
+            error = "worker job objective does not match corpus manifest";
+            return false;
+        }
+    } catch (const std::exception &) {
+        error = "worker corpus manifest is malformed";
         return false;
     }
     const auto key = queue_key(job.id, error);
@@ -568,6 +580,26 @@ bool agent_learning_worker_run_once(
             const auto summary = error;
             error.clear();
             if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
+            return true;
+        }
+        std::string manifest_text;
+        if (!read_text(running / "corpus-manifest.json", manifest_text, error)) {
+            const auto summary = error;
+            error.clear();
+            if (!fail_claimed_job(running, queue_root, key, job.id, summary, limits, report, error)) return false;
+            return true;
+        }
+        try {
+            const auto manifest = json::parse(manifest_text);
+            if (manifest.value("objective", std::string("sft")) !=
+                    common_learning_objective_name(job.objective)) {
+                if (!fail_claimed_job(running, queue_root, key, job.id,
+                        "training job objective does not match corpus manifest", limits, report, error)) return false;
+                return true;
+            }
+        } catch (const std::exception &) {
+            if (!fail_claimed_job(running, queue_root, key, job.id,
+                    "corpus manifest is malformed", limits, report, error)) return false;
             return true;
         }
         common_learning_training_result result;

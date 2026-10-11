@@ -11,6 +11,7 @@ struct common_learning_training_job {
     std::string id;
     std::string corpus_revision_id;
     std::string corpus_bundle_hash;
+    common_learning_objective objective = common_learning_objective::sft;
     std::string base_training_fingerprint;
     std::string trainer_kind = "qlora-sft";
     std::string trainer_version;

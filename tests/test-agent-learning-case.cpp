@@ -11,6 +11,11 @@ int main() {
     value.scope.turn_id = "turn-1";
     value.evidence_ids = {"evidence-1"};
     value.schema_fingerprint = "tool-schema:dataset.inspect:v1";
+    value.teaching_key = "dataset-inspect-v1";
+    value.behavior_key = "tool-use/dataset.inspect";
+    value.contrast_ref = "contrast:repair-1";
+    value.verifier_ref = "oracle:dataset-contract";
+    value.verifier_revision = "oracle-revision:dataset-v1";
     value.input = "Inspect the attached table.";
     value.rejected_action = "invalid binding";
     value.preferred_action = "valid binding";
@@ -28,6 +33,8 @@ int main() {
     const auto encoded = common_learning_case_to_json(value);
     assert(encoded.find("rejected_action") != std::string::npos);
     assert(encoded.find("tool_repair") != std::string::npos);
+    assert(encoded.find("dataset-inspect-v1") != std::string::npos);
+    assert(encoded.find("oracle-revision:dataset-v1") != std::string::npos);
     value.status = common_learning_case_status::revoked;
     assert(!common_learning_case_validate(value, 4, 128, error));
     return 0;

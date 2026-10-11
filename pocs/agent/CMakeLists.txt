@@ -1285,6 +1285,11 @@ target_link_libraries(${TARGET} PRIVATE
     vendor::hash
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
+if (MSVC)
+    target_compile_options(${TARGET} PRIVATE /UNDEBUG)
+else()
+    target_compile_options(${TARGET} PRIVATE -UNDEBUG)
+endif()
 set(AGENT_MCP_SERVER_LIBRARY_TARGETS
     llama-agent-mcp-stdio-fake-server
     llama-agent-mcp-stdio-server-smoke

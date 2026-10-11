@@ -90,7 +90,8 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, Any]:
         if not path.is_dir():
             fail("QLoRA requires a local Hugging Face checkpoint directory, not a serving GGUF: " + str(path))
     job = json.loads(args.job.read_text(encoding="utf-8"))
-    if job.get("schema_version") != 1 or job.get("trainer_kind") != "qlora-sft":
+    if (job.get("schema_version") != 1 or job.get("trainer_kind") != "qlora-sft"
+            or job.get("objective", "sft") != "sft"):
         fail("QLoRA trainer accepts only schema-version 1 qlora-sft jobs")
     if not isinstance(job.get("id"), str) or not isinstance(job.get("corpus_bundle_hash"), str):
         fail("training job has incomplete identity")
@@ -99,6 +100,8 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, Any]:
     manifest = json.loads(args.corpus_manifest.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict) or not isinstance(manifest.get("jsonl_hash"), str):
         fail("corpus manifest is not a valid corpus-builder manifest")
+    if manifest.get("objective", "sft") != "sft":
+        fail("SFT corpus manifest objective does not match SFT trainer")
     return job
 
 

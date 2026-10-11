@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+enum class common_learning_objective { sft, dpo };
+const char * common_learning_objective_name(common_learning_objective objective);
+
 struct common_learning_corpus_view {
     // Empty fields mean "all". A view is a deterministic projection of the
     // shared corpus; it does not create a second corpus or alter qualification.
@@ -24,6 +27,7 @@ bool common_learning_corpus_view_matches(
         const common_learning_corpus_view & view);
 
 struct common_learning_corpus_policy {
+    common_learning_objective objective = common_learning_objective::sft;
     std::string builder_version = "1";
     uint64_t seed = 42;
     size_t max_candidates = 1024;
@@ -44,6 +48,7 @@ struct common_learning_corpus_revision {
     int schema_version = 1;
     std::string id;
     std::string builder_version;
+    common_learning_objective objective = common_learning_objective::sft;
     uint64_t seed = 0;
     std::vector<std::string> candidate_ids;
     std::vector<std::string> replay_candidate_ids;

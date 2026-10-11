@@ -5,6 +5,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -31,9 +32,11 @@ common_learning_transaction make_transaction(const std::string & id) {
     return value;
 }
 
-common_training_candidate make_candidate(const std::string & transaction_id) {
+common_training_candidate make_candidate(
+        const std::string & transaction_id,
+        const std::string & candidate_id = "learning://candidate/adaptation-smoke") {
     common_training_candidate value;
-    value.id = "learning://candidate/adaptation-smoke";
+    value.id = candidate_id;
     value.transaction_ids = {transaction_id};
     value.cause = common_learning_cause::model_behavior;
     value.hypothesis = "The model needs to prefer the verified data inspection action.";
@@ -110,10 +113,28 @@ int main() {
     assert(lifecycle_records.front().status == common_learning_lifecycle_status::approved);
     assert(lifecycle_records.back().status == common_learning_lifecycle_status::active);
 
+    std::vector<common_training_candidate> nearline_candidates;
+    for (size_t index = 1; index <= 3; ++index) {
+        const auto transaction_id = "learning://transaction/adaptation-nearline-" + std::to_string(index);
+        auto additional_transaction = make_transaction(transaction_id);
+        assert(transactions.append(additional_transaction, error));
+        nearline_candidates.push_back(make_candidate(
+            transaction_id, "learning://candidate/adaptation-nearline-" + std::to_string(index)));
+    }
+    config.dispatch_mode = agent_learning_dispatch_mode::nearline;
+    config.auto_training_policy.min_qualified_examples = nearline_candidates.size();
+    agent_learning_adaptation_orchestrator_result nearline_result;
+    assert(agent_learning_run_adaptation(nearline_candidates, config, nearline_result, error));
+    assert(nearline_result.corpus.candidate_ids.size() == nearline_candidates.size());
+    assert(nearline_result.worker_report.state == agent_learning_worker_job_state::succeeded);
+    assert(nearline_result.lifecycle_records > nearline_candidates.size());
+
     std::cout << "adaptation_orchestration=passed\n"
               << "worker_state=succeeded\n"
               << "training_evaluation=not_run\n"
               << "evaluation=passed\n"
+              << "nearline_threshold=passed\n"
+              << "nearline_candidates=" << nearline_result.corpus.candidate_ids.size() << '\n'
               << "lifecycle_records=" << lifecycle_records.size() << '\n';
     std::filesystem::remove_all(root, ec);
     return 0;

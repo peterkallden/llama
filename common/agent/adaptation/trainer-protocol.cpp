@@ -68,11 +68,13 @@ bool common_learning_make_training_job(
         return false;
     }
     job = {};
-    const auto identity = corpus.bundle_hash + "\n" + base_training_fingerprint + "\n" +
+    const auto identity = corpus.bundle_hash + "\n" +
+        common_learning_objective_name(corpus.objective) + "\n" + base_training_fingerprint + "\n" +
         trainer_kind + "\n" + trainer_version + "\n" + code_revision + "\n" + std::to_string(corpus.seed);
     job.id = "learning://job/" + identity_hash(identity);
     job.corpus_revision_id = corpus.id;
     job.corpus_bundle_hash = corpus.bundle_hash;
+    job.objective = corpus.objective;
     job.base_training_fingerprint = base_training_fingerprint;
     job.trainer_kind = trainer_kind;
     job.code_revision = code_revision;
@@ -89,6 +91,14 @@ bool common_learning_validate_training_job(const common_learning_training_job & 
             !nonempty_bounded(job.base_training_fingerprint) || !nonempty_bounded(job.trainer_kind) ||
             !nonempty_bounded(job.trainer_version) || !nonempty_bounded(job.code_revision)) {
         error = "training job has missing or oversized identity"; return false;
+    }
+    if ((job.objective != common_learning_objective::sft &&
+         job.objective != common_learning_objective::dpo) ||
+            (job.trainer_kind == "fake-sft" && job.objective != common_learning_objective::sft) ||
+            (job.trainer_kind == "qlora-sft" && job.objective != common_learning_objective::sft) ||
+            (job.trainer_kind == "qlora-dpo" && job.objective != common_learning_objective::dpo)) {
+        error = "training job objective does not match the trainer kind";
+        return false;
     }
     if (job.deadline_seconds == 0 || job.deadline_seconds > 7 * 24 * 60 * 60) {
         error = "training job deadline is outside bounds"; return false;
@@ -133,6 +143,7 @@ bool common_learning_training_job_to_json(
         {"id", job.id},
         {"corpus_revision_id", job.corpus_revision_id},
         {"corpus_bundle_hash", job.corpus_bundle_hash},
+        {"objective", common_learning_objective_name(job.objective)},
         {"base_training_fingerprint", job.base_training_fingerprint},
         {"trainer_kind", job.trainer_kind},
         {"trainer_version", job.trainer_version},
@@ -157,6 +168,10 @@ bool common_learning_training_job_from_json(
         }
         job = {};
         job.schema_version = value.at("schema_version").get<int>();
+        const auto objective = value.value("objective", std::string("sft"));
+        if (objective == "sft") job.objective = common_learning_objective::sft;
+        else if (objective == "dpo") job.objective = common_learning_objective::dpo;
+        else { error = "training job objective is invalid"; return false; }
         if (!json_string(value, "id", job.id, error) ||
                 !json_string(value, "corpus_revision_id", job.corpus_revision_id, error) ||
                 !json_string(value, "corpus_bundle_hash", job.corpus_bundle_hash, error) ||

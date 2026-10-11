@@ -7,8 +7,12 @@ cause-classification, runtime assembly, artifact-import, and evaluation-report
 contracts exist. The local adaptation worker is implemented as a separate
 queue-consuming process. It can run the deterministic `fake-sft` trainer or an
 explicitly configured external trainer such as the supplied QLoRA helper.
-Production training operations, production multi-model loading/routing, and
-daemon-driven automatic adapter activation remain separate work.
+The shared corpus now supports SFT and same-context DPO projections, and a
+host admission bridge can derive candidates from resolved, host-verified
+FlyDelta relations. The bridge is not yet wired to automatically harvest or
+schedule those records from the daemon. Production training operations,
+production multi-model loading/routing, and daemon-driven automatic adapter
+activation remain separate work.
 
 The purpose of this work is not to make the model self-authorizing or to move
 runtime reasoning into model weights. It introduces a host-supervised path for
@@ -30,7 +34,12 @@ The local branch currently contains the first contract slices:
 - destination qualification and a bounded training-candidate contract;
 - a deterministic JSONL corpus builder requiring explicitly approved and
   redaction-attested candidates, with provenance, revocation, held-out,
-  split, duplicate, byte-bound, and bounded replay handling;
+  split, duplicate, byte-bound, and bounded replay handling; objective selects
+  the existing SFT row shape or a DPO `prompt`/`chosen`/`rejected` projection;
+- a FlyDelta admission bridge that consumes resolved, host-verified relations,
+  approved learning cases, and transactions, and rejects unverified,
+  duplicate-task, or revision-mixed groups before using the existing candidate
+  contract;
 - a separate adaptation worker with one-shot and bounded watch modes, an
   atomic file queue, a deterministic `fake-sft` trainer for protocol testing,
   and an operator-configured external-trainer seam;
@@ -234,7 +243,8 @@ I recommend the following adjustments before implementation:
 5. Start with one narrow behavior and SFT. Tool-contract compliance on
    redacted fixture data is a better first target than free-form planning or
    project-specific facts. DPO requires same-context chosen/rejected pairs,
-   which a recovery often does not provide.
+   which a recovery often does not provide; it is an explicit optional
+   objective, never inferred from a recovery.
 6. Start with one active adapter and an adapter-free baseline profile. A full
    multi-model catalog is useful, but it should not block the first complete
    transaction-to-adapter path.
@@ -668,6 +678,44 @@ while approval, redaction, bounds, replay, and provenance rules remain
 unchanged. This makes a view a reproducible projection rather than a hidden
 second corpus.
 
+### SFT and DPO projections; FlyDelta admission
+
+The immutable candidate/corpus path remains shared. SFT emits the established
+`input`/`target` rows. DPO is selected explicitly and emits
+`prompt`/`chosen`/`rejected`; admission requires a rejected response plus
+contrast and verifier provenance. A successful recovery alone is not a DPO
+pair. The optional `qlora-dpo` trainer is a separate configured worker command
+and consumes only the DPO projection. Trainer kind and objective are bound in
+the job identity and checked against the corpus manifest.
+
+`common_flydelta_admit_training_cases()` accepts resolved FlyDelta relations,
+their evidence, approved learning cases, and source transactions. The caller
+resolves these records from the existing stores; the bridge creates no second
+evidence store. It verifies host approval, evidence/transaction links,
+independent task fingerprints, and consistent model, tokenizer, template,
+behavior, and Oracle revisions before projecting candidates through the
+existing approval/redaction/qualification contract. At least three independent
+relations are required by default. Missing provenance is rejected rather than
+guessed. The derived candidates and corpus rows retain the relation, evidence,
+learning-case, contrast, model, tokenizer, template, and verifier revision
+references for later offline reproduction.
+
+Corpus splits are grouped by `teaching_key` (then `behavior_key`) so related
+examples cannot leak across train and held-out splits. If fewer than three
+independent groups are present, all rows are explicitly marked `train` in the
+manifest; this avoids producing a corpus with no training rows. Such a corpus
+does not gain a validation claim: the existing host evaluator remains the gate
+for adapter staging and promotion.
+
+The orchestrator supports explicit `offline` and threshold-gated `nearline`
+dispatch modes over the same immutable corpus and worker path. Nearline means
+that the configured auto-training threshold has been met before dispatch; it
+does not update serving weights inside an inference turn. Current orchestration
+still consumes the worker synchronously, and automatic daemon-side relation
+resolution/scheduling remains future wiring. Captured data should therefore
+remain durable and reproducible regardless of when an operator or host
+scheduler dispatches it.
+
 ### Adapter revision
 
 An adapter revision is an artifact plus a manifest. The manifest must bind it
@@ -974,11 +1022,25 @@ installation, a local Hugging Face checkpoint, and the converter environment.
 Evaluation, registry admission, canary staging, and activation remain
 host-controlled steps after the worker returns.
 
+#### Supporting QLoRA DPO trainer
+
+`scripts/agent-adaptation-dpo-trainer.py` uses the same worker bundle, local
+checkpoint requirements, optional Python dependencies, and GGUF converter as
+the SFT helper. Configure it only for `trainer_kind: qlora-dpo`; it rejects SFT
+jobs, non-DPO manifests, and corpus JSONL whose identity does not match the
+manifest. It uses chosen and rejected completions from each train-split row,
+scores both against the same prompt with the adapter enabled and disabled for
+the reference policy, and optimizes the pairwise DPO objective. It emits an
+adapter artifact with `evaluation_status: not_run`; the normal host evaluator
+and registry gates still apply. This helper has not been validated against a
+production checkpoint and requires the same CUDA/PEFT/bitsandbytes environment
+as SFT.
+
 #### Packaging boundary
 
 The agent package contains the complete runtime entrypoint set needed to
 create and consume adaptation jobs: `llama-agent-adaptation-worker`,
-`llama-agent-adaptation-admin`, the reference QLoRA helper, and
+`llama-agent-adaptation-admin`, the reference QLoRA SFT/DPO helpers, and
 `convert_lora_to_gguf.py`. It also contains the four requirements manifests under
 `share/llama-agent/requirements/`. Debian installs the executables under
 `/usr/bin` (with the daemon in `/usr/sbin`), while the tar archive and Docker

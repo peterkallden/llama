@@ -12,6 +12,7 @@ int main() {
     assert(common_learning_make_training_job(corpus, "base:qwen-small:training-v1",
         "trainer-revision-1", "fake-sft", "fake-trainer-1", job, error));
     assert(job.seed == 99);
+    assert(job.objective == common_learning_objective::sft);
     common_learning_training_job other_job;
     assert(common_learning_make_training_job(corpus, "base:qwen-large:training-v1",
         "trainer-revision-1", "fake-sft", "fake-trainer-1", other_job, error));
@@ -22,6 +23,22 @@ int main() {
         "trainer-revision-1", "qlora-sft", "fake-trainer-1", external_job, error));
     assert(external_job.trainer_kind == "qlora-sft");
     assert(external_job.id != job.id);
+
+    auto dpo_corpus = corpus;
+    dpo_corpus.objective = common_learning_objective::dpo;
+    common_learning_training_job dpo_job;
+    assert(common_learning_make_training_job(dpo_corpus, "base:qwen-small:training-v1",
+        "trainer-revision-1", "qlora-dpo", "dpo-trainer-1", dpo_job, error));
+    assert(dpo_job.objective == common_learning_objective::dpo);
+    std::string dpo_job_json;
+    assert(common_learning_training_job_to_json(dpo_job, dpo_job_json, error));
+    common_learning_training_job roundtrip_dpo;
+    assert(common_learning_training_job_from_json(dpo_job_json, roundtrip_dpo, error));
+    assert(roundtrip_dpo.objective == common_learning_objective::dpo);
+    assert(roundtrip_dpo.id == dpo_job.id);
+    common_learning_training_job mismatched_dpo;
+    assert(!common_learning_make_training_job(dpo_corpus, "base:qwen-small:training-v1",
+        "trainer-revision-1", "qlora-sft", "sft-trainer-1", mismatched_dpo, error));
 
     common_learning_training_result result;
     result.job_id = job.id;

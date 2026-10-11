@@ -36,6 +36,20 @@ struct common_training_candidate {
     std::string hypothesis;
     std::string approved_prompt;
     std::string approved_target;
+    // Optional contrast target enables preference objectives. Empty remains
+    // valid for existing SFT candidates.
+    std::string rejected_target;
+    std::string teaching_key;
+    std::string behavior_key;
+    std::string learning_case_id;
+    std::string teaching_relation_id;
+    std::string evidence_ref;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string contrast_ref;
+    std::string verifier_ref;
+    std::string verifier_revision;
     size_t observed_occurrences = 0;
     size_t verified_recoveries = 0;
     size_t contradictions = 0;

@@ -63,6 +63,8 @@ int main() {
     require(first.candidate_ids.size() == 2 && first.candidate_ids.front() == "learning://candidate/a",
             "corpus ordering is not stable");
     require(first.jsonl.find("\"input\":\"first\"") != std::string::npos, "corpus input is missing");
+    require(first.jsonl.find("\"target\":\"Emit the valid tool binding.\"") != std::string::npos,
+            "SFT target is missing");
     require(first.jsonl.find("\"redaction\"") != std::string::npos, "corpus redaction metadata is missing");
     const auto manifest = nlohmann::json::parse(first.manifest_json);
     require(manifest["transaction_ids"].size() == 6, "corpus provenance is incomplete");
@@ -180,5 +182,45 @@ int main() {
     auto too_large_replay = replay_policy;
     too_large_replay.replay_candidate_ids = {"learning://candidate/a", "learning://candidate/c"};
     require(!common_learning_build_corpus(candidates, too_large_replay, first, error), "replay bound was ignored");
+
+    auto preference_candidates = candidates;
+    for (auto & value : preference_candidates) {
+        value.rejected_target = "Emit the invalid tool binding.";
+        value.teaching_key = "stable-tool-binding-v1";
+        value.contrast_ref = "contrast:" + value.id;
+        value.verifier_ref = "oracle:tool-contract";
+        value.verifier_revision = "oracle-revision:tool-contract-v1";
+    }
+    common_learning_corpus_policy preference_policy;
+    preference_policy.objective = common_learning_objective::dpo;
+    common_learning_corpus_revision preference_revision;
+    require(common_learning_build_corpus(preference_candidates, preference_policy,
+            preference_revision, error), "DPO corpus build failed");
+    require(preference_revision.objective == common_learning_objective::dpo,
+            "DPO objective was not carried into the corpus revision");
+    const auto preference_manifest = nlohmann::json::parse(preference_revision.manifest_json);
+    require(preference_manifest["split_strategy"] == "all_train_insufficient_groups",
+            "small grouped corpus did not select the documented all-train fallback");
+    const auto preference_row = nlohmann::json::parse(preference_revision.jsonl.substr(
+        0, preference_revision.jsonl.find('\n')));
+    require(preference_row.contains("prompt") && preference_row.contains("chosen") &&
+            preference_row.contains("rejected") && !preference_row.contains("target"),
+            "DPO row does not use prompt/chosen/rejected fields");
+    const auto preference_split = preference_row.at("split").get<std::string>();
+    for (size_t start = preference_revision.jsonl.find('\n') + 1;
+            start < preference_revision.jsonl.size();) {
+        const auto end = preference_revision.jsonl.find('\n', start);
+        const auto row = nlohmann::json::parse(preference_revision.jsonl.substr(
+            start, end == std::string::npos ? end : end - start));
+        require(row.at("split").get<std::string>() == preference_split,
+                "same teaching group leaked across corpus splits");
+        require(row.at("split") == "train", "small preference corpus has no train-split fallback");
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    auto missing_preference = preference_candidates;
+    missing_preference.front().rejected_target.clear();
+    require(!common_learning_build_corpus(missing_preference, preference_policy,
+            preference_revision, error), "DPO admitted a candidate without rejected target");
     return 0;
 }

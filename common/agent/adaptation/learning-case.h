@@ -23,6 +23,14 @@ struct common_learning_case {
     common_agent_scope scope;
     std::vector<std::string> evidence_ids;
     std::string schema_fingerprint;
+    // Optional stable semantic grouping and verifier lineage. These fields
+    // let training projections retain the admission provenance without
+    // introducing a second evidence store.
+    std::string teaching_key;
+    std::string behavior_key;
+    std::string contrast_ref;
+    std::string verifier_ref;
+    std::string verifier_revision;
     std::string input;
     std::string rejected_action;
     std::string preferred_action;

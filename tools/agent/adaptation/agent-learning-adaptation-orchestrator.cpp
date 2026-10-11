@@ -2,6 +2,7 @@
 
 #include "hash/hash.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -76,6 +77,18 @@ std::string candidate_payload(const common_training_candidate & candidate) {
         {"hypothesis", candidate.hypothesis},
         {"approved_prompt", candidate.approved_prompt},
         {"approved_target", candidate.approved_target},
+        {"rejected_target", candidate.rejected_target},
+        {"teaching_key", candidate.teaching_key},
+        {"behavior_key", candidate.behavior_key},
+        {"learning_case_id", candidate.learning_case_id},
+        {"teaching_relation_id", candidate.teaching_relation_id},
+        {"evidence_ref", candidate.evidence_ref},
+        {"model_profile_fingerprint", candidate.model_profile_fingerprint},
+        {"tokenizer_fingerprint", candidate.tokenizer_fingerprint},
+        {"template_fingerprint", candidate.template_fingerprint},
+        {"contrast_ref", candidate.contrast_ref},
+        {"verifier_ref", candidate.verifier_ref},
+        {"verifier_revision", candidate.verifier_revision},
         {"learning_domain", candidate.learning_domain},
         {"tool_family", candidate.tool_family},
         {"provider_kind", candidate.provider_kind},
@@ -86,6 +99,7 @@ std::string corpus_payload(const common_learning_corpus_revision & corpus) {
     return json{
         {"id", corpus.id},
         {"bundle_hash", corpus.bundle_hash},
+        {"objective", common_learning_objective_name(corpus.objective)},
         {"candidate_ids", corpus.candidate_ids},
         {"replay_candidate_ids", corpus.replay_candidate_ids},
         {"view", {
@@ -103,43 +117,78 @@ bool agent_learning_run_adaptation(
         const agent_learning_adaptation_orchestrator_config & config,
         agent_learning_adaptation_orchestrator_result & result,
         std::string & error) {
+    return agent_learning_run_adaptation(
+        std::vector<common_training_candidate>{candidate}, config, result, error);
+}
+
+bool agent_learning_run_adaptation(
+        const std::vector<common_training_candidate> & candidates,
+        const agent_learning_adaptation_orchestrator_config & config,
+        agent_learning_adaptation_orchestrator_result & result,
+        std::string & error) {
     error.clear();
     result = {};
-    if (config.queue_root.empty()) {
+    if (config.queue_root.empty() || candidates.empty()) {
         error = "adaptation orchestrator requires a queue root";
         return false;
     }
     common_training_candidate_policy candidate_policy;
-    if (!common_training_candidate_qualifies(candidate, candidate_policy, error)) return false;
-
-    const auto transactions = config.transaction_store.list(error);
-    if (!error.empty()) return false;
-    for (const auto & transaction_id : candidate.transaction_ids) {
-        bool found = false;
-        for (const auto & transaction : transactions) {
-            if (transaction.id == transaction_id) { found = true; break; }
+    std::vector<common_training_candidate> selected = candidates;
+    for (const auto & candidate : selected) {
+        if (!common_training_candidate_qualifies(candidate, candidate_policy, error)) return false;
+    }
+    if (config.dispatch_mode == agent_learning_dispatch_mode::nearline) {
+        auto policy = config.auto_training_policy;
+        policy.enabled = true;
+        common_learning_auto_training_result trigger;
+        if (!common_learning_auto_training_ready(selected, config.training_group,
+                policy, trigger, error)) return false;
+        if (!trigger.ready || trigger.qualified_candidate_ids.size() != selected.size()) {
+            error = "nearline training threshold has not been reached for the supplied candidate group";
+            return false;
         }
-        if (!found) {
-            error = "training candidate references a transaction not present in the ledger: " + transaction_id;
+    }
+    const auto redaction_policy_id = selected.front().redaction_policy_id;
+    for (const auto & candidate : selected) {
+        if (candidate.redaction_policy_id != redaction_policy_id) {
+            error = "training batch candidates use different redaction policies";
             return false;
         }
     }
 
-    if (!append_lifecycle(config.lifecycle_store, candidate.id,
-            common_learning_lifecycle_kind::candidate,
-            common_learning_lifecycle_status::approved,
-            candidate_payload(candidate), candidate.id,
-            config.max_lifecycle_payload_bytes, result.lifecycle_records, error)) return false;
+    const auto transactions = config.transaction_store.list(error);
+    if (!error.empty()) return false;
+    for (const auto & candidate : selected) {
+        for (const auto & transaction_id : candidate.transaction_ids) {
+            bool found = false;
+            for (const auto & transaction : transactions) {
+                if (transaction.id == transaction_id) { found = true; break; }
+            }
+            if (!found) {
+                error = "training candidate references a transaction not present in the ledger: " + transaction_id;
+                return false;
+            }
+        }
+    }
+
+    for (const auto & candidate : selected) {
+        if (!append_lifecycle(config.lifecycle_store, candidate.id,
+                common_learning_lifecycle_kind::candidate,
+                common_learning_lifecycle_status::approved,
+                candidate_payload(candidate), candidate.id,
+                config.max_lifecycle_payload_bytes, result.lifecycle_records, error)) return false;
+    }
 
     common_learning_corpus_policy corpus_policy;
-    corpus_policy.max_candidates = 1;
-    corpus_policy.max_bytes = 64 * 1024;
-    corpus_policy.redaction_policy_id = candidate.redaction_policy_id;
-    if (!common_learning_build_corpus({candidate}, corpus_policy, result.corpus, error)) return false;
+    corpus_policy.max_candidates = selected.size();
+    corpus_policy.max_bytes = std::max<size_t>(64 * 1024, selected.size() * 64 * 1024);
+    corpus_policy.redaction_policy_id = redaction_policy_id;
+    corpus_policy.objective = config.objective;
+    if (!common_learning_build_corpus(selected, corpus_policy, result.corpus, error)) return false;
     if (!append_lifecycle(config.lifecycle_store, result.corpus.id,
             common_learning_lifecycle_kind::corpus_revision,
             common_learning_lifecycle_status::succeeded,
-            corpus_payload(result.corpus), candidate.id,
+            corpus_payload(result.corpus), result.corpus.id,
             config.max_lifecycle_payload_bytes, result.lifecycle_records, error)) return false;
 
     if (!common_learning_make_training_job(result.corpus,
@@ -151,13 +200,13 @@ bool agent_learning_run_adaptation(
     if (!append_lifecycle(config.lifecycle_store, result.job.id,
             common_learning_lifecycle_kind::training_job,
             common_learning_lifecycle_status::queued,
-            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            job_json, result.corpus.id, config.max_lifecycle_payload_bytes,
             result.lifecycle_records, error)) return false;
     if (!agent_learning_enqueue_job(config.queue_root, result.job, result.corpus, error)) return false;
     if (!append_lifecycle(config.lifecycle_store, result.job.id,
             common_learning_lifecycle_kind::training_job,
             common_learning_lifecycle_status::running,
-            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            job_json, result.corpus.id, config.max_lifecycle_payload_bytes,
             result.lifecycle_records, error)) return false;
 
     if (!agent_learning_worker_run_once(config.queue_root, config.worker_limits,
@@ -168,7 +217,7 @@ bool agent_learning_run_adaptation(
         append_lifecycle(config.lifecycle_store, result.job.id,
             common_learning_lifecycle_kind::training_job,
             common_learning_lifecycle_status::failed,
-            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            job_json, result.corpus.id, config.max_lifecycle_payload_bytes,
             result.lifecycle_records, lifecycle_error);
         error = worker_error;
         if (!lifecycle_error.empty()) error += "; lifecycle failure: " + lifecycle_error;
@@ -182,7 +231,7 @@ bool agent_learning_run_adaptation(
             result.worker_report.state == agent_learning_worker_job_state::cancelled
                 ? common_learning_lifecycle_status::cancelled
                 : common_learning_lifecycle_status::failed,
-            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            job_json, result.corpus.id, config.max_lifecycle_payload_bytes,
             result.lifecycle_records, lifecycle_error);
         if (!lifecycle_error.empty()) error += "; lifecycle failure: " + lifecycle_error;
         return false;
@@ -195,7 +244,7 @@ bool agent_learning_run_adaptation(
     if (!append_lifecycle(config.lifecycle_store, result.job.id,
             common_learning_lifecycle_kind::training_job,
             common_learning_lifecycle_status::succeeded,
-            job_json, candidate.id, config.max_lifecycle_payload_bytes,
+            job_json, result.corpus.id, config.max_lifecycle_payload_bytes,
             result.lifecycle_records, error)) return false;
     if (!append_lifecycle(config.lifecycle_store, result.training_result.adapter_id,
             common_learning_lifecycle_kind::training_result,

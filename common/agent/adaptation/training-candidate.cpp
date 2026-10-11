@@ -49,7 +49,14 @@ bool common_training_candidate_qualifies(
     }
     if (candidate.hypothesis.empty() || candidate.hypothesis.size() > policy.max_text_size ||
             candidate.approved_prompt.empty() || candidate.approved_prompt.size() > policy.max_text_size ||
-            candidate.approved_target.empty() || candidate.approved_target.size() > policy.max_text_size) {
+            candidate.approved_target.empty() || candidate.approved_target.size() > policy.max_text_size ||
+            candidate.rejected_target.size() > policy.max_text_size ||
+            candidate.teaching_key.size() > 512 || candidate.behavior_key.size() > 512 ||
+            candidate.learning_case_id.size() > 512 || candidate.teaching_relation_id.size() > 512 ||
+            candidate.evidence_ref.size() > 512 || candidate.model_profile_fingerprint.size() > 512 ||
+            candidate.tokenizer_fingerprint.size() > 512 || candidate.template_fingerprint.size() > 512 ||
+            candidate.contrast_ref.size() > 512 ||
+            candidate.verifier_ref.size() > 512 || candidate.verifier_revision.size() > 512) {
         error = "training candidate contains invalid bounded text"; return false;
     }
     if (candidate.cause != common_learning_cause::model_behavior) {
@@ -112,6 +119,13 @@ bool common_training_candidate_from_approved_case(
     candidate.hypothesis = promotion.hypothesis;
     candidate.approved_prompt = learning_case.input;
     candidate.approved_target = learning_case.preferred_action;
+    candidate.rejected_target = learning_case.rejected_action;
+    candidate.teaching_key = learning_case.teaching_key;
+    candidate.behavior_key = learning_case.behavior_key;
+    candidate.learning_case_id = learning_case.id;
+    candidate.contrast_ref = learning_case.contrast_ref;
+    candidate.verifier_ref = learning_case.verifier_ref;
+    candidate.verifier_revision = learning_case.verifier_revision;
     candidate.observed_occurrences = promotion.observed_occurrences;
     candidate.verified_recoveries = promotion.verified_recoveries;
     candidate.contradictions = promotion.contradictions;

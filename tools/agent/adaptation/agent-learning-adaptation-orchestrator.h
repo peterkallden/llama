@@ -4,15 +4,19 @@
 #include "agent-learning-lifecycle-store.h"
 #include "agent-learning-transaction-store.h"
 #include "agent-learning-worker.h"
+#include "agent/adaptation/auto-training-trigger.h"
 #include "agent/adaptation/adapter-registry.h"
 
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 // Host-level composition of the offline adaptation path.  It deliberately
 // does not run inside a user turn and it never treats a trainer artifact as
 // evaluated until the injected host evaluator returns a passed report.
+enum class agent_learning_dispatch_mode { offline, nearline };
+
 struct agent_learning_adaptation_orchestrator_config {
     common_learning_transaction_store & transaction_store;
     common_learning_lifecycle_store & lifecycle_store;
@@ -24,6 +28,10 @@ struct agent_learning_adaptation_orchestrator_config {
     std::string code_revision = "local-adaptation-smoke";
     std::string trainer_kind = "fake-sft";
     std::string trainer_version = "fake-trainer-1";
+    common_learning_objective objective = common_learning_objective::sft;
+    agent_learning_dispatch_mode dispatch_mode = agent_learning_dispatch_mode::offline;
+    common_learning_training_group training_group;
+    common_learning_auto_training_policy auto_training_policy;
     size_t max_artifact_bytes = 64 * 1024 * 1024;
     size_t max_lifecycle_payload_bytes = 4 * 1024 * 1024;
     agent_learning_worker_limits worker_limits;
@@ -48,6 +56,12 @@ struct agent_learning_adaptation_orchestrator_result {
 
 bool agent_learning_run_adaptation(
         const common_training_candidate & candidate,
+        const agent_learning_adaptation_orchestrator_config & config,
+        agent_learning_adaptation_orchestrator_result & result,
+        std::string & error);
+
+bool agent_learning_run_adaptation(
+        const std::vector<common_training_candidate> & candidates,
         const agent_learning_adaptation_orchestrator_config & config,
         agent_learning_adaptation_orchestrator_result & result,
         std::string & error);

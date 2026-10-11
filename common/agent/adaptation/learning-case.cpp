@@ -40,6 +40,13 @@ bool common_learning_case_validate(const common_learning_case & value, size_t ma
             value.preferred_action.empty() || value.content_hash.empty()) {
         error = "learning case requires redacted content and schema fingerprint"; return false;
     }
+    for (const auto * identity : {&value.teaching_key, &value.behavior_key,
+            &value.contrast_ref, &value.verifier_ref, &value.verifier_revision}) {
+        if (identity->size() > 512) {
+            error = "learning case provenance field exceeds bound";
+            return false;
+        }
+    }
     if (value.input.size() > max_text_size || value.rejected_action.size() > max_text_size ||
             value.preferred_action.size() > max_text_size) {
         error = "learning case exceeds text bound"; return false;
@@ -64,6 +71,9 @@ std::string common_learning_case_to_json(const common_learning_case & value) {
         {"scope", {{"namespace_id", value.scope.namespace_id}, {"session_id", value.scope.session_id},
                     {"project_id", value.scope.project_id}, {"turn_id", value.scope.turn_id}}},
         {"evidence_ids", value.evidence_ids}, {"schema_fingerprint", value.schema_fingerprint},
+        {"teaching_key", value.teaching_key}, {"behavior_key", value.behavior_key},
+        {"contrast_ref", value.contrast_ref}, {"verifier_ref", value.verifier_ref},
+        {"verifier_revision", value.verifier_revision},
         {"input", value.input}, {"rejected_action", value.rejected_action},
         {"preferred_action", value.preferred_action},
         {"redaction", {{"policy_id", value.redaction_policy_id}, {"method", value.redaction_method},

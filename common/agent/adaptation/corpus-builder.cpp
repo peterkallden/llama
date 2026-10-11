@@ -23,10 +23,11 @@ static std::string hash_text(const std::string & text) {
     return out.str();
 }
 
-static std::string split_for(const std::string & id, uint64_t seed) {
+static std::string split_for(const std::string & id, uint64_t seed,
+        size_t validation_percent, size_t test_percent) {
     const auto bucket = fnv1a(id + ":" + std::to_string(seed)) % 100;
-    if (bucket < 80) return "train";
-    if (bucket < 90) return "validation";
+    if (bucket < 100 - validation_percent - test_percent) return "train";
+    if (bucket < 100 - test_percent) return "validation";
     return "test";
 }
 
@@ -45,6 +46,18 @@ static std::string candidate_fingerprint(const common_training_candidate & candi
           << candidate.hypothesis << '\n'
           << candidate.approved_prompt << '\n'
           << candidate.approved_target << '\n'
+          << candidate.rejected_target << '\n'
+          << candidate.teaching_key << '\n'
+          << candidate.behavior_key << '\n'
+          << candidate.learning_case_id << '\n'
+          << candidate.teaching_relation_id << '\n'
+          << candidate.evidence_ref << '\n'
+          << candidate.model_profile_fingerprint << '\n'
+          << candidate.tokenizer_fingerprint << '\n'
+          << candidate.template_fingerprint << '\n'
+          << candidate.contrast_ref << '\n'
+          << candidate.verifier_ref << '\n'
+          << candidate.verifier_revision << '\n'
           << candidate.observed_occurrences << '\n'
           << candidate.verified_recoveries << '\n'
           << candidate.contradictions << '\n'
@@ -74,6 +87,14 @@ static json view_json(const common_learning_corpus_view & view) {
     };
 }
 
+const char * common_learning_objective_name(common_learning_objective objective) {
+    switch (objective) {
+        case common_learning_objective::sft: return "sft";
+        case common_learning_objective::dpo: return "dpo";
+    }
+    return "unknown";
+}
+
 bool common_learning_corpus_view_matches(
         const common_training_candidate & candidate,
         const common_learning_corpus_view & view) {
@@ -93,6 +114,11 @@ bool common_learning_build_corpus(
     if (policy.builder_version.empty()) { error = "corpus builder requires version"; return false; }
     if (policy.validation_percent + policy.test_percent > 100) {
         error = "corpus split percentages exceed 100";
+        return false;
+    }
+    if (policy.objective != common_learning_objective::sft &&
+            policy.objective != common_learning_objective::dpo) {
+        error = "corpus objective is unsupported";
         return false;
     }
     if (policy.redaction_policy_id.empty()) {
@@ -135,6 +161,12 @@ bool common_learning_build_corpus(
             return false;
         }
         if (!common_training_candidate_qualifies(candidate, candidate_policy, error)) return false;
+        if (policy.objective == common_learning_objective::dpo &&
+                (candidate.rejected_target.empty() || candidate.contrast_ref.empty() ||
+                 candidate.verifier_ref.empty() || candidate.verifier_revision.empty())) {
+            error = "DPO corpus candidate lacks a verified rejected response and contrast provenance";
+            return false;
+        }
         if (candidate.redaction_policy_id != policy.redaction_policy_id ||
                 candidate.redaction_method.empty() ||
                 (candidate.redaction_status != common_learning_redaction_status::caller_asserted &&
@@ -171,17 +203,41 @@ bool common_learning_build_corpus(
     std::sort(selected.begin(), selected.end(), [](const auto * left, const auto * right) { return left->id < right->id; });
     revision = {};
     revision.builder_version = policy.builder_version;
+    revision.objective = policy.objective;
     revision.seed = policy.seed;
     revision.held_out_candidate_ids.assign(held_out.begin(), held_out.end());
     revision.replay_candidate_ids.assign(replay.begin(), replay.end());
     revision.view = policy.view;
     std::map<std::string, size_t> split_counts;
+    std::set<std::string> split_groups;
+    for (const auto * candidate : selected) {
+        split_groups.insert(!candidate->teaching_key.empty()
+            ? candidate->teaching_key
+            : !candidate->behavior_key.empty() ? candidate->behavior_key : candidate->id);
+    }
+    // Do not strand a small corpus entirely in validation/test because the
+    // leakage-safe grouping key has only one or two values. Evaluation remains
+    // a separate host-owned gate; these rows are simply all training rows.
+    const bool enough_split_groups = split_groups.size() >= 3;
+    std::map<std::string, std::string> group_splits;
+    if (enough_split_groups) {
+        for (const auto & group : split_groups) {
+            group_splits.emplace(group, split_for(group, policy.seed,
+                policy.validation_percent, policy.test_percent));
+        }
+        const bool has_train_group = std::any_of(group_splits.begin(), group_splits.end(),
+            [](const auto & entry) { return entry.second == "train"; });
+        if (!has_train_group) group_splits.begin()->second = "train";
+    }
     std::ostringstream jsonl;
     for (const auto * candidate : selected) {
-        const auto split = split_for(candidate->id, policy.seed);
+        const auto split_identity = !candidate->teaching_key.empty()
+            ? candidate->teaching_key
+            : !candidate->behavior_key.empty() ? candidate->behavior_key : candidate->id;
+        const auto split = enough_split_groups ? group_splits.at(split_identity) : std::string("train");
         const auto candidate_transaction_ids = sorted_transaction_ids(*candidate);
         ++split_counts[split];
-        const auto line = json{
+        json row = {
             {"candidate_id", candidate->id},
             {"source", common_adaptation_evidence_source_name(candidate->source)},
             {"split", split},
@@ -193,9 +249,27 @@ bool common_learning_build_corpus(
             {"learning_domain", candidate->learning_domain},
             {"tool_family", candidate->tool_family},
             {"provider_kind", candidate->provider_kind},
-            {"input", candidate->approved_prompt},
-            {"target", candidate->approved_target},
-        }.dump();
+            {"teaching_key", candidate->teaching_key},
+            {"behavior_key", candidate->behavior_key},
+            {"learning_case_id", candidate->learning_case_id},
+            {"teaching_relation_id", candidate->teaching_relation_id},
+            {"evidence_ref", candidate->evidence_ref},
+            {"model_profile_fingerprint", candidate->model_profile_fingerprint},
+            {"tokenizer_fingerprint", candidate->tokenizer_fingerprint},
+            {"template_fingerprint", candidate->template_fingerprint},
+            {"contrast_ref", candidate->contrast_ref},
+            {"verifier_ref", candidate->verifier_ref},
+            {"verifier_revision", candidate->verifier_revision},
+        };
+        if (policy.objective == common_learning_objective::dpo) {
+            row["prompt"] = candidate->approved_prompt;
+            row["chosen"] = candidate->approved_target;
+            row["rejected"] = candidate->rejected_target;
+        } else {
+            row["input"] = candidate->approved_prompt;
+            row["target"] = candidate->approved_target;
+        }
+        const auto line = row.dump();
         jsonl << line << '\n';
         revision.candidate_ids.push_back(candidate->id);
     }
@@ -205,6 +279,8 @@ bool common_learning_build_corpus(
     revision.manifest_json = json{
         {"schema_version", revision.schema_version},
         {"builder_version", revision.builder_version},
+        {"objective", common_learning_objective_name(revision.objective)},
+        {"split_strategy", enough_split_groups ? "grouped_hash" : "all_train_insufficient_groups"},
         {"seed", revision.seed},
         {"candidate_ids", candidate_array},
         {"replay_candidate_ids", revision.replay_candidate_ids},
