@@ -874,7 +874,7 @@ bool resolve_agent_host_tool_selection(
                 if (!classify_agent_openapi_result_json(
                         result.structured_content_json,
                         agent_openapi_result_projection_limits{}, projection,
-                        materializer_error)) {
+                        materializer_error, operation.result_schema_json)) {
                     return false;
                 }
                 if (projection.kind == agent_openapi_result_projection_kind::dataset) {

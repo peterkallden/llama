@@ -391,18 +391,37 @@ bool operation_security(
 
 const nlohmann::json * result_collection(
         const nlohmann::json & value,
-        std::string & source_pointer) {
+        std::string & source_pointer,
+        bool allow_items_envelope = false) {
     source_pointer.clear();
     if (value.is_array()) return &value;
     if (!value.is_object()) return nullptr;
-    for (const char * field : {"results", "data", "items"}) {
+    for (const char * field : {"results", "data"}) {
         const auto found = value.find(field);
         if (found != value.end() && found->is_array()) {
             source_pointer = std::string("/") + field;
             return &*found;
         }
     }
+    if (allow_items_envelope) {
+        const auto found = value.find("items");
+        if (found != value.end() && found->is_array()) {
+            source_pointer = "/items";
+            return &*found;
+        }
+    }
     return nullptr;
+}
+
+bool schema_declares_items_array(const std::string & schema_json) {
+    if (schema_json.empty()) return false;
+    const auto schema = nlohmann::json::parse(schema_json, nullptr, false);
+    if (!schema.is_object()) return false;
+    const auto properties = schema.find("properties");
+    if (properties == schema.end() || !properties->is_object()) return false;
+    const auto items = properties->find("items");
+    return items != properties->end() && items->is_object() &&
+        items->value("type", std::string{}) == "array";
 }
 
 }
@@ -411,7 +430,8 @@ bool classify_agent_openapi_result_json(
         const std::string & structured_content_json,
         const agent_openapi_result_projection_limits & limits,
         agent_openapi_result_projection & projection,
-        std::string & error) {
+        std::string & error,
+        const std::string & result_schema_json) {
     projection = {};
     if (structured_content_json.size() > limits.max_bytes) {
         projection.reason = "structured API result exceeds the materialization byte limit";
@@ -424,7 +444,8 @@ bool classify_agent_openapi_result_json(
         return false;
     }
     std::string source_pointer;
-    const auto * rows = result_collection(value, source_pointer);
+    const auto * rows = result_collection(value, source_pointer,
+        schema_declares_items_array(result_schema_json));
     if (rows == nullptr || rows->empty() || rows->size() > limits.max_rows) {
         projection.reason = rows != nullptr && rows->size() > limits.max_rows
             ? "collection exceeds the materialization row limit"
@@ -631,7 +652,7 @@ bool make_agent_openapi_item_references(
     }
     const auto value = nlohmann::json::parse(structured_content_json, nullptr, false);
     std::string source_pointer;
-    const auto * rows = value.is_discarded() ? nullptr : result_collection(value, source_pointer);
+    const auto * rows = value.is_discarded() ? nullptr : result_collection(value, source_pointer, true);
     if (rows == nullptr) {
         error = "OpenAPI item references require a JSON collection";
         return false;

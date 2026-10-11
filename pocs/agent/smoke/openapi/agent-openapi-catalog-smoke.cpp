@@ -192,6 +192,16 @@ int main() {
         projection.row_count == 2 && projection.source_pointer == "/results" &&
         projection.rows_json == R"([{"id":"s1","year":2024},{"id":"s2","year":2025}])");
     assert(classify_agent_openapi_result_json(
+        R"({"items":[{"id":"s1"}]})",
+        agent_openapi_result_projection_limits{}, projection, error));
+    assert(projection.kind == agent_openapi_result_projection_kind::json_resource);
+    assert(classify_agent_openapi_result_json(
+        R"({"items":[{"id":"s1"}]})",
+        agent_openapi_result_projection_limits{}, projection, error,
+        R"({"type":"object","properties":{"items":{"type":"array"}}})"));
+    assert(projection.kind == agent_openapi_result_projection_kind::dataset &&
+        projection.source_pointer == "/items");
+    assert(classify_agent_openapi_result_json(
         R"([{"id":"s1","details":{"amount":10}}])",
         agent_openapi_result_projection_limits{}, projection, error));
     assert(projection.kind == agent_openapi_result_projection_kind::json_resource);

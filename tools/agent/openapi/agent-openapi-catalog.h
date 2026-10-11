@@ -138,7 +138,8 @@ bool classify_agent_openapi_result_json(
     const std::string & structured_content_json,
     const agent_openapi_result_projection_limits & limits,
     agent_openapi_result_projection & projection,
-    std::string & error);
+    std::string & error,
+    const std::string & result_schema_json = {});
 
 // Create deterministic, host-owned candidate handles from a bounded
 // collection result. Only rows containing a scalar item identifier are
