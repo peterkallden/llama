@@ -124,7 +124,26 @@ int main() {
     assert(chunk_workspace.sources.size() == 1 && chunk_workspace.evidence.size() == 1);
     assert(chunk_workspace.evidence.front().origin == common_agent_research_evidence_origin::model_inference);
     assert(chunk_workspace.evidence.front().model_inferred);
+    assert(chunk_workspace.evidence.front().statement == "Radiation increased.");
+    assert(chunk_workspace.evidence.front().supporting_excerpt == "radiation flux increased");
+    assert(chunk_workspace.evidence.front().supporting_excerpt_host_verified);
     assert(chunk_workspace.evidence.front().source_location.find("#bytes=4096+4096") != std::string::npos);
+    std::vector<common_agent_research_source> projected_sources;
+    std::vector<common_agent_research_evidence> projected_evidence;
+    assert(common_agent_research_chunk_evidence_from_observations(
+        chunk_observations, "task:projection", projected_sources, projected_evidence, factory_error));
+    assert(projected_sources.size() == 1 && projected_evidence.size() == 1);
+    assert(projected_evidence.front().claim_id == "task:projection");
+    assert(projected_evidence.front().supporting_excerpt_host_verified);
+    assert(projected_evidence.front().source_location == chunk_workspace.evidence.front().source_location);
+    auto no_finding_observation = chunk_observations.front();
+    no_finding_observation.id = "chunk-1";
+    no_finding_observation.summary = "no relevant findings.";
+    no_finding_observation.resource_refs.front().uri = "agent-resource://chunk-turn/empty-chunk";
+    no_finding_observation.resource_refs.front().lineage.chunk_index = 1;
+    assert(common_agent_research_chunk_evidence_from_observations(
+        {no_finding_observation}, "task:projection", projected_sources, projected_evidence, factory_error));
+    assert(projected_sources.empty() && projected_evidence.empty());
     assert(chunk_workspace.gaps.front().evidence_ids.size() == 1);
     assert(chunk_workspace.gaps.front().status == common_agent_research_gap_status::open);
     common_agent_research_bounded_assessor bounded_assessor;
@@ -224,6 +243,10 @@ int main() {
     assert(common_agent_research_record_evidence(workspace, evidence, error));
     assert(common_agent_research_update_coverage(workspace, {1, 1, 0, 0, 1.0, 0.9, 1.0}, error));
     assert(common_agent_research_workspace_validate(workspace, error));
+    auto invalid_verified_excerpt = workspace;
+    invalid_verified_excerpt.evidence.front().supporting_excerpt_host_verified = true;
+    assert(!common_agent_research_workspace_validate(invalid_verified_excerpt, error));
+    assert(error.find("invalid or duplicate evidence") != std::string::npos);
     auto invalid_dependency_workspace = workspace;
     invalid_dependency_workspace.tasks.push_back({
         "task-2", "gap-1", "Use the first result", common_agent_research_task_kind::fetch,

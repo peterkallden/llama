@@ -107,6 +107,90 @@ bool common_agent_research_record_evidence(
     return true;
 }
 
+bool common_agent_research_chunk_evidence_from_observations(
+        const std::vector<common_plan_observation> & observations,
+        const std::string & claim_id,
+        std::vector<common_agent_research_source> & sources,
+        std::vector<common_agent_research_evidence> & evidence,
+        std::string & error) {
+    sources.clear();
+    evidence.clear();
+    if (claim_id.empty()) {
+        error = "chunk evidence projection requires a claim id";
+        return false;
+    }
+
+    std::vector<const common_plan_observation *> ordered;
+    for (const auto & observation : observations) {
+        if (observation.source == "resource_chunk" && observation.resource_refs.size() == 1 &&
+                common_runtime_resource_lineage_is_chunk(observation.resource_refs.front().lineage)) {
+            ordered.push_back(&observation);
+        }
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const auto * left, const auto * right) {
+        return left->resource_refs.front().lineage.chunk_index <
+            right->resource_refs.front().lineage.chunk_index;
+    });
+
+    for (const auto * observation : ordered) {
+        const auto & resource = observation->resource_refs.front();
+        if (resource.uri.empty()) continue;
+        const auto & lineage = resource.lineage;
+        std::istringstream lines(observation->summary);
+        std::string pending_finding;
+        size_t finding_index = 0;
+        const size_t evidence_begin = evidence.size();
+        for (std::string line; std::getline(lines, line);) {
+            constexpr const char * finding_prefix = "finding: ";
+            constexpr const char * evidence_prefix = "evidence: ";
+            if (line.rfind(finding_prefix, 0) == 0) {
+                pending_finding = line.substr(std::char_traits<char>::length(finding_prefix));
+                continue;
+            }
+            if (line.rfind(evidence_prefix, 0) != 0 || pending_finding.empty()) continue;
+            const std::string excerpt = line.substr(std::char_traits<char>::length(evidence_prefix));
+            if (excerpt.empty()) {
+                pending_finding.clear();
+                continue;
+            }
+
+            common_agent_research_evidence item;
+            item.evidence_id = resource.uri + ":finding:" + std::to_string(++finding_index);
+            item.source_id = resource.uri;
+            item.claim_id = claim_id;
+            item.statement = pending_finding;
+            item.supporting_excerpt = excerpt;
+            item.supporting_excerpt_host_verified = true;
+            item.source_location = (lineage.parent_uri.empty() ? resource.uri : lineage.parent_uri) +
+                "#bytes=" + std::to_string(lineage.byte_offset) + "+" +
+                std::to_string(lineage.byte_length);
+            item.relation = common_agent_research_evidence_relation::supports;
+            item.origin = common_agent_research_evidence_origin::model_inference;
+            item.relevance = 0.85;
+            item.confidence = 0.75;
+            item.model_inferred = true;
+            evidence.push_back(std::move(item));
+            pending_finding.clear();
+        }
+        if (evidence.size() != evidence_begin) {
+            common_agent_research_source source;
+            source.source_id = resource.uri;
+            source.title = resource.name.empty() ? "Validated resource text chunk" : resource.name;
+            source.origin = "host.chunk.text.v1";
+            source.authority = "host-resource-runtime";
+            source.kind = common_agent_research_source_kind::documentation;
+            source.availability = common_agent_research_source_availability::materialized_context;
+            source.resource_ref = resource;
+            source.quality_score = 0.85;
+            source.primary_source = true;
+            source.role = "workflow_evidence";
+            sources.push_back(std::move(source));
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool common_agent_research_seed_chunk_observations(
         common_agent_research_workspace & workspace,
         const std::vector<common_plan_observation> & observations,
@@ -125,73 +209,24 @@ bool common_agent_research_seed_chunk_observations(
         return true;
     }
 
-    for (const auto & observation : observations) {
-        if (observation.source != "resource_chunk" || observation.resource_refs.size() != 1) continue;
-        const auto & resource = observation.resource_refs.front();
-        if (resource.uri.empty() || !common_runtime_resource_lineage_is_chunk(resource.lineage)) continue;
-
-        std::string pending_finding;
-        size_t finding_index = 0;
-        std::istringstream lines(observation.summary);
-        for (std::string line; std::getline(lines, line);) {
-            constexpr const char * finding_prefix = "finding: ";
-            constexpr const char * evidence_prefix = "evidence: ";
-            if (line.rfind(finding_prefix, 0) == 0) {
-                pending_finding = line.substr(std::char_traits<char>::length(finding_prefix));
-                continue;
-            }
-            if (line.rfind(evidence_prefix, 0) != 0 || pending_finding.empty()) continue;
-            const std::string quote = line.substr(std::char_traits<char>::length(evidence_prefix));
-            if (quote.empty()) {
-                pending_finding.clear();
-                continue;
-            }
-
-            auto source = std::find_if(workspace.sources.begin(), workspace.sources.end(),
-                [&](const auto & candidate) {
-                    return candidate.resource_ref && candidate.resource_ref->uri == resource.uri;
-                });
-            if (source == workspace.sources.end()) {
-                common_agent_research_source chunk_source;
-                chunk_source.source_id = workspace.workspace_id + ":workflow:chunks:" +
-                    std::to_string(resource.lineage.chunk_index);
-                chunk_source.title = resource.name.empty() ? "Validated resource text chunk" : resource.name;
-                chunk_source.origin = "host.chunk.text.v1";
-                chunk_source.authority = "host-resource-runtime";
-                chunk_source.kind = common_agent_research_source_kind::documentation;
-                chunk_source.availability = common_agent_research_source_availability::materialized_context;
-                chunk_source.resource_ref = resource;
-                chunk_source.quality_score = 0.85;
-                chunk_source.primary_source = true;
-                chunk_source.role = "workflow_evidence";
-                if (!common_agent_research_add_source(workspace, std::move(chunk_source), error)) return false;
-                source = std::prev(workspace.sources.end());
-            }
-
-            const std::string evidence_id = workspace.workspace_id + ":chunk:" +
-                std::to_string(resource.lineage.chunk_index) + ":finding:" +
-                std::to_string(++finding_index);
-            if (std::find_if(workspace.evidence.begin(), workspace.evidence.end(),
-                    [&](const auto & candidate) { return candidate.evidence_id == evidence_id; }) ==
-                    workspace.evidence.end()) {
-                common_agent_research_evidence evidence;
-                evidence.evidence_id = evidence_id;
-                evidence.source_id = source->source_id;
-                evidence.claim_id = gap->gap_id;
-                evidence.statement = pending_finding + " (quoted source evidence: " + quote + ")";
-                evidence.source_location = resource.uri + "#bytes=" +
-                    std::to_string(resource.lineage.byte_offset) + "+" +
-                    std::to_string(resource.lineage.byte_length);
-                evidence.relation = common_agent_research_evidence_relation::supports;
-                evidence.origin = common_agent_research_evidence_origin::model_inference;
-                evidence.relevance = 0.85;
-                evidence.confidence = 0.75;
-                evidence.model_inferred = true;
-                if (!common_agent_research_record_evidence(workspace, evidence, error)) return false;
-                gap->evidence_ids.push_back(evidence_id);
-            }
-            pending_finding.clear();
+    std::vector<common_agent_research_source> sources;
+    std::vector<common_agent_research_evidence> evidence;
+    if (!common_agent_research_chunk_evidence_from_observations(
+            observations, gap->gap_id, sources, evidence, error)) return false;
+    for (auto & source : sources) {
+        auto existing = std::find_if(workspace.sources.begin(), workspace.sources.end(),
+            [&](const auto & candidate) { return candidate.source_id == source.source_id; });
+        if (existing == workspace.sources.end()) {
+            if (!common_agent_research_add_source(workspace, std::move(source), error)) return false;
         }
+    }
+    for (auto & item : evidence) {
+        const auto evidence_id = item.evidence_id;
+        if (std::find_if(workspace.evidence.begin(), workspace.evidence.end(),
+                [&](const auto & candidate) { return candidate.evidence_id == evidence_id; }) !=
+                workspace.evidence.end()) continue;
+        if (!common_agent_research_record_evidence(workspace, std::move(item), error)) return false;
+        gap->evidence_ids.push_back(evidence_id);
     }
     error.clear();
     return true;

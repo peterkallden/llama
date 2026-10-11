@@ -3554,13 +3554,15 @@ task directly while stating incomplete coverage when an unresolved slice
 exists. This is an internal continuation of the existing turn, not a second
 daemon command or chunk queue.
 
-If reflection later escalates this same plan into research, the research
-workspace may reuse the validated finding/quote pairs as preliminary,
-model-selected excerpts tied to the host resource and byte range. This carries
-forward existing work without rereading or persisting raw OCR. It does not mark
-a research gap answered: the ordinary research assessor and coverage policy
-still decide whether the evidence is sufficient. When more than one research
-gap is open, the runtime does not guess which gap a chunk finding supports.
+If reflection later escalates this same plan into research, the existing
+Research evidence contract receives the claim and host-validated excerpt as
+separate fields, with the source location retained. The same transient
+projection supplies final chunk synthesis, so both paths use the same evidence
+shape while plan observations remain the progress and resume record. Raw OCR
+is not reread or persisted. Seeded evidence does not mark a research gap
+answered: the ordinary research assessor and coverage policy still decide
+whether it is sufficient. When more than one research gap is open, the runtime
+does not guess which gap a chunk finding supports.
 The research runner resolves historical tool aliases to the provider's
 canonical catalog names before invoking the route-scoped runtime, so phase
 enforcement and execution use the same identity (for example,

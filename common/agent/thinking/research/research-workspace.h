@@ -22,6 +22,16 @@ bool common_agent_research_record_evidence(
         common_agent_research_evidence evidence,
         std::string & error);
 
+// Convert host-validated chunk observations into the existing Research
+// evidence/source contracts. This is a transient projection; observations
+// remain the plan's progress and resume record.
+bool common_agent_research_chunk_evidence_from_observations(
+        const std::vector<common_plan_observation> & observations,
+        const std::string & claim_id,
+        std::vector<common_agent_research_source> & sources,
+        std::vector<common_agent_research_evidence> & evidence,
+        std::string & error);
+
 // Carry host-validated resource-chunk findings into research as preliminary
 // evidence. This does not mark any research gap as answered.
 bool common_agent_research_seed_chunk_observations(

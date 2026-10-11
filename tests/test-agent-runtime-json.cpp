@@ -136,6 +136,8 @@ int main() {
     TEST_ASSERT(extraction_request.messages[0].content.find("evidence sentence must contain that value or comparison") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("host tracks whether a resource was fetched or read") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("do not add a separate finding, include surrounding sentences, wrap it in quotes, or use labels or references") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("cursor") == std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("chunk_index") == std::string::npos);
     auto repair_request = common_agent_make_resource_chunk_extraction_request(
         "Summarize the camera result.", generation_chunk, common_agent_scope{},
         extraction_options, "chunk-repair-test",

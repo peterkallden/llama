@@ -64,6 +64,10 @@ struct common_agent_research_evidence {
     common_agent_research_evidence_origin origin = common_agent_research_evidence_origin::normalized_tool_result;
     double relevance = 0.0, confidence = 0.0;
     bool directly_observed = false, model_inferred = false;
+    // A source excerpt is kept separate from the model's claim. When true,
+    // the host matched this excerpt against the referenced resource text.
+    std::string supporting_excerpt;
+    bool supporting_excerpt_host_verified = false;
 };
 
 enum class common_agent_research_comparison_relation { agree, conflict, qualify };
@@ -263,7 +267,10 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
         error = "research workspace contains an invalid or duplicate source"; return false;
     }
     ids.clear();
-    for (const auto & item : workspace.evidence) if (item.evidence_id.empty() || item.source_id.empty() || item.claim_id.empty() || item.statement.empty() || item.relevance < 0.0 || item.relevance > 1.0 || item.confidence < 0.0 || item.confidence > 1.0 || !ids.insert(item.evidence_id).second) {
+    for (const auto & item : workspace.evidence) if (item.evidence_id.empty() || item.source_id.empty() || item.claim_id.empty() || item.statement.empty() ||
+            (item.supporting_excerpt_host_verified &&
+                (item.supporting_excerpt.empty() || item.source_location.empty())) ||
+            item.relevance < 0.0 || item.relevance > 1.0 || item.confidence < 0.0 || item.confidence > 1.0 || !ids.insert(item.evidence_id).second) {
         error = "research workspace contains invalid or duplicate evidence"; return false;
     }
     ids.clear();

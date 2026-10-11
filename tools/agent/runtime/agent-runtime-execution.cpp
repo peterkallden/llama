@@ -8,6 +8,7 @@
 #include "agent-dataset-workflow-adapter.h"
 #include "agent-resource-workflow-continuation.h"
 #include "agent-workflow-transition.h"
+#include "agent/thinking/research/research-workspace.h"
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
@@ -1170,7 +1171,7 @@ bool run_agent_runtime_driver(
                 }
                 execution.orchestration_config.prompt =
                     "Synthesize the validated resource-chunk findings from the active plan in chunk order. "
-                    "Use the exact evidence and source provenance recorded by the host. The source text has "
+                    "Use only the structured claims, host-verified excerpts and source locations below. The source text has "
                     "already been read and processed; do not claim it still needs to be fetched or read. "
                     "Answer the original user task below directly; do not substitute generic workflow or acquisition status. "
                     "State uncertainty or incomplete coverage if source coverage is incomplete.\n"
@@ -1179,6 +1180,27 @@ bool run_agent_runtime_driver(
                 const auto active_plan = execution.plan_store.get(
                     execution.current_plan_id, coverage_error);
                 if (active_plan) {
+                    std::vector<common_agent_research_source> chunk_sources;
+                    std::vector<common_agent_research_evidence> chunk_evidence;
+                    const std::string claim_id = "task:" + (execution.scope.turn_id.empty()
+                        ? execution.current_plan_id : execution.scope.turn_id);
+                    if (!common_agent_research_chunk_evidence_from_observations(
+                            active_plan->observations, claim_id,
+                            chunk_sources, chunk_evidence, coverage_error)) return false;
+                    execution.orchestration_config.prompt += "\nHost-validated evidence, in source order:\n";
+                    for (const auto & item : chunk_evidence) {
+                        const auto source = std::find_if(chunk_sources.begin(), chunk_sources.end(),
+                            [&](const auto & candidate) { return candidate.source_id == item.source_id; });
+                        execution.orchestration_config.prompt +=
+                            "claim: " + item.statement + "\n"
+                            "supporting_excerpt: " + item.supporting_excerpt + "\n"
+                            "source_title: " + (source == chunk_sources.end()
+                                ? std::string("resource text") : source->title) + "\n"
+                            "source_resource: " + (source == chunk_sources.end() || !source->resource_ref
+                                ? item.source_location : (source->resource_ref->lineage.parent_uri.empty()
+                                    ? source->resource_ref->uri : source->resource_ref->lineage.parent_uri)) + "\n"
+                            "source_location: " + item.source_location + "\n";
+                    }
                     common_plan_chunk_synthesis_input coverage;
                     if (common_plan_chunk_synthesis_from_observations(
                             active_plan->observations, {}, coverage, coverage_error) &&
