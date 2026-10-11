@@ -27,6 +27,36 @@ public:
     }
 };
 
+class canonical_resource_tool_runtime final : public common_agent_tool_runtime {
+public:
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+    bool has_execution_envelope() const override { return true; }
+    bool resolve_tool_name(
+            const std::string & requested,
+            std::string & resolved,
+            std::vector<std::string> & candidates) const override {
+        candidates.clear();
+        if (requested != "resource_read") return false;
+        resolved = "resource.read";
+        return true;
+    }
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        last_validated_name = call.name;
+        error.clear();
+        return call.name == "resource.read";
+    }
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        last_executed_name = call.name;
+        return common_tool_execution_result::success(
+            "bounded resource content", "the resource supports the research gap", {resource});
+    }
+
+    common_runtime_resource_ref resource;
+    mutable std::string last_validated_name;
+    mutable std::string last_executed_name;
+};
+
 int main() {
     common_agent_request factory_request;
     factory_request.prompt = "Research the bounded runtime contract";
@@ -130,6 +160,24 @@ int main() {
     assert(input_action.preferred_tools.size() == 1 && input_action.preferred_tools.front() == "resource_read");
     assert(input_action.instruction == input_resource.resource.uri);
 
+    // The research controller keeps its historical underscore alias, but the
+    // route-scoped runtime requires the canonical catalog name.
+    canonical_resource_tool_runtime canonical_runtime;
+    canonical_runtime.resource = input_resource.resource;
+    common_agent_research_runtime_adapter canonical_adapter(canonical_runtime);
+    auto canonical_workspace = factory_workspace;
+    common_agent_research_action canonical_action;
+    canonical_action.kind = common_agent_research_action_kind::schedule_task;
+    canonical_action.task_id = "alias-task";
+    canonical_action.gap_id = canonical_workspace.gaps.front().gap_id;
+    canonical_action.instruction = input_resource.resource.uri;
+    canonical_action.preferred_tools = {"resource_read"};
+    common_agent_research_event canonical_event;
+    assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
+    assert(canonical_runtime.last_validated_name == "resource.read");
+    assert(canonical_runtime.last_executed_name == "resource.read");
+    assert(canonical_event.type == common_agent_research_event_type::task_completed);
+
     factory_workspace.gaps.front().status = common_agent_research_gap_status::open;
     factory_workspace.tasks.clear();
     factory_workspace.evidence.clear();
@@ -137,6 +185,8 @@ int main() {
     factory_workspace.sources.front().resource_ref.reset();
     const auto memory_action = factory_controller.begin(factory_workspace, factory_error);
     assert(memory_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
+        "resource_read") == memory_action.preferred_tools.end());
     assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
         "memory_get") == memory_action.preferred_tools.end());
     assert(memory_action.instruction == factory_workspace.gaps.front().question);

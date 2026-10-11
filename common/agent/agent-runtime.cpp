@@ -1183,8 +1183,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             error = result.error;
             return false;
         }
+        // A visited but unresolved slice is surfaced in the synthesis context
+        // as an explicit coverage gap. A slice with no observation means the
+        // chain was interrupted before it was visited and must still block.
         if (chunk_synthesis.chunk_count > 0 &&
-                chunk_synthesis.status != common_plan_chunk_synthesis_status::complete) {
+                !chunk_synthesis.unobserved_chunk_indexes.empty()) {
             result.error = "resource synthesis is incomplete; missing chunk observations remain";
             error = result.error;
             return false;

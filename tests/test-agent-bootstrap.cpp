@@ -517,7 +517,9 @@ int main() {
     selection_request.namespace_id = config.namespace_id;
     selection_request.session_id = config.session_id;
     selection_request.project_id = config.project_id;
-    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+    auto task_selection_request = selection_request;
+    task_selection_request.prompt = "Report the measured shielding effect for the requested article.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, task_selection_request, selector,
         {{"repository-change", first.installed_blueprint_ids.front(), "repository work",
           "Safely modify the repository.", "Implement the requested change.", "The change is verified.",
           {{"scope", "Keep the change bounded.", true}},
@@ -527,12 +529,18 @@ int main() {
     assert(selector.seen.size() == 1 && selector.seen.front().purpose == "Safely modify the repository.");
     assert(selector.seen.front().constraints.size() == 1 && selector.seen.front().assumptions.size() == 1);
     assert(selector.seen.front().contributions.size() == 2);
+    const auto selected_instance = plans.get(selection_config.task_plan_id, error);
+    assert(selected_instance && selected_instance->goal == task_selection_request.prompt);
+    assert(selected_instance->purpose == task_selection_request.prompt);
+    assert(selected_instance->success_criteria.find("Answer the caller's specific request directly.") != std::string::npos);
+    assert(selected_instance->success_criteria.find("blueprint method:") != std::string::npos);
+    assert(selected_instance->success_criteria.find("The requested change is implemented") != std::string::npos);
     selection_config.task_plan_id = "selected-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector, {}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
-    const auto selected_instance = plans.get(selection_config.task_plan_id, error);
-    assert(selected_instance && selected_instance->namespace_id == config.namespace_id && selected_instance->project_id == config.project_id);
-    assert(common_plan_scope_matches(*selected_instance, common_plan_scope::project,
+    const auto resumed_instance = plans.get(selection_config.task_plan_id, error);
+    assert(resumed_instance && resumed_instance->namespace_id == config.namespace_id && resumed_instance->project_id == config.project_id);
+    assert(common_plan_scope_matches(*resumed_instance, common_plan_scope::project,
         config.namespace_id, config.session_id, config.project_id, {}));
 
     // A host may opt a selected dataset blueprint into the bounded A* backend

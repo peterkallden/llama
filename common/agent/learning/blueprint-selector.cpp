@@ -274,6 +274,36 @@ bool common_agent_select_and_instantiate_blueprint(
     }
     common_plan_state instance;
     if (!common_plan_instantiate_blueprint(*blueprint, config.task_plan_id, config.session_id, instance, error, config.scope, config.now)) return false;
+    // A blueprint is a reusable method/frame, not a replacement for the
+    // caller's concrete task. Specialize the task instance while keeping the
+    // blueprint itself, its constraints, and its source success criteria
+    // intact as provenance and method guidance.
+    const std::string caller_purpose = request.objective && !request.objective->purpose.empty()
+        ? request.objective->purpose : request.prompt;
+    const std::string caller_goal = request.objective && !request.objective->desired_outcome.empty()
+        ? request.objective->desired_outcome : request.prompt;
+    if (!caller_purpose.empty()) instance.purpose = caller_purpose;
+    if (!caller_goal.empty()) {
+        instance.goal = caller_goal;
+        const std::string caller_criterion = "Answer the caller's specific request directly.";
+        if (request.objective && !request.objective->success_criteria.empty()) {
+            instance.success_criteria.clear();
+            for (const auto & criterion : request.objective->success_criteria) {
+                if (!instance.success_criteria.empty()) instance.success_criteria += "; ";
+                instance.success_criteria += criterion;
+            }
+            if (!blueprint->success_criteria.empty()) {
+                instance.success_criteria += "; blueprint method: " + blueprint->success_criteria;
+            }
+        } else if (instance.success_criteria.find(caller_criterion) == std::string::npos) {
+            instance.success_criteria = caller_criterion +
+                (instance.success_criteria.empty() ? std::string{} : "; blueprint method: " + instance.success_criteria);
+        }
+        if (instance.success_criteria.size() > 1024) {
+            error = "caller-specific blueprint success criteria exceed the plan bound";
+            return false;
+        }
+    }
     // Blueprint templates deliberately contain no caller identity.  The
     // instantiated task must inherit it before persistence, otherwise a
     // turn- or project-scoped runtime cannot resume the plan it just made.

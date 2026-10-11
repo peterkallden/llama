@@ -3523,18 +3523,33 @@ The runtime event stream distinguishes `resource_chunk_planned` from
 observation remains the durable progress record. This keeps live tracing useful
 without making the event stream a second progress store.
 
-Each extraction returns flat `status: findings` with one exact, task-relevant
-`finding` quote (at most 20 words), or `status: no_findings`. The host parser
-enforces the DSL and word limit, then checks the quote against the actual slice
-after whitespace normalization. The host stores the verified quote as both
-finding and evidence; synthesis performs the interpretation. Malformed
-output, process chatter, or a quote not present in the chunk gets one bounded
-repair attempt and never advances the cursor. Only validated findings, their
-evidence, and parent/range provenance are persisted; raw OCR/text remains
-transient. Once all chunks are validated, the controller removes the full source from
-model-facing inputs and schedules a bounded synthesis slice from ordered plan
-observations. This is an internal continuation of the existing turn, not a
-second daemon command or chunk queue.
+Each extraction uses a flat evidence DSL. The host renders the bounded text
+view as plain text; the model returns `status: findings` and one exact,
+concise `evidence` sentence, or `status: no_findings`. Evidence is bounded to
+768 bytes so a complete result sentence from noisy OCR is not rejected merely
+because it crosses a smaller arbitrary limit. The host stores that verified
+sentence as both the initial finding and its evidence; the model does not need
+to produce a separate conclusion. Legacy `finding` + `evidence` pairs remain
+accepted. Chunk indexes,
+paragraph labels, byte ranges, cursor state and tools are never model-facing.
+The host normalizes whitespace and OCR line-break hyphenation, then checks each
+excerpt against the complete active slice rather than requiring it to fit in
+one paragraph segment. It stores the conclusion and excerpt with host-owned
+source/range provenance for every segment the excerpt spans. The model is asked
+for substantive claims/results in
+the visible text, not whether acquisition or workflow steps succeeded; those
+facts belong to the host. Raw OCR/text remains transient.
+
+Malformed output, a missing evidence sentence, or a sentence that does not
+occur in the active slice gets one bounded repair attempt. The host may strip
+one pair of surrounding quote marks before exact excerpt verification; it
+never resolves model-provided chunk IDs. A second failure records the slice as
+`unresolved`, advances the cursor, and makes coverage incomplete; it does not
+abort the whole workflow. Synthesis receives the original user task, ordered
+validated findings and coverage state—not full OCR text—and must answer that
+task directly while stating incomplete coverage when an unresolved slice
+exists. This is an internal continuation of the existing turn, not a second
+daemon command or chunk queue.
 
 If reflection later escalates this same plan into research, the research
 workspace may reuse the validated finding/quote pairs as preliminary,
@@ -3543,6 +3558,13 @@ forward existing work without rereading or persisting raw OCR. It does not mark
 a research gap answered: the ordinary research assessor and coverage policy
 still decide whether the evidence is sufficient. When more than one research
 gap is open, the runtime does not guess which gap a chunk finding supports.
+The research runner resolves historical tool aliases to the provider's
+canonical catalog names before invoking the route-scoped runtime, so phase
+enforcement and execution use the same identity (for example,
+`resource_read` resolves to `resource.read`). When workflow text has already
+been host-chunked, research reuses those observations instead of rereading the
+fetched body; generic research does not try `resource.read` on its question
+text when no source is pending acquisition.
 
 Workflow-produced text uses this exact continuation path only when the
 workflow definition declares `resource_read_policy: chunked`; the backward-
@@ -3552,9 +3574,15 @@ single-parent observation and checkpoint contracts remain valid.
 
 If native validation finds conflicting parent-linked chunk observations, the
 active synthesis step is blocked through the existing plan `block_step`
-operation and the conflicting evidence remains in the plan for diagnosis. An
-incomplete set is not presented as complete synthesis; it remains unfinished
-until the required observations are available.
+operation and the conflicting evidence remains in the plan for diagnosis. If
+all slices were visited but one or more extractions remain unresolved, the
+runtime may still produce a partial answer from validated findings; it must
+identify the incomplete source coverage and must not infer details from
+unassessed text. When the resource was fetched and made readable, the answer
+must distinguish incomplete evidence extraction from unavailable source text.
+A continuation/deadline limit reached before all slices are
+visited remains an incomplete execution and is not treated as a completed
+synthesis.
 
 The current range implementation covers the in-memory and filesystem blob
 backends. Persistent catalog lineage migration and controller-owned automatic
@@ -3573,9 +3601,11 @@ The current chunking path is deliberately bounded and text-oriented:
 3. The original resource descriptor remains the source of truth. Each chunk is
    only a parent-linked range view carrying its byte offset, length, overlap,
    and chunk index.
-4. The host reads one active chunk at a time and supplies its text to a
-   tool-free extractor. Only valid DSL with quotes verified against
-   that chunk creates a `resource_chunk` observation and advances the plan.
+4. The host reads one active slice at a time and supplies its bounded plain
+   text to a tool-free extractor. The model returns a short conclusion and an
+   exact text excerpt; the host verifies the excerpt against the active slice
+   and owns source/range provenance. An unresolved extraction is recorded as
+   incomplete coverage and does not stop later slices.
 5. Resume uses the plan's completed chunk observations and starts at the first
    missing index. Typed daemon events expose planning and processing progress,
    while the plan remains the durable progress record.

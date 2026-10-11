@@ -25,57 +25,77 @@ int main() {
 
     common_agent_resource_chunk_extraction chunk_extraction;
     std::string chunk_error;
-    const std::string chunk_text = "Radiation flux increased.\nThe camera remained operational during the campaign.";
+    const std::string chunk_text =
+        "Radiation flux increased.\nThe camera remained\noperational during the campaign.";
+    common_agent_generation_resource_chunk generation_chunk;
+    generation_chunk.text = chunk_text;
+    generation_chunk.segments = {
+        {"P1", "Radiation flux increased.", 0, 26},
+        {"P2", "The camera remained\noperational during the campaign.", 27, 54},
+    };
     TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding: Radiation flux increased.\n"
-        "finding: The camera remained operational during the campaign.",
-        chunk_text, chunk_extraction, chunk_error));
+        "status: findings\nfinding: The radiation result is reported.\nevidence: Radiation flux\n"
+        "finding: The camera stayed operational.\nevidence: The camera remained\noperational during the campaign.",
+        generation_chunk, chunk_extraction, chunk_error));
     TEST_ASSERT(chunk_extraction.findings.size() == 2);
+    TEST_ASSERT(chunk_extraction.findings.front().evidence == "Radiation flux");
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: Radiation flux increased.",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.size() == 1);
     TEST_ASSERT(chunk_extraction.findings.front().finding == "Radiation flux increased.");
     TEST_ASSERT(chunk_extraction.findings.front().evidence == "Radiation flux increased.");
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding: findings",
-        chunk_text, chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_error.find("does not occur") != std::string::npos);
     TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
-        "status: no_findings", chunk_text, chunk_extraction, chunk_error));
+        "status: findings\nfinding: The radiation result is reported.\nevidence_ref: Radiation flux increased.",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: The radiation result is reported.\nevidence: \"Radiation flux increased.\"",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.front().evidence == "Radiation flux increased.");
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: unsupported\nevidence: not in the text",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("does not occur") != std::string::npos);
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: unsupported\nevidence_ref: P1-P2",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nfinding: unsupported",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_error.find("requires an evidence excerpt") != std::string::npos);
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: no_findings", generation_chunk, chunk_extraction, chunk_error));
     TEST_ASSERT(chunk_extraction.no_findings && chunk_extraction.findings.empty());
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "I will read this slice now.", chunk_text, chunk_extraction, chunk_error));
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding: not in this resource",
-        chunk_text, chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_error.find("does not occur") != std::string::npos);
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding:", chunk_text, chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_error.find("must not be empty") != std::string::npos);
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding: This finding has more than twenty words and should be rejected by the host parser because it is too long to be a concise evidence excerpt.",
-        chunk_text, chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_error.find("at most 20 words") != std::string::npos);
-    const std::string twenty_word_evidence =
-        "status: findings\nfinding: The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment period.";
-    const std::string twenty_word_chunk =
-        "The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment period.";
-    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
-        twenty_word_evidence, twenty_word_chunk, chunk_extraction, chunk_error));
-    TEST_ASSERT(common_agent_resource_chunk_word_count(chunk_extraction.findings[0].evidence) == 20);
-    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
-        "status: findings\nfinding: The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment across all operating shifts.",
-        "The camera remained operational during the campaign despite the high neutron flux and elevated radiation exposure throughout the experiment across all operating shifts.",
-        chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_error.find("at most 20 words") != std::string::npos);
-    const std::string quoted_repeated_status =
-        "status: findings\n"
-        "finding: \"The cameras are installed in lead shield boxes.\"\n"
-        "status: findings\n"
-        "finding: \"Radiation flux was modeled by MCNP-6.\"";
-    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
-        quoted_repeated_status,
-        "The cameras are installed in lead shield boxes. Radiation flux was modeled by MCNP-6.",
-        chunk_extraction, chunk_error));
-    TEST_ASSERT(chunk_extraction.findings.size() == 2);
-    TEST_ASSERT(chunk_extraction.findings[1].evidence == "Radiation flux was modeled by MCNP-6.");
+
+    common_runtime_resource_ref unresolved_ref;
+    unresolved_ref.uri = "resource://derived/ocr-text";
+    unresolved_ref.name = "slice";
+    unresolved_ref.mime_type = "text/plain";
+    unresolved_ref.size_bytes = 48;
+    unresolved_ref.lineage = chunk_lineage;
+    unresolved_ref.lineage.parent_uri = "resource://source/pdf";
+    unresolved_ref.lineage.chunk_index = 0;
+    unresolved_ref.lineage.chunk_count = 2;
+    common_plan_observation unresolved_observation;
+    unresolved_observation.id = "unresolved-chunk";
+    unresolved_observation.source = "resource_chunk_unresolved";
+    unresolved_observation.resource_refs.push_back(unresolved_ref);
+    common_plan_chunk_synthesis_input synthesis;
+    TEST_ASSERT(common_plan_chunk_synthesis_from_observations(
+        {unresolved_observation}, "resource://source/pdf", synthesis, chunk_error));
+    TEST_ASSERT(synthesis.status == common_plan_chunk_synthesis_status::incomplete);
+    TEST_ASSERT(synthesis.missing_chunk_indexes.size() == 2);
+    TEST_ASSERT(synthesis.unresolved_chunk_indexes.size() == 1);
+    TEST_ASSERT(synthesis.unobserved_chunk_indexes.size() == 1);
+    auto visited_unresolved = unresolved_observation;
+    visited_unresolved.resource_refs.front().lineage.chunk_index = 1;
+    visited_unresolved.source = "resource_chunk";
+    visited_unresolved.id = "visited-chunk";
+    TEST_ASSERT(common_plan_chunk_synthesis_from_observations(
+        {unresolved_observation, visited_unresolved}, "resource://source/pdf", synthesis, chunk_error));
+    TEST_ASSERT(synthesis.status == common_plan_chunk_synthesis_status::incomplete);
+    TEST_ASSERT(synthesis.unresolved_chunk_indexes.size() == 1);
+    TEST_ASSERT(synthesis.unobserved_chunk_indexes.empty());
     common_agent_input_resource processor_resource;
     processor_resource.resource.uri = "resource://derived/ocr";
     processor_resource.resource.lineage = processor_lineage;
@@ -87,7 +107,6 @@ int main() {
     const auto chunk_context = common_agent_render_input_resource_context({chunk_resource});
     TEST_ASSERT(chunk_context.find("chunk_index=0 chunk_count=6") != std::string::npos);
 
-    common_agent_generation_resource_chunk generation_chunk;
     generation_chunk.text = chunk_text;
     generation_chunk.source.uri = "resource://derived/ocr";
     generation_chunk.chunk_index = 2;
@@ -108,18 +127,56 @@ int main() {
     TEST_ASSERT(extraction_request.tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE);
     TEST_ASSERT(extraction_request.messages.size() == 2);
     TEST_ASSERT(extraction_request.messages[1].content.find(chunk_text) != std::string::npos);
-    TEST_ASSERT(extraction_request.messages[1].content.find("Select a quote only if it helps answer the task.") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[1].content.find("Resource text") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[1].content.find("resource.read") == std::string::npos);
     TEST_ASSERT(extraction_request.grammar.empty());
     TEST_ASSERT(extraction_request.messages[0].content.find("status: findings") != std::string::npos);
-    TEST_ASSERT(extraction_request.messages[0].content.find("finding: <exact contiguous quote") != std::string::npos);
-    TEST_ASSERT(extraction_request.messages[0].content.find("at most 20 words") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("evidence: <one exact concise sentence") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("Return at most one evidence sentence") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("evidence sentence must contain that value or comparison") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("host tracks whether a resource was fetched or read") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("do not add a separate finding, include surrounding sentences, wrap it in quotes, or use labels or references") != std::string::npos);
     auto repair_request = common_agent_make_resource_chunk_extraction_request(
         "Summarize the camera result.", generation_chunk, common_agent_scope{},
         extraction_options, "chunk-repair-test",
-        "return one exact quote that appears in the resource text.");
+        "include a short exact evidence sentence.");
     TEST_ASSERT(repair_request.messages[0].content.find("Correction:") != std::string::npos);
     TEST_ASSERT(extraction_request.resource_chunk->byte_offset == 8192);
+
+    // OCR may produce a longer complete result sentence. The excerpt remains
+    // tightly bounded, but a valid exact passage should not be rejected at an
+    // unnecessarily small 512-byte boundary.
+    const std::string long_excerpt(600, 'x');
+    common_agent_generation_resource_chunk long_chunk;
+    long_chunk.text = long_excerpt;
+    long_chunk.segments = {{"P-long", long_excerpt, 0, long_excerpt.size()}};
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: " + long_excerpt,
+        long_chunk, chunk_extraction, chunk_error));
+    const std::string paragraph_one = "The plates reduce gamma-ray flux.";
+    const std::string paragraph_two = "The reduction ratio improves by about 20%.";
+    long_chunk.text = paragraph_one + "\n" + paragraph_two;
+    long_chunk.segments = {
+        {"P1", paragraph_one, 0, paragraph_one.size()},
+        {"P2", paragraph_two, paragraph_one.size() + 1, paragraph_two.size()},
+    };
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: The plates reduce gamma-ray flux. The reduction ratio improves by about 20%.",
+        long_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.front().evidence_byte_offset == 0);
+    TEST_ASSERT(chunk_extraction.findings.front().evidence_byte_length ==
+        paragraph_one.size() + 1 + paragraph_two.size());
+    long_chunk.text = "The shield perfor-\nmance was tested. Gamma-\nray flux decreased by about 20%.";
+    long_chunk.segments = {{"P-hyphen", long_chunk.text, 0, long_chunk.text.size()}};
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: The shield performance was tested. Gamma-ray flux decreased by about 20%.",
+        long_chunk, chunk_extraction, chunk_error));
+    const std::string oversized_excerpt(769, 'x');
+    long_chunk.text = oversized_excerpt;
+    long_chunk.segments = {{"P-large", oversized_excerpt, 0, oversized_excerpt.size()}};
+    TEST_ASSERT(!common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: " + oversized_excerpt,
+        long_chunk, chunk_extraction, chunk_error));
 
     common_agent_dataset_ref provenance_ref;
     provenance_ref.uri = "dataset://local/orders";

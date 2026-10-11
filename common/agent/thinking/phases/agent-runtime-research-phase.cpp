@@ -100,11 +100,24 @@ bool seed_research_from_workflow_resources(
     if (!common_agent_research_seed_chunk_observations(
             workspace, context.outer_plan->observations, context.error)) return false;
 
+    const bool has_host_chunk_observations = std::any_of(
+        context.outer_plan->observations.begin(), context.outer_plan->observations.end(),
+        [](const auto & observation) {
+            return observation.source == "resource_chunk" &&
+                observation.resource_refs.size() == 1 &&
+                common_runtime_resource_lineage_is_chunk(observation.resource_refs.front().lineage);
+        });
+
     for (const auto & step : context.outer_plan->steps) {
         if (step.status != common_plan_step_status::completed || !step.tool_call ||
                 (step.tool_call->name != "openalex.getWork" &&
                  step.tool_call->name != "web.fetch" &&
                  step.tool_call->name != "resource.read")) continue;
+        // Chunk observations already carry the host-read text evidence and
+        // provenance for this workflow. Do not schedule the fetched PDF or
+        // OCR representation for a second, whole-resource research read.
+        if (has_host_chunk_observations &&
+                (step.tool_call->name == "web.fetch" || step.tool_call->name == "resource.read")) continue;
         const std::string observation_prefix = "tool:" + step.id + ":";
         for (const auto & observation : context.outer_plan->observations) {
             if (observation.id.rfind(observation_prefix, 0) != 0) continue;

@@ -12,7 +12,7 @@
 #include "../runtime/agent-runtime-session.h"
 #include "memory/memory-store.h"
 #include "plan/plan-store.h"
-#include "tools/agent/resource/agent-resource-chunker.h"
+#include "tools/agent/resource/agent-resource-evidence-session.h"
 
 #include <string>
 #include <vector>
@@ -124,7 +124,7 @@ struct common_agent_runtime_driver_execution {
     bool execution_envelope_ready = false;
     std::vector<common_memory_hit> route_procedure_memories;
     common_agent_runtime_execution_control execution_control;
-    std::vector<agent_resource_chunk_plan> resource_chunk_plans;
+    std::vector<agent_resource_evidence_session> resource_evidence_sessions;
     // Keep the authoritative input view so the lane can restore it for the
     // synthesis slice after the last bounded chunk has been processed.
     std::vector<common_agent_input_resource> resource_chunk_original_inputs;

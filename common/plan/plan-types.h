@@ -33,6 +33,11 @@ struct common_plan_observation {
     std::vector<common_agent_dataset_ref> dataset_refs;
 };
 
+inline bool common_plan_observation_is_resource_chunk(const common_plan_observation & observation) {
+    return observation.source == "resource_chunk" ||
+        observation.source == "resource_chunk_unresolved";
+}
+
 inline bool common_plan_chunk_observations_valid(
         const std::vector<common_plan_observation> & observations,
         std::string & error) {
@@ -40,7 +45,7 @@ inline bool common_plan_chunk_observations_valid(
     size_t chunk_count = 0;
     std::vector<size_t> indexes;
     for (const auto & observation : observations) {
-        if (observation.source != "resource_chunk") {
+        if (!common_plan_observation_is_resource_chunk(observation)) {
             continue;
         }
         if (observation.resource_refs.size() != 1 ||
@@ -77,6 +82,8 @@ struct common_plan_chunk_synthesis_input {
     size_t chunk_count = 0;
     std::vector<size_t> completed_chunk_indexes;
     std::vector<size_t> missing_chunk_indexes;
+    std::vector<size_t> unresolved_chunk_indexes;
+    std::vector<size_t> unobserved_chunk_indexes;
     std::vector<std::string> summaries;
 };
 
@@ -94,26 +101,32 @@ inline bool common_plan_chunk_synthesis_from_observations(
         out.status = common_plan_chunk_synthesis_status::conflict;
         return false;
     }
-    struct item { size_t index; std::string summary; };
+    struct item { size_t index; std::string summary; bool unresolved = false; };
     std::vector<item> items;
     for (const auto & observation : observations) {
-        if (observation.source != "resource_chunk" || observation.resource_refs.size() != 1) continue;
+        if (!common_plan_observation_is_resource_chunk(observation) || observation.resource_refs.size() != 1) continue;
         const auto & lineage = observation.resource_refs.front().lineage;
         if (!parent_uri.empty() && lineage.parent_uri != parent_uri) continue;
         if (out.parent_uri.empty()) out.parent_uri = lineage.parent_uri;
         if (out.chunk_count == 0) out.chunk_count = lineage.chunk_count;
-        items.push_back({lineage.chunk_index, observation.summary});
+        items.push_back({lineage.chunk_index, observation.summary,
+            observation.source == "resource_chunk_unresolved"});
     }
     std::sort(items.begin(), items.end(), [](const item & left, const item & right) {
         return left.index < right.index;
     });
     for (const auto & item : items) {
-        out.completed_chunk_indexes.push_back(item.index);
+        if (item.unresolved) out.unresolved_chunk_indexes.push_back(item.index);
+        else out.completed_chunk_indexes.push_back(item.index);
         out.summaries.push_back(item.summary);
     }
     for (size_t index = 0; index < out.chunk_count; ++index) {
-        if (std::find(out.completed_chunk_indexes.begin(), out.completed_chunk_indexes.end(), index) ==
-                out.completed_chunk_indexes.end()) {
+        const bool observed = std::any_of(items.begin(), items.end(), [index](const item & value) {
+            return value.index == index;
+        });
+        if (!observed) out.unobserved_chunk_indexes.push_back(index);
+        if (!observed || std::find(out.unresolved_chunk_indexes.begin(),
+                    out.unresolved_chunk_indexes.end(), index) != out.unresolved_chunk_indexes.end()) {
             out.missing_chunk_indexes.push_back(index);
         }
     }

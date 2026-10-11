@@ -4,6 +4,7 @@
 #include "agent/agent-scope.h"
 #include "chat.h"
 #include "resource/resource-contract.h"
+#include "resource/resource-text-view.h"
 
 #include <cstdint>
 #include <functional>
@@ -95,6 +96,9 @@ struct common_agent_generation_resource_chunk {
     size_t chunk_count = 0;
     size_t byte_offset = 0;
     size_t byte_length = 0;
+    // Host-rendered structural references. Model generations use these
+    // labels, never chunk indexes or byte ranges, to identify evidence.
+    std::vector<common_runtime_resource_text_segment> segments;
 };
 
 inline common_agent_generation_options common_agent_generation_options_with_n_predict(

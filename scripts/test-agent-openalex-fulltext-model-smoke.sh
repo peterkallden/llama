@@ -101,7 +101,7 @@ pathlib.Path(output).write_text(json.dumps({
 PY
 
 log_path="$work_dir/openalex-fulltext-model.log"
-prompt='Use the configured OpenAlex full-text workflow for work W3038568908. State whether the article full text was obtained and report one concrete result from the article, based on its extracted text rather than only OpenAlex metadata.'
+prompt='Using the extracted full text for OpenAlex work W3038568908, report one concrete result about how radiation shielding affected neutron or gamma-ray flux. Give the reported comparison or value, not only a qualitative description.'
 args=(
     run --config "$config" --model "$model"
     --agent-profile default --tool-profile openalex-fulltext-smoke
@@ -143,7 +143,7 @@ grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch' "$log_path" ||
     echo "OpenAlex full-text model smoke did not execute web.fetch; log=$log_path" >&2
     exit 1
 }
-grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch.*http_provider=web\.fetch.*http_status=2[0-9][0-9].*http_url=https://[^ ]+' "$log_path" || {
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch.*http_provider=web\.fetch.*http_url=https://[^ ]+.*http_status=2[0-9][0-9]' "$log_path" || {
     echo "OpenAlex full-text model smoke did not trace web.fetch HTTP status and source URL; log=$log_path" >&2
     exit 1
 }
@@ -208,7 +208,7 @@ if not decoded:
     raise SystemExit("smoke log did not contain the final model response")
 answer = log[decoded[-1].end():].strip()
 answer_lower = answer.lower()
-if not any(term in answer_lower for term in ("borated", "mcnp", "anneal", "bright spot", "radiation flux")):
+if not any(term in answer_lower for term in ("one order of magnitude", "about 20%", "factor of about 2 or 3", "factor of about 30", "factor of about 10", "15 mm", "30 times", "10 times")):
     raise SystemExit("final answer did not include an identifiable full-text-supported finding")
 if re.search(r"(?:still need|needs? to be|must be|should be) fetched|need to fetch.*(?:pdf|full text)|fetch.*to obtain.*full.text", answer_lower):
     raise SystemExit("final answer incorrectly says the PDF/full text still needs fetching")

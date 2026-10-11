@@ -506,6 +506,7 @@ test-agent-flydelta-alpha-response-search.cpp
             target_sources(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-resource-workflow-continuation.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp)
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()

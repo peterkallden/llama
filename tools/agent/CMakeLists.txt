@@ -133,6 +133,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-execution.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-assembly.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-resource-workflow-continuation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-plan-orchestration.cpp
 )
@@ -253,6 +254,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
 add_library(llama-agent-resource
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-catalog.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-chunker.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-evidence-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-media-type.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-processing-service.cpp

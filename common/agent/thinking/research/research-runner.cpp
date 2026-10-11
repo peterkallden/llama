@@ -41,7 +41,7 @@ bool build_call(
         return true;
     }
     if (tool_name == "resource.read" || tool_name == "resource_read") {
-        call.arguments_json = json{{"uri", instruction}, {"max_bytes", 16384}}.dump();
+        call.arguments_json = json{{"uri", instruction}, {"max_bytes", 2048}}.dump();
         return true;
     }
     if (tool_name == "memory.get" || tool_name == "memory_get") {
@@ -110,8 +110,17 @@ bool common_agent_research_runtime_adapter::execute(
     bool last_failure_retryable = false;
     bool executed_failure = false;
     for (const auto & tool_name : action.preferred_tools) {
+        std::string resolved_tool_name = tool_name;
+        std::vector<std::string> candidates;
+        if (tools.resolve_tool_name(tool_name, resolved_tool_name, candidates)) {
+            // Use the provider's canonical identity so route-envelope checks
+            // see the same name as planning and model-facing tool catalogs.
+        } else if (tools.has_execution_envelope()) {
+            // Never invoke an unresolved legacy alias outside the active route.
+            continue;
+        }
         common_agent_tool_call call;
-        if (!build_call(tool_name, action.instruction, workspace, call)) continue;
+        if (!build_call(resolved_tool_name, action.instruction, workspace, call)) continue;
         std::string validation_error;
         if (!tools.validate(call, validation_error)) {
             if (!executed_failure) {
@@ -133,7 +142,7 @@ bool common_agent_research_runtime_adapter::execute(
 
         const std::string existing_source_id = existing_source_id_for_resource(
             workspace, result.resource_refs, action.instruction);
-        const std::string memory_source_id = (tool_name == "memory.get" || tool_name == "memory_get")
+        const std::string memory_source_id = (resolved_tool_name == "memory.get" || resolved_tool_name == "memory_get")
             ? existing_source_id_for_memory(workspace, action.instruction)
             : std::string();
         const std::string source_id = !memory_source_id.empty()
@@ -184,10 +193,10 @@ bool common_agent_research_runtime_adapter::execute(
         }
         common_agent_research_source source;
         source.source_id = source_id;
-        source.title = tool_name;
-        source.origin = tool_name;
+        source.title = resolved_tool_name;
+        source.origin = resolved_tool_name;
         source.authority = "host-tool-runtime";
-        source.kind = (tool_name == "web.search" || tool_name == "web_search" || tool_name == "web.fetch" || tool_name == "web_fetch")
+        source.kind = (resolved_tool_name == "web.search" || resolved_tool_name == "web_search" || resolved_tool_name == "web.fetch" || resolved_tool_name == "web_fetch")
             ? common_agent_research_source_kind::web_page
             : (!result.resource_refs.empty() &&
                 result.resource_refs.front().uri.rfind("artifact://", 0) == 0
@@ -199,7 +208,7 @@ bool common_agent_research_runtime_adapter::execute(
             source.resource_ref = result.resource_refs.front();
             source.content_hash = result.resource_refs.front().uri;
         } else {
-            source.content_hash = tool_name + ":" + action.instruction;
+            source.content_hash = resolved_tool_name + ":" + action.instruction;
         }
         if (!common_agent_research_add_source(workspace, source, error)) return false;
 
