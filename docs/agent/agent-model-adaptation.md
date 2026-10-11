@@ -79,6 +79,10 @@ the reservation remains visible as configured-but-idle and no job is consumed.
 Changing this configuration remains restart-required and never silently
 reduces the normal daemon pool.
 
+This FlyDelta worker reservation is separate from the SFT/DPO adaptation
+orchestrator's `dispatch_mode` below; it is not a configuration switch for
+weight-training dispatch.
+
 The same configuration can opt the existing adaptation observer into bounded
 FlyDelta candidate capture with `capture_candidates=true`. This requires the
 normal adaptation capture and collection gates. Optional lifecycle journaling
@@ -707,14 +711,42 @@ manifest; this avoids producing a corpus with no training rows. Such a corpus
 does not gain a validation claim: the existing host evaluator remains the gate
 for adapter staging and promotion.
 
-The orchestrator supports explicit `offline` and threshold-gated `nearline`
-dispatch modes over the same immutable corpus and worker path. Nearline means
-that the configured auto-training threshold has been met before dispatch; it
-does not update serving weights inside an inference turn. Current orchestration
-still consumes the worker synchronously, and automatic daemon-side relation
-resolution/scheduling remains future wiring. Captured data should therefore
-remain durable and reproducible regardless of when an operator or host
-scheduler dispatches it.
+The orchestrator's `dispatch_mode` is currently a host-code setting, not a
+JSON/CLI host-config flag. It defaults to `offline`. To enable threshold-gated
+nearline dispatch in a host that constructs this orchestrator, set it and its
+batch threshold explicitly:
+
+```cpp
+config.dispatch_mode = agent_learning_dispatch_mode::nearline;
+config.auto_training_policy.min_qualified_examples = 6;
+config.training_group.learning_domain = "tool_use"; // optional filter
+config.training_group.tool_family = "data";          // optional filter
+```
+
+Nearline counts qualified, approved candidates in the supplied batch/group;
+the entire submitted batch must match and qualify, and the threshold must be
+met. The orchestrator forces the auto-training gate on when nearline is
+selected. To disable that gate and use the default direct path, leave the mode
+at `offline` or set it explicitly:
+
+```cpp
+config.dispatch_mode = agent_learning_dispatch_mode::offline;
+```
+
+Here `offline` means “do not require the nearline threshold,” not “defer this
+job to a later scheduler”: both modes currently enqueue and consume the worker
+synchronously through the same immutable corpus path. Nearline does not update
+serving weights inside an inference turn. The adaptation end-to-end smoke
+exercises both the offline default and a threshold-gated three-candidate
+nearline batch; run it with:
+
+```bash
+ctest --test-dir build --output-on-failure -R '^llama-agent-adaptation-e2e-ctest$'
+```
+
+Automatic daemon-side relation resolution and scheduled dispatch remain future
+wiring. Captured data remains durable and reproducible independently of when a
+host or operator chooses to dispatch it.
 
 ### Adapter revision
 
