@@ -1033,9 +1033,20 @@ bool run_agent_runtime_driver(
     const std::string original_prompt = execution.orchestration_config.prompt;
     common_agent_result aggregate;
     size_t continuation_count = 0;
-    const auto stop_for_execution_control = [&]() {
+    const auto preserve_partial_result = [&]() {
         execution.orchestration_config.prompt = original_prompt;
         result = std::move(aggregate);
+        result.events.insert(result.events.begin(), execution.pre_turn_events.begin(), execution.pre_turn_events.end());
+        result.trace.insert(result.trace.begin(), execution.pre_turn_trace.begin(), execution.pre_turn_trace.end());
+    };
+    const auto fail_with_partial_result = [&](const std::string & failure) {
+        preserve_partial_result();
+        result.error = failure;
+        error = failure;
+        return false;
+    };
+    const auto stop_for_execution_control = [&]() {
+        preserve_partial_result();
         result.response_generation_status = common_agent_generation_status::cancelled;
         result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
         result.error = execution.execution_control.stop_reason();
@@ -1113,13 +1124,13 @@ bool run_agent_runtime_driver(
             common_agent_resource_chunk_extraction extraction;
             if (!extract_active_resource_chunk(
                     execution, original_prompt, context, extraction, error)) {
-                return false;
+                return fail_with_partial_result(error);
             }
             execution.active_resource_chunk_context = context;
             bool chunk_chain_completed = false;
             const bool has_next_chunk = record_and_advance_resource_chunk(
                 execution, context, extraction, chunk_chain_completed, error);
-            if (!error.empty()) return false;
+            if (!error.empty()) return fail_with_partial_result(error);
             ++continuation_count;
             if (has_next_chunk) {
                 execution.orchestration_config.prompt =
@@ -1175,6 +1186,7 @@ bool run_agent_runtime_driver(
 
         const auto slice = assembly.runtime->run(request);
         if (!slice.error.empty()) {
+            append_runtime_result(aggregate, slice);
             if (execution.policy.agent_trace) {
                 for (const auto & failure : slice.failures) {
                     fprintf(stderr,
@@ -1190,8 +1202,7 @@ bool run_agent_runtime_driver(
                         failure.repair_context_json.c_str());
                 }
             }
-            error = "agent runtime failed: " + slice.error;
-            return false;
+            return fail_with_partial_result("agent runtime failed: " + slice.error);
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
@@ -1199,8 +1210,8 @@ bool run_agent_runtime_driver(
                 execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
             const auto & current = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
             if (current.parent.uri != slice.chunk_resource_request->uri) {
-                error = "workflow requested a second chunked resource while another resource is active";
-                return false;
+                return fail_with_partial_result(
+                    "workflow requested a second chunked resource while another resource is active");
             }
         }
         if (slice.chunk_resource_request &&
@@ -1210,27 +1221,29 @@ bool run_agent_runtime_driver(
             const auto plan_id = slice.plan_id.value_or(execution.current_plan_id);
             const auto active_plan = execution.plan_store.get(plan_id, plan_error);
             if (!active_plan) {
-                error = plan_error.empty() ? "workflow chunk handoff requires an active plan" : plan_error;
-                return false;
+                return fail_with_partial_result(
+                    plan_error.empty() ? "workflow chunk handoff requires an active plan" : plan_error);
             }
             execution.current_plan_id = active_plan->id;
             for (const auto & observation : active_plan->observations) {
                 if (observation.source != "resource_chunk" || observation.resource_refs.size() != 1) continue;
                 if (observation.resource_refs.front().lineage.parent_uri != resource.uri) {
-                    error = "workflow requested a second chunked resource in one plan; start a new plan for " + resource.uri;
-                    return false;
+                    return fail_with_partial_result(
+                        "workflow requested a second chunked resource in one plan; start a new plan for " + resource.uri);
                 }
             }
             if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
                 const auto & current = execution.resource_chunk_plans[execution.active_resource_chunk_plan];
                 if (current.parent.uri != resource.uri) {
-                    error = "workflow requested a second chunked resource while another resource is active";
-                    return false;
+                    return fail_with_partial_result(
+                        "workflow requested a second chunked resource while another resource is active");
                 }
             } else {
                 execution.input_resources.push_back({resource, "workflow_full_text", true});
                 execution.resource_chunk_observations_prepared = false;
-                if (!prepare_resource_chunk_observations(execution, error)) return false;
+                if (!prepare_resource_chunk_observations(execution, error)) {
+                    return fail_with_partial_result(error);
+                }
             }
             if (continuation_count >= execution.runtime_config.max_continuations) {
                 aggregate.limit_reached = true;
@@ -1257,12 +1270,9 @@ bool run_agent_runtime_driver(
         std::string plan_error;
         const auto plan = execution.plan_store.get(*slice.plan_id, plan_error);
         if (!plan) {
-            result = std::move(aggregate);
-            result.error = plan_error.empty()
+            return fail_with_partial_result(plan_error.empty()
                 ? "continuation could not resolve the current plan"
-                : plan_error;
-            error = result.error;
-            return false;
+                : plan_error);
         }
         execution.current_plan_id = plan->id;
         if (slice_requires_context_continuation(slice)) {
@@ -1295,9 +1305,7 @@ bool run_agent_runtime_driver(
                 execution, result, continuation_count + 1, checkpoint, checkpoint_error)) {
             result.continuation_checkpoint = std::move(checkpoint);
         } else if (!checkpoint_error.empty()) {
-            result.error = checkpoint_error;
-            error = result.error;
-            return false;
+            return fail_with_partial_result(checkpoint_error);
         }
     }
     result.events.insert(result.events.begin(), execution.pre_turn_events.begin(), execution.pre_turn_events.end());

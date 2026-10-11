@@ -1,5 +1,6 @@
 #include "agent/runtime/agent-inference-contracts.h"
 #include "tools/agent/runtime/agent-runtime-control.h"
+#include "common/runtime/runtime-trace.h"
 
 #include <cassert>
 
@@ -32,5 +33,12 @@ int main() {
 
     assert(static_cast<int>(agent_inference_backend::cli) !=
         static_cast<int>(agent_inference_backend::server_context));
+
+    assert(common_runtime_trace_safe_url(
+        "https://user:password@example.org/path/to/item?api_key=secret&limit=5#section") ==
+        "https://example.org/path/to/item");
+    assert(common_runtime_trace_safe_url("https://example.org") == "https://example.org/");
+    assert(common_runtime_trace_safe_url("https://example.org?token=secret") == "https://example.org/");
+    assert(common_runtime_trace_safe_url("not-a-url") == "[redacted-url]");
     return 0;
 }

@@ -135,8 +135,16 @@ grep -Eq 'stage=tool kind=(succeeded|completed).*tool=openalex\.getWork' "$log_p
     echo "OpenAlex full-text model smoke did not execute openalex.getWork; log=$log_path" >&2
     exit 1
 }
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=openalex\.getWork.*http_provider=openalex.*http_operation=getWork.*http_status=200' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not trace the successful OpenAlex HTTP response; log=$log_path" >&2
+    exit 1
+}
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch' "$log_path" || {
     echo "OpenAlex full-text model smoke did not execute web.fetch; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'stage=tool kind=(succeeded|completed).*tool=web\.fetch.*http_provider=web\.fetch.*http_status=2[0-9][0-9].*http_url=https://[^ ]+' "$log_path" || {
+    echo "OpenAlex full-text model smoke did not trace web.fetch HTTP status and source URL; log=$log_path" >&2
     exit 1
 }
 grep -Eq 'agent workflow-choice trace: transition=choose-evidence-depth.*selected_id=fetch_full_text' "$log_path" || {

@@ -3,12 +3,30 @@
 #include "resource/resource-contract.h"
 #include "agent/dataset-contracts.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 struct common_agent_tool_call {
     std::string name;
     std::string arguments_json = "{}";
+};
+
+// Safe transport facts collected by a host-owned HTTP connector. URLs are
+// retained internally for later redaction at the trace boundary.
+struct common_tool_http_metadata {
+    std::string provider;
+    std::string operation;
+    std::string method;
+    std::string requested_url;
+    std::string final_url;
+    std::string resource_ref;
+    int status = 0;
+    std::string content_type;
+    size_t response_bytes = 0;
+    int64_t duration_ms = 0;
+    int retry_after_seconds = -1;
 };
 
 enum class common_tool_failure_class { validation, policy, not_found, timeout, network, execution, limit };
@@ -37,16 +55,17 @@ struct common_tool_execution_result {
     std::string content_summary;
     std::vector<common_runtime_resource_ref> resource_refs;
     std::vector<common_agent_dataset_ref> dataset_refs;
+    common_tool_http_metadata http;
 
     static common_tool_execution_result success(std::string output) {
-        return {true, std::move(output), {}, common_tool_failure_class::execution, false, {}, {}, {}, {}, {}};
+        return {true, std::move(output), {}, common_tool_failure_class::execution, false, {}, {}, {}, {}, {}, {}};
     }
     static common_tool_execution_result success(
             std::string output,
             std::string content_summary,
             std::vector<common_runtime_resource_ref> resource_refs = {}) {
         common_tool_execution_result result{
-            true, std::move(output), {}, common_tool_failure_class::execution, false, {}, {}, {}, {}, {}};
+            true, std::move(output), {}, common_tool_failure_class::execution, false, {}, {}, {}, {}, {}, {}};
         result.content_summary = std::move(content_summary);
         result.resource_refs = std::move(resource_refs);
         return result;
@@ -54,6 +73,6 @@ struct common_tool_execution_result {
     static common_tool_execution_result failure(std::string code, common_tool_failure_class failure_class, bool retryable,
             std::string safe_summary, std::string raw_diagnostic = {}) {
         return {false, {}, std::move(code), failure_class, retryable, std::move(safe_summary),
-            std::move(raw_diagnostic), {}, {}, {}};
+            std::move(raw_diagnostic), {}, {}, {}, {}};
     }
 };

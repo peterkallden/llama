@@ -722,6 +722,17 @@ bool winhttp_fetch_text(const std::string & url, const common_http_url & parts, 
 #endif
 
 bool http_fetch_text(const std::string & url, size_t max_bytes, json & response, std::string & error, std::string * raw_body = nullptr) {
+    const auto request_started = std::chrono::steady_clock::now();
+    std::string final_url = url;
+    const auto record_http = [&](int status, const std::string & content_type, size_t bytes) {
+        response["http"] = {
+            {"provider", "web.fetch"}, {"operation", "fetch"}, {"method", "GET"},
+            {"requested_url", url}, {"final_url", url}, {"status", status},
+            {"content_type", content_type}, {"response_bytes", bytes},
+            {"duration_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - request_started).count()},
+        };
+    };
     try {
 #ifdef LLAMA_AGENT_WEB_USE_WINHTTP
         const auto parts = common_http_parse_url(url);
@@ -730,7 +741,10 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
         bool truncated = false;
         int status = 0;
         std::string content_type;
-        if (!winhttp_fetch_text(url, parts, max_bytes, body, status, content_type, error, truncated)) return false;
+        if (!winhttp_fetch_text(url, parts, max_bytes, body, status, content_type, error, truncated)) {
+            record_http(status, content_type, body.size());
+            return false;
+        }
 #else
         auto [cli, parts] = common_http_client(url);
         if (!public_https_url(parts, error)) return false;
@@ -749,6 +763,27 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
             [&](const httplib::Response & r) {
                 status = r.status;
                 if (r.has_header("Content-Type")) content_type = r.get_header_value("Content-Type");
+                if (r.status >= 300 && r.status < 400 && r.has_header("Location")) {
+                    const auto location = r.get_header_value("Location");
+                    if (location.find("://") != std::string::npos) {
+                        final_url = location;
+                    } else if (location.rfind("//", 0) == 0) {
+                        final_url = parts.scheme + ":" + location;
+                    } else {
+                        const auto query = parts.path.find_first_of("?#");
+                        auto current_path = parts.path.substr(0, query);
+                        const auto origin = parts.scheme + "://" + common_http_format_host(parts.host) +
+                            ((parts.scheme == "https" && parts.port == 443) ||
+                             (parts.scheme == "http" && parts.port == 80)
+                                ? "" : ":" + std::to_string(parts.port));
+                        if (!location.empty() && location.front() == '/') {
+                            final_url = origin + location;
+                        } else {
+                            const auto slash = current_path.rfind('/');
+                            final_url = origin + current_path.substr(0, slash == std::string::npos ? 0 : slash + 1) + location;
+                        }
+                    }
+                }
                 return r.status >= 200 && r.status < 300;
             },
             [&](const char * data, size_t len) {
@@ -762,17 +797,30 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
                 return true;
             },
             nullptr);
-        if (!res) { error = "HTTP request failed: " + std::string(httplib::to_string(res.error())); return false; }
+        if (!res) {
+            record_http(status, content_type, body.size());
+            response["http"]["final_url"] = final_url;
+            error = status > 0 ? "HTTP status " + std::to_string(status) :
+                "HTTP request failed: " + std::string(httplib::to_string(res.error()));
+            return false;
+        }
 #endif
+        record_http(status, content_type, body.size());
+        if (response["http"].contains("final_url")) {
+            response["http"]["final_url"] = final_url;
+        }
         if (raw_body) *raw_body = body;
+        auto http_metadata = response["http"];
+        http_metadata["final_url"] = http_metadata.value("final_url", url);
         response = {
             {"url", url},
-            {"final_url", url},
+            {"final_url", http_metadata.value("final_url", url)},
             {"status", status},
             {"content_type", content_type},
             {"title", html_title(body)},
             {"text", html_to_text(body)},
             {"truncated", truncated},
+            {"http", std::move(http_metadata)},
         };
         return true;
     } catch (const std::exception & e) {
@@ -984,7 +1032,20 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     json fetched;
                     std::string raw_body;
                     if (!http_fetch_text(url, (size_t) max_bytes, fetched, err, &raw_body)) {
-                        return tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
+                        auto failure = tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
+                        if (fetched.contains("http") && fetched["http"].is_object()) {
+                            const auto & http = fetched["http"];
+                            failure.http.provider = http.value("provider", std::string{});
+                            failure.http.operation = http.value("operation", std::string{});
+                            failure.http.method = http.value("method", std::string{});
+                            failure.http.requested_url = http.value("requested_url", std::string{});
+                            failure.http.final_url = http.value("final_url", std::string{});
+                            failure.http.status = http.value("status", 0);
+                            failure.http.content_type = http.value("content_type", std::string{});
+                            failure.http.response_bytes = http.value("response_bytes", size_t(0));
+                            failure.http.duration_ms = http.value("duration_ms", int64_t(0));
+                        }
+                        return failure;
                     }
 
                     const std::string mime_type = common_normalize_resource_media_type(
@@ -1002,6 +1063,19 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     const std::string title = trim_copy(fetch_result.title);
                     const std::string text = fetch_result.text;
                     const bool truncated = fetch_result.truncated;
+                    common_tool_http_metadata http_metadata;
+                    if (fetched.contains("http") && fetched["http"].is_object()) {
+                        const auto & http = fetched["http"];
+                        http_metadata.provider = http.value("provider", std::string{});
+                        http_metadata.operation = http.value("operation", std::string{});
+                        http_metadata.method = http.value("method", std::string{});
+                        http_metadata.requested_url = http.value("requested_url", std::string{});
+                        http_metadata.final_url = http.value("final_url", std::string{});
+                        http_metadata.status = http.value("status", 0);
+                        http_metadata.content_type = http.value("content_type", std::string{});
+                        http_metadata.response_bytes = http.value("response_bytes", size_t(0));
+                        http_metadata.duration_ms = http.value("duration_ms", int64_t(0));
+                    }
                     // Always materialize the authoritative fetched body when
                     // the host resource store is available. This preserves a
                     // PDF, XML or JSON representation for later document
@@ -1009,11 +1083,13 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     // JSON wrapper.
                     const bool should_externalize = bindings.resource_runtime.store != nullptr;
                     if (!should_externalize) {
-                        return common_tool_execution_result::success(
+                        auto success = common_tool_execution_result::success(
                             common_tool_web_fetch_result_to_json(fetch_result).dump(),
                             title.empty()
                                 ? "Fetched bounded page text from " + url + "."
                                 : "Fetched bounded page text for \"" + title + "\".");
+                        success.http = std::move(http_metadata);
+                        return success;
                     }
 
                     std::vector<std::string> keywords;
@@ -1044,6 +1120,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                             err)) {
                         return tool_execution_failure("tool.web_fetch.resource_store_failed", std::move(err), "Web fetch result could not be materialized as a host resource.");
                     }
+                    http_metadata.resource_ref = resource_ref.uri;
 
                     common_tool_web_fetch_inline_result payload{
                         fetch_result.url,
@@ -1057,12 +1134,14 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         resource_ref.uri,
                     };
 
-                    return common_tool_execution_result::success(
+                    auto success = common_tool_execution_result::success(
                         common_tool_web_fetch_inline_result_to_json(payload).dump(),
                         title.empty()
                             ? "Fetched bounded page text from " + url + "; the full payload was stored as a turn resource."
                             : "Fetched bounded page text for \"" + title + "\"; the full payload was stored as a turn resource.",
                         {std::move(resource_ref)});
+                    success.http = std::move(http_metadata);
+                    return success;
                 }, error);
             }
         } else if (definition.executor_id == "builtin.openapi_connect") {

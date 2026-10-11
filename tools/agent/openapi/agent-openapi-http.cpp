@@ -421,6 +421,9 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             const agent_tool_context & context, const agent_openapi_operation & operation,
             const std::string & arguments_json, agent_openapi_execution_result & result,
             std::string & error) {
+        result.http.provider = config.id;
+        result.http.operation = operation.operation_id;
+        result.http.method = operation.method;
         if (!context.allow_network) { error = "OpenAPI tool requires network capability"; return false; }
         url_parts url;
         if (!parse_url(config.base_url, url, error)) return false;
@@ -512,12 +515,16 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         }
         std::string request_path = join_path(url.base_path, path);
         request_path = httplib::append_query_params(request_path, query);
+        result.http.requested_url = url.scheme + "://" + url.host +
+            (url.port == (url.scheme == "https" ? 443 : 80) ? "" : ":" + std::to_string(url.port)) + request_path;
+        result.http.final_url = result.http.requested_url;
         // Public APIs and API gateways commonly use the User-Agent for
         // diagnostics and abuse/rate-limit handling. Keep it deterministic
         // and host-owned; callers still cannot provide arbitrary headers.
         headers.emplace("User-Agent", "llama-agent-openapi-http/1.0");
         const std::string body = arguments.contains("body") ? arguments["body"].dump() : "{}";
         httplib::Result response;
+        const auto http_started = std::chrono::steady_clock::now();
         if (url.scheme == "http") {
             if (config.auth.type == "mutual_tls") { error = "OpenAPI mutual_tls requires HTTPS"; return false; }
             httplib::Client client(url.host, url.port); client.set_hostname_addr_map({{url.host, validated_address}}); client.set_follow_location(false); configure(client, config);
@@ -557,7 +564,23 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             error = "HTTPS OpenAPI transport requires OpenSSL"; return false;
 #endif
         }
-        if (!response) { error = "OpenAPI HTTP request failed: " + httplib::to_string(response.error()); return false; }
+        if (!response) {
+            result.http.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - http_started).count();
+            error = "OpenAPI HTTP request failed: " + httplib::to_string(response.error());
+            return false;
+        }
+        result.http.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - http_started).count();
+        result.http.status = response->status;
+        result.http.content_type = response->get_header_value("Content-Type");
+        result.http.response_bytes = response->body.size();
+        int64_t retry_after = -1;
+        const auto retry_after_header = response->get_header_value("Retry-After");
+        if (parse_retry_after_seconds(retry_after_header, retry_after) ||
+                parse_retry_after_date_seconds(retry_after_header, retry_after)) {
+            result.http.retry_after_seconds = static_cast<int>(std::min<int64_t>(retry_after, std::numeric_limits<int>::max()));
+        }
         if (response->body.size() > config.max_result_bytes) { error = "OpenAPI response exceeded max_result_bytes"; return false; }
         result.ok = response->status >= 200 && response->status < 300;
         result.http_status = response->status;

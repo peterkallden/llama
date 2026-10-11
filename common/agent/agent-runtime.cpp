@@ -82,16 +82,34 @@ static void append_trace(
         std::string tool_name = {},
         std::string observation_id = {},
         std::string related_id = {}) {
-    result.trace.push_back({
-        stage,
-        kind,
-        std::move(detail),
-        std::move(plan_id),
-        std::move(step_id),
-        std::move(tool_name),
-        std::move(observation_id),
-        std::move(related_id),
-    });
+    common_runtime_trace_entry entry;
+    entry.stage = stage;
+    entry.kind = kind;
+    entry.detail = std::move(detail);
+    entry.plan_id = std::move(plan_id);
+    entry.step_id = std::move(step_id);
+    entry.tool_name = std::move(tool_name);
+    entry.observation_id = std::move(observation_id);
+    entry.related_id = std::move(related_id);
+    result.trace.push_back(std::move(entry));
+}
+
+static void attach_http_trace_metadata(
+        common_runtime_trace_entry & trace,
+        const common_tool_http_metadata & http) {
+    if (http.provider.empty() && http.status == 0 && http.requested_url.empty()) return;
+    trace.http_provider = http.provider;
+    trace.http_operation = http.operation;
+    trace.http_method = http.method;
+    trace.http_url = common_runtime_trace_safe_url(http.requested_url);
+    trace.http_final_url = common_runtime_trace_safe_url(
+        http.final_url.empty() ? http.requested_url : http.final_url);
+    trace.http_resource_ref = http.resource_ref;
+    trace.http_status = http.status;
+    trace.http_content_type = http.content_type;
+    trace.http_response_bytes = http.response_bytes;
+    trace.http_duration_ms = http.duration_ms;
+    trace.http_retry_after_seconds = http.retry_after_seconds;
 }
 
 static common_agent_deliberation_policy policy_after_escalation(
@@ -1483,6 +1501,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         tool_trace_diagnostic(execution.raw_diagnostic) +
                         tool_argument_resource_ref(tool_call->arguments_json),
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                attach_http_trace_metadata(result.trace.back(), execution.http);
                 append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::started,
                     "repair_required failure_code=" + failure.code +
                         " retryable=" + std::string(failure.retryable ? "true" : "false"),
@@ -1587,6 +1606,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 execution.resource_refs);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::succeeded,
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
+            attach_http_trace_metadata(result.trace.back(), execution.http);
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             if (plan.workflow_definition &&

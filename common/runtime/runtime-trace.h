@@ -1,6 +1,25 @@
 #pragma once
 
+#include <cstdint>
+#include <cstddef>
 #include <string>
+
+inline std::string common_runtime_trace_safe_url(const std::string & url) {
+    const auto scheme = url.find("://");
+    if (scheme == std::string::npos) return url.empty() ? std::string{} : "[redacted-url]";
+    const auto authority_begin = scheme + 3;
+    const auto authority_end = url.find_first_of("/?#", authority_begin);
+    const auto path_begin = authority_end != std::string::npos && url[authority_end] == '/'
+        ? authority_end : std::string::npos;
+    auto authority = url.substr(authority_begin,
+        authority_end == std::string::npos ? std::string::npos : authority_end - authority_begin);
+    const auto user = authority.rfind('@');
+    if (user != std::string::npos) authority.erase(0, user + 1);
+    auto path = path_begin == std::string::npos ? std::string("/") : url.substr(path_begin);
+    const auto suffix = path.find_first_of("?#");
+    if (suffix != std::string::npos) path.resize(suffix);
+    return url.substr(0, scheme + 3) + authority + path;
+}
 
 enum class common_runtime_trace_stage {
     turn,
@@ -65,4 +84,15 @@ struct common_runtime_trace_entry {
     std::string tool_name;
     std::string observation_id;
     std::string related_id;
+    std::string http_provider;
+    std::string http_operation;
+    std::string http_method;
+    std::string http_url;
+    std::string http_final_url;
+    std::string http_resource_ref;
+    int http_status = 0;
+    std::string http_content_type;
+    size_t http_response_bytes = 0;
+    int64_t http_duration_ms = 0;
+    int http_retry_after_seconds = -1;
 };

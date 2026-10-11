@@ -5580,6 +5580,16 @@ Keeping these signals under the existing agent trace makes a failed
 model-backed tool selection diagnosable without introducing a second tracing
 channel.
 
+HTTP-backed tool trace entries also expose bounded transport metadata when the
+connector has it: provider/operation, method, requested and final URL, status,
+content type, response byte count, elapsed time, retry delay and the resulting
+host resource reference. URL user-info and query/fragment values are omitted;
+response bodies, credentials and arbitrary headers are never added to the
+runtime trace. This makes OpenAPI and `web.fetch` acquisition visible alongside
+the plan step that invoked them, including HTTP error responses. If a later
+continuation or chunk fails, the already-recorded events and traces are kept
+on the failed result so the acquisition path remains diagnosable.
+
 For a local focused run:
 
 ```powershell

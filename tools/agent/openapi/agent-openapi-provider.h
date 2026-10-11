@@ -19,6 +19,7 @@ struct agent_openapi_execution_result {
     bool retryable = false;
     std::string safe_summary;
     std::string raw_diagnostic;
+    common_tool_http_metadata http;
 };
 
 using agent_openapi_executor = std::function<bool(

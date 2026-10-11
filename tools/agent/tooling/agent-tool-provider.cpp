@@ -175,13 +175,15 @@ agent_tool_result normalize_execution_result(
         const agent_tool_call & call,
         const common_tool_execution_result & execution) {
     if (!execution.ok) {
-        return make_failure_result(
+        auto result = make_failure_result(
             call,
             execution.failure_code.empty() ? "tool_call_rejected" : execution.failure_code,
             execution.failure_class,
             execution.retryable,
             execution.safe_summary.empty() ? "The tool call was rejected by its native contract or executor." : execution.safe_summary,
             execution.raw_diagnostic);
+        result.http = execution.http;
+        return result;
     }
 
     const size_t result_limit = effective_result_limit(context, definition);
@@ -208,11 +210,13 @@ agent_tool_result normalize_execution_result(
         }
     }
 
-    return make_agent_tool_json_success_result(
+    auto result = make_agent_tool_json_success_result(
         call,
         execution.output,
         execution.content_summary.empty() ? definition.description : execution.content_summary,
         execution.resource_refs, execution.dataset_refs);
+    result.http = execution.http;
+    return result;
 }
 
 bool is_mcp_definition_allowed(
@@ -260,13 +264,15 @@ agent_tool_result normalize_mcp_execution_result(
         const mcp_agent_tool_call_result & execution,
         size_t result_limit) {
     if (!execution.ok) {
-        return make_failure_result(
+        auto result = make_failure_result(
             call,
             execution.failure_code.empty() ? "mcp.tool_call_failed" : execution.failure_code,
             execution.failure_class,
             execution.retryable,
             execution.safe_summary.empty() ? "The MCP tool call failed." : execution.safe_summary,
             execution.raw_diagnostic);
+        result.http = execution.http;
+        return result;
     }
 
     if (execution.structured_content_json.size() > result_limit ||
@@ -294,18 +300,22 @@ agent_tool_result normalize_mcp_execution_result(
     }
 
     if (!execution.structured_content_json.empty()) {
-        return make_agent_tool_structured_success_result(
+        auto result = make_agent_tool_structured_success_result(
             call,
             execution.structured_content_json,
             execution.text_content,
             execution.resource_refs, execution.dataset_refs);
+        result.http = execution.http;
+        return result;
     }
 
-    return make_agent_tool_text_success_result(
+    auto result = make_agent_tool_text_success_result(
         call,
         execution.text_content,
         execution.text_content,
         execution.resource_refs, execution.dataset_refs);
+    result.http = execution.http;
+    return result;
 }
 
 class native_agent_tool_view : public agent_tool_view {

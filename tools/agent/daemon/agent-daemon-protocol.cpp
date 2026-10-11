@@ -552,6 +552,16 @@ json serialize_agent_daemon_trace_entry(
     if (!entry.related_id.empty()) {
         entry_json["related_id"] = entry.related_id;
     }
+    if (!entry.http_provider.empty() || entry.http_status > 0 || !entry.http_url.empty()) {
+        entry_json["http"] = {
+            {"provider", entry.http_provider}, {"operation", entry.http_operation}, {"method", entry.http_method},
+            {"url", entry.http_url}, {"final_url", entry.http_final_url},
+            {"resource_ref", entry.http_resource_ref},
+            {"status", entry.http_status}, {"content_type", entry.http_content_type},
+            {"response_bytes", entry.http_response_bytes}, {"duration_ms", entry.http_duration_ms},
+            {"retry_after_seconds", entry.http_retry_after_seconds},
+        };
+    }
     return entry_json;
 }
 

@@ -42,7 +42,7 @@ void print_agent_runtime_trace(const common_agent_result & result, bool enabled)
     for (const auto & entry : result.trace) {
         std::fprintf(
             stderr,
-            "agent trace: stage=%s kind=%s detail=%s plan=%s step=%s tool=%s observation=%s related=%s\n",
+            "agent trace: stage=%s kind=%s detail=%s plan=%s step=%s tool=%s observation=%s related=%s http_provider=%s http_operation=%s http_method=%s http_url=%s http_final_url=%s http_resource=%s http_status=%d http_content_type=%s http_bytes=%zu http_ms=%lld retry_after_s=%d\n",
             common_runtime_trace_stage_name(entry.stage),
             common_runtime_trace_kind_name(entry.kind),
             entry.detail.c_str(),
@@ -50,7 +50,11 @@ void print_agent_runtime_trace(const common_agent_result & result, bool enabled)
             entry.step_id.c_str(),
             entry.tool_name.c_str(),
             entry.observation_id.c_str(),
-            entry.related_id.c_str());
+            entry.related_id.c_str(),
+            entry.http_provider.c_str(), entry.http_operation.c_str(), entry.http_method.c_str(), entry.http_url.c_str(),
+            entry.http_final_url.c_str(), entry.http_resource_ref.c_str(), entry.http_status, entry.http_content_type.c_str(),
+            entry.http_response_bytes, static_cast<long long>(entry.http_duration_ms),
+            entry.http_retry_after_seconds);
     }
 }
 

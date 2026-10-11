@@ -93,6 +93,7 @@ struct agent_tool_result {
     std::string content_summary;
     std::vector<common_runtime_resource_ref> resource_refs;
     std::vector<common_agent_dataset_ref> dataset_refs;
+    common_tool_http_metadata http;
 
     std::string failure_code;
     common_tool_failure_class failure_class = common_tool_failure_class::execution;
@@ -197,6 +198,7 @@ struct mcp_agent_tool_call_result {
     std::string text_content;
     std::vector<common_runtime_resource_ref> resource_refs;
     std::vector<common_agent_dataset_ref> dataset_refs;
+    common_tool_http_metadata http;
     std::string failure_code;
     common_tool_failure_class failure_class = common_tool_failure_class::execution;
     bool retryable = false;

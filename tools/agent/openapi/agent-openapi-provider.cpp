@@ -118,6 +118,8 @@ public:
         result.retryable = execution.retryable;
         result.safe_summary = execution.safe_summary;
         result.raw_diagnostic = execution.raw_diagnostic;
+        result.http = execution.http;
+        if (!execution.resource_refs.empty()) result.http.resource_ref = execution.resource_refs.front().uri;
         return true;
     }
 

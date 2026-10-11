@@ -192,7 +192,17 @@ int main() {
         if (input.find("\"url\":\"https://example.com/llama\"") == std::string::npos) {
             return common_tool_execution_result::failure("tool.web_fetch.unexpected_url", common_tool_failure_class::validation, false, "Unexpected fetch URL.", "unexpected fetch url");
         }
-        return common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
+        auto fetched = common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
+        fetched.http.provider = "web.fetch";
+        fetched.http.operation = "fetch";
+        fetched.http.method = "GET";
+        fetched.http.requested_url = "https://example.com/llama?token=redacted";
+        fetched.http.final_url = "https://example.com/llama";
+        fetched.http.status = 200;
+        fetched.http.content_type = "text/html";
+        fetched.http.response_bytes = 128;
+        fetched.http.duration_ms = 23;
+        return fetched;
     };
     assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
     result = repository_registry.execute({"repository.list", R"({"path":"src","depth":1})"});
@@ -204,7 +214,9 @@ int main() {
     result = repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"});
     assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
     result = repository_registry.execute({"web_fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});
-    assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos);
+    assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos &&
+           result.http.provider == "web.fetch" && result.http.status == 200 &&
+           result.http.response_bytes == 128 && result.http.duration_ms == 23);
     result = repository_registry.execute({"repository.read", R"({"path":"../outside.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
 

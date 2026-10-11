@@ -130,17 +130,21 @@ public:
         std::string error;
         const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
         if (result.ok) {
-            return common_tool_execution_result::success(
+            auto execution = common_tool_execution_result::success(
                 result.content_json,
                 result.content_summary,
                 result.resource_refs);
+            execution.http = result.http;
+            return execution;
         }
-        return common_tool_execution_result::failure(
+        auto execution = common_tool_execution_result::failure(
             result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
             result.failure_class,
             result.retryable,
             result.safe_summary.empty() ? "The tool failed." : result.safe_summary,
             result.raw_diagnostic);
+        execution.http = result.http;
+        return execution;
     }
 
     bool supports_async(const common_agent_tool_call & call) const override {
@@ -177,6 +181,7 @@ public:
                 result.content_json,
                 result.content_summary,
                 result.resource_refs);
+            output.http = result.http;
         } else {
             output = common_tool_execution_result::failure(
                 result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
@@ -184,6 +189,7 @@ public:
                 result.retryable,
                 result.safe_summary.empty() ? "The tool failed." : result.safe_summary,
                 result.raw_diagnostic);
+            output.http = result.http;
         }
         error.clear();
         return true;
