@@ -56,14 +56,35 @@ bool common_training_candidate_qualifies(
             candidate.evidence_ref.size() > 512 || candidate.model_profile_fingerprint.size() > 512 ||
             candidate.tokenizer_fingerprint.size() > 512 || candidate.template_fingerprint.size() > 512 ||
             candidate.contrast_ref.size() > 512 ||
-            candidate.verifier_ref.size() > 512 || candidate.verifier_revision.size() > 512) {
+            candidate.verifier_ref.size() > 512 || candidate.verifier_revision.size() > 512 ||
+            candidate.host_verifier_ref.size() > 512 || candidate.host_verifier_revision.size() > 512 ||
+            candidate.host_proof_ref.size() > 512 || candidate.split_group_key.size() > 512) {
         error = "training candidate contains invalid bounded text"; return false;
     }
-    if (candidate.cause != common_learning_cause::model_behavior) {
-        error = "training candidate cause is not model behavior"; return false;
+    if (candidate.provenance == common_training_candidate_provenance::observed_model_behavior) {
+        if (candidate.cause != common_learning_cause::model_behavior) {
+            error = "observed training candidate cause is not model behavior"; return false;
+        }
+        if (candidate.observed_occurrences < policy.min_occurrences) { error = "training candidate has insufficient occurrences"; return false; }
+        if (candidate.verified_recoveries < policy.min_verified_recoveries) { error = "training candidate has insufficient recoveries"; return false; }
+    } else if (candidate.provenance == common_training_candidate_provenance::host_verified_demonstration) {
+        if (!policy.allow_host_verified_demonstrations) {
+            error = "host-verified demonstrations are not enabled for this training path";
+            return false;
+        }
+        if (candidate.cause != common_learning_cause::host_contract ||
+                candidate.source != common_adaptation_evidence_source::user_taught_concept ||
+                candidate.observed_occurrences != 0 || candidate.verified_recoveries != 0 ||
+                candidate.host_verifier_ref.empty() || candidate.host_verifier_revision.empty() ||
+                candidate.host_proof_ref.empty() || candidate.evidence_ref != candidate.host_proof_ref ||
+                candidate.teaching_key.empty() || candidate.behavior_key.empty() ||
+                candidate.learning_case_id.empty()) {
+            error = "host demonstration requires verifier provenance and must not claim model occurrences or recoveries";
+            return false;
+        }
+    } else {
+        error = "training candidate provenance is unsupported"; return false;
     }
-    if (candidate.observed_occurrences < policy.min_occurrences) { error = "training candidate has insufficient occurrences"; return false; }
-    if (candidate.verified_recoveries < policy.min_verified_recoveries) { error = "training candidate has insufficient verified recoveries"; return false; }
     if (candidate.contradictions != 0) { error = "training candidate has unresolved contradictions"; return false; }
     if (!valid_score(candidate.confidence) || candidate.confidence < policy.min_confidence) { error = "training candidate confidence is below threshold"; return false; }
     if (candidate.status != common_training_candidate_status::approved) {

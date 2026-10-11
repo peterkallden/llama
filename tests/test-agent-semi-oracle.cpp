@@ -1,6 +1,7 @@
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 
+#include <algorithm>
 #include <map>
 #include <string>
 
@@ -40,7 +41,7 @@ int main() {
         common_semi_oracle_rule_authority::declared));
     CHECK(game.active && game.scope == common_semi_oracle_scope::session && game.revision == 1);
     CHECK(game.semantic_fingerprint.rfind("fnv1a64:",0)==0);
-    CHECK(common_semi_oracle_action_contract(game).find("player: X, O")!=std::string::npos);
+    CHECK(common_semi_oracle_action_contract(game).find("choose exactly one player value from: X or O")!=std::string::npos);
 
     common_semi_oracle_query q;
     q.ruleset_id=game.id;q.ruleset_revision=game.revision;q.state_json=R"({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})";
@@ -66,6 +67,81 @@ int main() {
     q.state_json=R"json({"cells":["X",null,null,null,null,null,null,null,null],"turn":"X"})json";
     CHECK(common_semi_oracle_evaluate(game,q,result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::unknown);
+
+    std::vector<common_semi_oracle_placement_action_value> move_values;
+    CHECK(common_semi_oracle_rank_placements(game,
+        R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json",
+        {2000, 9}, move_values, error));
+    CHECK(move_values.size() == 5);
+    const auto preferred_move = std::find_if(move_values.begin(), move_values.end(),
+        [](const auto & move) { return move.row == 0 && move.column == 2; });
+    const auto rejected_move = std::find_if(move_values.begin(), move_values.end(),
+        [](const auto & move) { return move.row == 2 && move.column == 2; });
+    CHECK(preferred_move != move_values.end() && rejected_move != move_values.end());
+    CHECK(preferred_move->value == common_semi_oracle_placement_value::win);
+    CHECK(rejected_move->value == common_semi_oracle_placement_value::loss);
+    CHECK(preferred_move->proof_json.find("memoized_minimax_v1") != std::string::npos);
+    CHECK(preferred_move->state_fingerprint == rejected_move->state_fingerprint);
+    std::vector<common_semi_oracle_placement_action_value> draw_values;
+    CHECK(common_semi_oracle_rank_placements(game,
+        R"json({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})json",
+        {100000, 9}, draw_values, error));
+    CHECK(draw_values.size() == 9);
+    CHECK(std::all_of(draw_values.begin(), draw_values.end(), [](const auto & move) {
+        return move.value == common_semi_oracle_placement_value::draw;
+    }));
+    memory_store store;
+    std::string position_group, rotated_group;
+    CHECK(common_semi_oracle_placement_state_group(game,
+        R"json({"cells":["X",null,null,null,"O",null,null,null,null],"turn":"X"})json",
+        position_group, error));
+    CHECK(common_semi_oracle_placement_state_group(game,
+        R"json({"cells":[null,null,"X",null,"O",null,null,null,null],"turn":"X"})json",
+        rotated_group, error));
+    CHECK(position_group == rotated_group);
+    CHECK(store.put_revision(game, error));
+    CHECK(store.bind_session("session-1", game.id, game.revision, error));
+    common_semi_oracle_tool_service session_oracle(store, "host", "session-1");
+    std::vector<common_semi_oracle_placement_action_value> persisted_values;
+    CHECK(session_oracle.rank_placements(
+        R"json({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})json",
+        {100000, 9}, persisted_values, error));
+    CHECK(!persisted_values.front().persisted_evaluation_ref.empty());
+    CHECK(persisted_values.front().ranking_complete);
+    CHECK(store.evaluations.size() == 1 &&
+        store.evaluations.front().proof_json.find("memoized_minimax_v1") != std::string::npos);
+    common_semi_oracle_ruleset short_line_game;
+    CHECK(common_semi_oracle_parse_ruleset_dsl(
+        "name: Two in a row\ndescription: alternate small placement rule set\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 2\nplayers: X, O\n",
+        "ruleset://host/short-line", "session-short-line", short_line_game, error,
+        common_semi_oracle_rule_authority::declared));
+    std::vector<common_semi_oracle_placement_action_value> short_line_values;
+    CHECK(common_semi_oracle_rank_placements(short_line_game,
+        R"json({"cells":["X",null,null,null,"O",null,null,null,null],"turn":"X"})json",
+        {1000, 8}, short_line_values, error));
+    CHECK(std::any_of(short_line_values.begin(), short_line_values.end(), [](const auto & move) {
+        return move.value == common_semi_oracle_placement_value::win;
+    }));
+    common_semi_oracle_ruleset rectangular_game;
+    CHECK(common_semi_oracle_parse_ruleset_dsl(
+        "name: Three across on a short board\ndescription: 2 by 3 placement game\ndomain: placement_game\nrows: 2\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",
+        "ruleset://host/rectangular", "session-rectangular", rectangular_game, error,
+        common_semi_oracle_rule_authority::declared));
+    std::vector<common_semi_oracle_placement_action_value> rectangular_values;
+    CHECK(common_semi_oracle_rank_placements(rectangular_game,
+        R"json({"cells":[null,null,null,null,null,null],"turn":"X"})json",
+        {10000, 6}, rectangular_values, error));
+    CHECK(rectangular_values.size() == 6);
+    std::vector<common_semi_oracle_placement_action_value> incomplete_values;
+    CHECK(common_semi_oracle_rank_placements(game,
+        R"json({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})json",
+        {1, 1}, incomplete_values, error));
+    CHECK(std::any_of(incomplete_values.begin(), incomplete_values.end(), [](const auto & move) {
+        return move.value == common_semi_oracle_placement_value::unknown;
+    }));
+    CHECK(!common_semi_oracle_rank_placements(game,
+        R"json({"cells":["X","X","X","O","O",null,null,null,null],"turn":"O"})json",
+        {2000, 9}, incomplete_values, error));
 
     q.level=common_semi_oracle_level::bounded;
     q.state_json=R"({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})";
@@ -117,7 +193,7 @@ int main() {
     CHECK(common_semi_oracle_ruleset_from_json(encoded,roundtrip,error));
     CHECK(roundtrip.id==game.id&&roundtrip.semantic_fingerprint==game.semantic_fingerprint);
 
-    memory_store store;common_semi_oracle_tool_service service(store,"host-test","session-tool");
+    common_semi_oracle_tool_service service(store,"host-test","session-tool");
     common_semi_oracle_ruleset managed;
     CHECK(service.define_ruleset("name: Tool game\ndescription: session game\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",common_semi_oracle_rule_authority::declared,managed,error));
     CHECK(managed.id!=""&&managed.scope==common_semi_oracle_scope::session&&managed.active);
@@ -125,7 +201,7 @@ int main() {
     CHECK(service.verify_action(R"json({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})json",
         "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",common_semi_oracle_level::local,"",
         common_semi_oracle_budget{}, {},result,error));
-    CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&store.evaluations.size()==1);
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&store.evaluations.size()==2);
     common_semi_oracle_ruleset revised;
     CHECK(service.define_ruleset("name: Tool game corrected\ndescription: session game\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",common_semi_oracle_rule_authority::declared,revised,error));
     CHECK(revised.id==managed.id&&revised.revision==2&&revised.parent_revision==1);

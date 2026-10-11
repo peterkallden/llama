@@ -1,11 +1,14 @@
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/semi-oracle-teaching.h"
 
+#include <nlohmann/json.hpp>
 #include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
 
 namespace {
+using json = nlohmann::ordered_json;
 std::string opaque_id(const std::string & host, const std::string & session, const char * kind) {
     static std::atomic<uint64_t> sequence{0};
     const auto now = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -75,6 +78,66 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     if(!common_semi_oracle_evaluate(ruleset,query,result,error))return false;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
     return store_.append_evaluation(evaluation_id,result,error);
+}
+
+bool common_semi_oracle_tool_service::rank_placements(const std::string & state_json,
+        common_semi_oracle_budget budget,
+        std::vector<common_semi_oracle_placement_action_value> & values,
+        std::string & error) {
+    common_semi_oracle_ruleset ruleset;bool found=false;
+    if(!active_ruleset(ruleset,found,error))return false;
+    if(!found){error="no active semi-oracle RuleSet is bound to this session";return false;}
+    if(!common_semi_oracle_rank_placements(ruleset,state_json,budget,values,error))return false;
+
+    json actions=json::array();
+    for(const auto & value:values) {
+        actions.push_back({{"player",value.player},{"row",value.row},{"column",value.column},
+            {"value",static_cast<int>(value.value)},{"expansions",value.expansions},
+            {"depth_reached",value.depth_reached},{"proof_json",value.proof_json}});
+    }
+    common_semi_oracle_result result;
+    result.ruleset_id=ruleset.id;result.ruleset_revision=ruleset.revision;
+    result.evaluator_ref="semi-oracle://evaluator/placement_game";
+    result.evaluator_revision="minimax-v1";
+    result.level=common_semi_oracle_level::bounded;
+    const bool ranking_complete=!std::any_of(values.begin(),values.end(),[](const auto & value){
+        return value.value==common_semi_oracle_placement_value::unknown;
+    });
+    result.verdict=ranking_complete?common_semi_oracle_verdict::satisfied:common_semi_oracle_verdict::unknown;
+    result.proof_json=json{{"algorithm","memoized_minimax_v1"},
+        {"state_fingerprint",values.front().state_fingerprint},
+        {"action_contract_fingerprint",ruleset.action_contract_fingerprint},
+        {"actions",std::move(actions)}}.dump();
+    const std::string evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
+    if(!store_.append_evaluation(evaluation_id,result,error))return false;
+    for(auto & value:values) {
+        value.persisted_evaluation_ref=evaluation_id;
+        value.ranking_complete=ranking_complete;
+    }
+    return true;
+}
+
+bool common_semi_oracle_tool_service::make_sft_candidate(
+        const common_semi_oracle_placement_action_value & preferred,
+        const std::string & approved_prompt, const std::string & redaction_policy_id,
+        const std::string & redaction_method, bool curator_approved,
+        common_training_candidate & candidate, std::string & error) const {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (preferred.ruleset_id != ruleset.id || preferred.ruleset_revision != ruleset.revision) {
+        error = "SFT action does not belong to the active session RuleSet revision";
+        return false;
+    }
+    std::string payload;
+    if (!store_.get_evaluation_payload(preferred.persisted_evaluation_ref, payload, found, error)) return false;
+    if (!found) { error = "SFT action evaluation is not present in the configured semi-oracle store"; return false; }
+    common_agent_scope scope;
+    scope.namespace_id = host_namespace_;
+    scope.session_id = session_id_;
+    return common_semi_oracle_make_sft_candidate(ruleset, preferred, payload, scope,
+        approved_prompt, redaction_policy_id, redaction_method, curator_approved, candidate, error);
 }
 
 bool common_semi_oracle_tool_service::promote_active_ruleset_to_host(std::string & error) {

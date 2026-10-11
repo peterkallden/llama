@@ -704,12 +704,27 @@ guessed. The derived candidates and corpus rows retain the relation, evidence,
 learning-case, contrast, model, tokenizer, template, and verifier revision
 references for later offline reproduction.
 
-Corpus splits are grouped by `teaching_key` (then `behavior_key`) so related
-examples cannot leak across train and held-out splits. If fewer than three
+Corpus splits are grouped by an explicit `split_group_key` when provided,
+otherwise by `teaching_key` (then `behavior_key`), so related examples
+cannot leak across train and held-out splits. If fewer than three
 independent groups are present, all rows are explicitly marked `train` in the
 manifest; this avoids producing a corpus with no training rows. Such a corpus
 does not gain a validation claim: the existing host evaluator remains the gate
 for adapter staging and promotion.
+
+The shared candidate contract also distinguishes
+`observed_model_behavior` from `host_verified_demonstration`. Placement-game
+Semi-Oracle examples use the latter only when the complete minimax ranking is
+persisted and the selected action proof is tied to the active session RuleSet
+revision. A curator must approve the candidate and provide a redaction
+attestation before corpus admission. These examples keep model occurrence and
+recovery counts at zero; the ordinary observed-behavior path retains its
+existing minimum counts. Symmetry-canonical game positions supply
+`split_group_key`, keeping rotated/reflected versions together. This is a
+curated SFT source through the same corpus and trainer-job contracts, not an
+automatic FlyDelta capture or adapter activation path. See
+[`agent-semi-oracle.md`](agent-semi-oracle.md) for the game-specific proof
+and scope rules.
 
 The orchestrator's `dispatch_mode` is currently a host-code setting, not a
 JSON/CLI host-config flag. It defaults to `offline`. To enable threshold-gated

@@ -346,8 +346,8 @@ bool common_semi_oracle_ruleset_from_json(const std::string & text, common_semi_
 std::string common_semi_oracle_action_contract(const common_semi_oracle_ruleset & r) {
     if(r.domain==common_semi_oracle_domain::placement_game) {
         const auto s=spec(r);const auto players=s.value("players",std::vector<std::string>{});
-        std::string p;for(size_t i=0;i<players.size();++i){if(i)p+=", ";p+=players[i];}
-        return "Rule set: "+r.name+"@r"+std::to_string(r.revision)+"\nReturn only these fields, one per line:\nplayer: "+p+"\nrow: integer, 0-based\ncolumn: integer, 0-based\nConstraint: target cell must be empty and player must match turn. The host selects the placement transition.";
+        std::string p;for(size_t i=0;i<players.size();++i){if(i)p+=" or ";p+=players[i];}
+        return "Rule set: "+r.name+"@r"+std::to_string(r.revision)+"\nReturn only these fields, one per line; choose exactly one player value from: "+p+".\nplayer: current player's single symbol\nrow: integer, 0-based\ncolumn: integer, 0-based\nConstraint: target cell must be empty and player must match turn. The host selects the placement transition.";
     }
     return "Rule set: "+r.name+"@r"+std::to_string(r.revision)+"\nReturn changed fields only, one per line:\nlhs: linear expression in x (omit to keep current lhs)\nrhs: linear expression in x (omit to keep current rhs)\nConstraint: resulting equation must be equivalent over exact rational numbers. The host selects the rewrite evaluator and fills omitted fields from current state.";
 }
@@ -453,4 +453,200 @@ bool common_semi_oracle_learning_authorized(const common_semi_oracle_ruleset & r
     if(result.verdict==common_semi_oracle_verdict::satisfied&&!proof.is_object()) return false;
     if(result.verdict==common_semi_oracle_verdict::violated&&!counterexample.is_object()) return false;
     return std::all_of(r.assertions.begin(),r.assertions.end(),[](const auto & a){return a.authority!=common_semi_oracle_rule_authority::inferred;});
+}
+
+bool common_semi_oracle_rank_placements(
+        const common_semi_oracle_ruleset & r,
+        const std::string & state_json,
+        common_semi_oracle_budget budget,
+        std::vector<common_semi_oracle_placement_action_value> & values,
+        std::string & error) {
+    values.clear();
+    error.clear();
+    if (!r.active || r.domain != common_semi_oracle_domain::placement_game ||
+            !common_semi_oracle_validate_ruleset(r, error)) {
+        if (error.empty()) error = "placement action ranking requires an active placement_game RuleSet";
+        return false;
+    }
+    if (budget.max_expansions == 0 || budget.max_expansions > 100000 ||
+            budget.max_depth == 0 || budget.max_depth > 64) {
+        error = "semi-oracle search budget is outside the supported bound";
+        return false;
+    }
+
+    json state;
+    int rows = 0, columns = 0, win_length = 0;
+    if (!game_state(r, state_json, state, rows, columns, win_length, error)) return false;
+    const auto players = spec(r).value("players", std::vector<std::string>{});
+    const std::string root_player = state["turn"].get<std::string>();
+    if (game_won(state["cells"], rows, columns, win_length, players[0]) ||
+            game_won(state["cells"], rows, columns, win_length, players[1])) {
+        error = "cannot rank actions from a terminal placement_game state";
+        return false;
+    }
+
+    const std::string canonical_state = state.dump();
+    std::ostringstream state_identity;
+    state_identity << "fnv1a64:" << std::hex << fingerprint(canonical_state);
+    std::map<std::string, int> memo;
+    size_t expansions = 0;
+    size_t max_depth_reached = 0;
+
+    std::function<int(const json &, const std::string &, size_t)> solve;
+    solve = [&](const json & cells, const std::string & turn, size_t depth) -> int {
+        if (game_won(cells, rows, columns, win_length, root_player)) return 1;
+        const std::string other = root_player == players[0] ? players[1] : players[0];
+        if (game_won(cells, rows, columns, win_length, other)) return -1;
+        bool full = true;
+        for (const auto & cell : cells) if (cell.is_null()) { full = false; break; }
+        if (full) return 0;
+
+        const std::string key = cells.dump() + "|" + turn;
+        const auto known = memo.find(key);
+        if (known != memo.end()) return known->second;
+        if (depth >= budget.max_depth || expansions >= budget.max_expansions) {
+            return 2;
+        }
+        ++expansions;
+        max_depth_reached = std::max(max_depth_reached, depth);
+
+        const bool maximizing = turn == root_player;
+        int best = maximizing ? -1 : 1;
+        bool unknown_child = false;
+        for (size_t i = 0; i < cells.size(); ++i) {
+            if (!cells[i].is_null()) continue;
+            auto next = cells;
+            next[i] = turn;
+            const std::string next_turn = turn == players[0] ? players[1] : players[0];
+            const int child = solve(next, next_turn, depth + 1);
+            if (child == 2) {
+                unknown_child = true;
+                continue;
+            }
+            if (maximizing) {
+                best = std::max(best, child);
+                if (best == 1) { memo.emplace(key, best); return best; }
+            } else {
+                best = std::min(best, child);
+                if (best == -1) { memo.emplace(key, best); return best; }
+            }
+        }
+        if (unknown_child) return 2;
+        memo.emplace(key, best);
+        return best;
+    };
+
+    for (size_t i = 0; i < state["cells"].size(); ++i) {
+        if (!state["cells"][i].is_null()) continue;
+        const size_t expansions_before_action = expansions;
+        const int row = static_cast<int>(i / static_cast<size_t>(columns));
+        const int column = static_cast<int>(i % static_cast<size_t>(columns));
+        auto next = state["cells"];
+        next[i] = root_player;
+        int value = 0;
+        if (game_won(next, rows, columns, win_length, root_player)) {
+            value = 1;
+        } else {
+            bool full = true;
+            for (const auto & cell : next) if (cell.is_null()) { full = false; break; }
+            if (!full) {
+                const std::string next_turn = root_player == players[0] ? players[1] : players[0];
+                value = solve(next, next_turn, 1);
+            }
+        }
+
+        common_semi_oracle_placement_action_value action;
+        action.ruleset_id = r.id;
+        action.ruleset_revision = r.revision;
+        action.evaluator_ref = "semi-oracle://evaluator/placement_game";
+        action.evaluator_revision = "minimax-v1";
+        action.state_fingerprint = state_identity.str();
+        action.player = root_player;
+        action.row = row;
+        action.column = column;
+        action.expansions = expansions - expansions_before_action;
+        action.depth_reached = max_depth_reached;
+        if (value == 2) {
+            action.value = common_semi_oracle_placement_value::unknown;
+        } else {
+            action.value = static_cast<common_semi_oracle_placement_value>(value);
+            const char * label = value > 0 ? "win" : value < 0 ? "loss" : "draw";
+            action.proof_json = json{
+                {"algorithm", "memoized_minimax_v1"},
+                {"expansions", action.expansions},
+                {"ruleset_id", r.id},
+                {"ruleset_revision", r.revision},
+                {"evaluator_ref", action.evaluator_ref},
+                {"evaluator_revision", action.evaluator_revision},
+                {"state_fingerprint", action.state_fingerprint},
+                {"state", state},
+                {"player", root_player},
+                {"action", {{"row", row}, {"column", column}}},
+                {"outcome", label},
+                {"rule_fingerprint", r.semantic_fingerprint},
+                {"action_contract_fingerprint", r.action_contract_fingerprint},
+            }.dump();
+        }
+        values.push_back(std::move(action));
+    }
+    if (values.empty()) {
+        error = "placement_game state has no legal actions";
+        return false;
+    }
+    return true;
+}
+
+bool common_semi_oracle_placement_state_group(
+        const common_semi_oracle_ruleset & r,
+        const std::string & state_json,
+        std::string & group_key,
+        std::string & error) {
+    group_key.clear();
+    error.clear();
+    if (!r.active || r.domain != common_semi_oracle_domain::placement_game ||
+            !common_semi_oracle_validate_ruleset(r, error)) {
+        if (error.empty()) error = "position grouping requires an active placement_game RuleSet";
+        return false;
+    }
+    json state;
+    int rows = 0, columns = 0, win_length = 0;
+    if (!game_state(r, state_json, state, rows, columns, win_length, error)) return false;
+    (void) win_length;
+
+    std::vector<std::string> variants;
+    const auto & cells = state["cells"];
+    const int reflection_count = rows == columns ? 2 : 4;
+    const int rotations = rows == columns ? 4 : 1;
+    for (int reflected = 0; reflected < reflection_count; ++reflected) {
+        for (int rotation = 0; rotation < rotations; ++rotation) {
+            std::vector<std::string> transformed(static_cast<size_t>(rows * columns));
+            for (int row = 0; row < rows; ++row) {
+                for (int column = 0; column < columns; ++column) {
+                    int r0 = (rows != columns && (reflected & 1)) ? rows - 1 - row : row;
+                    int c0 = (rows == columns ? (reflected ? columns - 1 - column : column) :
+                        ((reflected & 2) ? columns - 1 - column : column));
+                    for (int i = 0; i < rotation; ++i) {
+                        const int next_r = c0;
+                        const int next_c = rows - 1 - r0;
+                        r0 = next_r;
+                        c0 = next_c;
+                    }
+                    if (r0 < 0 || r0 >= rows || c0 < 0 || c0 >= columns) continue;
+                    const auto & cell = cells[static_cast<size_t>(row * columns + column)];
+                    transformed[static_cast<size_t>(r0 * columns + c0)] = cell.is_null()
+                        ? "_" : cell.get<std::string>();
+                }
+            }
+            std::ostringstream canonical;
+            canonical << r.semantic_fingerprint << '|' << r.revision << '|'
+                      << state["turn"].get<std::string>() << '|';
+            for (const auto & cell : transformed) canonical << cell << ';';
+            variants.push_back(canonical.str());
+        }
+    }
+    const auto & canonical = *std::min_element(variants.begin(), variants.end());
+    std::ostringstream key;
+    key << "semi-oracle://position-group/fnv1a64:" << std::hex << fingerprint(canonical);
+    group_key = key.str();
+    return true;
 }

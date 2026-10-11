@@ -118,6 +118,15 @@ bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,con
     const json payload={{"ruleset_id",result.ruleset_id},{"ruleset_revision",result.ruleset_revision},{"verdict",common_semi_oracle_verdict_name(result.verdict)},{"level",common_semi_oracle_level_name(result.level)},{"evaluator_ref",result.evaluator_ref},{"evaluator_revision",result.evaluator_revision},{"expansions",result.expansions},{"depth_reached",result.depth_reached},{"proof_json",result.proof_json},{"counterexample_json",result.counterexample_json},{"reason",result.reason},{"guidance_ref",result.guidance_ref}};
     std::string raw;return run("?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]] :put agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }",json{{"eid",eid},{"id",result.ruleset_id},{"rev",result.ruleset_revision},{"payload",payload.dump()}}.dump(),raw,error);
 }
+bool agent_semi_oracle_cozo_store::get_evaluation_payload(const std::string & eid,std::string & payload,bool & found,std::string & error) const {
+    found=false;payload.clear();std::string raw;
+    if(!run("?[payload] := *agent_semi_oracle_evaluations[$eid, ruleset_id, revision, payload]",json{{"eid",eid}}.dump(),raw,error))return false;
+    const auto value=json::parse(raw,nullptr,false);
+    if(!value.is_object()||!value.contains("rows")||!value["rows"].is_array()){error="semi-oracle evaluation query returned invalid rows";return false;}
+    if(value["rows"].empty())return true;
+    if(!value["rows"][0].is_array()||value["rows"][0].empty()||!value["rows"][0][0].is_string()){error="semi-oracle evaluation payload row is invalid";return false;}
+    payload=value["rows"][0][0].get<std::string>();found=true;return true;
+}
 std::vector<std::string> agent_semi_oracle_cozo_store::list_host_rulesets(std::string & error) const {
     error.clear();std::vector<std::string> ids;std::string raw;if(!run("?[ruleset_id] := *agent_semi_oracle_host_catalog[ruleset_id, revision]","{}",raw,error))return ids;
     const auto j=json::parse(raw,nullptr,false);if(!j.is_object()||!j.contains("rows")||!j["rows"].is_array()){error="semi-oracle host catalog query returned invalid rows";return {};}

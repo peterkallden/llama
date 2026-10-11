@@ -40,6 +40,7 @@ static std::vector<std::string> sorted_transaction_ids(const common_training_can
 static std::string candidate_fingerprint(const common_training_candidate & candidate) {
     std::ostringstream value;
     value << candidate.id << '\n';
+    value << static_cast<int>(candidate.provenance) << '\n';
     value << common_adaptation_evidence_source_name(candidate.source) << '\n';
     for (const auto & transaction_id : sorted_transaction_ids(candidate)) value << transaction_id << '\n';
     value << static_cast<int>(candidate.cause) << '\n'
@@ -58,6 +59,10 @@ static std::string candidate_fingerprint(const common_training_candidate & candi
           << candidate.contrast_ref << '\n'
           << candidate.verifier_ref << '\n'
           << candidate.verifier_revision << '\n'
+          << candidate.host_verifier_ref << '\n'
+          << candidate.host_verifier_revision << '\n'
+          << candidate.host_proof_ref << '\n'
+          << candidate.split_group_key << '\n'
           << candidate.observed_occurrences << '\n'
           << candidate.verified_recoveries << '\n'
           << candidate.contradictions << '\n'
@@ -148,6 +153,8 @@ bool common_learning_build_corpus(
         }
     }
     common_training_candidate_policy candidate_policy;
+    candidate_policy.allow_host_verified_demonstrations =
+        policy.objective == common_learning_objective::sft;
     std::map<std::string, std::string> fingerprints;
     for (const auto & candidate : candidates) {
         if (!common_learning_corpus_view_matches(candidate, policy.view)) continue;
@@ -211,7 +218,8 @@ bool common_learning_build_corpus(
     std::map<std::string, size_t> split_counts;
     std::set<std::string> split_groups;
     for (const auto * candidate : selected) {
-        split_groups.insert(!candidate->teaching_key.empty()
+        split_groups.insert(!candidate->split_group_key.empty() ? candidate->split_group_key :
+            !candidate->teaching_key.empty()
             ? candidate->teaching_key
             : !candidate->behavior_key.empty() ? candidate->behavior_key : candidate->id);
     }
@@ -231,7 +239,8 @@ bool common_learning_build_corpus(
     }
     std::ostringstream jsonl;
     for (const auto * candidate : selected) {
-        const auto split_identity = !candidate->teaching_key.empty()
+        const auto split_identity = !candidate->split_group_key.empty() ? candidate->split_group_key :
+            !candidate->teaching_key.empty()
             ? candidate->teaching_key
             : !candidate->behavior_key.empty() ? candidate->behavior_key : candidate->id;
         const auto split = enough_split_groups ? group_splits.at(split_identity) : std::string("train");
@@ -239,6 +248,8 @@ bool common_learning_build_corpus(
         ++split_counts[split];
         json row = {
             {"candidate_id", candidate->id},
+            {"provenance", candidate->provenance == common_training_candidate_provenance::host_verified_demonstration
+                ? "host_verified_demonstration" : "observed_model_behavior"},
             {"source", common_adaptation_evidence_source_name(candidate->source)},
             {"split", split},
             {"replay", contains(replay, candidate->id)},
@@ -260,6 +271,10 @@ bool common_learning_build_corpus(
             {"contrast_ref", candidate->contrast_ref},
             {"verifier_ref", candidate->verifier_ref},
             {"verifier_revision", candidate->verifier_revision},
+            {"host_verifier_ref", candidate->host_verifier_ref},
+            {"host_verifier_revision", candidate->host_verifier_revision},
+            {"host_proof_ref", candidate->host_proof_ref},
+            {"split_group_key", candidate->split_group_key},
         };
         if (policy.objective == common_learning_objective::dpo) {
             row["prompt"] = candidate->approved_prompt;

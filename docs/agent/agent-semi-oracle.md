@@ -53,11 +53,61 @@ existing `user_taught_concept` teaching relation. The relation includes the
 RuleSet semantic revision and action-contract fingerprint in its behavioral
 identity. Revision changes must not reuse prior evidence without an explicit
 compatibility check. `UNKNOWN`, exhausted budgets and inferred-only rule sets
-remain diagnostic; they are not FlyDelta, SFT, DPO or KTO admission.
+remain diagnostic; they are not FlyDelta or training admission.
 
 The bridge creates the existing teaching relation; it does not introduce a
 second capture/training store. The runtime host still owns the usual FlyDelta
 capture, contrast and admission steps.
+
+For strategic placement behavior, a legal-but-worse action is not an Oracle
+violation. The host-only `rank_placements` service runs memoized minimax for
+each legal action from the current player's perspective and persists the full
+bounded result through the existing evaluation store. A FlyDelta preference
+relation is eligible only when two distinct actions in the same state and
+revision have complete, persisted proofs and the preferred outcome is strictly
+better (`loss < draw < win`). This is a preference comparison, not a false
+`VIOLATED` verdict. The relation remains session-scoped; it does not promote
+the RuleSet or create a FlyDelta overlay by itself. The host still has to
+present it through the existing `user_taught_concept_relation_provider` and
+let production capture and admission gates run; the semi-oracle smoke does not
+claim to exercise those activation steps.
+
+## Offline SFT and leakage-safe splits
+
+The same verified minimax action can become an SFT demonstration through
+`common_semi_oracle_make_sft_candidate`, then enters the existing shared
+learning corpus and trainer-job path. It is tagged
+`host_verified_demonstration`, carries the persisted evaluation/action proof
+reference, and requires a caller-provided redaction attestation and explicit
+curator approval before corpus admission. This provenance path never invents
+model occurrences or recoveries; those remain zero. In contrast,
+`observed_model_behavior` candidates continue to require their normal
+occurrence, verified-recovery and approval thresholds.
+
+This admission is explicitly offline SFT only. The shared corpus builder opts
+in to host-verified demonstrations for the SFT objective; DPO still requires
+real chosen/rejected pairs, and default candidate qualification (including the
+nearline auto-training trigger) rejects solver demonstrations. A solver proof
+therefore cannot silently count as an observed model recovery or start online
+training.
+
+Position examples carry a `split_group_key` based on a canonical board under
+the RuleSet's symmetry group (all eight symmetries for square boards and
+dimension-preserving reflections for rectangular boards). The shared corpus
+builder splits by this key when present, so rotated/reflected versions of one
+position cannot straddle train, validation and test. RuleSet revision and
+side-to-move are included in the group identity.
+
+This creates two comparable evidence paths without a parallel corpus:
+
+1. Session FlyDelta uses an observed model action, a strictly better
+   solver-proved alternative and the normal runtime capture/control pipeline.
+2. Offline SFT uses curated solver demonstrations projected through the shared
+   candidate, corpus, redaction and trainer-job contracts.
+
+The smoke reports base-model move quality against minimax; it does not train,
+activate or claim a FlyDelta/LoRA adapter. Adapter comparison is an explicit
+later operation over an approved corpus and the same held-out symmetry groups.
 
 ## Search levels
 
@@ -90,8 +140,10 @@ overflow return `UNKNOWN`.
 ## Validation and model smoke
 
 Model-free tests cover RuleSpec parsing, domain validation, legal/illegal game
-transitions, bounded/guided search, exact algebra equivalence, authority
-gating, revision identity, tool registration and Cozo persistence. Run:
+transitions, per-action minimax ranking and budget cutoffs, symmetry grouping,
+proof-verified preference relations, SFT provenance/admission, symmetry-safe
+corpus splitting, exact algebra equivalence, authority gating, revision
+identity, tool registration and Cozo evaluation roundtrip. Run:
 
 ```sh
 ctest --test-dir build-agent-vulkan-cozo --output-on-failure -R 'test-agent-semi-oracle'

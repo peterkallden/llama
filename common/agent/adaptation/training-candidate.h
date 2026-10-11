@@ -24,11 +24,18 @@ enum class common_training_candidate_status {
     revoked,
 };
 
+enum class common_training_candidate_provenance {
+    observed_model_behavior,
+    host_verified_demonstration,
+};
+
 const char * common_learning_destination_name(common_learning_destination destination);
 const char * common_training_candidate_status_name(common_training_candidate_status status);
 
 struct common_training_candidate {
     int schema_version = 1;
+    common_training_candidate_provenance provenance =
+        common_training_candidate_provenance::observed_model_behavior;
     std::string id;
     common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
     std::vector<std::string> transaction_ids;
@@ -50,6 +57,13 @@ struct common_training_candidate {
     std::string contrast_ref;
     std::string verifier_ref;
     std::string verifier_revision;
+    // Required only for host-verified demonstrations. These identify the
+    // exact deterministic proof; they are not model-behavior occurrence data.
+    std::string host_verifier_ref;
+    std::string host_verifier_revision;
+    std::string host_proof_ref;
+    // Optional leakage group, e.g. a symmetry-canonical game position.
+    std::string split_group_key;
     size_t observed_occurrences = 0;
     size_t verified_recoveries = 0;
     size_t contradictions = 0;
@@ -74,6 +88,9 @@ struct common_training_candidate_policy {
     size_t max_transaction_ids = 64;
     size_t max_text_size = 2048;
     float min_confidence = 0.80f;
+    // Solver-generated demonstrations are admitted only by an explicit
+    // offline corpus build, never by nearline/automatic training gates.
+    bool allow_host_verified_demonstrations = false;
 };
 
 // Host/curator input for the only observation-to-candidate promotion seam.

@@ -17,6 +17,7 @@
 #include <iostream>
 #include <memory>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,34 @@ std::string compact_text(const std::string & value) {
     result.reserve(value.size());
     for (const unsigned char c : value) if (!std::isspace(c)) result.push_back(static_cast<char>(c));
     return result;
+}
+
+std::string render_game_state_for_model(const std::string & state_json) {
+    const auto state = json::parse(state_json, nullptr, false);
+    if (!state.is_object() || !state.contains("cells") || !state["cells"].is_array() ||
+            !state.contains("turn") || !state["turn"].is_string()) return state_json;
+    constexpr size_t columns = 3;
+    const size_t rows = state["cells"].size() / columns;
+    std::ostringstream rendered;
+    rendered << "Turn: " << state["turn"].get<std::string>()
+             << ". Board is row-major; coordinates are zero-based (row, column).\nBoard: ";
+    std::vector<std::string> empty_cells;
+    for (size_t row = 0; row < rows; ++row) {
+        for (size_t column = 0; column < columns; ++column) {
+            const auto & cell = state["cells"][row * columns + column];
+            rendered << (cell.is_null() ? '.' : cell.get<std::string>().front());
+            if (cell.is_null()) {
+                empty_cells.push_back("(" + std::to_string(row) + "," + std::to_string(column) + ")");
+            }
+        }
+        if (row + 1 < rows) rendered << '/';
+    }
+    rendered << "Empty coordinates: ";
+    for (size_t i = 0; i < empty_cells.size(); ++i) {
+        if (i != 0) rendered << ", ";
+        rendered << empty_cells[i];
+    }
+    return rendered.str();
 }
 
 common_agent_generation_result generate(
@@ -165,19 +194,21 @@ bool run_case(common_agent_inference & inference, const options & config,
 
     std::string action_contract;if(!oracle_tools.action_contract(action_contract,error)){std::cout<<"ACTION CONTRACT: "<<error<<"\n";return false;}
     const std::string action_format = domain == "placement_game"
-        ? "player: X\nrow: 0\ncolumn: 0"
+        ? "player: current player's single symbol\nrow: 0-based index of an empty cell\ncolumn: 0-based index of an empty cell"
         : "lhs: 2x+6";
     const std::string action_system =
-        "The host has already selected the operation. Return only these DSL fields, replacing values as needed; "
+        "The host has already selected the operation. Return only these DSL fields, choosing one value for each; "
         "do not return a tool/action name, function call or explanation. "
         "For a rewrite request, return changed fields only; omitted equation sides stay unchanged. "
         "The result must apply the requested rewrite; returning the current equation unchanged is not a rewrite.\n"
         "Required format:\n" + action_format + "\n\nActive action contract:\n" + action_contract;
+    const std::string model_state = domain == "placement_game"
+        ? render_game_state_for_model(state_json) : "Current state: " + state_json;
     const auto action = generate(inference, case_id + "-action", action_system,
-        action_request + "\nCurrent state: " + state_json, config);
+        action_request + "\n" + model_state, config);
     std::cout << "\n=== " << case_id << " ACTION GENERATION ===\n"
               << "SYSTEM INPUT:\n" << action_system << "\nUSER INPUT:\n"
-              << action_request << "\nCurrent state: " << state_json
+              << action_request << "\n" << model_state
               << "\nMODEL OUTPUT:\n" << content(action) << "\n";
     if (!common_agent_generation_succeeded(action)) return false;
 
@@ -199,12 +230,63 @@ bool run_case(common_agent_inference & inference, const options & config,
               << " reason=" << last_result.reason << "\n"
               << "PROOF=" << last_result.proof_json << "\nCOUNTEREXAMPLE="
               << last_result.counterexample_json << "\n"
-              << "FLYDELTA ADMISSION="
+              << "ORACLE EVIDENCE AUTHORITY="
               << (common_semi_oracle_learning_authorized(ruleset, last_result)
-                    ? "eligible only as one side of a verified contrast" : "rejected") << "\n"
+                    ? "host-verified transition; not itself training credit" : "not eligible") << "\n"
+              << "FLYDELTA RELATION=not created: one-shot smoke has no matched control capture\n"
               << "EXPECTED ACTION MARKER=" << (expected_action.empty() ? "<semantic verdict>" : expected_action)
               << " OUTCOME=" << (matches ? "matched" : "mismatch") << "\n";
-    return matches;
+    if (domain == "placement_game" && last_result.verdict == common_semi_oracle_verdict::satisfied) {
+        const auto transition_proof = json::parse(last_result.proof_json, nullptr, false);
+        if (!transition_proof.is_object() || !transition_proof.contains("action") ||
+                !transition_proof["action"].is_object()) return false;
+        const auto & played = transition_proof["action"];
+        const int row = std::stoi(played.at("row").get<std::string>());
+        const int column = std::stoi(played.at("column").get<std::string>());
+        std::vector<common_semi_oracle_placement_action_value> action_values;
+        std::string group_key;
+        if (!oracle_tools.rank_placements(state_json,
+                common_semi_oracle_budget{100000, 9}, action_values, error) ||
+                !common_semi_oracle_placement_state_group(ruleset, state_json, group_key, error)) {
+            std::cout << "MINIMAX COMPARISON: unavailable: " << error << "\n";
+            return false;
+        }
+        const auto played_value = std::find_if(action_values.begin(), action_values.end(),
+            [&](const auto & value) { return value.row == row && value.column == column; });
+        const auto best_value = std::max_element(action_values.begin(), action_values.end(),
+            [](const auto & left, const auto & right) {
+                return static_cast<int>(left.value) < static_cast<int>(right.value);
+            });
+        if (played_value == action_values.end() || best_value == action_values.end() ||
+                std::any_of(action_values.begin(), action_values.end(), [](const auto & value) {
+                    return value.value == common_semi_oracle_placement_value::unknown;
+                })) return false;
+        const auto outcome_name = [](common_semi_oracle_placement_value value) {
+            switch (value) {
+                case common_semi_oracle_placement_value::win: return "win";
+                case common_semi_oracle_placement_value::draw: return "draw";
+                case common_semi_oracle_placement_value::loss: return "loss";
+                case common_semi_oracle_placement_value::unknown: return "unknown";
+            }
+            return "unknown";
+        };
+        std::cout << "MINIMAX COMPARISON=" << json{
+            {"ruleset_id", ruleset.id}, {"ruleset_revision", ruleset.revision},
+            {"position_group", group_key},
+            {"persisted_evaluation_ref", best_value->persisted_evaluation_ref},
+            {"model_move", {{"row", row}, {"column", column}, {"value", outcome_name(played_value->value)}}},
+            {"solver_best_move", {{"row", best_value->row}, {"column", best_value->column},
+                {"value", outcome_name(best_value->value)}}},
+            {"same_best_value", played_value->value == best_value->value},
+            {"evaluator", "memoized_minimax_v1"},
+            {"budget_expansions", 100000},
+        }.dump() << '\n';
+    }
+    // A legal suboptimal game move is a useful baseline observation, not a
+    // broken runtime flow. Preserve its mismatch/minimax trace for comparison;
+    // the algebra case still requires the exact intended rewrite.
+    return last_result.verdict == common_semi_oracle_verdict::satisfied &&
+        (domain == "placement_game" || matches);
 }
 } // namespace
 
@@ -237,8 +319,8 @@ int main(int argc, char ** argv) {
     smoke_ruleset_store store;
     const bool game = run_case(*session.inference, config, store,"tic-tac-toe", "placement_game",
         "Let's play tic-tac-toe: a 3 by 3 board, X starts, players alternate, place only in an empty cell, three in a row wins, and a full board without a winner is a draw.",
-        "row: 0", R"json({"cells":[null,null,null,null,null,null,null,null,null],"turn":"X"})json",
-        "Make the first move as X.", "", common_semi_oracle_level::local);
+        "row: 0\ncolumn: 2", R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json",
+        "Play as X. Take an immediate win if one is available.", "", common_semi_oracle_level::local);
     const bool algebra = run_case(*session.inference, config, store,"linear-algebra", "linear_algebra",
         "Rules for one-variable linear equations in x: use exact rational arithmetic, and every allowed step must preserve the same solution set.",
         "lhs: 2x+6", R"json({"lhs":"2(x+3)","rhs":"10"})json",

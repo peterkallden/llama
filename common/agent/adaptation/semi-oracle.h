@@ -74,6 +74,27 @@ struct common_semi_oracle_result {
     std::string guidance_ref;
 };
 
+enum class common_semi_oracle_placement_value { loss = -1, draw = 0, win = 1, unknown = 2 };
+
+struct common_semi_oracle_placement_action_value {
+    std::string ruleset_id;
+    uint64_t ruleset_revision = 0;
+    std::string evaluator_ref;
+    std::string evaluator_revision;
+    std::string state_fingerprint;
+    std::string persisted_evaluation_ref;
+    bool ranking_complete = false;
+    std::string player;
+    int row = -1;
+    int column = -1;
+    // Outcome is always from the perspective of the player to move in the
+    // supplied state, assuming optimal play by both players.
+    common_semi_oracle_placement_value value = common_semi_oracle_placement_value::unknown;
+    size_t expansions = 0;
+    size_t depth_reached = 0;
+    std::string proof_json;
+};
+
 // A deliberately small, non-executable RuleSpec DSL. Only registered domain
 // families and host-owned primitives can be represented.
 bool common_semi_oracle_parse_ruleset_dsl(
@@ -107,6 +128,25 @@ bool common_semi_oracle_evaluate(
         const common_semi_oracle_ruleset & ruleset,
         const common_semi_oracle_query & query,
         common_semi_oracle_result & result,
+        std::string & error);
+
+// Computes a proven minimax value for every legal placement in one state.
+// If the shared search budget is exhausted, unresolved actions are UNKNOWN;
+// guidance cannot change values and is intentionally not accepted here.
+bool common_semi_oracle_rank_placements(
+        const common_semi_oracle_ruleset & ruleset,
+        const std::string & state_json,
+        common_semi_oracle_budget budget,
+        std::vector<common_semi_oracle_placement_action_value> & values,
+        std::string & error);
+
+// Stable leakage group for a placement-game position. Square boards include
+// all dihedral symmetries; rectangular boards include dimension-preserving
+// reflections. RuleSet revision and side-to-move are part of the identity.
+bool common_semi_oracle_placement_state_group(
+        const common_semi_oracle_ruleset & ruleset,
+        const std::string & state_json,
+        std::string & group_key,
         std::string & error);
 
 // The shared teaching seam may consume only a proven contrast under rules whose

@@ -4,8 +4,10 @@
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <sstream>
 
 static void require(bool condition, const char * message) {
     if (!condition) {
@@ -74,6 +76,65 @@ int main() {
     common_learning_corpus_revision reordered_revision;
     require(common_learning_build_corpus(reordered, {}, reordered_revision, error), "reordered corpus build failed");
     require(reordered_revision.bundle_hash == first.bundle_hash, "transaction order changed corpus identity");
+
+    auto oracle_demo_a = candidate("learning://candidate/oracle-a", "position-a");
+    oracle_demo_a.provenance = common_training_candidate_provenance::host_verified_demonstration;
+    oracle_demo_a.source = common_adaptation_evidence_source::user_taught_concept;
+    oracle_demo_a.cause = common_learning_cause::host_contract;
+    oracle_demo_a.observed_occurrences = 0;
+    oracle_demo_a.verified_recoveries = 0;
+    oracle_demo_a.host_verifier_ref = "semi-oracle://evaluator/placement_game";
+    oracle_demo_a.host_verifier_revision = "minimax-v1:rules:r1";
+    oracle_demo_a.host_proof_ref = "semi-oracle://evaluation/1/action/0/0";
+    oracle_demo_a.evidence_ref = oracle_demo_a.host_proof_ref;
+    oracle_demo_a.teaching_key = "semi-oracle://ruleset/r1/action-v1";
+    oracle_demo_a.behavior_key = oracle_demo_a.teaching_key;
+    oracle_demo_a.learning_case_id = oracle_demo_a.id;
+    oracle_demo_a.split_group_key = "semi-oracle://position-group/symmetry-a";
+    auto oracle_demo_symmetric = oracle_demo_a;
+    oracle_demo_symmetric.id = "learning://candidate/oracle-a-rotated";
+    oracle_demo_symmetric.approved_prompt = "position-a-rotated";
+    oracle_demo_symmetric.transaction_ids = {"semi-oracle://evaluation/2/action/2/2"};
+    auto oracle_demo_b = oracle_demo_a;
+    oracle_demo_b.id = "learning://candidate/oracle-b";
+    oracle_demo_b.approved_prompt = "position-b";
+    oracle_demo_b.transaction_ids = {"semi-oracle://evaluation/3/action/0/1"};
+    oracle_demo_b.split_group_key = "semi-oracle://position-group/symmetry-b";
+    auto oracle_demo_c = oracle_demo_a;
+    oracle_demo_c.id = "learning://candidate/oracle-c";
+    oracle_demo_c.approved_prompt = "position-c";
+    oracle_demo_c.transaction_ids = {"semi-oracle://evaluation/4/action/0/2"};
+    oracle_demo_c.split_group_key = "semi-oracle://position-group/symmetry-c";
+    std::vector<common_training_candidate> oracle_demos = {
+        oracle_demo_a, oracle_demo_symmetric, oracle_demo_b, oracle_demo_c};
+    common_training_candidate_policy oracle_policy;
+    require(!common_training_candidate_qualifies(oracle_demo_a, oracle_policy, error),
+            "host-verified demonstration unexpectedly qualified for a default/nearline policy");
+    oracle_policy.allow_host_verified_demonstrations = true;
+    require(common_training_candidate_qualifies(oracle_demo_a, oracle_policy, error),
+            "verified solver demonstration incorrectly required model recovery counts");
+    auto fake_recovery = oracle_demo_a;
+    fake_recovery.verified_recoveries = 1;
+    require(!common_training_candidate_qualifies(fake_recovery, oracle_policy, error),
+            "host demonstration accepted fabricated model recovery counts");
+    common_learning_corpus_revision oracle_revision;
+    require(common_learning_build_corpus(oracle_demos, {}, oracle_revision, error),
+            "curator-approved oracle demonstrations did not enter the shared SFT corpus");
+    const auto oracle_rows = nlohmann::json::parse("[" +
+        [&] { std::string rows; std::istringstream input(oracle_revision.jsonl); std::string line;
+             while (std::getline(input, line)) { if (!rows.empty()) rows += ','; rows += line; }
+             return rows; }() + "]");
+    std::map<std::string, std::string> oracle_splits;
+    for (const auto & row : oracle_rows) {
+        const auto group = row.at("split_group_key").get<std::string>();
+        const auto split = row.at("split").get<std::string>();
+        const auto prior = oracle_splits.find(group);
+        require(prior == oracle_splits.end() || prior->second == split,
+                "symmetry-equivalent positions leaked across corpus splits");
+        oracle_splits[group] = split;
+    }
+    require(oracle_revision.jsonl.find("\"provenance\":\"host_verified_demonstration\"") != std::string::npos,
+            "oracle demonstration provenance was lost in the shared corpus");
 
     std::vector<common_training_candidate> shared = {
         scoped_candidate("learning://candidate/native", "native tool", "tool_use", "diagnostics", "native"),

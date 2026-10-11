@@ -2,6 +2,8 @@
 
 #include "agent/adaptation/semi-oracle-store.h"
 
+struct common_training_candidate;
+
 // Host-side facade for the native `oracle.ruleset.define` and
 // `oracle.action.verify` operations. It is intentionally not a general solver
 // API exposed to the model: session identity, RuleSet identity/revision,
@@ -22,6 +24,16 @@ public:
             common_semi_oracle_budget host_budget,
             const std::vector<std::string> & host_guidance,
             common_semi_oracle_result & result, std::string & error);
+    // Host-only strategic ranking. The complete bounded ranking and proofs
+    // are appended through the configured semi-oracle evaluation store.
+    bool rank_placements(const std::string & state_json,
+            common_semi_oracle_budget host_budget,
+            std::vector<common_semi_oracle_placement_action_value> & values,
+            std::string & error);
+    bool make_sft_candidate(const common_semi_oracle_placement_action_value & preferred,
+            const std::string & approved_prompt, const std::string & redaction_policy_id,
+            const std::string & redaction_method, bool curator_approved,
+            common_training_candidate & candidate, std::string & error) const;
     bool promote_active_ruleset_to_host(std::string & error);
 
 private:

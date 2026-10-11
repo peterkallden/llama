@@ -18,5 +18,13 @@ public:
             uint64_t & revision, bool & found, std::string & error) const = 0;
     virtual bool append_evaluation(const std::string & evaluation_id,
             const common_semi_oracle_result & result, std::string & error) = 0;
+    virtual bool get_evaluation_payload(const std::string & evaluation_id,
+            std::string & payload_json, bool & found, std::string & error) const {
+        (void) evaluation_id;
+        payload_json.clear();
+        found = false;
+        error = "semi-oracle evaluation reads are unsupported by this store";
+        return false;
+    }
     virtual std::vector<std::string> list_host_rulesets(std::string & error) const = 0;
 };

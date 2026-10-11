@@ -1,6 +1,53 @@
 #include "agent/adaptation/semi-oracle-teaching.h"
 
+#include <algorithm>
+#include <nlohmann/json.hpp>
+#include <cstdint>
 #include <sstream>
+
+namespace {
+using json = nlohmann::ordered_json;
+
+std::string state_fingerprint(const std::string & text) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char byte : text) { hash ^= byte; hash *= 1099511628211ULL; }
+    std::ostringstream out;
+    out << "fnv1a64:" << std::hex << hash;
+    return out.str();
+}
+
+bool action_proof_matches(
+        const common_semi_oracle_ruleset & ruleset,
+        const common_semi_oracle_placement_action_value & value) {
+    const auto proof = json::parse(value.proof_json, nullptr, false);
+    if (!proof.is_object() || proof.value("algorithm", std::string()) != "memoized_minimax_v1" ||
+            proof.value("ruleset_id", std::string()) != ruleset.id ||
+            proof.value("ruleset_revision", uint64_t(0)) != ruleset.revision ||
+            proof.value("evaluator_ref", std::string()) != value.evaluator_ref ||
+            proof.value("evaluator_revision", std::string()) != value.evaluator_revision ||
+            proof.value("state_fingerprint", std::string()) != value.state_fingerprint ||
+            proof.value("rule_fingerprint", std::string()) != ruleset.semantic_fingerprint ||
+            proof.value("action_contract_fingerprint", std::string()) != ruleset.action_contract_fingerprint ||
+            proof.value("player", std::string()) != value.player || !proof.contains("state") ||
+            !proof["state"].is_object() ||
+            state_fingerprint(proof["state"].dump()) != value.state_fingerprint ||
+            !proof.contains("action") ||
+            !proof["action"].is_object() || proof["action"].value("row", -1) != value.row ||
+            proof["action"].value("column", -1) != value.column) return false;
+    const char * outcome = value.value == common_semi_oracle_placement_value::win ? "win" :
+        value.value == common_semi_oracle_placement_value::draw ? "draw" :
+        value.value == common_semi_oracle_placement_value::loss ? "loss" : "unknown";
+    if (proof.value("outcome", std::string()) != outcome) return false;
+    std::vector<common_semi_oracle_placement_action_value> verified;
+    std::string error;
+    if (!common_semi_oracle_rank_placements(
+            ruleset, proof["state"].dump(), {100000, 64}, verified, error)) return false;
+    const auto match = std::find_if(verified.begin(), verified.end(), [&](const auto & candidate) {
+        return candidate.row == value.row && candidate.column == value.column;
+    });
+    return match != verified.end() && match->value == value.value;
+}
+}
 
 bool common_semi_oracle_make_teaching_relation(
         const common_semi_oracle_ruleset & ruleset,
@@ -8,6 +55,7 @@ bool common_semi_oracle_make_teaching_relation(
         const common_semi_oracle_result & accepted,
         const common_agent_scope & scope,
         const std::string & relation_id,
+        const std::string & task_fingerprint,
         const std::string & rejected_execution_ref,
         const std::string & accepted_execution_ref,
         const std::string & evidence_ref,
@@ -23,7 +71,7 @@ bool common_semi_oracle_make_teaching_relation(
         error = "semi-oracle teaching requires a verified rejected/accepted contrast from one evaluator and RuleSet revision";
         return false;
     }
-    if (relation_id.empty() || rejected_execution_ref.empty() ||
+    if (relation_id.empty() || task_fingerprint.empty() || rejected_execution_ref.empty() ||
             accepted_execution_ref.empty() || evidence_ref.empty() ||
             rejected_execution_ref == accepted_execution_ref ||
             scope.namespace_id.empty() || scope.session_id.empty()) {
@@ -42,7 +90,7 @@ bool common_semi_oracle_make_teaching_relation(
     relation.source = common_adaptation_evidence_source::user_taught_concept;
     relation.behavior_key = key;
     relation.scope = scope;
-    relation.task_fingerprint = key;
+    relation.task_fingerprint = task_fingerprint;
     relation.baseline_ref = rejected_execution_ref;
     relation.conditioned_ref = accepted_execution_ref;
     relation.verifier_ref = accepted.evaluator_ref;
@@ -56,4 +104,217 @@ bool common_semi_oracle_make_teaching_relation(
     relation.confidence = 1.0f;
     relation.host_approved = true;
     return common_flydelta_teaching_relation_validate(relation, error);
+}
+
+bool common_semi_oracle_make_preference_relation(
+        const common_semi_oracle_ruleset & ruleset,
+        const common_semi_oracle_placement_action_value & rejected,
+        const common_semi_oracle_placement_action_value & preferred,
+        const common_agent_scope & scope,
+        const std::string & relation_id,
+        const std::string & rejected_execution_ref,
+        const std::string & preferred_execution_ref,
+        const std::string & control_execution_ref,
+        const std::string & evidence_ref,
+        common_flydelta_teaching_relation & relation,
+        std::string & error) {
+    error.clear();
+    const auto known_value = [](common_semi_oracle_placement_value value) {
+        return value == common_semi_oracle_placement_value::loss ||
+            value == common_semi_oracle_placement_value::draw ||
+            value == common_semi_oracle_placement_value::win;
+    };
+    if (!common_semi_oracle_validate_ruleset(ruleset, error)) return false;
+    const bool authorized_rules = std::all_of(ruleset.assertions.begin(), ruleset.assertions.end(),
+        [](const common_semi_oracle_rule_assertion & assertion) {
+            return assertion.authority != common_semi_oracle_rule_authority::inferred;
+        });
+    const bool same_evaluation = rejected.ruleset_id == ruleset.id &&
+        preferred.ruleset_id == ruleset.id &&
+        rejected.ruleset_revision == ruleset.revision &&
+        preferred.ruleset_revision == ruleset.revision &&
+        rejected.evaluator_ref == "semi-oracle://evaluator/placement_game" &&
+        preferred.evaluator_ref == rejected.evaluator_ref &&
+        rejected.evaluator_revision == "minimax-v1" &&
+        preferred.evaluator_revision == rejected.evaluator_revision &&
+        !rejected.state_fingerprint.empty() &&
+        rejected.state_fingerprint == preferred.state_fingerprint &&
+        !rejected.persisted_evaluation_ref.empty() &&
+        rejected.persisted_evaluation_ref.rfind("semi-oracle://evaluation/", 0) == 0 &&
+        rejected.persisted_evaluation_ref == preferred.persisted_evaluation_ref &&
+        !rejected.player.empty() && rejected.player == preferred.player &&
+        (rejected.row != preferred.row || rejected.column != preferred.column) &&
+        known_value(rejected.value) && known_value(preferred.value) &&
+        action_proof_matches(ruleset, rejected) && action_proof_matches(ruleset, preferred) &&
+        static_cast<int>(preferred.value) > static_cast<int>(rejected.value);
+    if (!authorized_rules || !same_evaluation) {
+        error = "semi-oracle preference requires a proven, strictly better action pair from one state and RuleSet revision";
+        return false;
+    }
+    if (ruleset.scope != common_semi_oracle_scope::session ||
+            ruleset.scope_id != scope.session_id || scope.namespace_id.empty() ||
+            scope.session_id.empty() || relation_id.empty() ||
+            rejected_execution_ref.empty() || preferred_execution_ref.empty() ||
+            control_execution_ref.empty() || evidence_ref.empty() ||
+            evidence_ref.rfind(rejected.persisted_evaluation_ref, 0) != 0 ||
+            rejected_execution_ref == preferred_execution_ref) {
+        error = "semi-oracle preference relation is missing session-scoped execution, control or evidence references";
+        return false;
+    }
+
+    std::ostringstream identity;
+    identity << "semi-oracle://ruleset/" << ruleset.id << "@" << ruleset.revision
+             << "/action/" << ruleset.action_contract_fingerprint;
+    std::ostringstream contrast;
+    contrast << "minimax-v1:" << rejected.state_fingerprint << ":"
+             << rejected.player << "[" << rejected.row << "," << rejected.column
+             << "]=" << static_cast<int>(rejected.value) << "<"
+             << preferred.player << "[" << preferred.row << "," << preferred.column
+             << "]=" << static_cast<int>(preferred.value);
+
+    relation = {};
+    relation.id = relation_id;
+    relation.teaching_key = identity.str();
+    relation.source = common_adaptation_evidence_source::user_taught_concept;
+    relation.behavior_key = identity.str();
+    relation.scope = scope;
+    relation.task_fingerprint = rejected.state_fingerprint;
+    relation.baseline_ref = rejected_execution_ref;
+    relation.conditioned_ref = preferred_execution_ref;
+    relation.control_ref = control_execution_ref;
+    relation.verifier_ref = rejected.evaluator_ref;
+    relation.oracle_revision = rejected.evaluator_revision + ":" +
+        ruleset.semantic_fingerprint + ":" + ruleset.action_contract_fingerprint;
+    relation.evidence_ref = evidence_ref;
+    relation.contrast_ref = contrast.str();
+    relation.status = common_flydelta_teaching_relation_status::resolved;
+    relation.baseline_origin = common_flydelta_teaching_origin::observed;
+    relation.conditioned_origin = common_flydelta_teaching_origin::host_derived;
+    relation.control_origin = common_flydelta_teaching_origin::host_counterfactual;
+    relation.confidence = 1.0f;
+    relation.host_approved = true;
+    return common_flydelta_teaching_relation_validate(relation, error);
+}
+
+bool common_semi_oracle_make_sft_candidate(
+        const common_semi_oracle_ruleset & ruleset,
+        const common_semi_oracle_placement_action_value & preferred,
+        const std::string & persisted_evaluation_payload_json,
+        const common_agent_scope & scope,
+        const std::string & approved_prompt,
+        const std::string & redaction_policy_id,
+        const std::string & redaction_method,
+        bool curator_approved,
+        common_training_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    if (!common_semi_oracle_validate_ruleset(ruleset, error) ||
+            ruleset.domain != common_semi_oracle_domain::placement_game ||
+            !action_proof_matches(ruleset, preferred) ||
+            preferred.value == common_semi_oracle_placement_value::unknown ||
+            !preferred.ranking_complete ||
+            ruleset.scope != common_semi_oracle_scope::session ||
+            scope.session_id.empty() || scope.session_id != ruleset.scope_id ||
+            scope.namespace_id.empty()) {
+        if (error.empty()) error = "offline SFT demonstration requires a current, proven placement action";
+        return false;
+    }
+    if (preferred.persisted_evaluation_ref.rfind("semi-oracle://evaluation/", 0) != 0 ||
+            approved_prompt.empty() || approved_prompt.size() > 2048 ||
+            redaction_policy_id.empty() || redaction_method.empty()) {
+        error = "offline SFT demonstration requires a persisted proof reference, bounded prompt and redaction attestation";
+        return false;
+    }
+
+    const auto evaluation = json::parse(persisted_evaluation_payload_json, nullptr, false);
+    const auto ranking = evaluation.is_object() && evaluation.contains("proof_json") &&
+        evaluation["proof_json"].is_string()
+        ? json::parse(evaluation["proof_json"].get<std::string>(), nullptr, false) : json();
+    if (!evaluation.is_object() ||
+            evaluation.value("ruleset_id", std::string()) != ruleset.id ||
+            evaluation.value("ruleset_revision", uint64_t(0)) != ruleset.revision ||
+            evaluation.value("verdict", std::string()) != "SATISFIED" ||
+            evaluation.value("evaluator_ref", std::string()) != preferred.evaluator_ref ||
+            evaluation.value("evaluator_revision", std::string()) != preferred.evaluator_revision ||
+            !ranking.is_object() ||
+            ranking.value("algorithm", std::string()) != "memoized_minimax_v1" ||
+            ranking.value("state_fingerprint", std::string()) != preferred.state_fingerprint ||
+            ranking.value("action_contract_fingerprint", std::string()) != ruleset.action_contract_fingerprint ||
+            !ranking.contains("actions") || !ranking["actions"].is_array() ||
+            ranking["actions"].empty()) {
+        error = "offline SFT demonstration requires a persisted complete ranking for this RuleSet and state";
+        return false;
+    }
+    bool found_preferred = false;
+    for (const auto & action : ranking["actions"]) {
+        if (!action.is_object() || !action.contains("proof_json") ||
+                !action["proof_json"].is_string() || action["proof_json"].get<std::string>().empty() ||
+                !action.contains("value") || !action["value"].is_number_integer() ||
+                action["value"].get<int>() < static_cast<int>(common_semi_oracle_placement_value::loss) ||
+                action["value"].get<int>() > static_cast<int>(common_semi_oracle_placement_value::win)) {
+            error = "persisted placement ranking is incomplete or contains an unknown action value";
+            return false;
+        }
+        if (action.value("player", std::string()) == preferred.player &&
+                action.value("row", -1) == preferred.row &&
+                action.value("column", -1) == preferred.column &&
+                action.value("value", 99) == static_cast<int>(preferred.value) &&
+                action["proof_json"].get<std::string>() == preferred.proof_json) {
+            found_preferred = true;
+        }
+    }
+    if (!found_preferred) {
+        error = "selected SFT action is not present in the persisted complete ranking";
+        return false;
+    }
+
+    std::string split_group;
+    const auto proof = json::parse(preferred.proof_json, nullptr, false);
+    if (!proof.is_object() || !proof.contains("state") ||
+            !common_semi_oracle_placement_state_group(
+                ruleset, proof["state"].dump(), split_group, error)) return false;
+    std::ostringstream action;
+    action << "player: " << preferred.player << "\nrow: " << preferred.row
+           << "\ncolumn: " << preferred.column;
+    std::ostringstream key;
+    key << "semi-oracle://ruleset/" << ruleset.id << "@" << ruleset.revision
+        << "/action/" << ruleset.action_contract_fingerprint;
+    const std::string persisted_proof_ref = preferred.persisted_evaluation_ref +
+        "/action/" + std::to_string(preferred.row) + "/" + std::to_string(preferred.column);
+
+    candidate = {};
+    candidate.id = "learning://candidate/" +
+        preferred.persisted_evaluation_ref.substr(std::string("semi-oracle://evaluation/").size())
+        + "/" + std::to_string(preferred.row) + "/" + std::to_string(preferred.column);
+    candidate.provenance = common_training_candidate_provenance::host_verified_demonstration;
+    candidate.source = common_adaptation_evidence_source::user_taught_concept;
+    candidate.transaction_ids = {persisted_proof_ref};
+    candidate.cause = common_learning_cause::host_contract;
+    candidate.hypothesis = "Select a placement with the best proven minimax outcome under the declared RuleSet.";
+    candidate.approved_prompt = approved_prompt;
+    candidate.approved_target = action.str();
+    candidate.teaching_key = key.str();
+    candidate.behavior_key = key.str();
+    candidate.learning_case_id = candidate.id;
+    candidate.teaching_relation_id = "semi-oracle://position/" + preferred.state_fingerprint;
+    candidate.evidence_ref = persisted_proof_ref;
+    candidate.host_verifier_ref = preferred.evaluator_ref;
+    candidate.host_verifier_revision = preferred.evaluator_revision + ":" +
+        ruleset.semantic_fingerprint + ":" + ruleset.action_contract_fingerprint;
+    candidate.host_proof_ref = persisted_proof_ref;
+    candidate.split_group_key = split_group;
+    candidate.verifier_ref = preferred.evaluator_ref;
+    candidate.verifier_revision = candidate.host_verifier_revision;
+    candidate.observed_occurrences = 0;
+    candidate.verified_recoveries = 0;
+    candidate.confidence = 1.0f;
+    candidate.redaction_policy_id = redaction_policy_id;
+    candidate.redaction_method = redaction_method;
+    candidate.redaction_status = common_learning_redaction_status::caller_asserted;
+    candidate.status = curator_approved ? common_training_candidate_status::approved
+                                        : common_training_candidate_status::eligible;
+    candidate.learning_domain = "placement_game";
+    candidate.tool_family = "semi-oracle";
+    candidate.provider_kind = "native";
+    return true;
 }
