@@ -37,6 +37,7 @@ std::string family_description_for_id(const std::string & id) {
         {"math",       "Perform bounded arithmetic calculations"},
         {"memory",     "Search and manage scoped runtime memory"},
         {"openapi",    "Load a fetched OpenAPI spec and expose its permitted API operations"},
+        {"oracle",     "When a user states rules for a small placement game or one-variable linear equations: define/correct session rules, then verify proposed moves or rewrites. Not general game search or general math"},
         {"resource",   "Inspect and read host-owned resources"},
         {"statistics", "Describe datasets and compute summaries"},
         {"time",       "Read current time and date information"},

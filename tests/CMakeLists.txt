@@ -358,6 +358,7 @@ if (LLAMA_AGENT_RUNTIME)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     foreach(TEST_SOURCE
         test-agent-contract.cpp
+        test-agent-semi-oracle.cpp
         test-agent-cognitive-mode.cpp
         test-agent-prepared-generation.cpp
         test-agent-model-profile.cpp
@@ -585,6 +586,29 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
     endforeach()
+
+    llama_build_and_test(test-agent-semi-oracle-teaching.cpp)
+    target_link_libraries(test-agent-semi-oracle-teaching PRIVATE
+        llama-agent-core llama-agent-flydelta)
+    target_include_directories(test-agent-semi-oracle-teaching PRIVATE
+        ${PROJECT_SOURCE_DIR})
+    set_property(TEST test-agent-semi-oracle-teaching PROPERTY LABELS agent-adaptation)
+
+    llama_build_and_test(test-agent-semi-oracle-tool-adapter.cpp)
+    target_link_libraries(test-agent-semi-oracle-tool-adapter PRIVATE
+        llama-agent-core llama-agent-tooling)
+    target_include_directories(test-agent-semi-oracle-tool-adapter PRIVATE
+        ${PROJECT_SOURCE_DIR})
+    set_property(TEST test-agent-semi-oracle-tool-adapter PROPERTY LABELS agent)
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-semi-oracle-cozo.cpp)
+        target_link_libraries(test-agent-semi-oracle-cozo PRIVATE
+            llama-agent-core llama-agent-adaptation-storage)
+        target_include_directories(test-agent-semi-oracle-cozo PRIVATE
+            ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+        set_property(TEST test-agent-semi-oracle-cozo PROPERTY LABELS agent-adaptation)
+    endif()
 
     llama_test_cmd(
         ${Python3_EXECUTABLE}

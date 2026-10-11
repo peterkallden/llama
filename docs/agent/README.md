@@ -174,6 +174,10 @@ remote MCP providers, status/readiness, and Docker usage.
   turn evidence to reproducible training corpora, an external QLoRA worker,
   and evaluated LoRA adapters. See
   [Agent model adaptation](agent-model-adaptation.md).
+- **Semi-oracle RuleSets (experimental)** — bounded host verification for
+  session-scoped placement games and exact one-variable linear algebra, with
+  explicit provenance and a bridge into the existing FlyDelta teaching
+  relation: [Semi-oracle RuleSets](agent-semi-oracle.md).
 - **FlyDelta sideband learning (design hypothesis)** — a separate,
   host-certified sparse associative steering overlay for a frozen model. Its
   model-free evidence, basis and activation-gate contracts are implemented,

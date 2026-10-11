@@ -337,6 +337,7 @@ add_library(llama-agent-adaptation-storage
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-lifecycle-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta-teaching-material-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta-teaching-material-store.h
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-cozo.h
 )
 if (LLAMA_MEMORY_COZO)
     target_sources(llama-agent-adaptation-storage PRIVATE
@@ -344,6 +345,7 @@ if (LLAMA_MEMORY_COZO)
         ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-transaction-store-cozo.h
         ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-lifecycle-store-cozo.cpp
         ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-lifecycle-store-cozo.h
+        ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-cozo.cpp
     )
 endif()
 if (LLAMA_AGENT_STORAGE_SQLITE)

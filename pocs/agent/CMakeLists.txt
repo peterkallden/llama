@@ -144,6 +144,20 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Optional Qwen/Phi smoke for natural RuleSpec DSL, dynamic action contracts,
+# and host semi-oracle verdicts. It is opt-in and retains full prompt/output.
+set(TARGET llama-agent-semi-oracle-model-smoke)
+add_executable(${TARGET}
+    smoke/adaptation/semi-oracle-model.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Model-free host smoke for the complete FlyDelta tool-repair loop. It uses a
 # deterministic wrong/correct tool fixture and never claims to exercise a
 # real model's hidden states.

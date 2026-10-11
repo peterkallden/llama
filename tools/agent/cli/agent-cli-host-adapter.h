@@ -17,6 +17,7 @@
 #include "../tooling/agent-tool-provider.h"
 
 #include <memory>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -69,6 +70,9 @@ struct agent_host_tool_selection_request {
     // may bind an already-authorized executor for a named provider.
     std::map<std::string, agent_openapi_executor> openapi_executor_overrides;
     std::map<std::string, std::vector<std::string>> tool_capabilities;
+    // Optional host-owned Oracle wrapper. When supplied, the native
+    // `semi-oracle` tool profile is bound to this session-aware executor.
+    std::function<common_tool_execution_result(const std::string &, const std::string &)> semi_oracle_tool_call;
     std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;

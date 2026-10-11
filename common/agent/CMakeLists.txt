@@ -144,6 +144,8 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
     adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
     adaptation/flydelta/oracles/contracts.cpp adaptation/flydelta/oracles/contracts.h
+    adaptation/semi-oracle.cpp adaptation/semi-oracle.h adaptation/semi-oracle-store.h
+    adaptation/semi-oracle-tool.cpp adaptation/semi-oracle-tool.h
     adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
     adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
     adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h
@@ -163,6 +165,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
     tooling/adapters/families/memory-adapters.cpp tooling/adapters/families/memory-adapters.h
+    tooling/adapters/families/oracle-adapters.cpp tooling/adapters/families/oracle-adapters.h
     tooling/adapters/families/data-adapters.cpp tooling/adapters/families/data-adapters.h
     tooling/adapters/families/document-adapters.cpp tooling/adapters/families/document-adapters.h
     tooling/adapters/families/repository-adapters.cpp tooling/adapters/families/repository-adapters.h
@@ -191,6 +194,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/contracts/schema-contract.cpp
     tooling/adapters/tool-adapters.cpp
     tooling/adapters/families/memory-adapters.cpp
+    tooling/adapters/families/oracle-adapters.cpp
     tooling/adapters/families/data-adapters.cpp
     tooling/adapters/families/document-adapters.cpp
     tooling/adapters/families/repository-adapters.cpp
@@ -226,6 +230,8 @@ list(REMOVE_ITEM AGENT_CORE_SOURCES
     adaptation/concept-candidate-index.h
 )
 list(APPEND AGENT_FLYDELTA_SOURCES
+    adaptation/semi-oracle-teaching.cpp
+    adaptation/semi-oracle-teaching.h
     adaptation/semantic-teaching.cpp
     adaptation/semantic-teaching.h
     adaptation/concept-input-routing.cpp

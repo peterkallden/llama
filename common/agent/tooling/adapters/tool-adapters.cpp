@@ -3,6 +3,7 @@
 #include "agent/tooling/adapters/families/diagnostics-adapters.h"
 #include "agent/tooling/adapters/families/document-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
+#include "agent/tooling/adapters/families/oracle-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
 #include "agent/tooling/adapters/families/resource-adapters.h"
 
@@ -868,6 +869,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 definition, bindings, registry, installed, error);
         if (handled_by_memory_family) {
             // The memory family owns its bindings and policy details.
+        } else if (common_try_register_oracle_tool_adapter(
+                definition,bindings,registry,installed,error)) {
+            // The Oracle facade owns RuleSet/session binding and evaluation provenance.
         } else if (common_try_register_data_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The data family owns dataset, data and statistics adapters.

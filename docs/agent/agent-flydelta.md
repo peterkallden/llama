@@ -4760,3 +4760,9 @@ model/capture identity and layer. The role is not reconstructed from a generic
 direction later, so a negative component cannot silently become a normal
 positive arm. Coefficients may still discover that the avoid component is
 useful, but only a complete host-verified pair outcome can be `HELPED`.
+# Semi-oracle teaching source
+
+The optional bounded RuleSet evaluator and its authority boundary are
+documented in [Semi-oracle RuleSets](agent-semi-oracle.md). It reuses the
+existing `user_taught_concept` teaching-relation path; it is not a second
+FlyDelta capture or training pipeline.
