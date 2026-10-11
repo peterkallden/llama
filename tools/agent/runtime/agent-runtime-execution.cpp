@@ -549,6 +549,9 @@ bool extract_active_resource_chunk(
             execution.scope.turn_id + ":resource_chunk:" + std::to_string(index) +
                 ":attempt:" + std::to_string(attempt + 1),
             correction);
+        const std::string submitted_slice_text = context.text;
+        const bool prompt_contains_submitted_slice = request.messages.size() > 1 &&
+            request.messages[1].content.find(submitted_slice_text) != std::string::npos;
         const auto generated = execution.inference.generate_result(request);
         if (!common_agent_generation_succeeded(generated)) {
             error = "resource evidence generation failed: " + generated.error_message;
@@ -560,12 +563,17 @@ bool extract_active_resource_chunk(
             error.clear();
             return true;
         }
+        error += " (prompt_contains_slice=" +
+            std::string(prompt_contains_submitted_slice ? "true" : "false") +
+            ", context_unchanged=" +
+            std::string(context.text == submitted_slice_text ? "true" : "false") + ")";
     }
     // Extraction is an evidence-quality outcome, not a workflow-fatal tool
     // failure. Record the missing coverage and let the host advance to the
     // next bounded slice.
     extraction = {};
     extraction.unresolved = true;
+    extraction.unresolved_reason = error;
     error.clear();
     return true;
 }
@@ -635,7 +643,11 @@ bool record_and_advance_resource_chunk(
     execution.pre_turn_events.push_back({
         common_agent_event_type::resource_chunk_processed,
         "bounded resource chunk processed chunk_index=" + std::to_string(chunk_index) +
-            " chunk_count=" + std::to_string(chunk_plan.ranges.size()),
+            " chunk_count=" + std::to_string(chunk_plan.ranges.size()) +
+            " extraction_status=" + (extraction.unresolved ? "unresolved" :
+                extraction.no_findings ? "no_findings" : "findings") +
+            (extraction.unresolved_reason.empty() ? "" :
+                " extraction_error=" + extraction.unresolved_reason),
         {},
         plan->id,
         {},

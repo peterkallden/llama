@@ -182,6 +182,11 @@ if not counts:
     raise SystemExit("smoke trace did not expose the host's planned chunk count")
 expected = int(counts[0])
 processed = log.count("detail=bounded resource chunk processed")
+chunk_events = re.findall(
+    r"(?m)^.*detail=bounded resource chunk processed chunk_index=(\d+) "
+    r"chunk_count=(\d+) extraction_status=(findings|no_findings|unresolved)(.*)$",
+    log,
+)
 extraction_blocks = re.findall(
     r"agent generation trace prompt: purpose=resource_chunk_extraction.*?\n(.*?)\nagent generation trace prompt: end",
     log,
@@ -190,7 +195,18 @@ extraction_blocks = re.findall(
 extraction_prompts = len(extraction_blocks)
 if expected <= 0 or processed != expected:
     raise SystemExit(
-        f"validated chunk count mismatch: planned={expected}, processed={processed}")
+        f"host-processed chunk count mismatch: planned={expected}, processed={processed}")
+if len(chunk_events) != expected:
+    raise SystemExit(
+        f"chunk validation trace mismatch: planned={expected}, status_events={len(chunk_events)}")
+indexes = [int(event[0]) for event in chunk_events]
+if sorted(indexes) != list(range(expected)):
+    raise SystemExit(f"chunk status trace has missing or duplicate indexes: {indexes}")
+unresolved = [event for event in chunk_events if event[2] == "unresolved"]
+if unresolved:
+    details = "; ".join(
+        f"chunk {index}: {detail.strip()}" for index, _, _, detail in unresolved)
+    raise SystemExit(f"one or more chunk extractions remained unresolved: {details}")
 if extraction_prompts < expected:
     raise SystemExit(
         f"host chunk text was not submitted for every extraction: planned={expected}, prompts={extraction_prompts}")

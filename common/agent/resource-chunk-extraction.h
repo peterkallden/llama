@@ -16,6 +16,7 @@ struct common_agent_resource_chunk_finding {
 struct common_agent_resource_chunk_extraction {
     bool no_findings = false;
     bool unresolved = false;
+    std::string unresolved_reason;
     std::vector<common_agent_resource_chunk_finding> findings;
 };
 
@@ -169,9 +170,26 @@ inline bool common_agent_parse_resource_chunk_extraction(
         };
         remove_inter_letter_hyphens(normalized_evidence, nullptr);
         remove_inter_letter_hyphens(normalized_slice.text, &normalized_slice.segment_by_character);
+        // A quote may begin mid-sentence in the source (`the number...`) but
+        // at sentence start in the model response (`The number...`). Match
+        // ASCII case-insensitively while retaining the original quote and
+        // host-owned byte provenance.
+        const auto fold_ascii_case = [](std::string & value) {
+            for (char & character : value) {
+                const auto byte = static_cast<unsigned char>(character);
+                if (byte >= 'A' && byte <= 'Z') character = static_cast<char>(byte - 'A' + 'a');
+            }
+        };
+        fold_ascii_case(normalized_evidence);
+        fold_ascii_case(normalized_slice.text);
         const size_t match = normalized_slice.text.find(normalized_evidence);
         if (match == std::string::npos) {
-            error = "evidence excerpt does not occur in the active resource slice";
+            auto normalized_visible_text = common_agent_resource_chunk_normalize_whitespace(slice.text);
+            remove_inter_letter_hyphens(normalized_visible_text, nullptr);
+            fold_ascii_case(normalized_visible_text);
+            error = "evidence excerpt does not occur in the active resource slice (visible_text_match=" +
+                std::string(normalized_visible_text.find(normalized_evidence) == std::string::npos
+                    ? "false" : "true") + ", segment_count=" + std::to_string(slice.segments.size()) + ")";
             return false;
         }
         const size_t match_end = match + normalized_evidence.size();

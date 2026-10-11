@@ -166,6 +166,14 @@ int main() {
     TEST_ASSERT(chunk_extraction.findings.front().evidence_byte_offset == 0);
     TEST_ASSERT(chunk_extraction.findings.front().evidence_byte_length ==
         paragraph_one.size() + 1 + paragraph_two.size());
+    long_chunk.text = "The figures clearly show that the number of specks generally increases\n"
+        "with the cumulative radiation flux. The parameters describe observed fluxes.";
+    long_chunk.segments = {{"P-ocr", long_chunk.text, 0, long_chunk.text.size()}};
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: The number of specks generally increases with the cumulative radiation flux.",
+        long_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.front().evidence ==
+        "The number of specks generally increases with the cumulative radiation flux.");
     long_chunk.text = "The shield perfor-\nmance was tested. Gamma-\nray flux decreased by about 20%.";
     long_chunk.segments = {{"P-hyphen", long_chunk.text, 0, long_chunk.text.size()}};
     TEST_ASSERT(common_agent_parse_resource_chunk_extraction(

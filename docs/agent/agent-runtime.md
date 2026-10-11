@@ -3532,10 +3532,13 @@ sentence as both the initial finding and its evidence; the model does not need
 to produce a separate conclusion. Legacy `finding` + `evidence` pairs remain
 accepted. Chunk indexes,
 paragraph labels, byte ranges, cursor state and tools are never model-facing.
-The host normalizes whitespace and OCR line-break hyphenation, then checks each
-excerpt against the complete active slice rather than requiring it to fit in
-one paragraph segment. It stores the conclusion and excerpt with host-owned
-source/range provenance for every segment the excerpt spans. The model is asked
+The host normalizes whitespace, OCR line-break hyphenation and ASCII letter case
+for matching, then checks each excerpt against the complete active slice rather
+than requiring it to fit in one paragraph segment. Case normalization permits a
+quote to begin at sentence start when the same words were lowercase mid-sentence
+in the OCR text; the stored quote and host-owned source/range provenance remain
+unchanged. It stores the conclusion and excerpt with provenance for every
+segment the excerpt spans. The model is asked
 for substantive claims/results in
 the visible text, not whether acquisition or workflow steps succeeded; those
 facts belong to the host. Raw OCR/text remains transient.
