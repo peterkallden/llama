@@ -585,7 +585,7 @@ static void test_planner_repairs_final_only_plan_without_binding_noise() {
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->name == "openalex.listWorks");
     assert(inference.seen.size() == 2);
-    const auto & repair = inference.seen[1].messages[1].content;
+    const auto & repair = inference.seen[1].messages[2].content;
     assert(repair.find("model plan steps require a tool or explicit mode: reasoning") != std::string::npos);
     assert(repair.find("Do not emit a final or answer step") != std::string::npos);
     assert(repair.find("There are no current attached resources") == std::string::npos);
