@@ -493,7 +493,8 @@ static void test_runtime_generation_metadata() {
     assert(reflection.generation);
     assert(reflection.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
     assert(inference.seen[4].messages.size() == 3);
-    assert(inference.seen[4].messages[1].content.find("For dataset repair, use dataset.list/select") != std::string::npos);
+    assert(inference.seen[4].messages[1].content.find(
+        "Compare the draft with the request and verified evidence.") != std::string::npos);
     assert(inference.seen[4].messages[2].content.find("<reflection_plan>") != std::string::npos);
     assert(inference.seen[4].messages[2].content.find("[Draft]") != std::string::npos);
 
