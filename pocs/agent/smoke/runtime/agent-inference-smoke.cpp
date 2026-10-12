@@ -495,8 +495,11 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[4].messages.size() == 3);
     assert(inference.seen[4].messages[1].content.find(
         "Compare the draft") != std::string::npos);
-    assert(inference.seen[4].messages[2].content.find("<reflection_plan>") != std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("[User request]\nCheck status") != std::string::npos);
     assert(inference.seen[4].messages[2].content.find("[Draft]") != std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("draft-content") != std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("<reflection_plan>") == std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("plan-1") == std::string::npos);
 
     auto extractor = make_llama_cli_memory_candidate_extractor(inference, make_agent_generation_config(options));
     common_agent_result agent_result;
