@@ -154,7 +154,9 @@ bool common_learning_build_corpus(
     }
     common_training_candidate_policy candidate_policy;
     candidate_policy.allow_host_verified_demonstrations =
-        policy.objective == common_learning_objective::sft;
+        policy.objective == common_learning_objective::sft ||
+        (policy.objective == common_learning_objective::dpo &&
+            policy.allow_host_verified_dpo_pairs);
     std::map<std::string, std::string> fingerprints;
     for (const auto & candidate : candidates) {
         if (!common_learning_corpus_view_matches(candidate, policy.view)) continue;

@@ -51,6 +51,8 @@ int main() {
     auto persisted_rejected = *rejected_move;
     persisted_preferred.persisted_evaluation_ref = "semi-oracle://evaluation/preference";
     persisted_rejected.persisted_evaluation_ref = persisted_preferred.persisted_evaluation_ref;
+    persisted_preferred.ranking_complete = true;
+    persisted_rejected.ranking_complete = true;
     CHECK(common_semi_oracle_make_preference_relation(ruleset, persisted_rejected, persisted_preferred,
         scope, "relation-preference", "run://suboptimal", "run://optimal",
         "run://matched-control", "semi-oracle://evaluation/preference", relation, error));
@@ -86,6 +88,7 @@ int main() {
         scope, "relation-tie", "run://one", "run://two", "run://control",
         "semi-oracle://evaluation/preference", relation, error));
     persisted_preferred.persisted_evaluation_ref = "semi-oracle://evaluation/test";
+    persisted_rejected.persisted_evaluation_ref = persisted_preferred.persisted_evaluation_ref;
     persisted_preferred.ranking_complete = false;
     common_training_candidate sft_candidate;
     CHECK(!common_semi_oracle_make_sft_candidate(ruleset, persisted_preferred, persisted_payload, scope,
@@ -98,6 +101,12 @@ int main() {
     CHECK(sft_candidate.provenance == common_training_candidate_provenance::host_verified_demonstration);
     CHECK(sft_candidate.status == common_training_candidate_status::eligible);
     CHECK(sft_candidate.observed_occurrences == 0 && sft_candidate.verified_recoveries == 0);
+    auto inferred_ruleset = ruleset;
+    inferred_ruleset.assertions.front().authority = common_semi_oracle_rule_authority::inferred;
+    common_training_candidate inferred_candidate;
+    CHECK(!common_semi_oracle_make_sft_candidate(inferred_ruleset, persisted_preferred,
+        persisted_payload, scope, "Play X on the current board and choose the move with best outcome.",
+        "stub:test-fixture", "test fixture has no user content", true, inferred_candidate, error));
     common_training_candidate_policy candidate_policy;
     CHECK(!common_training_candidate_qualifies(sft_candidate, candidate_policy, error));
     CHECK(common_semi_oracle_make_sft_candidate(ruleset, persisted_preferred, persisted_payload, scope,
@@ -114,13 +123,55 @@ int main() {
     CHECK(sft_row.at("input") == sft_candidate.approved_prompt);
     CHECK(sft_row.at("target") == sft_candidate.approved_target);
     CHECK(sft_row.at("split") == "train");
+
+    common_training_candidate dpo_candidate;
+    const bool dpo_built = common_semi_oracle_make_dpo_candidate(ruleset, persisted_preferred,
+        persisted_rejected, persisted_payload, scope,
+        "Choose a move with the best proven outcome from this board.",
+        "stub:test-fixture", "test fixture has no user content", true,
+        dpo_candidate, error);
+    CHECK(dpo_built);
+    CHECK(!dpo_candidate.rejected_target.empty());
+    CHECK(dpo_candidate.approved_target != dpo_candidate.rejected_target);
+    CHECK(dpo_candidate.contrast_ref.find("minimax-v1:") == 0);
+    CHECK(dpo_candidate.transaction_ids.size() == 2);
+    auto equal_value_rejected = persisted_preferred;
+    equal_value_rejected.row = 2;
+    equal_value_rejected.column = 1;
+    equal_value_rejected.value = common_semi_oracle_placement_value::win;
+    const auto equal_value_action = std::find_if(values.begin(), values.end(),
+        [](const auto & value) { return value.row == 2 && value.column == 1; });
+    CHECK(equal_value_action != values.end());
+    equal_value_rejected.proof_json = equal_value_action->proof_json;
+    common_training_candidate invalid_dpo_candidate;
+    CHECK(!common_semi_oracle_make_dpo_candidate(ruleset, persisted_preferred,
+        equal_value_rejected, persisted_payload, scope,
+        "Choose a move with the best proven outcome from this board.",
+        "stub:test-fixture", "test fixture has no user content", true,
+        invalid_dpo_candidate, error));
+    CHECK(invalid_dpo_candidate.id.empty());
+    auto dpo_policy = sft_policy;
+    dpo_policy.objective = common_learning_objective::dpo;
+    common_learning_corpus_revision dpo_corpus;
+    CHECK(!common_learning_build_corpus({dpo_candidate}, dpo_policy, dpo_corpus, error));
+    dpo_policy.allow_host_verified_dpo_pairs = true;
+    const bool dpo_corpus_built = common_learning_build_corpus({dpo_candidate}, dpo_policy, dpo_corpus, error);
+    CHECK(dpo_corpus_built);
+    const auto dpo_row = nlohmann::json::parse(dpo_corpus.jsonl);
+    CHECK(dpo_row.at("prompt") == dpo_candidate.approved_prompt);
+    CHECK(dpo_row.at("chosen") == dpo_candidate.approved_target);
+    CHECK(dpo_row.at("rejected") == dpo_candidate.rejected_target);
+
     common_learning_training_job sft_job;
     CHECK(common_learning_make_training_job(sft_corpus, "base:qwen-instruct:training-v1",
         "semi-oracle-sft-v1", "fake-sft", "corpus-contract-test", sft_job, error));
     CHECK(sft_job.objective == common_learning_objective::sft);
-    auto dpo_policy = sft_policy;
-    dpo_policy.objective = common_learning_objective::dpo;
-    common_learning_corpus_revision dpo_corpus;
-    CHECK(!common_learning_build_corpus({sft_candidate}, dpo_policy, dpo_corpus, error));
+    common_learning_training_job dpo_job;
+    CHECK(common_learning_make_training_job(dpo_corpus, "base:qwen-instruct:training-v1",
+        "semi-oracle-dpo-v1", "fake-dpo", "corpus-contract-test", dpo_job, error));
+    CHECK(dpo_job.objective == common_learning_objective::dpo);
+    CHECK(dpo_job.corpus_revision_id == dpo_corpus.id);
+    common_learning_corpus_revision invalid_dpo_corpus;
+    CHECK(!common_learning_build_corpus({sft_candidate}, dpo_policy, invalid_dpo_corpus, error));
     return 0;
 }

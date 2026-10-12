@@ -1,6 +1,7 @@
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-store.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/trainer-protocol.h"
 #include "agent/agent-inference.h"
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
@@ -48,13 +49,37 @@ public:
     bool get_session_binding(const std::string & session,std::string & id,uint64_t & revision,bool & found,std::string &) const override {
         auto it=bindings.find(session);found=it!=bindings.end();if(found){id=it->second.first;revision=it->second.second;}return true;
     }
-    bool append_evaluation(const std::string &,const common_semi_oracle_result & value,std::string &) override {evaluations.push_back(value);return true;}
+    bool append_evaluation(const std::string & id,const common_semi_oracle_result & value,std::string & error) override {
+        if (id.empty()) { error = "evaluation id is empty"; return false; }
+        evaluation_payloads[id] = json{
+            {"ruleset_id", value.ruleset_id},
+            {"ruleset_revision", value.ruleset_revision},
+            {"verdict", common_semi_oracle_verdict_name(value.verdict)},
+            {"level", common_semi_oracle_level_name(value.level)},
+            {"evaluator_ref", value.evaluator_ref},
+            {"evaluator_revision", value.evaluator_revision},
+            {"expansions", value.expansions},
+            {"depth_reached", value.depth_reached},
+            {"proof_json", value.proof_json},
+            {"counterexample_json", value.counterexample_json},
+            {"reason", value.reason},
+            {"guidance_ref", value.guidance_ref},
+        }.dump();
+        return true;
+    }
+    bool get_evaluation_payload(const std::string & id,std::string & payload,bool & found,std::string & error) const override {
+        const auto it = evaluation_payloads.find(id);
+        found = it != evaluation_payloads.end();
+        payload = found ? it->second : std::string();
+        if (!found) error = "evaluation payload not found";
+        return true;
+    }
     std::vector<std::string> list_host_rulesets(std::string &) const override {return hosts;}
 private:
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
     std::vector<std::string> hosts;
-    std::vector<common_semi_oracle_result> evaluations;
+    std::map<std::string,std::string> evaluation_payloads;
 };
 
 bool parse_args(int argc, char ** argv, options & out) {
@@ -281,6 +306,47 @@ bool run_case(common_agent_inference & inference, const options & config,
             {"evaluator", "memoized_minimax_v1"},
             {"budget_expansions", 100000},
         }.dump() << '\n';
+        if (static_cast<int>(best_value->value) > static_cast<int>(played_value->value)) {
+            common_training_candidate dpo_candidate;
+            common_learning_corpus_revision dpo_corpus;
+            common_learning_corpus_policy dpo_policy;
+            dpo_policy.objective = common_learning_objective::dpo;
+            dpo_policy.redaction_policy_id = "stub:semi-oracle-smoke";
+            dpo_policy.allow_host_verified_dpo_pairs = true;
+            const std::string approved_prompt = action_request + "\n" + model_state;
+            if (!oracle_tools.make_dpo_candidate(*best_value, *played_value,
+                    approved_prompt, dpo_policy.redaction_policy_id,
+                    "smoke fixture contains no user-provided content", true,
+                    dpo_candidate, error) ||
+                    !common_learning_build_corpus({dpo_candidate}, dpo_policy, dpo_corpus, error)) {
+                std::cout << "SEMI-ORACLE DPO PROJECTION=failed: " << error << '\n';
+                return false;
+            }
+            common_learning_training_job training_job;
+            if (!common_learning_make_training_job(dpo_corpus,
+                    "base:" + std::filesystem::path(config.model).filename().string(),
+                    "semi-oracle-dpo-smoke", "trainer-protocol-only", "smoke-v1",
+                    training_job, error)) {
+                std::cout << "SEMI-ORACLE DPO TRAINER CONTRACT=failed: " << error << '\n';
+                return false;
+            }
+            std::cout << "SEMI-ORACLE DPO PROJECTION=" << json{
+                {"source", "observed_qwen_move_vs_same_state_minimax"},
+                {"chosen", dpo_candidate.approved_target},
+                {"rejected", dpo_candidate.rejected_target},
+                {"ruleset_id", ruleset.id},
+                {"ruleset_revision", ruleset.revision},
+                {"split_group_key", dpo_candidate.split_group_key},
+                {"corpus_objective", common_learning_objective_name(dpo_corpus.objective)},
+                {"trainer_job_objective", common_learning_objective_name(training_job.objective)},
+                {"offline_only", true},
+                {"adapter_trained", false},
+            }.dump() << '\n';
+            std::cout.flush();
+        } else {
+            std::cout << "SEMI-ORACLE DPO PROJECTION=not-created: observed action is not strictly worse than minimax best\n";
+            std::cout.flush();
+        }
     }
     // A legal suboptimal game move is a useful baseline observation, not a
     // broken runtime flow. Preserve its mismatch/minimax trace for comparison;

@@ -3,6 +3,7 @@
 #include "agent/adaptation/semi-oracle-store.h"
 
 struct common_training_candidate;
+struct common_flydelta_teaching_relation;
 
 // Host-side facade for the native `oracle.ruleset.define` and
 // `oracle.action.verify` operations. It is intentionally not a general solver
@@ -30,7 +31,22 @@ public:
             common_semi_oracle_budget host_budget,
             std::vector<common_semi_oracle_placement_action_value> & values,
             std::string & error);
+    bool make_preference_relation(
+            const common_semi_oracle_placement_action_value & rejected,
+            const common_semi_oracle_placement_action_value & preferred,
+            const std::string & relation_id,
+            const std::string & rejected_execution_ref,
+            const std::string & preferred_execution_ref,
+            const std::string & control_execution_ref,
+            const std::string & evidence_ref,
+            common_flydelta_teaching_relation & relation,
+            std::string & error) const;
     bool make_sft_candidate(const common_semi_oracle_placement_action_value & preferred,
+            const std::string & approved_prompt, const std::string & redaction_policy_id,
+            const std::string & redaction_method, bool curator_approved,
+            common_training_candidate & candidate, std::string & error) const;
+    bool make_dpo_candidate(const common_semi_oracle_placement_action_value & chosen,
+            const common_semi_oracle_placement_action_value & rejected,
             const std::string & approved_prompt, const std::string & redaction_policy_id,
             const std::string & redaction_method, bool curator_approved,
             common_training_candidate & candidate, std::string & error) const;

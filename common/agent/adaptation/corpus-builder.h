@@ -36,6 +36,9 @@ struct common_learning_corpus_policy {
     size_t test_percent = 10;
     size_t max_replay_candidates = 0;
     std::string redaction_policy_id = "stub:caller-asserted-v1";
+    // Solver-backed chosen/rejected pairs remain opt-in and offline-only.
+    // This does not affect nearline candidate qualification.
+    bool allow_host_verified_dpo_pairs = false;
     std::vector<std::string> held_out_candidate_ids;
     std::vector<std::string> revoked_candidate_ids;
     // Selected by a host/ledger query.  The builder only bounds and records

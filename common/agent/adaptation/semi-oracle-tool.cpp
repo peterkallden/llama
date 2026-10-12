@@ -140,6 +140,35 @@ bool common_semi_oracle_tool_service::make_sft_candidate(
         approved_prompt, redaction_policy_id, redaction_method, curator_approved, candidate, error);
 }
 
+bool common_semi_oracle_tool_service::make_dpo_candidate(
+        const common_semi_oracle_placement_action_value & chosen,
+        const common_semi_oracle_placement_action_value & rejected,
+        const std::string & approved_prompt, const std::string & redaction_policy_id,
+        const std::string & redaction_method, bool curator_approved,
+        common_training_candidate & candidate, std::string & error) const {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active session RuleSet is bound to this session"; return false; }
+    if (chosen.ruleset_id != ruleset.id || chosen.ruleset_revision != ruleset.revision ||
+            rejected.ruleset_id != ruleset.id || rejected.ruleset_revision != ruleset.revision) {
+        error = "DPO actions do not belong to the active session RuleSet revision";
+        return false;
+    }
+    std::string payload;
+    if (!store_.get_evaluation_payload(chosen.persisted_evaluation_ref, payload, found, error)) return false;
+    if (!found || chosen.persisted_evaluation_ref != rejected.persisted_evaluation_ref) {
+        error = "DPO actions do not share a persisted evaluation in the configured semi-oracle store";
+        return false;
+    }
+    common_agent_scope scope;
+    scope.namespace_id = host_namespace_;
+    scope.session_id = session_id_;
+    return common_semi_oracle_make_dpo_candidate(ruleset, chosen, rejected, payload, scope,
+        approved_prompt, redaction_policy_id, redaction_method, curator_approved,
+        candidate, error);
+}
+
 bool common_semi_oracle_tool_service::promote_active_ruleset_to_host(std::string & error) {
     common_semi_oracle_ruleset ruleset;bool found=false;
     if(!active_ruleset(ruleset,found,error))return false;

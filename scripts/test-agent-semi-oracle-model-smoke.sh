@@ -22,5 +22,6 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
         --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" \
         --strict
 grep -Fq 'semi_oracle_model_smoke model=' "$log_path"
+grep -Fq 'SEMI-ORACLE DPO PROJECTION=' "$log_path"
 echo "semi_oracle_model_smoke=passed"
 echo "log=${log_path}"

@@ -105,9 +105,45 @@ This creates two comparable evidence paths without a parallel corpus:
 2. Offline SFT uses curated solver demonstrations projected through the shared
    candidate, corpus, redaction and trainer-job contracts.
 
-The smoke reports base-model move quality against minimax; it does not train,
-activate or claim a FlyDelta/LoRA adapter. Adapter comparison is an explicit
-later operation over an approved corpus and the same held-out symmetry groups.
+The Qwen model smoke reports the observed move against minimax. When the
+observed move is strictly worse, it also projects that same-state pair into
+the shared offline DPO corpus and creates an ordinary DPO trainer job. The
+smoke does not launch training, capture FlyDelta activations, activate or
+claim an adapter. Adapter comparison remains a later operation over an
+approved corpus and the same held-out symmetry groups.
+
+## Strict minimax DPO pairs
+
+For placement games, `common_semi_oracle_make_dpo_candidate` can project two
+actions from the same persisted, complete minimax ranking into one ordinary
+`common_training_candidate`. The chosen action must have a strictly better
+minimax outcome than the rejected action. Equal-value moves are deliberately
+not ordered. Both action proofs, the evaluation reference, RuleSet revision,
+action-contract fingerprint and symmetry group are retained; the prompt and
+redaction attestation still come from the host/curator. Inferred RuleSets are
+rejected for both SFT and DPO admission.
+
+The shared corpus builder accepts host-verified examples for SFT as before.
+For DPO, host-verified pairs are rejected by default and require the explicit
+offline-only `common_learning_corpus_policy::allow_host_verified_dpo_pairs`
+opt-in. This flag only affects corpus construction; it does not relax nearline
+candidate qualification or create observed model behavior. The DPO row uses
+the chosen and rejected DSL actions from the pair, and its strict contrast
+reference points back to the persisted minimax evaluation. This supports
+curated corpus generation, not automatic adapter training, activation or
+promotion.
+
+The persisted preference-relation bridge is exposed by
+`common_semi_oracle_tool_service::make_preference_relation`. A host may call it
+from the existing `user_taught_concept_relation_provider` after it has an
+observed model action and host-owned references for the preferred and matched
+control capture contexts. The method re-loads the persisted ranking and checks
+that both actions are in it before using the existing FlyDelta relation
+contract. It does not fabricate execution references or invoke capture itself;
+the ordinary relation observer, concept-capture worker, synthesis and search
+remain responsible for those downstream stages. The existing direct SemiOracle
+model smoke still tests rule/action inference only; it is not evidence of a
+full SemiOracle-to-FlyDelta model E2E.
 
 ## Search levels
 

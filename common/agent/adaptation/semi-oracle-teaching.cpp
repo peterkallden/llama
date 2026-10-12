@@ -1,4 +1,5 @@
 #include "agent/adaptation/semi-oracle-teaching.h"
+#include "agent/adaptation/semi-oracle-tool.h"
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
@@ -194,4 +195,66 @@ bool common_semi_oracle_make_preference_relation(
     relation.confidence = 1.0f;
     relation.host_approved = true;
     return common_flydelta_teaching_relation_validate(relation, error);
+}
+
+bool common_semi_oracle_tool_service::make_preference_relation(
+        const common_semi_oracle_placement_action_value & rejected,
+        const common_semi_oracle_placement_action_value & preferred,
+        const std::string & relation_id,
+        const std::string & rejected_execution_ref,
+        const std::string & preferred_execution_ref,
+        const std::string & control_execution_ref,
+        const std::string & evidence_ref,
+        common_flydelta_teaching_relation & relation,
+        std::string & error) const {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active session RuleSet is bound to this session"; return false; }
+    if (rejected.ruleset_id != ruleset.id || rejected.ruleset_revision != ruleset.revision ||
+            preferred.ruleset_id != ruleset.id || preferred.ruleset_revision != ruleset.revision ||
+            rejected.persisted_evaluation_ref.empty() ||
+            rejected.persisted_evaluation_ref != preferred.persisted_evaluation_ref) {
+        error = "preference actions do not share the active RuleSet revision and persisted ranking";
+        return false;
+    }
+
+    std::string payload;
+    if (!store_.get_evaluation_payload(
+            rejected.persisted_evaluation_ref, payload, found, error)) return false;
+    const auto evaluation = json::parse(payload, nullptr, false);
+    const auto ranking = evaluation.is_object() && evaluation.contains("proof_json") &&
+            evaluation["proof_json"].is_string()
+        ? json::parse(evaluation["proof_json"].get<std::string>(), nullptr, false) : json();
+    if (!found || !evaluation.is_object() ||
+            evaluation.value("ruleset_id", std::string()) != ruleset.id ||
+            evaluation.value("ruleset_revision", uint64_t(0)) != ruleset.revision ||
+            evaluation.value("verdict", std::string()) != "SATISFIED" ||
+            evaluation.value("evaluator_ref", std::string()) != rejected.evaluator_ref ||
+            evaluation.value("evaluator_revision", std::string()) != rejected.evaluator_revision ||
+            !ranking.is_object() || ranking.value("algorithm", std::string()) != "memoized_minimax_v1" ||
+            ranking.value("state_fingerprint", std::string()) != rejected.state_fingerprint ||
+            ranking.value("action_contract_fingerprint", std::string()) != ruleset.action_contract_fingerprint ||
+            !ranking.contains("actions") || !ranking["actions"].is_array()) {
+        error = "preference relation requires the matching persisted complete minimax ranking";
+        return false;
+    }
+    const auto contains_action = [&](const common_semi_oracle_placement_action_value & action) {
+        return std::any_of(ranking["actions"].begin(), ranking["actions"].end(), [&](const auto & item) {
+            return item.is_object() && item.value("player", std::string()) == action.player &&
+                item.value("row", -1) == action.row && item.value("column", -1) == action.column &&
+                item.value("value", 99) == static_cast<int>(action.value) &&
+                item.value("proof_json", std::string()) == action.proof_json;
+        });
+    };
+    if (!contains_action(rejected) || !contains_action(preferred)) {
+        error = "preference relation actions are not both present in the persisted ranking";
+        return false;
+    }
+    common_agent_scope scope;
+    scope.namespace_id = host_namespace_;
+    scope.session_id = session_id_;
+    return common_semi_oracle_make_preference_relation(ruleset, rejected, preferred,
+        scope, relation_id, rejected_execution_ref, preferred_execution_ref,
+        control_execution_ref, evidence_ref, relation, error);
 }

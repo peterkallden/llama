@@ -1,5 +1,6 @@
 #include "semi-oracle-store-cozo.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/training-candidate.h"
 
 #include <filesystem>
@@ -16,7 +17,7 @@ int main() {
     const auto db=(dir/"semi-oracle.db").string();std::string error;
     agent_semi_oracle_cozo_store store;CHECK(store.open(db,error));
     common_semi_oracle_ruleset r;
-    CHECK(common_semi_oracle_parse_ruleset_dsl("name: TTT\ndescription: test\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n","ruleset://test/1","session-1",r,error));
+    CHECK(common_semi_oracle_parse_ruleset_dsl("name: TTT\ndescription: test\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n","ruleset://test/1","session-1",r,error, common_semi_oracle_rule_authority::declared));
     CHECK(store.put_revision(r,error));
     common_semi_oracle_ruleset loaded;bool found=false;
     CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.name=="TTT");
@@ -31,10 +32,39 @@ int main() {
         R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json",
         {10000,9},ranked,error));
     CHECK(!ranked.empty()&&!ranked.front().persisted_evaluation_ref.empty());
+    const auto preferred = std::max_element(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
+        return static_cast<int>(left.value) < static_cast<int>(right.value);
+    });
+    const auto rejected = std::min_element(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
+        return static_cast<int>(left.value) < static_cast<int>(right.value);
+    });
+    CHECK(preferred != ranked.end() && rejected != ranked.end() &&
+        static_cast<int>(preferred->value) > static_cast<int>(rejected->value));
+    common_flydelta_teaching_relation preference;
+    const bool relation_built = service.make_preference_relation(*rejected, *preferred,
+        "relation://cozo/preference", "run://model/suboptimal", "run://solver/preferred",
+        "run://control/matched", preferred->persisted_evaluation_ref + "/contrast",
+        preference, error);
+    CHECK(relation_built);
+    CHECK(preference.host_approved && preference.baseline_origin == common_flydelta_teaching_origin::observed &&
+        preference.conditioned_origin == common_flydelta_teaching_origin::host_derived &&
+        preference.control_origin == common_flydelta_teaching_origin::host_counterfactual);
+    auto forged = *rejected;
+    forged.proof_json = "{}";
+    CHECK(!service.make_preference_relation(forged, *preferred,
+        "relation://cozo/forged", "run://model/suboptimal", "run://solver/preferred",
+        "run://control/matched", preferred->persisted_evaluation_ref + "/contrast",
+        preference, error));
     common_training_candidate candidate;
     CHECK(service.make_sft_candidate(ranked.front(), "Play the strongest move.",
         "stub:redaction", "fixture-with-no-user-data", false, candidate, error));
     CHECK(candidate.status==common_training_candidate_status::eligible);
+    const bool dpo_candidate_built = service.make_dpo_candidate(*preferred, *rejected,
+        "Play X on this board; choose the move with the best proven outcome.",
+        "stub:redaction", "fixture-with-no-user-data", true, candidate, error);
+    CHECK(dpo_candidate_built && !candidate.rejected_target.empty() &&
+        candidate.contrast_ref.find("minimax-v1:") == 0 &&
+        candidate.transaction_ids.size() == 2);
     auto unpersisted=ranked.front();
     unpersisted.persisted_evaluation_ref="semi-oracle://evaluation/not-present";
     CHECK(!service.make_sft_candidate(unpersisted, "Play the strongest move.",
