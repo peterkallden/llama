@@ -1883,6 +1883,8 @@ llama_agent_add_smoke_group(
 
 set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-contract
+    test-agent-semi-oracle
+    test-agent-cognitive-mode
     test-agent-prepared-generation
     test-agent-model-profile
     test-agent-model-catalog
@@ -1893,6 +1895,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-loop
     test-agent-tool-failure
     test-agent-tool-rounds
+    test-agent-resource-chunker
     test-memory-learning
     test-agent-learning-observation
     test-agent-learning-domain-policy
@@ -1922,6 +1925,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-oracles
     test-agent-flydelta-teaching-material
     test-agent-flydelta-training
+    test-agent-flydelta-training-admission
     test-agent-flydelta-training-corpus
     test-agent-flydelta-job
     test-agent-flydelta-queue
@@ -1969,6 +1973,11 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-model-facing-tool-chain
     test-agent-learning-transaction-backends
     test-agent-flydelta-teaching-material-cozo
+    test-agent-route-compiler
+    test-agent-execution-envelope
+    test-agent-semi-oracle-teaching
+    test-agent-semi-oracle-tool-adapter
+    test-agent-semi-oracle-cozo
     test-agent-clangd-protocol
     test-agent-native-crash
     test-agent-native-crash-smoke
