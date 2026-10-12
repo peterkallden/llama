@@ -353,7 +353,7 @@ static void test_cli_scope_helpers() {
     const auto global_scope = common_cli_make_agent_scope_with_matching_plan_scope(global_args);
     assert(global_scope.memory_scope == common_memory_scope::global);
     assert(global_scope.plan_scope == common_plan_scope::global);
-    assert(!common_cli_supports_bootstrap_package_scope(global_scope));
+    assert(common_cli_supports_bootstrap_package_scope(global_scope));
 
     const auto explicit_scope = common_cli_make_agent_scope(project_args, common_plan_scope::session);
     assert(explicit_scope.memory_scope == common_memory_scope::project);

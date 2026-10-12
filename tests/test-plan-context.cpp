@@ -45,7 +45,7 @@ int main() {
     assert(observations.find("<verified_tool_observations>") == 0);
     assert(observations.find("orders.csv") != std::string::npos);
     assert(observations.find("total: 40") != std::string::npos);
-    assert(observations.find("alias: summary") != std::string::npos);
+    assert(observations.find("alias: \"summary\"") != std::string::npos);
     assert(observations.find("result={") == std::string::npos);
     assert(observations.size() <= observation_cfg.char_budget);
 

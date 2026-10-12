@@ -177,6 +177,13 @@ int main() {
         const auto failure = view->call({"http-error", "sales.getHttpError",
             "{\"code\":\"" + std::to_string(expected.status) + "\"}"}, error);
         assert(!failure.ok);
+        if (failure.failure_class != expected.failure_class) {
+            std::cerr << "HTTP " << expected.status << " failure class mismatch: expected "
+                      << common_tool_failure_class_name(expected.failure_class) << ", got "
+                      << common_tool_failure_class_name(failure.failure_class)
+                      << "; failure_code=" << failure.failure_code
+                      << "; diagnostic=" << failure.raw_diagnostic << "\n";
+        }
         assert(failure.failure_class == expected.failure_class);
         assert(failure.retryable == expected.retryable);
         assert(failure.failure_code == "openapi.http_status");

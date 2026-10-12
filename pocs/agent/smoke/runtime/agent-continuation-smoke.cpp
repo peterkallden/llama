@@ -123,8 +123,8 @@ void test_continuation_is_consumed_in_same_driver_operation() {
     assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].messages.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("[Regeneration]") != std::string::npos);
+    assert(inference.seen[1].messages.size() == 3);
+    assert(inference.seen[1].messages[2].content.find("[Regeneration]") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
     assert(inference.seen[3].purpose == common_agent_generation_purpose::draft);
 }

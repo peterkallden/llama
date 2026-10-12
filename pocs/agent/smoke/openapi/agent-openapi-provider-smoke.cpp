@@ -96,7 +96,8 @@ int main() {
     assert(view->chat_tools()[0].description.find("per-page") != std::string::npos);
     assert(view->chat_tools()[0].description.find("cursor") != std::string::npos);
     assert(view->chat_tools()[0].description.find("select") != std::string::npos);
-    assert(view->chat_tools()[0].description.find("Returns: result, resources") != std::string::npos);
+    assert(view->chat_tools()[0].description.find(
+        "Returns: result (Bounded provider response.), resources (Host-owned materialized result resources.)") != std::string::npos);
     assert(view->chat_tools()[0].description.find("display_name") == std::string::npos);
     assert(view->chat_tools()[0].result_schema.find("resources") != std::string::npos);
     assert(view->chat_tools()[0].parameters.find(R"("required":["limit"])" ) != std::string::npos);

@@ -39,7 +39,7 @@ int main() {
 
     const common_chat_tool memory_search_tool{
         "memory_search", "Search memory.",
-        R"({"type":"object","required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":10}}})",
+        R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":10}}})",
         R"({"type":"object"})",
     };
     assert(common_reflection_parse_compact_dsl(

@@ -87,6 +87,7 @@ int main() {
     document_request.source_representation = "document:table";
     document_request.source_representation_uri = "agent-resource://document/report.json";
     document_request.import_processor_id = "pandoc-docx-document-json-v1";
+    document_request.origin_kind = "document_table";
     document_request.sheet_name.reset();
     document_request.limits.max_rows = 100;
     std::string document_normalized;
