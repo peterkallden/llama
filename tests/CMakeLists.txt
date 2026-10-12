@@ -519,10 +519,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-execution-envelope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
-            target_sources(${TEST_NAME} PRIVATE
-                ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
-                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp)
-            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tooling)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tool-provider)
         endif()
         if (TEST_NAME STREQUAL "test-agent-prepared-generation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
