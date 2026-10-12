@@ -479,7 +479,9 @@ bool daemon_flydelta_finalize_arm(
                 result.verifier_violation_kind,
                 result.verifier_violation_dimensions,
                 result.semantic_progress_observation,
-                error)) return false;
+                error)) {
+            return false;
+        }
         if (verifier_known) {
             result.verifier_known = true;
             result.verifier_passed = passed;

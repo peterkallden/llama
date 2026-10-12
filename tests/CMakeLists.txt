@@ -427,6 +427,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-candidate-lifecycle.cpp
         test-agent-flydelta-runtime-observer.cpp
         test-agent-flydelta-server-binding.cpp
+        test-agent-flydelta-resource-scope.cpp
 test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
 test-agent-flydelta-alpha-response-search.cpp
@@ -537,6 +538,15 @@ test-agent-flydelta-alpha-response-search.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-inference.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-resource-scope")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/daemon)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/resource-scope.cpp)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-sparse-cvec")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)

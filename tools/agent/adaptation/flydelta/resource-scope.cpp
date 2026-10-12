@@ -36,6 +36,10 @@ daemon_flydelta_provider_for_scope(
     scoped->n_threads = source->n_threads;
     scoped->model_n_embd = source->model_n_embd;
     scoped->model_n_layers = source->model_n_layers;
+    // Semantic verification is host-owned configuration, just like the
+    // model profile and capture layout. Preserve it when narrowing resource
+    // authority to a job scope.
+    scoped->oracle_registry = source->oracle_registry;
     scoped->lifecycle_store = source->lifecycle_store;
     scoped->resolve_bootstrap_zoom_state = source->resolve_bootstrap_zoom_state;
     scoped->resolve_bootstrap_zoom_state_for_job =
