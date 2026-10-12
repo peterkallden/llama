@@ -83,6 +83,8 @@ add_library(${TARGET}
     http.h
     imatrix-loader.cpp
     imatrix-loader.h
+    json-partial.cpp
+    json-partial.h
     json-schema-to-grammar.cpp
     json-schema.cpp
     json-schema.h
@@ -101,8 +103,10 @@ add_library(${TARGET}
     peg-parser.h
     preset.cpp
     preset.h
+    regex-partial.cpp
     reasoning-budget.cpp
     reasoning-budget.h
+    regex-partial.h
     sampling.cpp
     sampling.h
     speculative.cpp
@@ -184,3 +188,60 @@ if (LLAMA_LLGUIDANCE)
 endif()
 
 target_link_libraries(${TARGET} PUBLIC llama Threads::Threads)
+
+if (LLAMA_AGENT_STORAGE_SQLITE)
+    if (ANDROID)
+        # Android NDK builds must not link the platform's private SQLite
+        # library. Use the pinned amalgamation shipped in vendor/sqlite.
+        set(SQLITE3_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/vendor/sqlite")
+        add_library(llama-agent-sqlite3 STATIC
+            ${PROJECT_SOURCE_DIR}/vendor/sqlite/sqlite3.c
+        )
+        target_include_directories(llama-agent-sqlite3 PUBLIC ${SQLITE3_INCLUDE_DIR})
+        target_compile_definitions(llama-agent-sqlite3 PRIVATE
+            SQLITE_THREADSAFE=1
+            SQLITE_DEFAULT_MEMSTATUS=0
+            SQLITE_OMIT_LOAD_EXTENSION=1
+        )
+        set(SQLITE3_TARGET llama-agent-sqlite3)
+    else()
+        if (NOT SQLITE3_INCLUDE_DIR)
+            find_path(SQLITE3_INCLUDE_DIR sqlite3.h)
+        endif()
+        if (NOT SQLITE3_LIBRARY)
+            find_library(SQLITE3_LIBRARY NAMES sqlite3)
+        endif()
+        if (NOT SQLITE3_INCLUDE_DIR OR NOT SQLITE3_LIBRARY)
+            message(FATAL_ERROR "LLAMA_AGENT_STORAGE_SQLITE=ON requires SQLite3 headers and library. Set SQLITE3_INCLUDE_DIR and SQLITE3_LIBRARY.")
+        endif()
+        set(SQLITE3_TARGET "${SQLITE3_LIBRARY}")
+    endif()
+
+    add_library(llama-agent-storage-sqlite
+        agent/storage/sqlite/sqlite-database.cpp
+        agent/storage/sqlite/sqlite-database.h
+    )
+    target_include_directories(llama-agent-storage-sqlite
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE ${SQLITE3_INCLUDE_DIR}
+    )
+    target_compile_features(llama-agent-storage-sqlite PUBLIC cxx_std_17)
+    target_link_libraries(llama-agent-storage-sqlite PUBLIC llama-common PRIVATE ${SQLITE3_TARGET})
+    target_compile_definitions(llama-agent-storage-sqlite PUBLIC LLAMA_AGENT_STORAGE_USE_SQLITE=1)
+    if (BUILD_SHARED_LIBS)
+        set_target_properties(llama-agent-storage-sqlite PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            WINDOWS_EXPORT_ALL_SYMBOLS ON
+        )
+    endif()
+endif()
+
+if (LLAMA_MEMORY)
+    add_subdirectory(memory)
+endif()
+if (LLAMA_PLAN)
+    add_subdirectory(plan)
+endif()
+if (LLAMA_AGENT_RUNTIME)
+    add_subdirectory(agent)
+endif()

@@ -1,0 +1,133 @@
+name: Agent verification (sanitizers)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-analysis.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'common/runtime/**'
+      - 'tools/agent/**'
+      - 'tools/server/**'
+      - 'tools/mtmd/**'
+      - 'pocs/agent/**'
+      - 'pocs/memory/**'
+      - 'pocs/common/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+  pull_request:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-analysis.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'common/runtime/**'
+      - 'tools/agent/**'
+      - 'tools/server/**'
+      - 'tools/mtmd/**'
+      - 'pocs/agent/**'
+      - 'pocs/memory/**'
+      - 'pocs/common/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-asan-ubsan:
+    name: Analyze build on Linux with ASan/UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    env:
+      CC: clang
+      CXX: clang++
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:allocator_may_return_null=0
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            clangd \
+            cmake \
+            libssl-dev \
+            ninja-build \
+            zlib1g-dev
+          clang --version
+
+      - name: Configure sanitizer build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-agent-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DGGML_NATIVE=OFF \
+            -DLLAMA_BUILD_TESTS=ON \
+            -DBUILD_TESTING=ON \
+            -DLLAMA_TESTS_INSTALL=OFF \
+            -DLLAMA_TOOLS_INSTALL=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DLLAMA_MEMORY_COZO=OFF \
+            -DLLAMA_PLAN_COZO=OFF \
+            -DLLAMA_AGENT_RUNTIME=ON \
+            -DLLAMA_AGENT_TOOLS_CLANG=ON
+
+      - name: Build agent test pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build-agent-asan --parallel 4 --target llama-agent-build-pack
+
+      - name: Run agent tests under sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest \
+            --test-dir build-agent-asan \
+            --output-on-failure \
+            --timeout 900 \
+            -L agent
+
+      - name: Upload sanitizer diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-analysis-diagnostics
+          path: |
+            build-agent-asan/Testing/**
+            build-agent-asan/CMakeCache.txt
+          if-no-files-found: ignore
+          retention-days: 14

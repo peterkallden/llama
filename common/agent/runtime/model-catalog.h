@@ -1,0 +1,125 @@
+#pragma once
+
+#include "agent/runtime/model-profile.h"
+#include "agent/runtime/model-profile-cache.h"
+
+#include <cstddef>
+#include <map>
+#include <string>
+#include <vector>
+
+// Configuration-level model kind. Embedding models are catalogued here for
+// discovery, but are never valid generation bases for an agent profile.
+struct common_agent_model_base_spec {
+    std::string kind = "generation";
+    std::string backend = "server-context";
+    std::string path;
+    std::string mmproj;
+    std::string load_policy = "lazy";
+};
+
+struct common_agent_model_profile_spec {
+    std::string base_model_id;
+    std::vector<common_agent_adapter_overlay> adapters;
+    std::vector<common_agent_flydelta_sideband_overlay> sidebands;
+    size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
+    // Empty means inherit the base model's load policy.
+    std::string load_policy;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    bool tool_output_format_configured = false;
+};
+
+struct common_agent_model_catalog {
+    int schema_version = 1;
+    std::string directory;
+    std::map<std::string, common_agent_model_base_spec> bases;
+    std::map<std::string, common_agent_model_profile_spec> profiles;
+    std::string default_profile = "agent-default";
+    std::string embedding_model_id;
+    size_t max_loaded_generation_models = 1;
+    std::string model_eviction = "lru";
+};
+
+// Host-facing result of selecting one named generation profile. This resolves
+// catalog-relative paths but does not load a model or apply adapter weights.
+struct common_agent_model_selection {
+    std::string profile_id;
+    std::string base_model_id;
+    std::string backend;
+    std::string path;
+    std::string mmproj;
+    size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
+    std::string load_policy;
+    std::vector<common_agent_adapter_overlay> adapters;
+    std::vector<common_agent_flydelta_sideband_overlay> sidebands;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
+    bool tool_output_format_configured = false;
+};
+
+bool common_agent_validate_model_catalog(
+        const common_agent_model_catalog & catalog,
+        std::string & error);
+
+std::string common_agent_model_catalog_to_json(
+        const common_agent_model_catalog & catalog);
+
+bool common_agent_model_catalog_from_json(
+        const std::string & text,
+        common_agent_model_catalog & catalog,
+        std::string & error);
+
+// Resolve a configured profile into the host-neutral identity contract. The
+// loader supplies fingerprints later; configuration cannot invent them.
+bool common_agent_model_catalog_make_profile(
+        const common_agent_model_catalog & catalog,
+        const std::string & profile_id,
+        const std::string & base_model_fingerprint,
+        const std::string & tokenizer_fingerprint,
+        const std::string & chat_template_fingerprint,
+        common_agent_model_profile & profile,
+        std::string & error);
+
+bool common_agent_model_catalog_resolve_profile(
+        const common_agent_model_catalog & catalog,
+        const std::string & profile_id,
+        common_agent_model_selection & selection,
+        std::string & error);
+
+common_agent_tool_output_format common_agent_model_selection_effective_tool_output_format(
+        const common_agent_model_selection & selection,
+        common_agent_tool_output_format request_format);
+
+// The key is safe to use for residency/KV admission before a model is loaded.
+// It includes every selection field that can change serving behavior.
+std::string common_agent_model_selection_cache_key(
+        const common_agent_model_selection & selection);
+
+struct common_agent_model_route {
+    common_agent_model_selection selection;
+    std::string cache_key;
+    std::string evicted_cache_key;
+    bool cache_reused = false;
+};
+
+// Host-neutral profile router. It admits turns against the bounded profile
+// cache but never loads model files; the caller owns the actual loader and
+// must release evicted_cache_key before loading the returned selection.
+class common_agent_model_router {
+public:
+    explicit common_agent_model_router(const common_agent_model_catalog & catalog);
+
+    bool begin_turn(
+            const std::string & profile_id,
+            common_agent_model_route & route,
+            std::string & error);
+    bool end_turn(const common_agent_model_route & route, std::string & error);
+    const common_agent_model_profile_cache & cache() const { return profile_cache; }
+
+private:
+    common_agent_model_catalog catalog;
+    common_agent_model_profile_cache profile_cache;
+};

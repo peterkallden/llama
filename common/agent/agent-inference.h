@@ -1,0 +1,358 @@
+#pragma once
+
+#include "agent/agent-generation.h"
+#include "agent/agent-scope.h"
+#include "chat.h"
+#include "resource/resource-contract.h"
+#include "resource/resource-text-view.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+struct common_flydelta_activation_result;
+struct common_flydelta_hidden_state_capture_request;
+struct common_flydelta_hidden_state_capture;
+struct common_agent_residual_patch_request;
+struct common_agent_residual_patch_observation;
+struct common_flydelta_device_diagnostics_request;
+struct common_flydelta_device_diagnostics_result;
+
+enum class common_agent_generation_purpose {
+    planner,
+    tool_family_selection,
+    route_selection,
+    operation_selection,
+    plan_selection,
+    blueprint_selection,
+    blueprint_binding,
+    conversation,
+    tool_followup,
+    draft,
+    reasoning,
+    reflection,
+    memory_learning,
+    resource_chunk_extraction,
+};
+
+inline const char * common_agent_generation_purpose_name(common_agent_generation_purpose purpose) {
+    switch (purpose) {
+        case common_agent_generation_purpose::planner:             return "planner";
+        case common_agent_generation_purpose::tool_family_selection: return "tool_family_selection";
+        case common_agent_generation_purpose::route_selection:       return "route_selection";
+        case common_agent_generation_purpose::operation_selection: return "operation_selection";
+        case common_agent_generation_purpose::plan_selection:      return "plan_selection";
+        case common_agent_generation_purpose::blueprint_selection: return "blueprint_selection";
+        case common_agent_generation_purpose::blueprint_binding:   return "blueprint_binding";
+        case common_agent_generation_purpose::conversation:        return "conversation";
+        case common_agent_generation_purpose::tool_followup:       return "tool_followup";
+        case common_agent_generation_purpose::draft:               return "draft";
+        case common_agent_generation_purpose::reasoning:           return "reasoning";
+        case common_agent_generation_purpose::reflection:          return "reflection";
+        case common_agent_generation_purpose::memory_learning:     return "memory_learning";
+        case common_agent_generation_purpose::resource_chunk_extraction: return "resource_chunk_extraction";
+    }
+    return "draft";
+}
+
+struct common_agent_generation_options {
+    int n_predict = 0;
+    // Zero means that the host/runtime must supply the configured thread
+    // count.  Keeping this unset prevents a library default from silently
+    // forcing model-backed agent turns onto a single CPU thread.
+    int n_threads = 0;
+    // Emit bounded progress diagnostics for model generation. This never
+    // includes the generated content itself.
+    bool generation_trace = false;
+    std::optional<int64_t> t_max_prompt_ms;
+    std::optional<int64_t> t_max_predict_ms;
+};
+
+// Resource identity crossing the orchestration/inference boundary. Bytes and
+// derived representations remain host-owned; inference receives references
+// until a backend explicitly resolves them.
+struct common_agent_generation_resource {
+    common_runtime_resource_ref resource;
+    std::string role = "reference";
+    bool required = false;
+    std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_bytes;
+    // Optional host-owned fallback for image text extraction when native
+    // multimodal inference is unavailable.
+    std::function<bool(size_t max_bytes, std::string & out, std::string & error)> read_text_fallback;
+};
+
+// Transient host-read text for one bounded resource chunk. Chunk identity and
+// byte provenance remain host-owned; backends receive this context only for
+// the dedicated extraction generation and do not acquire resource access.
+struct common_agent_generation_resource_chunk {
+    std::string text;
+    common_runtime_resource_ref source;
+    size_t chunk_index = 0;
+    size_t chunk_count = 0;
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+    // Host-rendered structural references. Model generations use these
+    // labels, never chunk indexes or byte ranges, to identify evidence.
+    std::vector<common_runtime_resource_text_segment> segments;
+};
+
+inline common_agent_generation_options common_agent_generation_options_with_n_predict(
+        common_agent_generation_options options,
+        int n_predict) {
+    options.n_predict = n_predict;
+    return options;
+}
+
+struct common_agent_generation_request {
+    common_agent_generation_purpose purpose = common_agent_generation_purpose::draft;
+    std::optional<std::string> trace_id;
+    std::optional<common_agent_scope> scope;
+    std::vector<common_chat_msg> messages;
+    std::vector<common_chat_tool> tools;
+    common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
+    common_agent_generation_options options;
+    std::string json_schema;
+    // Optional host-built GBNF for non-JSON structured formats such as the
+    // bounded compact-DSL workflow action selector.
+    std::string grammar;
+    std::vector<common_agent_generation_resource> input_resources;
+    std::optional<common_agent_generation_resource_chunk> resource_chunk;
+    // Immutable host-prepared activation for this turn. The shared snapshot
+    // avoids copying potentially large cvec data across continuation steps.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Neutral internal graph intervention used by causal model experiments.
+    // It is request-scoped and never participates in FlyDelta lifecycle.
+    std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
+    std::shared_ptr<const common_flydelta_device_diagnostics_request> flydelta_device_diagnostics;
+};
+
+inline common_agent_generation_request common_agent_make_generation_request(
+        common_agent_generation_purpose purpose,
+        std::optional<std::string> trace_id,
+        std::optional<common_agent_scope> scope,
+        std::vector<common_chat_msg> messages,
+        common_agent_generation_options options,
+        std::string json_schema = {},
+        std::vector<common_chat_tool> tools = {},
+        common_chat_tool_choice tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE,
+        std::shared_ptr<const common_flydelta_activation_result> flydelta_activation = {},
+        std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture = {}) {
+    common_agent_generation_request request;
+    request.purpose = purpose;
+    request.trace_id = std::move(trace_id);
+    request.scope = std::move(scope);
+    request.messages = std::move(messages);
+    request.tools = std::move(tools);
+    request.tool_choice = tool_choice;
+    request.options = std::move(options);
+    request.json_schema = std::move(json_schema);
+    request.flydelta_activation = std::move(flydelta_activation);
+    request.flydelta_capture = std::move(flydelta_capture);
+    return request;
+}
+
+struct common_agent_generation_result {
+    std::string content;
+    int decoded_tokens = 0;
+    common_agent_generation_status status = common_agent_generation_status::errored;
+    common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
+    std::string error_message;
+    std::optional<common_chat_params> chat_params;
+    std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
+    std::shared_ptr<const common_agent_residual_patch_observation> residual_patch_observation;
+    std::shared_ptr<const common_flydelta_device_diagnostics_result> flydelta_device_diagnostics;
+    // Internal runtime provenance; does not affect generation semantics.
+    bool flydelta_device_batch = false;
+    // Request-scoped evidence that the model host received and applied the
+    // exact cvec associated with this generation. This is diagnostic
+    // telemetry, not learning or promotion evidence.
+    struct {
+        bool requested = false;
+        bool applied = false;
+        // Backend-resident sparse overlay binding. This may be true for one
+        // scalar arm; device_batch remains the narrower multi-sequence
+        // execution provenance.
+        bool sparse_device_binding = false;
+        bool device_batch = false;
+        bool cache_prompt = true;
+        int32_t n_cache_reuse = 0;
+        int32_t n_embd = 0;
+        int32_t il_start = 1;
+        int32_t il_end = 0;
+        size_t data_bytes = 0;
+        std::string artifact_id;
+        std::string content_hash;
+    } flydelta_runtime;
+};
+
+// A bounded teacher-forced comparison over one model-facing choice slot.
+// This is deliberately transport-level data: the FlyDelta layer turns it
+// into a decision-margin diagnostic, while the host still owns verification
+// and learning credit.
+struct common_agent_teacher_forced_choice_request {
+    // Stable identity for one independent batch entry. Empty is allowed for
+    // legacy callers; batch implementations derive a deterministic index
+    // identity in that case and always echo it in the result.
+    std::string sequence_id;
+    common_agent_generation_request context;
+    std::string choice_prefix;
+    std::string positive_choice;
+    std::string negative_choice;
+    // Optional complete continuations after choice_prefix.  These allow a
+    // behavior-specific margin when the tool name is unchanged but the
+    // repaired arguments differ.  If empty, the scorer uses the choice
+    // strings above for the legacy tool-slot comparison.
+    std::string positive_continuation;
+    std::string negative_continuation;
+};
+
+// Teacher-forced scoring is a contrast operation.  Equal effective
+// continuations are not a valid contrast and must fail closed instead of
+// silently producing a zero diagnostic margin.
+inline bool common_agent_teacher_forced_contrast_is_valid(
+        const std::string & choice_prefix,
+        const std::string & positive,
+        const std::string & negative,
+        std::string & error) {
+    if (choice_prefix.empty() || positive.empty() || negative.empty()) {
+        error = "teacher-forced scoring requires a prefix and two continuations";
+        return false;
+    }
+    if (positive == negative) {
+        error = "teacher-forced scoring requires distinct positive and negative continuations";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+struct common_agent_teacher_forced_choice_result {
+    std::string sequence_id;
+    bool available = false;
+    float positive_total_logprob = 0.0f;
+    float negative_total_logprob = 0.0f;
+    size_t positive_token_count = 0;
+    size_t negative_token_count = 0;
+    std::string error_message;
+    bool flydelta_device_batch = false;
+
+    float total_delta() const {
+        return positive_total_logprob - negative_total_logprob;
+    }
+    float normalized_delta() const {
+        if (positive_token_count == 0 || negative_token_count == 0) return 0.0f;
+        return positive_total_logprob / static_cast<float>(positive_token_count) -
+            negative_total_logprob / static_cast<float>(negative_token_count);
+    }
+};
+
+inline std::string common_agent_teacher_forced_choice_sequence_id(
+        const common_agent_teacher_forced_choice_request & request,
+        size_t index) {
+    return request.sequence_id.empty()
+        ? "choice:" + std::to_string(index) : request.sequence_id;
+}
+
+// Backend-neutral batch form for teacher-forced comparisons. Each entry is
+// independent and retains its own context/overlay semantics. Backends may
+// execute the entries together; the default inference implementation below
+// provides a correctness-preserving scalar fallback.
+struct common_agent_teacher_forced_choice_batch_request {
+    std::vector<common_agent_teacher_forced_choice_request> choices;
+};
+
+struct common_agent_teacher_forced_choice_batch_result {
+    std::vector<common_agent_teacher_forced_choice_result> choices;
+    std::string error_message;
+};
+
+inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
+    return result.status == common_agent_generation_status::completed;
+}
+
+inline common_agent_generated_text_result common_agent_generated_text_result_from_generation_result(
+        const common_agent_generation_result & result) {
+    return {
+        result.content,
+        result.decoded_tokens,
+        result.status,
+        result.stop_reason,
+        result.error_message,
+    };
+}
+
+class common_agent_inference {
+public:
+    virtual ~common_agent_inference() = default;
+    virtual bool generate(
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) = 0;
+
+    // Backend-neutral batch boundary for independent generation requests.
+    // The default is deliberately scalar and preserves the existing result
+    // contract. A resident model host may override it when its server/context
+    // can submit the requests concurrently with independent overlay/KV state.
+    virtual bool generate_batch(
+            const std::vector<common_agent_generation_request> & requests,
+            std::vector<common_agent_generation_result> & results) {
+        results.clear();
+        results.resize(requests.size());
+        for (size_t index = 0; index < requests.size(); ++index) {
+            if (!generate(requests[index], results[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    virtual bool score_teacher_forced_choice(
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) {
+        (void) request;
+        result = {};
+        result.error_message = "teacher-forced choice scoring is unavailable for this inference backend";
+        return false;
+    }
+    virtual bool score_teacher_forced_choice_batch(
+            const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) {
+        result = {};
+        if (request.choices.empty() || request.choices.size() > 256) {
+            result.error_message = "teacher-forced scoring batch has an invalid size";
+            return false;
+        }
+        result.choices.reserve(request.choices.size());
+        std::unordered_set<std::string> sequence_ids;
+        for (size_t index = 0; index < request.choices.size(); ++index) {
+            const auto & choice_request = request.choices[index];
+            common_agent_teacher_forced_choice_result choice_result;
+            choice_result.sequence_id = common_agent_teacher_forced_choice_sequence_id(
+                choice_request, index);
+            if (!sequence_ids.insert(choice_result.sequence_id).second) {
+                result.error_message = "teacher-forced scoring batch has duplicate sequence identity";
+                result.choices.clear();
+                return false;
+            }
+            if (!score_teacher_forced_choice(choice_request, choice_result)) {
+                result.error_message = choice_result.error_message.empty()
+                    ? "teacher-forced scoring batch entry failed"
+                    : choice_result.error_message;
+                result.choices.clear();
+                return false;
+            }
+            result.choices.push_back(std::move(choice_result));
+        }
+        return true;
+    }
+    common_agent_generation_result generate_result(const common_agent_generation_request & request) {
+        common_agent_generation_result result;
+        generate(request, result);
+        return result;
+    }
+};

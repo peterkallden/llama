@@ -1,0 +1,83 @@
+#include "agent-prepared-generation.h"
+
+#include "json-schema-to-grammar.h"
+
+bool common_agent_prepare_chat_generation(
+        const common_chat_templates * chat_templates,
+        const common_agent_generation_request & request,
+        common_agent_prepared_generation & prepared,
+        common_chat_params * chat_params) {
+    common_chat_templates_inputs chat_inputs;
+    chat_inputs.messages = request.messages;
+    chat_inputs.tools = request.tools;
+    chat_inputs.tool_choice = request.tool_choice;
+    chat_inputs.parallel_tool_calls = false;
+    chat_inputs.add_generation_prompt = true;
+
+    const common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    if (chat_params != nullptr) {
+        *chat_params = generated_chat_params;
+    }
+
+    prepared = {};
+    prepared.prompt = generated_chat_params.prompt;
+    prepared.grammar_lazy = generated_chat_params.grammar_lazy;
+    prepared.grammar_triggers = generated_chat_params.grammar_triggers;
+    prepared.parser_generation_prompt = generated_chat_params.generation_prompt;
+    prepared.chat_format = generated_chat_params.format;
+    prepared.parser = generated_chat_params.parser;
+    // Tools remain part of the model-facing prompt for planners and other
+    // structured turns, but their response contract is the explicit JSON
+    // schema.  Feeding that JSON through the chat template's native tool-call
+    // parser would reject an otherwise valid plan before the host can apply
+    // its own schema and plan validation.
+    prepared.parse_tool_calls = request.json_schema.empty() && !request.tools.empty();
+
+    if (request.json_schema.empty() && !request.grammar.empty()) {
+        prepared.grammar = common_grammar{
+            COMMON_GRAMMAR_TYPE_USER,
+            request.grammar,
+        };
+        // Custom grammars define the entire response contract. Do not leave
+        // chat-template tool-call triggers attached: a tool-free DSL response
+        // may not begin with any of those trigger strings, which would leave
+        // the grammar inactive and let malformed text through unchanged.
+        prepared.grammar_lazy = false;
+        prepared.grammar_triggers.clear();
+        // The server's streaming validator is intentionally JSON-specific.
+        // Custom grammars are completed by the sampler and collected as a
+        // normal response, then validated by their owning DSL/parser.
+        prepared.stream = false;
+        return true;
+    }
+
+    if (request.json_schema.empty()) {
+        // An empty tool view is ordinary chat, not an empty tool-call
+        // grammar. Some small models (notably Qwen 1.5B) treat an enabled
+        // grammar with no productions as a fatal empty grammar stack.
+        if (!request.tools.empty()) {
+            prepared.grammar = common_grammar{ COMMON_GRAMMAR_TYPE_TOOL_CALLS, generated_chat_params.grammar };
+        } else {
+            // Some chat templates expose lazy tool-grammar metadata even when
+            // the current request has no tools. Do not carry that metadata
+            // into ordinary conversation or final synthesis: there is no
+            // grammar to activate and small models can otherwise create an
+            // empty grammar stack when the lazy trigger fires.
+            prepared.grammar_lazy = false;
+            prepared.grammar_triggers.clear();
+        }
+        prepared.generation_prompt = generated_chat_params.generation_prompt;
+        return true;
+    }
+
+    if (!request.grammar.empty()) return false;
+
+    prepared.grammar = common_grammar{
+        COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT,
+        json_schema_to_grammar(common_json::parse(request.json_schema)),
+    };
+    prepared.ignore_eos = true;
+    prepared.suppress_eog = true;
+    prepared.stream = true;
+    return true;
+}

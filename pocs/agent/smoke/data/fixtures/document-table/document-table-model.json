@@ -1,0 +1,9 @@
+{"blocks":[
+  {"t":"Header","c":[1,[],[{"t":"Str","c":"Budget summary"}]]},
+  {"t":"Para","c":[{"t":"Str","c":"Amounts are in local currency."}]},
+  {"t":"Table","c":[[],[],[],
+    [[],[[[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"category"}]}]],[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"amount"}]}]]]]]],
+    [[[],0,[],[[[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"Travel"}]}]],[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"125"}]}]]]]]],[]],
+    [[[],0,[],[[[],[[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"Supplies"}]}]],[[],null,1,1,[{"t":"Plain","c":[{"t":"Str","c":"75"}]}]]]]]],[]]
+  ]}
+]}

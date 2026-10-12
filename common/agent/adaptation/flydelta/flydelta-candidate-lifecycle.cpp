@@ -1,0 +1,685 @@
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
+    return !value.empty() && value.size() <= max_size;
+}
+
+bool finite_nonnegative(float value) {
+    return std::isfinite(value) && value >= 0.0f;
+}
+
+bool lifecycle_context_valid(
+        const common_flydelta_lifecycle_event_context & context,
+        std::string & error) {
+    if (!nonempty_bounded(context.event_id) || !nonempty_bounded(context.idempotency_key) ||
+            !nonempty_bounded(context.source_id) || !nonempty_bounded(context.content_hash) ||
+            !nonempty_bounded(context.created_at) || context.scope.namespace_id.empty()) {
+        error = "FlyDelta lifecycle event context is invalid";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool common_flydelta_append_orchestration_state_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & state_ref,
+        const std::string & payload_json,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !nonempty_bounded(state_ref) || payload_json.empty() ||
+            payload_json.size() > 4U * 1024U * 1024U) {
+        if (error.empty()) error = "FlyDelta orchestration lifecycle payload is invalid";
+        return false;
+    }
+
+    const auto payload = nlohmann::ordered_json::parse(payload_json, nullptr, false);
+    if (!payload.is_object()) {
+        error = "FlyDelta orchestration lifecycle payload must be a JSON object";
+        return false;
+    }
+
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = state_ref;
+    record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+    record.status = common_learning_lifecycle_status::running;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+const char * common_flydelta_search_disposition_name(
+        common_flydelta_search_disposition disposition) {
+    switch (disposition) {
+        case common_flydelta_search_disposition::none: return "none";
+        case common_flydelta_search_disposition::retain: return "retain";
+        case common_flydelta_search_disposition::refine: return "refine";
+        case common_flydelta_search_disposition::validate_repeatability:
+            return "validate_repeatability";
+        case common_flydelta_search_disposition::reject: return "reject";
+    }
+    return "none";
+}
+
+const char * common_flydelta_experimental_artifact_action_name(
+        common_flydelta_experimental_artifact_action action) {
+    switch (action) {
+        case common_flydelta_experimental_artifact_action::retain_experimental:
+            return "retain_experimental";
+        case common_flydelta_experimental_artifact_action::review_candidate:
+            return "review_candidate";
+        case common_flydelta_experimental_artifact_action::reject:
+            return "reject";
+    }
+    return "retain_experimental";
+}
+
+bool common_flydelta_candidate_lineage_validate(
+        const common_flydelta_candidate_lineage & lineage,
+        size_t max_layers,
+        std::string & error) {
+    error.clear();
+    if (lineage.schema_version != 1 || !nonempty_bounded(lineage.candidate_id) ||
+            !nonempty_bounded(lineage.mutation_kind) ||
+            lineage.parent_candidate_id.size() > 512 || lineage.direction_id.size() > 512 ||
+            lineage.layer_indices.size() > max_layers ||
+            !finite_nonnegative(lineage.scale) ||
+            !finite_nonnegative(lineage.intervention_budget)) {
+        error = "FlyDelta candidate lineage is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_search_observation_validate(
+        const common_flydelta_search_observation & observation,
+        std::string & error) {
+    error.clear();
+    if (observation.schema_version != 1 || !nonempty_bounded(observation.experiment_id) ||
+            !nonempty_bounded(observation.candidate_id) ||
+            !nonempty_bounded(observation.search_kind) ||
+            observation.experimental_artifact_id.size() > 512 ||
+            observation.fixture_baseline_ref.size() > 512 ||
+            observation.surface_parent_best_ref.size() > 512 || !observation.host_evaluated ||
+            (observation.diagnostics_available &&
+                !common_flydelta_representation_diagnostics_validate(observation.diagnostics, error)) ||
+            observation.coefficients.size() > 16 ||
+            !std::all_of(observation.coefficients.begin(), observation.coefficients.end(),
+                [](float value) { return std::isfinite(value); }) ||
+            !std::isfinite(observation.search_fitness) ||
+            (observation.sequence_margin_available &&
+                (!observation.sequence_margin.available ||
+                 !common_flydelta_margin_comparison_validate(observation.sequence_margin, error)))) {
+        if (error.empty()) error = "FlyDelta search observation is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_decide_search_disposition(
+        const common_flydelta_search_observation & observation,
+        common_flydelta_search_decision & decision,
+        std::string & error) {
+    if (!common_flydelta_search_observation_validate(observation, error)) return false;
+
+    decision = {};
+    decision.candidate_id = observation.candidate_id;
+
+    const bool geometry_is_safe = observation.diagnostics_available &&
+        observation.diagnostics.cosine >= 0.3f && observation.diagnostics.progress > 0.0f &&
+        observation.diagnostics.leakage <= 1.0f && observation.diagnostics.shift_norm <= 1.0f;
+    const bool margin_is_promising = observation.sequence_margin_available &&
+        observation.sequence_margin.normalized_delta() > 0.0f;
+    const bool search_signal = geometry_is_safe || margin_is_promising;
+
+    switch (observation.outcome) {
+        case common_flydelta_counterfactual_outcome::helped:
+            if (!observation.verifier_known) {
+                error = "FlyDelta HELPED observation requires a known verifier";
+                return false;
+            }
+            decision.disposition = common_flydelta_search_disposition::validate_repeatability;
+            decision.search_priority = 0.5f;
+            decision.evidence_score = 1.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::review_candidate;
+            decision.reason = "host verified HELPED; repeatability is the next gate";
+            break;
+        case common_flydelta_counterfactual_outcome::harmed:
+            decision.disposition = common_flydelta_search_disposition::reject;
+            decision.search_priority = 0.0f;
+            decision.evidence_score = -1.0f;
+            decision.artifact_action = common_flydelta_experimental_artifact_action::reject;
+            decision.reason = "host verified HARMED; reject candidate";
+            break;
+        case common_flydelta_counterfactual_outcome::neutral:
+            decision.disposition = search_signal && observation.budget_remaining
+                ? common_flydelta_search_disposition::refine
+                : common_flydelta_search_disposition::retain;
+            decision.search_priority = search_signal ? 0.6f : 0.2f;
+            decision.evidence_score = 0.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::retain_experimental;
+            decision.reason = search_signal
+                ? "NEUTRAL has bounded diagnostic signal; refine candidate"
+                : "NEUTRAL has no bounded follow-up signal; retain without promotion";
+            break;
+        case common_flydelta_counterfactual_outcome::unknown:
+            decision.disposition = search_signal && observation.budget_remaining
+                ? common_flydelta_search_disposition::refine
+                : common_flydelta_search_disposition::retain;
+            decision.search_priority = search_signal ? 1.0f : 0.1f;
+            decision.evidence_score = 0.0f;
+            decision.artifact_action =
+                common_flydelta_experimental_artifact_action::retain_experimental;
+            decision.reason = search_signal
+                ? "UNKNOWN has bounded diagnostic signal; refine candidate"
+                : "UNKNOWN remains unproven; retain without promotion";
+            break;
+    }
+    return true;
+}
+
+bool common_flydelta_experiment_champion_validate(
+        const common_flydelta_experiment_champion & champion,
+        std::string & error) {
+    error.clear();
+    if (champion.schema_version != 1 || !nonempty_bounded(champion.experiment_id) ||
+            !nonempty_bounded(champion.candidate_id) || !nonempty_bounded(champion.model_profile_id) ||
+            !nonempty_bounded(champion.fixture_set_revision) ||
+            !nonempty_bounded(champion.verifier_revision) ||
+            !std::isfinite(champion.objective_score) || champion.evaluated_turns == 0 ||
+            champion.harmed_trials > champion.evaluated_turns) {
+        error = "FlyDelta experiment champion is invalid";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_select_experiment_champion(
+        const common_flydelta_experiment_champion & current,
+        const common_flydelta_experiment_champion & challenger,
+        common_flydelta_experiment_champion & selected,
+        std::string & error) {
+    if (!common_flydelta_experiment_champion_validate(current, error) ||
+            !common_flydelta_experiment_champion_validate(challenger, error)) return false;
+    if (current.experiment_id != challenger.experiment_id ||
+            current.model_profile_id != challenger.model_profile_id ||
+            current.fixture_set_revision != challenger.fixture_set_revision ||
+            current.verifier_revision != challenger.verifier_revision) {
+        error = "FlyDelta champions are not comparable";
+        return false;
+    }
+
+    selected = current;
+    if (challenger.host_verified && challenger.holdout_passed && challenger.no_regression &&
+            challenger.helped_trials > 0 && challenger.harmed_trials == 0 &&
+            challenger.objective_score > current.objective_score) {
+        selected = challenger;
+    }
+    return true;
+}
+
+bool common_flydelta_append_search_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_search_observation & observation,
+        const common_flydelta_search_decision & decision,
+        const common_flydelta_candidate_lineage * lineage,
+        std::string & error) {
+    error.clear();
+    common_flydelta_search_decision expected;
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_search_observation_validate(observation, error) ||
+            !common_flydelta_decide_search_disposition(observation, expected, error) ||
+            decision.schema_version != 1 || decision.candidate_id != observation.candidate_id ||
+            decision.disposition != expected.disposition ||
+            decision.artifact_action != expected.artifact_action ||
+            !nonempty_bounded(decision.reason) || !std::isfinite(decision.search_priority) ||
+            decision.search_priority < 0.0f || decision.search_priority > 1.0f ||
+            !std::isfinite(decision.evidence_score) || decision.evidence_score < -1.0f ||
+            decision.evidence_score > 1.0f) {
+        if (error.empty()) error = "FlyDelta search lifecycle payload is invalid";
+        return false;
+    }
+    if (lineage && (!common_flydelta_candidate_lineage_validate(*lineage, 64, error) ||
+            lineage->candidate_id != observation.candidate_id)) return false;
+
+    using json = nlohmann::ordered_json;
+    json payload = {
+        {"record_type", "candidate_search_decision"},
+        {"experiment_id", observation.experiment_id},
+        {"candidate_id", observation.candidate_id},
+        {"search_kind", observation.search_kind},
+        {"artifact_status", "experimental"},
+        {"artifact_action", common_flydelta_experimental_artifact_action_name(
+            decision.artifact_action)},
+        {"outcome", common_flydelta_counterfactual_outcome_name(observation.outcome)},
+        {"host_evaluated", observation.host_evaluated},
+        {"verifier_known", observation.verifier_known},
+        {"fixture_baseline_ref", observation.fixture_baseline_ref},
+        {"surface_parent_best_ref", observation.surface_parent_best_ref},
+        {"disposition", common_flydelta_search_disposition_name(decision.disposition)},
+        {"search_priority", decision.search_priority},
+        {"evidence_score", decision.evidence_score},
+        {"reason", decision.reason},
+    };
+    if (!observation.experimental_artifact_id.empty()) {
+        payload["experimental_artifact_id"] = observation.experimental_artifact_id;
+    }
+    if (observation.diagnostics_available) {
+        payload["diagnostics"] = {
+            {"layer_index", observation.diagnostics.layer_index},
+            {"cosine", observation.diagnostics.cosine},
+            {"progress", observation.diagnostics.progress},
+            {"leakage", observation.diagnostics.leakage},
+            {"shift_norm", observation.diagnostics.shift_norm},
+        };
+    }
+    if (!observation.coefficients.empty()) {
+        payload["coefficients"] = observation.coefficients;
+        payload["search_fitness"] = observation.search_fitness;
+    }
+    if (observation.sequence_margin_available) {
+        payload["sequence_margin"] = {
+            {"baseline_total", observation.sequence_margin.baseline.total_delta()},
+            {"candidate_total", observation.sequence_margin.candidate.total_delta()},
+            {"total_delta", observation.sequence_margin.total_delta()},
+            {"baseline_normalized", observation.sequence_margin.baseline.normalized_delta()},
+            {"candidate_normalized", observation.sequence_margin.candidate.normalized_delta()},
+            {"normalized_delta", observation.sequence_margin.normalized_delta()},
+        };
+    }
+    if (lineage) {
+        payload["lineage"] = {
+            {"candidate_id", lineage->candidate_id},
+            {"parent_candidate_id", lineage->parent_candidate_id},
+            {"mutation_kind", lineage->mutation_kind},
+            {"generation", lineage->generation},
+            {"direction_id", lineage->direction_id},
+            {"layer_indices", lineage->layer_indices},
+            {"scale", lineage->scale},
+            {"intervention_budget", lineage->intervention_budget},
+        };
+    }
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = observation.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = decision.disposition == common_flydelta_search_disposition::reject
+        ? common_learning_lifecycle_status::rejected
+        : common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_append_counterfactual_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_counterfactual_report & report,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_counterfactual_report_validate(report, error)) {
+        return false;
+    }
+
+    using json = nlohmann::ordered_json;
+    const auto report_json = json::parse(
+        common_flydelta_counterfactual_report_to_json(report));
+    const json payload = {
+        {"record_type", "counterfactual_report"},
+        {"report", report_json},
+    };
+
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = report.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = report.outcome == common_flydelta_counterfactual_outcome::harmed
+        ? common_learning_lifecycle_status::rejected
+        : common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_counterfactual_reports(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        std::vector<common_flydelta_counterfactual_report> & reports,
+        std::string & error) {
+    error.clear();
+    reports.clear();
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta counterfactual report lookup requires a candidate id";
+        return false;
+    }
+
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "counterfactual_report") continue;
+        common_flydelta_counterfactual_report report;
+        const auto report_value = payload.value("report", json::object());
+        if (!common_flydelta_counterfactual_report_from_json(
+                report_value.dump(), report, error)) return false;
+        if (report.candidate_id == candidate_id) reports.push_back(std::move(report));
+    }
+    return true;
+}
+
+bool common_flydelta_append_evaluation_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_evaluation_report & report,
+        const std::vector<common_flydelta_evaluation_fixture_result> & fixtures,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_evaluation_report_validate(report, error) ||
+            fixtures.empty()) return false;
+    json payload = {
+        {"record_type", "evaluation_report"},
+        {"report", json::parse(common_flydelta_evaluation_report_to_json(report))},
+        {"fixtures", json::array()},
+    };
+    for (const auto & fixture : fixtures) {
+        if (!common_flydelta_evaluation_fixture_result_validate(fixture, error) ||
+                fixture.candidate_id != report.candidate_id) return false;
+        payload["fixtures"].push_back(json::parse(
+            common_flydelta_evaluation_fixture_result_to_json(fixture)));
+    }
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = report.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = report.status == "passed"
+        ? common_learning_lifecycle_status::eligible
+        : common_learning_lifecycle_status::failed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_evaluation_report(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_evaluation_report & report,
+        std::vector<common_flydelta_evaluation_fixture_result> * fixtures,
+        std::string & error) {
+    error.clear();
+    report = {};
+    if (fixtures) fixtures->clear();
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta evaluation lookup requires a candidate id";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "evaluation_report") continue;
+        common_flydelta_evaluation_report candidate;
+        if (!common_flydelta_evaluation_report_from_json(
+                payload.value("report", json::object()).dump(), candidate, error)) return false;
+        if (candidate.candidate_id != candidate_id) continue;
+        report = std::move(candidate);
+        if (fixtures && payload.value("fixtures", json::array()).is_array()) {
+            for (const auto & item : payload["fixtures"]) {
+                common_flydelta_evaluation_fixture_result fixture;
+                if (!common_flydelta_evaluation_fixture_result_from_json(
+                        item.dump(), fixture, error)) return false;
+                fixtures->push_back(std::move(fixture));
+            }
+        }
+    }
+    if (report.candidate_id.empty()) {
+        error = "FlyDelta evaluation report was not found";
+        return false;
+    }
+    return true;
+}
+
+bool common_flydelta_append_promotion_summary_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_promotion_summary & summary,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    error.clear();
+    common_flydelta_promotion_policy policy;
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_promotion_summary_validate(summary, policy, error)) return false;
+    const json payload = {
+        {"record_type", "promotion_summary"},
+        {"summary", json::parse(common_flydelta_promotion_summary_to_json(summary))},
+    };
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = summary.candidate_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = summary.status == common_flydelta_candidate_status::eligible
+        ? common_learning_lifecycle_status::eligible
+        : common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_load_promotion_summary(
+        const common_learning_lifecycle_store & store,
+        const std::string & candidate_id,
+        common_flydelta_promotion_summary & summary,
+        std::string & error) {
+    error.clear();
+    summary = {};
+    if (!nonempty_bounded(candidate_id)) {
+        error = "FlyDelta promotion summary lookup requires a candidate id";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    for (const auto & record : store.list(error)) {
+        if (!error.empty()) return false;
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result) continue;
+        const auto payload = json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || payload.value("record_type", "") !=
+                "promotion_summary") continue;
+        common_flydelta_promotion_summary candidate;
+        if (!common_flydelta_promotion_summary_from_json(
+                payload.value("summary", json::object()).dump(), candidate, error)) return false;
+        if (candidate.candidate_id == candidate_id) summary = std::move(candidate);
+    }
+    if (summary.candidate_id.empty()) {
+        error = "FlyDelta promotion summary was not found";
+        return false;
+    }
+    common_flydelta_promotion_policy policy;
+    if (!common_flydelta_promotion_summary_validate(summary, policy, error)) return false;
+    return true;
+}
+
+bool common_flydelta_append_capture_candidate_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_capture_candidate & candidate,
+        const common_learning_transaction & transaction,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_capture_candidate_validate(candidate, error) ||
+            !common_learning_transaction_validate(transaction, 64, error) ||
+            candidate.transaction_id != transaction.id ||
+            context.source_id != transaction.id ||
+            context.content_hash != transaction.observation.content_hash) {
+        if (error.empty()) error = "FlyDelta capture candidate lifecycle payload is invalid";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    const json payload = {
+        {"record_type", "capture_candidate_discovered"},
+        {"candidate_id", candidate.id},
+        {"transaction_id", candidate.transaction_id},
+        {"source", common_adaptation_evidence_source_name(candidate.source)},
+        {"scope", {
+            {"namespace_id", candidate.scope.namespace_id},
+            {"project_id", candidate.scope.project_id},
+            {"session_id", candidate.scope.session_id},
+            {"turn_id", candidate.scope.turn_id},
+        }},
+        {"behavior_key", candidate.behavior_key},
+        {"task_fingerprint", candidate.task_fingerprint},
+        {"baseline_ref", candidate.baseline_ref},
+        {"candidate_ref", candidate.candidate_ref},
+        {"verifier_ref", candidate.verifier_ref},
+        {"evidence_refs", candidate.evidence_refs},
+        {"model_profile_fingerprint", candidate.model_profile_fingerprint},
+        {"capture_layout_revision", candidate.capture_layout_revision},
+        {"candidate_ready", candidate.candidate_ready},
+    };
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = candidate.id;
+    record.kind = common_learning_lifecycle_kind::candidate;
+    record.status = common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}
+
+bool common_flydelta_append_worker_trace_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const std::string & job_id,
+        const std::string & trace_json,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) || job_id.empty() || job_id.size() > 512 ||
+            trace_json.empty() || trace_json.size() > 4U * 1024U * 1024U) {
+        if (error.empty()) error = "FlyDelta worker trace lifecycle payload is invalid";
+        return false;
+    }
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = job_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+    record.status = common_learning_lifecycle_status::succeeded;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = trace_json;
+    return store.append(record, error);
+}
+
+bool common_flydelta_append_champion_lifecycle(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & context,
+        const common_flydelta_experiment_champion & current,
+        const common_flydelta_experiment_champion & challenger,
+        const common_flydelta_experiment_champion & selected,
+        std::string & error) {
+    error.clear();
+    if (!lifecycle_context_valid(context, error) ||
+            !common_flydelta_experiment_champion_validate(current, error) ||
+            !common_flydelta_experiment_champion_validate(challenger, error) ||
+            !common_flydelta_experiment_champion_validate(selected, error) ||
+            current.experiment_id != challenger.experiment_id ||
+            challenger.experiment_id != selected.experiment_id ||
+            (selected.candidate_id != current.candidate_id &&
+                selected.candidate_id != challenger.candidate_id)) {
+        if (error.empty()) error = "FlyDelta champion lifecycle payload is invalid";
+        return false;
+    }
+    using json = nlohmann::ordered_json;
+    const auto snapshot = [](const auto & value) {
+        return nlohmann::ordered_json{
+            {"candidate_id", value.candidate_id},
+            {"objective_score", value.objective_score},
+            {"evaluated_turns", value.evaluated_turns},
+            {"helped_trials", value.helped_trials},
+            {"harmed_trials", value.harmed_trials},
+            {"host_verified", value.host_verified},
+            {"holdout_passed", value.holdout_passed},
+            {"no_regression", value.no_regression},
+        };
+    };
+    const json payload = {
+        {"record_type", "experiment_champion_selection"},
+        {"experiment_id", selected.experiment_id},
+        {"current", snapshot(current)},
+        {"challenger", snapshot(challenger)},
+        {"selected_candidate_id", selected.candidate_id},
+    };
+    common_learning_lifecycle_record record;
+    record.event_id = context.event_id;
+    record.subject_id = selected.experiment_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = common_learning_lifecycle_status::observed;
+    record.idempotency_key = context.idempotency_key;
+    record.source_id = context.source_id;
+    record.namespace_id = context.scope.namespace_id;
+    record.project_id = context.scope.project_id;
+    record.session_id = context.scope.session_id;
+    record.content_hash = context.content_hash;
+    record.created_at = context.created_at;
+    record.payload_json = payload.dump();
+    return store.append(record, error);
+}

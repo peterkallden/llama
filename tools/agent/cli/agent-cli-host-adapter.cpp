@@ -1,0 +1,1401 @@
+#include "agent-cli-host-adapter.h"
+#include "../openapi/agent-openapi-http.h"
+#include "../openapi/agent-openapi-catalog.h"
+#include "../openapi/dynamic/agent-openapi-dynamic-admission.h"
+
+#include "tools/agent/cli/agent-cli-memory-tools.h"
+#include "tools/agent/resource/assembly/agent-resource-processor-factory.h"
+#include "tools/agent/host/agent-sandbox-assembly.h"
+#include "tools/agent/mcp/agent-mcp-client-factory.h"
+#include "tools/agent/resource/processors/agent-pdf-text-processor.h"
+
+#include "../runtime/agent-plan-orchestration.h"
+#include "../runtime/agent-runtime-assembly.h"
+#include "../runtime/agent-runtime-execution.h"
+#if LLAMA_AGENT_SANDBOX
+#include "agent/sandbox/sandbox-docker-runtime.h"
+#include "agent/sandbox/sandbox-kubernetes-runtime.h"
+#include "agent/sandbox/sandbox-lxc-runtime.h"
+#include "agent/sandbox/sandbox-local-runtime.h"
+#endif
+#include "agent/sandbox/sandbox-runtime.h"
+#include "../diagnostics/agent-clangd-provider.h"
+#include "../diagnostics/agent-native-crash.h"
+#include "../data/agent-data-store-factory.h"
+#include "../data/agent-dataset-importer.h"
+#include "../tooling/agent-sandbox-helper.h"
+#include "tools/agent/cli/agent-cli-scope.h"
+
+#include <algorithm>
+#include <fstream>
+#include <cstdio>
+#include <ctime>
+#include <filesystem>
+#include <memory>
+#include <map>
+#include <cstdlib>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::ordered_json;
+
+namespace {
+
+// Some public APIs legally expose an abstract as an inverted index rather than
+// plaintext. Add a bounded, deterministic model-facing view while retaining
+// the unmodified provider response in the materialized resource.
+bool add_inverted_index_text_views(json & value) {
+    bool changed = false;
+    if (value.is_array()) {
+        for (auto & item : value) changed = add_inverted_index_text_views(item) || changed;
+        return changed;
+    }
+    if (!value.is_object()) return false;
+    const auto abstract = value.find("abstract_inverted_index");
+    if (abstract != value.end() && abstract->is_object() && !value.contains("abstract_text")) {
+        std::map<size_t, std::string> words;
+        for (const auto & entry : abstract->items()) {
+            if (!entry.value().is_array() || entry.key().empty()) continue;
+            for (const auto & position : entry.value()) {
+                if (!position.is_number_integer() && !position.is_number_unsigned()) continue;
+                if (position.is_number_integer() && position.get<int64_t>() < 0) continue;
+                const auto index = position.is_number_unsigned()
+                    ? position.get<size_t>()
+                    : static_cast<size_t>(position.get<int64_t>());
+                if (index > 65535 || words.size() >= 16384) continue;
+                words.emplace(index, entry.key());
+            }
+        }
+        std::string text;
+        for (const auto & word : words) {
+            if (!text.empty()) text.push_back(' ');
+            if (text.size() + word.second.size() > 32768) break;
+            text += word.second;
+        }
+        if (!text.empty()) {
+            value["abstract_text"] = std::move(text);
+            changed = true;
+        }
+    }
+    for (auto & entry : value.items()) {
+        if (entry.key() != "abstract_inverted_index") {
+            changed = add_inverted_index_text_views(entry.value()) || changed;
+        }
+    }
+    return changed;
+}
+
+std::string model_facing_openapi_json(const std::string & raw) {
+    auto value = json::parse(raw, nullptr, false);
+    if (value.is_discarded() || !add_inverted_index_text_views(value)) return raw;
+    return value.dump();
+}
+
+class cli_agent_embedding_provider final : public agent_embedding_provider {
+public:
+    explicit cli_agent_embedding_provider(const args & options)
+        : options(options) {}
+
+    bool embed(
+            const std::string & purpose,
+            const std::string & text,
+            std::vector<float> & embedding,
+            std::string & error) override {
+        return ensure_memory_cli_embedding(options, text, embedding, purpose.c_str(), error);
+    }
+
+private:
+    const args & options;
+};
+
+agent_tool_context make_agent_cli_tool_context(
+        const args & options,
+        const common_memory_query & query,
+        const std::string & repository_root) {
+    agent_tool_context tool_context;
+    tool_context.request_id = "cli-run";
+    tool_context.turn_id = options.memory_turn;
+    tool_context.scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
+    tool_context.memory_scope = query.scope;
+    tool_context.plan_scope = tool_context.scope.plan_scope;
+    tool_context.profile_id = options.tool_profile;
+    tool_context.repository_root = repository_root;
+    tool_context.allow_network = !options.mcp_tool_command.empty();
+    agent_tool_context_apply_policy_gated_writes(tool_context, false);
+    tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    tool_context.default_timeout_ms = options.tool_timeout_ms > 0 ? options.tool_timeout_ms : tool_context.default_timeout_ms;
+    tool_context.execution_control = make_common_agent_runtime_execution_control({
+        options.turn_timeout_ms,
+        options.inference_step_timeout_ms,
+        options.tool_timeout_ms,
+        options.mcp_connect_timeout_ms,
+        options.mcp_request_timeout_ms,
+        options.mcp_shutdown_timeout_ms,
+    });
+    return tool_context;
+}
+
+agent_host_tool_selection_request make_agent_cli_tool_selection_request(
+        const args & options,
+        const common_memory_query & query,
+        const std::string & repository_root) {
+    agent_host_tool_selection_request request;
+    request.tool_context = make_agent_cli_tool_context(options, query, repository_root);
+    request.repository_root = repository_root;
+    request.resource_store_config = {
+        options.resource_blob_backend,
+        options.resource_blob_root,
+        options.resource_metadata_backend,
+        options.resource_metadata_db,
+    };
+    request.data_store_config = {options.data_backend, options.data_db};
+    request.tool_capabilities = options.tool_capabilities;
+    request.tool_family_descriptions = options.tool_family_descriptions;
+    request.tool_profiles = options.tool_profiles;
+    request.sandbox = options.sandbox;
+    request.resource_processor_policies = options.resource_processor_policies;
+    append_configured_stdio_mcp_providers(options.mcp_providers, request.mcp_providers);
+    request.openapi_providers = options.openapi_providers;
+    append_legacy_stdio_mcp_provider(
+        options.mcp_tool_command,
+        options.mcp_tool_args,
+        options.mcp_tool_server_name,
+        options.mcp_tool_prefix,
+        request.mcp_providers);
+    return request;
+}
+
+} // namespace
+
+bool has_enabled_stdio_mcp_provider(
+        const std::vector<agent_host_mcp_provider_config> & providers) {
+    for (const auto & provider : providers) {
+        if (provider.enabled &&
+                provider.type == "mcp" &&
+                provider.transport == "stdio" &&
+                !provider.command.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_enabled_mcp_provider(
+        const std::vector<agent_host_mcp_provider_config> & providers) {
+    for (const auto & provider : providers) {
+        if (provider.enabled && provider.type == "mcp") {
+            return true;
+        }
+    }
+    return false;
+}
+
+void append_configured_stdio_mcp_providers(
+        const std::vector<agent_host_mcp_provider_config> & configured_providers,
+        std::vector<agent_host_stdio_mcp_provider_request> & request_providers) {
+    for (const auto & provider : configured_providers) {
+        if (!provider.enabled || provider.type != "mcp" ||
+                (provider.transport == "stdio" && provider.command.empty()) ||
+                (provider.transport != "stdio" && provider.url.empty())) {
+            continue;
+        }
+        agent_host_stdio_mcp_provider_request request_provider;
+        request_provider.server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+        request_provider.transport = provider.transport;
+        request_provider.exposed_name_prefix = provider.prefix;
+        request_provider.command_line = provider.command;
+        request_provider.url = provider.url;
+        request_provider.allowed_tools = provider.allowed_tools;
+        request_provider.connect_timeout_ms = provider.connect_timeout_ms;
+        request_provider.request_timeout_ms = provider.request_timeout_ms;
+        request_provider.shutdown_timeout_ms = provider.shutdown_timeout_ms;
+        request_provider.max_result_bytes = provider.max_result_bytes;
+        if (provider.auth.type == "bearer" && !provider.auth.token_env.empty()) {
+            const char * token = std::getenv(provider.auth.token_env.c_str());
+            if (token != nullptr) request_provider.bearer_token = token;
+        }
+        request_providers.push_back(std::move(request_provider));
+    }
+}
+
+void append_legacy_stdio_mcp_provider(
+        const std::string & command,
+        const std::vector<std::string> & args,
+        const std::string & server_name,
+        const std::string & prefix,
+        std::vector<agent_host_stdio_mcp_provider_request> & request_providers) {
+    if (command.empty()) {
+        return;
+    }
+    agent_host_stdio_mcp_provider_request provider;
+    provider.server_name = server_name;
+    provider.transport = "stdio";
+    provider.exposed_name_prefix = prefix;
+    provider.command_line.push_back(command);
+    provider.command_line.insert(provider.command_line.end(), args.begin(), args.end());
+    request_providers.push_back(std::move(provider));
+}
+
+common_agent_runtime_host_post_run make_agent_cli_runtime_post_run(
+        common_memory_store & store,
+        const args & options,
+        bool memory_enabled) {
+    return [&store, &options, memory_enabled](const common_agent_result &, std::string & hook_error) {
+        if (!options.record_episode) {
+            hook_error.clear();
+            return true;
+        }
+        if (!memory_enabled) {
+            std::fprintf(stderr, "warning: skipping episode recording because no query embedding could be generated\n");
+            hook_error.clear();
+            return true;
+        }
+
+        common_memory_record episode;
+        episode.id = "episode-" + std::to_string(std::time(nullptr));
+        episode.kind = common_memory_kind::episode;
+        episode.content = options.prompt;
+        episode.created_at = std::time(nullptr);
+        episode.accessed_at = episode.created_at;
+        episode.importance = 0.5f;
+        episode.confidence = 0.5f;
+        apply_memory_scope(options, episode);
+        if (!store.put(episode, hook_error)) {
+            std::fprintf(stderr, "failed to record memory episode: %s\n", hook_error.c_str());
+            hook_error.clear();
+        }
+        return true;
+    };
+}
+
+bool resolve_agent_host_tool_selection(
+        common_memory_store & store,
+        common_plan_store * plan_store,
+        agent_resource_store * resource_store,
+        std::string * current_plan_id,
+        const std::string & tool_profile,
+        const agent_host_tool_selection_request & request,
+        const common_memory_query & query,
+        agent_embedding_provider * embedding_provider,
+        common_agent_cli_tool_selection & selection,
+        std::string & error) {
+    selection = {};
+    selection.tooling.resource_runtime.store = resource_store;
+    selection.tooling.resource_runtime.namespace_id = request.tool_context.scope.namespace_id;
+    selection.tooling.resource_runtime.session_id = request.tool_context.scope.session_id;
+    selection.tooling.resource_runtime.project_id = request.tool_context.scope.project_id;
+    selection.tooling.resource_runtime.turn_id = request.tool_context.scope.turn_id;
+    selection.tooling.family_descriptions = request.tool_family_descriptions;
+
+    if (request.data_store == nullptr) {
+        selection.owned_data_store = make_agent_data_store(request.data_store_config, error);
+        if (!error.empty()) {
+            error = "data store setup failed: " + error;
+            return false;
+        }
+    }
+
+    common_tool_catalog tool_catalog;
+    std::unique_ptr<native_agent_tool_provider> native_provider;
+    agent_tool_context resolved_tool_context = request.tool_context;
+    // The caller supplies the profile as the resolver argument. Keep the
+    // effective context identity in sync before providers validate snapshots.
+    resolved_tool_context.profile_id = tool_profile;
+    if (!tool_profile.empty()) {
+        common_tool_bootstrap_result bootstrap;
+        if (!tool_catalog.bootstrap(
+                tool_profile,
+                bootstrap,
+                error,
+                request.tool_capabilities,
+                request.tool_profiles)) {
+            error = "tool bootstrap failed: " + error;
+            return false;
+        }
+        auto profile_snapshot = std::make_shared<common_tool_profile_snapshot>();
+        if (!tool_catalog.resolve_profile(tool_profile, *profile_snapshot, error)) {
+            error = "tool profile snapshot resolution failed: " + error;
+            return false;
+        }
+        // Sandbox-backed tools must not be model-visible when the host has no
+        // execution backend. Keep the profile itself intact for diagnostics,
+        // but resolve an effective snapshot that cannot advertise tools which
+        // would only fail later with sandbox.backend_unavailable.
+        if (request.sandbox.backend != "docker" && request.sandbox.backend != "kubernetes" &&
+                request.sandbox.backend != "lxc") {
+            std::vector<common_tool_definition> available_tools;
+            for (auto & definition : profile_snapshot->tools) {
+                if (definition.risk_class != common_tool_risk_class::sandbox_execution) {
+                    available_tools.push_back(std::move(definition));
+                }
+            }
+            profile_snapshot->tools = std::move(available_tools);
+        }
+        if (request.data_store == nullptr && selection.owned_data_store == nullptr) {
+            std::vector<common_tool_definition> available_tools;
+            for (auto & definition : profile_snapshot->tools) {
+                if (definition.executor_id.rfind("builtin.data.", 0) != 0 &&
+                        definition.executor_id != "builtin.statistics.describe" &&
+                        definition.executor_id != "builtin.statistics.outliers" &&
+                        definition.executor_id != "builtin.statistics.value_counts") {
+                    available_tools.push_back(std::move(definition));
+                }
+            }
+            profile_snapshot->tools = std::move(available_tools);
+        }
+        const bool exposes_dataset_tools = std::any_of(
+            profile_snapshot->tools.begin(), profile_snapshot->tools.end(),
+            [](const common_tool_definition & definition) {
+                return definition.name == "dataset.list" ||
+                    definition.name == "dataset.select" ||
+                    definition.executor_id == "builtin.dataset.list" ||
+                    definition.executor_id == "builtin.dataset.select" ||
+                    definition.executor_id == "builtin.dataset.inspect" ||
+                    definition.executor_id == "builtin.dataset.schema" ||
+                    definition.executor_id == "builtin.dataset.sample" ||
+                    definition.executor_id == "builtin.data.query" ||
+                    definition.executor_id == "builtin.data.filter" ||
+                    definition.executor_id == "builtin.data.aggregate" ||
+                    definition.executor_id == "builtin.data.join" ||
+                    definition.executor_id == "builtin.data.transform" ||
+                    definition.executor_id == "builtin.statistics.describe" ||
+                    definition.executor_id == "builtin.statistics.outliers" ||
+                    definition.executor_id == "builtin.statistics.value_counts";
+            });
+        common_agent_data_store * inventory_store = request.data_store != nullptr
+            ? request.data_store : selection.owned_data_store.get();
+        if (exposes_dataset_tools && inventory_store != nullptr) {
+            std::vector<common_agent_dataset_descriptor> descriptors;
+            std::string inventory_error;
+            if (inventory_store->list_dataset_descriptors(descriptors, inventory_error)) {
+                std::sort(descriptors.begin(), descriptors.end(),
+                    [](const common_agent_dataset_descriptor & left,
+                       const common_agent_dataset_descriptor & right) {
+                        if (left.ref.name != right.ref.name) return left.ref.name < right.ref.name;
+                        return left.ref.uri < right.ref.uri;
+                    });
+                selection.tooling.available_datasets = std::move(descriptors);
+            } else if (!inventory_error.empty()) {
+                fprintf(stderr, "warning: scoped dataset inventory unavailable: %s\n", inventory_error.c_str());
+            }
+        }
+        for (const auto & definition : profile_snapshot->tools) {
+            selection.tooling.capabilities.insert(selection.tooling.capabilities.end(),
+                definition.capabilities.begin(), definition.capabilities.end());
+            for (const auto & capability : definition.capabilities) {
+                selection.tooling.capability_tools[capability].push_back(definition.name);
+            }
+        }
+        if (!selection.tooling.available_datasets.empty()) {
+            selection.tooling.available_context.push_back("context.dataset.available");
+        }
+        if (selection.tooling.available_datasets.size() > 1) {
+            selection.tooling.available_context.push_back("context.dataset.multiple_available");
+        }
+        std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
+        selection.tooling.capabilities.erase(std::unique(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()), selection.tooling.capabilities.end());
+        const auto * resolved_profile = tool_catalog.find_profile(tool_profile);
+        resolved_tool_context.profile_snapshot = profile_snapshot;
+        if (resolved_profile != nullptr) {
+            if (resolved_profile->allow_network.has_value()) {
+                resolved_tool_context.allow_network = *resolved_profile->allow_network;
+            }
+            if (resolved_profile->allow_policy_gated_writes.has_value()) {
+                agent_tool_context_apply_policy_gated_writes(
+                    resolved_tool_context, *resolved_profile->allow_policy_gated_writes);
+            }
+        }
+        const auto & repository_root = request.repository_root.empty()
+            ? resolved_tool_context.repository_root : request.repository_root;
+        if (!repository_root.empty()) {
+            selection.tooling.available_context.push_back("context.repository.available");
+        }
+        if (resolved_tool_context.allow_network) {
+            selection.tooling.available_context.push_back("context.network.allowed");
+        }
+
+        common_native_tool_bindings bindings;
+        bindings.semi_oracle = request.semi_oracle_tool_call;
+        if (!request.repository_root.empty()) {
+            bindings.repository_root = request.repository_root;
+        }
+        bindings.plan_store = plan_store;
+        bindings.plan_id = current_plan_id;
+        if (resource_store == nullptr) {
+            selection.owned_resource_store = make_agent_resource_store(
+                request.resource_store_config,
+                error);
+            if (!selection.owned_resource_store) {
+                error = "resource store setup failed: " + error;
+                return false;
+            }
+            resource_store = selection.owned_resource_store.get();
+        }
+        bindings.resource_runtime = selection.tooling.resource_runtime;
+        bindings.resource_runtime.store = resource_store;
+        selection.tooling.resource_runtime.store = resource_store;
+        if (request.dynamic_openapi_registry != nullptr && resource_store != nullptr) {
+            const auto runtime = bindings.resource_runtime;
+            const auto registry = request.dynamic_openapi_registry;
+            bindings.openapi_connect = [resource_store, runtime, registry](const std::string & input) {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object() || !arguments.contains("spec_resource") ||
+                        !arguments["spec_resource"].is_string()) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.invalid_arguments", common_tool_failure_class::validation, false,
+                        "OpenAPI connection requires a fetched spec resource.", "spec_resource must be a string");
+                }
+                const std::string uri = arguments["spec_resource"].get<std::string>();
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                agent_resource_descriptor descriptor;
+                std::string error;
+                if (!resource_store->stat(uri, authority, descriptor, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.resource_unavailable", common_tool_failure_class::not_found, false,
+                        "The OpenAPI spec resource is not available in this session.", std::move(error));
+                }
+                if (descriptor.mime_type != "application/json" && descriptor.mime_type != "text/plain") {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.unsupported_media_type", common_tool_failure_class::validation, false,
+                        "The fetched resource is not a JSON OpenAPI document.", descriptor.mime_type);
+                }
+                std::string payload;
+                if (!resource_store->read_text(uri, authority, 1024 * 1024, payload, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.resource_read_failed", common_tool_failure_class::execution, false,
+                        "The OpenAPI spec resource could not be read.", std::move(error));
+                }
+                auto document = json::parse(payload, nullptr, false);
+                if (document.is_object() && document.contains("text") && document["text"].is_string()) {
+                    document = json::parse(document["text"].get<std::string>(), nullptr, false);
+                }
+                if (!document.is_object()) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.invalid_spec", common_tool_failure_class::validation, false,
+                        "The resource does not contain a valid OpenAPI JSON document.", "OpenAPI resource JSON parse failed");
+                }
+                agent_openapi_dynamic_registration registration;
+                if (!admit_agent_dynamic_openapi_document(
+                        document, uri, descriptor.sha256, registration, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.admission_rejected", common_tool_failure_class::validation, false,
+                        "The OpenAPI document did not meet the host's admission policy.", std::move(error));
+                }
+                const auto provider_id = registration.config.id;
+                const auto operation_count = registration.catalog.operations.size();
+                if (!registry->add(std::move(registration), error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.openapi.connect.registration_failed", common_tool_failure_class::execution, false,
+                        "The OpenAPI provider could not be registered in this session.", std::move(error));
+                }
+                return common_tool_execution_result::success(json({
+                    {"provider_id", provider_id},
+                    {"operation_count", operation_count},
+                    {"available_next_turn", true},
+                }).dump(), "Validated read-only OpenAPI provider registered for the next turn in this session.");
+            };
+        }
+        selection.resource_processor_registry = std::make_shared<agent_resource_processor_registry>();
+        auto pdf_text_processor = std::make_shared<agent_pdf_text_processor>();
+        if (!selection.resource_processor_registry->add(*pdf_text_processor, error)) {
+            error = "resource processor setup failed: " + error;
+            return false;
+        }
+        selection.resource_processors.push_back(std::move(pdf_text_processor));
+        selection.resource_processing_service = std::make_shared<agent_resource_processing_service>(
+            *resource_store,
+            *selection.resource_processor_registry);
+        bindings.resource_processing_service = selection.resource_processing_service.get();
+        bindings.data_store = request.data_store != nullptr
+            ? request.data_store
+            : selection.owned_data_store.get();
+        if (bindings.data_store != nullptr && resource_store != nullptr) {
+            const auto runtime = bindings.resource_runtime;
+            bindings.dataset_from_resource = [resource_store, runtime, data_store = bindings.data_store](
+                    const std::string & uri, const std::string & operation) {
+                std::string error;
+                agent_resource_descriptor resource;
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                if (!resource_store->stat(uri, authority, resource, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_unavailable", common_tool_failure_class::not_found, false,
+                        "The resource is unavailable as a dataset.", std::move(error));
+                }
+                if (common_normalize_resource_media_type(resource.mime_type) != "text/csv") {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_unsupported", common_tool_failure_class::validation, false,
+                        "Only CSV resources are currently materialized as datasets.",
+                        "resource MIME type is not text/csv");
+                }
+                std::string csv;
+                if (!resource_store->read_bytes(uri, authority, 128 * 1024 * 1024, csv, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_read_failed", common_tool_failure_class::execution, true,
+                        "The CSV resource could not be read.", std::move(error));
+                }
+                std::string worksheet_json;
+                if (!normalize_agent_csv_text(csv, resource.name, worksheet_json, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.resource_invalid", common_tool_failure_class::validation, false,
+                        "The CSV resource could not be normalized.", std::move(error));
+                }
+                agent_dataset_import_request import;
+                import.source_resource_uri = resource.uri;
+                import.source_workbook_name = resource.name;
+                import.source_representation = "csv:dataset";
+                import.source_representation_uri = resource.uri;
+                import.origin_kind = "csv_resource";
+                import.import_processor_id = "csv-resource-import-v1";
+                import.import_processor_version = "1";
+                import.worksheet_json = std::move(worksheet_json);
+                std::vector<common_agent_dataset_descriptor> imported;
+                if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.materialization_failed", common_tool_failure_class::execution, false,
+                        "The CSV resource could not be materialized as a dataset.", std::move(error));
+                }
+                const auto & dataset = imported.front();
+                if (operation == "schema") {
+                    json columns = json::array();
+                    for (const auto & column : dataset.columns) columns.push_back({
+                        {"name", column.name}, {"type", common_agent_dataset_column_type_name(column.type)},
+                        {"nullable", column.nullable}});
+                    auto result = common_tool_execution_result::success(json({
+                        {"dataset", dataset.ref.uri}, {"source", dataset.ref.source_resource_uri},
+                        {"columns", columns}}).dump());
+                    result.dataset_refs.push_back(dataset.ref);
+                    return result;
+                }
+                if (operation == "sample") {
+                    json query = {{"dataset", dataset.ref.uri}, {"limit", 20},
+                        {"max_scan_rows", 10000}, {"max_result_rows", 100}};
+                    std::string sample_json;
+                    if (!data_store->execute("data.query", query.dump(), sample_json, error)) {
+                        return common_tool_execution_result::failure(
+                            "tool.dataset.sample_failed", common_tool_failure_class::execution, false,
+                            "The CSV dataset sample could not be read.", std::move(error));
+                    }
+                    auto result = common_tool_execution_result::success(std::move(sample_json));
+                    result.dataset_refs.push_back(dataset.ref);
+                    return result;
+                }
+                auto result = common_tool_execution_result::success(json({
+                    {"dataset", dataset.ref.uri}, {"name", dataset.ref.name},
+                    {"rows", dataset.ref.row_count}, {"columns", dataset.ref.column_count},
+                    {"source", dataset.ref.source_resource_uri}}).dump());
+                result.dataset_refs.push_back(dataset.ref);
+                return result;
+            };
+            auto read_document_json = [resource_store, runtime](
+                    const std::string & uri, std::string & document_json,
+                    agent_resource_descriptor & descriptor, std::string & read_error) {
+                const auto authority = make_agent_resource_read_authority(runtime, std::time(nullptr));
+                if (!resource_store->stat(uri, authority, descriptor, read_error)) {
+                    std::vector<agent_resource_descriptor> visible_resources;
+                    std::string list_error;
+                    if (resource_store->list(authority, visible_resources, list_error)) {
+                        read_error += " (visible_resources=" + std::to_string(visible_resources.size()) + ")";
+                    }
+                    return false;
+                }
+                if (descriptor.mime_type != "application/json") {
+                    read_error = "document table tools require an application/json document representation";
+                    return false;
+                }
+                return resource_store->read_bytes(uri, authority, 4 * 1024 * 1024, document_json, read_error);
+            };
+            bindings.document_tables = [read_document_json](const std::string & input) mutable {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object()) return common_tool_execution_result::failure(
+                    "tool.document.tables.invalid_arguments", common_tool_failure_class::validation, false,
+                    "Document table arguments are invalid.", "invalid document table arguments");
+                agent_resource_descriptor descriptor;
+                std::string document_json, error;
+                if (!read_document_json(arguments["resource"].get<std::string>(), document_json, descriptor, error))
+                    return common_tool_execution_result::failure("tool.document.tables.unavailable", common_tool_failure_class::not_found, false,
+                        "The document representation is unavailable.", std::move(error));
+                std::string worksheet_json;
+                if (!normalize_agent_pandoc_document_json(document_json, worksheet_json, error))
+                    return common_tool_execution_result::failure("tool.document.tables.invalid_document", common_tool_failure_class::validation, false,
+                        "The document representation could not be normalized.", std::move(error));
+                common_agent_document_table_catalog catalog;
+                if (!make_agent_document_table_catalog(worksheet_json, catalog, error))
+                    return common_tool_execution_result::failure("tool.document.tables.invalid_document", common_tool_failure_class::validation, false,
+                        "The document table catalog could not be created.", std::move(error));
+                const size_t limit = std::min<size_t>(arguments.value("max_results", 32), catalog.tables.size());
+                json tables = json::array();
+                for (size_t index = 0; index < limit; ++index) {
+                    const auto & table = catalog.tables[index];
+                    tables.push_back({{"index", table.table_index}, {"name", table.name},
+                        {"caption", table.caption}, {"node_id", table.node_id}});
+                }
+                return common_tool_execution_result::success(json({
+                    {"resource", arguments["resource"]}, {"tables", tables},
+                    {"truncated", catalog.tables.size() > limit}}).dump());
+            };
+            bindings.document_table = [read_document_json, data_store = bindings.data_store](const std::string & input) mutable {
+                const auto arguments = json::parse(input, nullptr, false);
+                if (!arguments.is_object()) return common_tool_execution_result::failure(
+                    "tool.document.table.invalid_arguments", common_tool_failure_class::validation, false,
+                    "Document table arguments are invalid.", "invalid document table arguments");
+                agent_resource_descriptor descriptor;
+                std::string document_json, error;
+                if (!read_document_json(arguments["resource"].get<std::string>(), document_json, descriptor, error))
+                    return common_tool_execution_result::failure("tool.document.table.unavailable", common_tool_failure_class::not_found, false,
+                        "The document representation is unavailable.", std::move(error));
+                std::string worksheet_json;
+                if (!normalize_agent_pandoc_document_json(document_json, worksheet_json, error))
+                    return common_tool_execution_result::failure("tool.document.table.invalid_document", common_tool_failure_class::validation, false,
+                        "The document representation could not be normalized.", std::move(error));
+                common_agent_document_table_catalog catalog;
+                if (!make_agent_document_table_catalog(worksheet_json, catalog, error))
+                    return common_tool_execution_result::failure("tool.document.table.invalid_document", common_tool_failure_class::validation, false,
+                        "The document table catalog could not be created.", std::move(error));
+                common_agent_document_table_locator locator;
+                if (arguments.contains("table")) locator.name = arguments["table"].get<std::string>();
+                else if (arguments.contains("table_index")) locator.table_index = arguments["table_index"].get<size_t>();
+                else locator.node_id = arguments["node_id"].get<std::string>();
+                common_agent_document_table_entry selected;
+                if (!resolve_common_agent_document_table(catalog, locator, selected, error))
+                    return common_tool_execution_result::failure("tool.document.table.not_found", common_tool_failure_class::not_found, false,
+                        "The requested document table was not found.", std::move(error));
+                agent_dataset_import_request import;
+                // The catalog descriptor is intentionally bounded and does
+                // not carry the full derived-resource lineage. The imported
+                // dataset keeps the semantic representation URI; the
+                // resource store remains authoritative for its parent chain.
+                import.source_resource_uri = descriptor.uri;
+                import.source_workbook_name = descriptor.name;
+                import.source_representation = "document:table";
+                import.source_representation_uri = descriptor.uri;
+                import.origin_kind = "document_table";
+                import.import_processor_id = "document-json-table-import-v1";
+                import.import_processor_version = "1";
+                import.worksheet_json = worksheet_json;
+                import.sheet_index = selected.table_index;
+                std::vector<common_agent_dataset_descriptor> imported;
+                if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1)
+                    return common_tool_execution_result::failure("tool.document.table.materialization_failed", common_tool_failure_class::execution, false,
+                        "The selected document table could not be materialized.", std::move(error));
+                auto result = common_tool_execution_result::success(json({
+                    {"table_index", selected.table_index}, {"name", selected.name},
+                    {"node_id", selected.node_id}, {"dataset", imported.front().ref.uri},
+                    {"source_resource", imported.front().ref.source_resource_uri}}).dump());
+                result.dataset_refs.push_back(imported.front().ref);
+                return result;
+            };
+        }
+        bindings.memory_store = &store;
+        bindings.memory_query = query;
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+        std::shared_ptr<agent_clangd_diagnostics_provider> clangd_provider;
+        if (request.diagnostics.semantic_backend == "clangd" && !request.repository_root.empty()) {
+            clangd_provider = std::make_shared<agent_clangd_diagnostics_provider>(agent_clangd_session_config{
+                request.diagnostics.clangd_executable,
+                request.repository_root,
+                request.diagnostics.compile_commands,
+                request.tool_context.default_timeout_ms,
+                request.tool_context.default_timeout_ms,
+            });
+            bindings.diagnostics_symbol = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
+            bindings.diagnostics_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
+            bindings.diagnostics_call_hierarchy = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };
+        }
+#endif
+        if (request.diagnostics.native_crash_backend != "none") {
+            const auto native_crash_limits = agent_native_crash_limits{
+                request.diagnostics.native_crash_timeout_ms,
+                request.diagnostics.native_crash_max_frames,
+                request.diagnostics.native_crash_max_threads,
+                request.diagnostics.native_crash_max_output_bytes,
+            };
+            bindings.diagnostics_native_crash = [
+                    backend = request.diagnostics.native_crash_backend,
+                    gdb = request.diagnostics.gdb_executable,
+                    cdb = request.diagnostics.cdb_executable,
+                    repository_root = request.repository_root,
+                    native_crash_limits](const std::string & input) {
+                return agent_execute_native_crash(input, backend, gdb, cdb, repository_root, native_crash_limits);
+            };
+        }
+        if (embedding_provider != nullptr) {
+            bindings.embed_memory_query = [provider = embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & embedding_error) {
+                return provider != nullptr &&
+                    provider->embed("tool query", text, embedding, embedding_error);
+            };
+        }
+
+        const auto needs_sandbox_assembly = [&request]() {
+            return request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
+                request.sandbox.backend == "lxc" ||
+                request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("odt.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("html.text") != request.resource_processor_policies.end() ||
+                request.resource_processor_policies.find("xlsx.workbook") != request.resource_processor_policies.end();
+        };
+#if LLAMA_AGENT_SANDBOX
+        std::shared_ptr<common_agent_sandbox_docker_runtime> docker_runtime;
+        std::shared_ptr<common_agent_sandbox_kubernetes_runtime> kubernetes_runtime;
+        std::shared_ptr<common_agent_sandbox_lxc_runtime> lxc_runtime;
+#endif
+        std::shared_ptr<common_agent_workspace_manager> workspace_manager;
+        if (needs_sandbox_assembly()) {
+            auto sandbox_assembly = make_agent_host_sandbox_assembly({
+                request.sandbox,
+                request.tool_context.scope,
+                resource_store,
+            });
+#if LLAMA_AGENT_SANDBOX
+            docker_runtime = std::move(sandbox_assembly.docker_runtime);
+            kubernetes_runtime = std::move(sandbox_assembly.kubernetes_runtime);
+            lxc_runtime = std::move(sandbox_assembly.lxc_runtime);
+#endif
+            workspace_manager = std::move(sandbox_assembly.workspace_manager);
+            bindings.sandbox_execute = std::move(sandbox_assembly.execute);
+        } else {
+            bindings.sandbox_execute = make_agent_host_sandbox_assembly({
+                request.sandbox,
+                request.tool_context.scope,
+                resource_store,
+            }).execute;
+        }
+
+        if (needs_sandbox_assembly()) {
+            agent_resource_processing_assembly_request assembly;
+            assembly.policies = request.resource_processor_policies;
+            assembly.sandbox_classes = request.sandbox.classes;
+            assembly.sandbox_defaults = request.sandbox.defaults;
+#if LLAMA_AGENT_SANDBOX
+            assembly.docker_runtime = docker_runtime;
+            assembly.kubernetes_runtime = kubernetes_runtime;
+            assembly.lxc_runtime = lxc_runtime;
+            assembly.local_runtime = std::make_shared<common_agent_sandbox_local_runtime>();
+#else
+            assembly.local_runtime = std::make_shared<common_agent_sandbox_unavailable_runtime>();
+#endif
+            assembly.workspace_manager = workspace_manager;
+            assembly.resource_store = resource_store;
+            assembly.sandbox_backend = request.sandbox.backend;
+            bindings.resource_processing_provider_factory =
+                make_agent_resource_processing_provider_factory(std::move(assembly));
+        }
+
+        selection.tooling.resource_runtime.processing_provider_factory =
+            bindings.resource_processing_provider_factory;
+
+        native_provider = std::make_unique<native_agent_tool_provider>(
+            tool_catalog,
+            [bindings](const agent_tool_context & context, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
+                resolved = bindings;
+                resolved.resource_runtime.namespace_id = context.scope.namespace_id;
+                resolved.resource_runtime.session_id = context.scope.session_id;
+                resolved.resource_runtime.project_id = context.scope.project_id;
+                resolved.resource_runtime.turn_id = context.scope.turn_id;
+                binding_error.clear();
+                return true;
+            });
+    }
+
+    std::vector<std::unique_ptr<mcp_agent_tool_provider>> mcp_providers;
+    for (const auto & provider_request : request.mcp_providers) {
+        const auto client_request = agent_mcp_client_factory_request{
+            provider_request.server_name,
+            provider_request.transport,
+            provider_request.command_line,
+            provider_request.url,
+            provider_request.bearer_token,
+            provider_request.allowed_tools,
+            provider_request.connect_timeout_ms,
+            provider_request.request_timeout_ms,
+            provider_request.shutdown_timeout_ms,
+            provider_request.max_result_bytes,
+        };
+        auto client = make_agent_mcp_client(client_request, error);
+        if (!client) return false;
+        auto provider = std::make_unique<mcp_agent_tool_provider>(
+            provider_request.server_name,
+            *client,
+            provider_request.exposed_name_prefix);
+        selection.mcp_clients.push_back(std::move(client));
+        mcp_providers.push_back(std::move(provider));
+    }
+
+    std::vector<std::string> openapi_read_tools;
+    for (const auto & provider_config : request.openapi_providers) {
+        if (!provider_config.enabled) continue;
+        const std::filesystem::path configured_spec_path(provider_config.spec_path);
+        const std::filesystem::path spec_path = configured_spec_path.is_absolute() ||
+                provider_config.source_directory.empty()
+            ? configured_spec_path
+            : std::filesystem::path(provider_config.source_directory) / configured_spec_path;
+        std::ifstream spec_file(spec_path);
+        if (!spec_file) {
+            if (provider_config.required) {
+                error = "required OpenAPI spec could not be opened: " + spec_path.string();
+                return false;
+            }
+            continue;
+        }
+        nlohmann::json spec;
+        std::string provider_error;
+        try { spec_file >> spec; }
+        catch (const std::exception & exception) {
+            provider_error = "OpenAPI spec could not be parsed: " + std::string(exception.what());
+        }
+        if (!provider_error.empty()) {
+            if (provider_config.required) { error = provider_error; return false; }
+            continue;
+        }
+        agent_openapi_catalog catalog;
+        if (!build_agent_openapi_catalog(spec, provider_config, catalog, provider_error)) {
+            if (provider_config.required) {
+                error = "OpenAPI provider '" + provider_config.id + "' failed: " + provider_error;
+                return false;
+            }
+            continue;
+        }
+        for (const auto & operation : catalog.operations) {
+            if (operation.read_only && !operation.auth_required) {
+                openapi_read_tools.push_back(agent_openapi_exposed_tool_name(catalog, operation));
+            }
+        }
+        const std::string provider_id = provider_config.id;
+        common_agent_data_store * openapi_data_store = request.data_store != nullptr
+            ? request.data_store : selection.owned_data_store.get();
+        const auto materializer = [resource_store, openapi_data_store, provider_id](
+                const agent_tool_context & context,
+                const agent_openapi_operation & operation,
+                const std::string & arguments_json,
+                agent_openapi_execution_result & result,
+            std::string & materializer_error) {
+            const bool json_response = result.mime_type.rfind("application/json", 0) == 0;
+            if (json_response && openapi_data_store != nullptr) {
+                agent_openapi_result_projection projection;
+                if (!classify_agent_openapi_result_json(
+                        result.structured_content_json,
+                        agent_openapi_result_projection_limits{}, projection,
+                        materializer_error, operation.result_schema_json)) {
+                    return false;
+                }
+                if (projection.kind == agent_openapi_result_projection_kind::dataset) {
+                    if (resource_store == nullptr) {
+                        materializer_error = "OpenAPI dataset materialization requires a resource store";
+                        return false;
+                    }
+                    const auto value = json::parse(projection.rows_json, nullptr, false);
+                    agent_resource_put_request source_request;
+                    source_request.name = provider_id + "-" + operation.operation_id + ".json";
+                    source_request.description = "Raw bounded response from OpenAPI operation " + operation.operation_id;
+                    source_request.mime_type = result.mime_type;
+                    source_request.scope = common_runtime_resource_scope::turn;
+                    source_request.namespace_id = context.scope.namespace_id;
+                    source_request.session_id = context.scope.session_id;
+                    source_request.project_id = context.scope.project_id;
+                    source_request.turn_id = context.scope.turn_id;
+                    source_request.source_provider = provider_id;
+                    source_request.source_tool = operation.operation_id;
+                    source_request.created_at = std::time(nullptr);
+                    source_request.metadata.source_provider = provider_id;
+                    source_request.metadata.source_operation = operation.operation_id;
+                    source_request.metadata.source_request_json = arguments_json;
+                    source_request.metadata.retrieved_at = source_request.created_at;
+                    source_request.metadata.content_summary = "Bounded OpenAPI collection retained as dataset source.";
+                    source_request.metadata.limitations = "Host-bounded response; pagination requires an explicit plan step.";
+                    source_request.text = result.structured_content_json;
+                    agent_resource_descriptor source_descriptor;
+                    if (!resource_store->put_text(source_request, source_descriptor, materializer_error)) {
+                        return false;
+                    }
+                    source_descriptor.metadata.content_hash = source_descriptor.sha256;
+                    result.resource_refs.push_back(source_descriptor);
+                    json worksheet = {{"name", operation.operation_id}, {"index", 0},
+                        {"columns", json::array()}, {"rows", value}};
+                    for (const auto & column : projection.columns) {
+                        common_agent_dataset_column_type type = common_agent_dataset_column_type::unknown;
+                        for (const auto & row : value) {
+                            if (!row.contains(column) || row[column].is_null()) continue;
+                            if (row[column].is_boolean()) type = common_agent_dataset_column_type::boolean;
+                            else if (row[column].is_number_integer()) type = common_agent_dataset_column_type::integer;
+                            else if (row[column].is_number()) type = common_agent_dataset_column_type::decimal;
+                            else if (row[column].is_string()) type = common_agent_dataset_column_type::string;
+                            break;
+                        }
+                        worksheet["columns"].push_back({
+                            {"name", column},
+                            {"type", common_agent_dataset_column_type_name(type)},
+                            {"nullable", true}});
+                    }
+                    agent_dataset_import_request import;
+                    import.source_resource_uri = source_descriptor.uri;
+                    import.source_workbook_name = provider_id + "-" + operation.operation_id;
+                    import.source_representation = "openapi:json";
+                    import.source_representation_uri = import.source_resource_uri;
+                    import.origin_kind = "openapi_collection";
+                    import.import_processor_id = "openapi-json-dataset-import-v1";
+                    import.import_processor_version = "1";
+                    import.worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
+                    std::vector<common_agent_dataset_descriptor> imported;
+                    if (!import_agent_worksheet_envelope(*openapi_data_store, import, imported, materializer_error) || imported.size() != 1) {
+                        return false;
+                    }
+                    // The dataset import owns the tabular identity, while the
+                    // OpenAPI host owns the acquisition provenance. Copy the
+                    // latter onto the model-facing ref so it survives after
+                    // the temporary import descriptor is no longer in scope.
+                    imported.front().ref.source_provider = provider_id;
+                    imported.front().ref.source_operation = operation.operation_id;
+                    imported.front().ref.source_request_json = arguments_json;
+                    imported.front().ref.retrieved_at = source_request.created_at;
+                    imported.front().ref.content_hash = source_descriptor.sha256;
+                    result.dataset_refs.push_back(imported.front().ref);
+                    result.structured_content_json = json({
+                        {"materialized", "dataset"},
+                        {"dataset", imported.front().ref.uri},
+                        {"source_resource", source_descriptor.uri},
+                        {"rows", imported.front().ref.row_count},
+                        {"columns", imported.front().ref.column_count},
+                        {"representation", "openapi:json"},
+                    }).dump();
+                    result.text_content = "OpenAPI collection materialized as dataset " + imported.front().ref.uri;
+                    return true;
+                }
+            }
+            // Once a data store is available, non-tabular JSON must remain a
+            // resource as well. Keeping it inline would make the model see a
+            // complex response without a stable resource handle, while the
+            // dataset path above deliberately returns a compact summary.
+            if (json_response && openapi_data_store == nullptr &&
+                    result.structured_content_json.size() <= 2048) return true;
+            if (resource_store == nullptr) {
+                materializer_error = "OpenAPI result materialization requires a resource store";
+                return false;
+            }
+            const std::string raw_response = result.structured_content_json;
+            agent_resource_put_request request;
+            request.name = provider_id + "-" + operation.operation_id + ".result";
+            request.description = "Bounded result from OpenAPI operation " + operation.operation_id;
+            request.mime_type = result.mime_type;
+            request.scope = common_runtime_resource_scope::turn;
+            request.namespace_id = context.scope.namespace_id;
+            request.session_id = context.scope.session_id;
+            request.project_id = context.scope.project_id;
+            request.turn_id = context.scope.turn_id;
+            request.source_provider = provider_id;
+            request.source_tool = operation.operation_id;
+            request.created_at = std::time(nullptr);
+            request.metadata.source_provider = provider_id;
+            request.metadata.source_operation = operation.operation_id;
+            request.metadata.source_request_json = arguments_json;
+            request.metadata.retrieved_at = request.created_at;
+            request.metadata.content_summary = "Bounded OpenAPI response retained for later resource/dataflow use.";
+            request.metadata.limitations = "Host-bounded response; pagination and links require explicit validation.";
+            agent_resource_descriptor descriptor;
+            const bool text_payload = json_response || result.mime_type.rfind("text/", 0) == 0;
+            bool stored = false;
+            if (text_payload) {
+                request.text = raw_response;
+                stored = resource_store->put_text(request, descriptor, materializer_error);
+            } else {
+                request.bytes = raw_response;
+                request.bytes_are_authoritative = true;
+                stored = resource_store->put_bytes(request, descriptor, materializer_error);
+            }
+            if (!stored) return false;
+            descriptor.metadata.content_hash = descriptor.sha256;
+            result.resource_refs.push_back(std::move(descriptor));
+            if (json_response) result.structured_content_json = model_facing_openapi_json(raw_response);
+            return true;
+        };
+        auto executor = make_agent_openapi_http_executor(provider_config);
+        const auto executor_override = request.openapi_executor_overrides.find(provider_config.id);
+        if (executor_override != request.openapi_executor_overrides.end()) {
+            executor = executor_override->second;
+        }
+        selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
+            std::move(catalog), std::move(executor), materializer));
+    }
+
+    if (request.dynamic_openapi_registry != nullptr) {
+        for (const auto & registration : request.dynamic_openapi_registry->snapshot()) {
+            for (const auto & operation : registration.catalog.operations) {
+                if (operation.read_only && !operation.auth_required) {
+                    openapi_read_tools.push_back(
+                        agent_openapi_exposed_tool_name(registration.catalog, operation));
+                }
+            }
+            const auto provider_id = registration.config.id;
+            const auto materializer = [resource_store, provider_id](
+                    const agent_tool_context & context,
+                    const agent_openapi_operation & operation,
+                    const std::string & arguments_json,
+                    agent_openapi_execution_result & result,
+                    std::string & materializer_error) {
+                if (resource_store == nullptr) {
+                    materializer_error = "dynamic OpenAPI result requires the host resource store";
+                    return false;
+                }
+                agent_resource_put_request put;
+                put.name = provider_id + "-" + operation.operation_id + ".json";
+                put.description = "Bounded response from a session-scoped dynamic OpenAPI provider.";
+                put.mime_type = result.mime_type.empty() ? "application/json" : result.mime_type;
+                const bool text_payload = put.mime_type.rfind("application/json", 0) == 0 ||
+                    put.mime_type.rfind("text/", 0) == 0;
+                if (text_payload) {
+                    put.text = result.structured_content_json;
+                } else {
+                    put.bytes = result.structured_content_json;
+                    put.bytes_are_authoritative = true;
+                }
+                put.scope = common_runtime_resource_scope::session;
+                put.namespace_id = context.scope.namespace_id;
+                put.session_id = context.scope.session_id;
+                put.project_id = context.scope.project_id;
+                put.turn_id = context.scope.turn_id;
+                put.source_provider = provider_id;
+                put.source_tool = operation.operation_id;
+                put.created_at = std::time(nullptr);
+                put.metadata.source_provider = provider_id;
+                put.metadata.source_operation = operation.operation_id;
+                put.metadata.source_request_json = arguments_json;
+                put.metadata.retrieved_at = put.created_at;
+                put.metadata.content_summary = "Bounded dynamic OpenAPI response retained as a host resource.";
+                put.metadata.limitations = "Read-only single request; pagination requires an explicit plan step.";
+                agent_resource_descriptor descriptor;
+                if (!resource_store->put_text(put, descriptor, materializer_error)) return false;
+                descriptor.metadata.content_hash = descriptor.sha256;
+                result.resource_refs.push_back(std::move(descriptor));
+                return true;
+            };
+            auto executor = make_agent_openapi_http_executor(registration.config);
+            const auto executor_override = request.openapi_executor_overrides.find(provider_id);
+            if (executor_override != request.openapi_executor_overrides.end()) {
+                executor = executor_override->second;
+            }
+            selection.openapi_providers.push_back(std::make_unique<agent_openapi_tool_provider>(
+                registration.catalog,
+                std::move(executor),
+                materializer));
+        }
+    }
+
+    if (native_provider || !mcp_providers.empty() || !selection.openapi_providers.empty()) {
+        composite_agent_tool_provider provider;
+        if (native_provider) {
+            provider.add_provider(*native_provider);
+        }
+        for (const auto & mcp_provider : mcp_providers) {
+            provider.add_provider(*mcp_provider);
+        }
+        for (const auto & openapi_provider : selection.openapi_providers) {
+            provider.add_provider(*openapi_provider);
+        }
+
+        if (!(selection.tool_view = provider.resolve_tools(resolved_tool_context, error))) {
+            error = "tool provider resolution failed: " + error;
+            return false;
+        }
+        selection.tooling.tools = selection.tool_view->chat_tools();
+        for (const auto & name : openapi_read_tools) {
+            if (std::any_of(selection.tooling.tools.begin(), selection.tooling.tools.end(),
+                    [&](const common_chat_tool & tool) { return tool.name == name; })) {
+                selection.tooling.capability_tools["openapi.read"].push_back(name);
+            }
+        }
+        if (!selection.tooling.capability_tools["openapi.read"].empty()) {
+            selection.tooling.capabilities.push_back("openapi.read");
+            selection.tooling.available_context.push_back("context.openapi.available");
+        }
+        std::sort(selection.tooling.capabilities.begin(), selection.tooling.capabilities.end());
+        selection.tooling.capabilities.erase(std::unique(
+            selection.tooling.capabilities.begin(), selection.tooling.capabilities.end()),
+            selection.tooling.capabilities.end());
+        std::sort(selection.tooling.available_context.begin(), selection.tooling.available_context.end());
+        selection.tooling.available_context.erase(std::unique(
+            selection.tooling.available_context.begin(), selection.tooling.available_context.end()),
+            selection.tooling.available_context.end());
+        selection.tooling.profile_tools_active = true;
+        selection.tooling.tool_view = selection.tool_view.get();
+        error.clear();
+        return true;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool resolve_agent_cli_tool_selection(
+        common_memory_store & store,
+        common_plan_store * plan_store,
+        agent_resource_store * resource_store,
+        std::string * current_plan_id,
+        const args & options,
+        const common_memory_query & query,
+        bool memory_enabled,
+        common_agent_cli_tool_selection & selection,
+        std::string & error) {
+    selection = {};
+    std::unique_ptr<agent_embedding_provider> embedding_provider;
+    if (memory_enabled) {
+        embedding_provider = std::make_unique<cli_agent_embedding_provider>(options);
+    }
+
+    const auto repository_root = !options.repository_root.empty()
+        ? std::filesystem::weakly_canonical(options.repository_root).string()
+        : std::string();
+    auto request = make_agent_cli_tool_selection_request(options, query, repository_root);
+    // The CLI runtime resolves its tool view before inference. Provide the
+    // same host-owned dynamic registry used by the OpenAPI connect binding at
+    // that point, otherwise `openapi.connect` is silently omitted from the
+    // model-facing family catalog even when the selected profile enables it.
+    // Keep the registry alive with the tooling/provider view for the whole
+    // turn; the daemon's session host supplies its own session-scoped registry.
+    auto dynamic_openapi_registry = std::make_shared<agent_openapi_dynamic_registry>();
+    request.dynamic_openapi_registry = dynamic_openapi_registry;
+    const bool ok = resolve_agent_host_tool_selection(
+        store,
+        plan_store,
+        resource_store,
+        current_plan_id,
+        options.tool_profile,
+        request,
+        query,
+        embedding_provider.get(),
+        selection,
+        error);
+    if (ok) {
+        selection.embedding_provider = std::move(embedding_provider);
+        selection.tooling.owned_resources.push_back(
+            std::static_pointer_cast<void>(std::move(dynamic_openapi_registry)));
+    }
+    return ok;
+}
+
+std::vector<common_agent_tool_argument_binding>
+make_agent_host_openapi_argument_bindings(
+        const std::vector<agent_host_openapi_provider_config> & providers) {
+    std::vector<common_agent_tool_argument_binding> bindings;
+    for (const auto & provider : providers) {
+        if (!provider.enabled) continue;
+        const std::string prefix = provider.prefix.empty() ? provider.id : provider.prefix;
+        for (const auto & operation : provider.operations) {
+            if (!operation.second.enabled) continue;
+            const std::string tool_name = prefix.empty()
+                ? operation.first
+                : prefix + "." + operation.first;
+            // A provider default projection is host policy, not an argument
+            // the model should reconstruct or override.  Keep it separate
+            // from explicitly model-visible workflow bindings.
+            if (!operation.second.default_projection.empty()) {
+                bindings.push_back({
+                    tool_name,
+                    json({{"select", operation.second.default_projection}}).dump(),
+                    "config://openapi/" + provider.id + "/" + operation.first + "/default-projection",
+                    false});
+            }
+            if (operation.second.bound_arguments_json == "{}") continue;
+            const auto bound = json::parse(operation.second.bound_arguments_json, nullptr, false);
+            if (bound.is_discarded() || !bound.is_object() || bound.empty()) continue;
+            bindings.push_back({
+                tool_name,
+                bound.dump(),
+                "config://openapi/" + provider.id + "/" + operation.first,
+                true});
+        }
+    }
+    return bindings;
+}
+
+common_agent_runtime_turn_request make_agent_cli_runtime_turn_request(
+        const args & options,
+        const common_agent_scope & scope,
+        const common_agent_orchestration_config & orchestration_config,
+        common_memory_scope memory_scope,
+        bool memory_enabled,
+        const std::string & fallback_reason,
+        agent_embedding_provider * embedding_provider,
+        common_agent_request request,
+        common_agent_generation_options generation_options,
+        std::vector<common_agent_input_resource> input_resources) {
+    const auto bindings = make_agent_host_openapi_argument_bindings(options.openapi_providers);
+    request.tool_argument_bindings.insert(
+        request.tool_argument_bindings.end(), bindings.begin(), bindings.end());
+    common_agent_runtime_turn_request turn_request;
+    turn_request.request = std::move(request);
+    turn_request.request.input_resources = std::move(input_resources);
+    turn_request.request.require_tool_execution = options.require_tool_execution;
+    turn_request.request.tool_output_format = options.tool_output_format;
+    turn_request.scope = scope;
+    // Keep the resident-host policy fields explicit.  This used to be a
+    // positional aggregate; after reserve_flydelta_workspace was added to
+    // the contract, that silently disabled the 99 -> auto-fit translation
+    // and shifted agent_trace into the cvec-batch field for CLI runtime turns.
+    common_agent_inference_options inference_options;
+    inference_options.model = options.model;
+    inference_options.n_predict = options.n_predict;
+    inference_options.n_gpu_layers = options.n_gpu_layers;
+    inference_options.fit_params = true;
+    inference_options.n_threads = options.n_threads;
+    inference_options.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
+    inference_options.n_parallel = 1;
+    inference_options.n_sequences = 1;
+    inference_options.reserve_flydelta_workspace = true;
+    inference_options.per_sequence_cvec_batch = false;
+    inference_options.agent_trace = options.agent_trace;
+    turn_request.inference_options = make_agent_inference_options(std::move(inference_options));
+    turn_request.inference_options.n_threads = options.n_threads;
+    turn_request.inference_options.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
+    turn_request.policy = make_agent_runtime_policy({
+        options.agent_inference_backend,
+        options.tool_profile,
+        options.memory_learn,
+        options.memory_learn_show_candidate,
+        options.plan_show_summary,
+        options.agent_trace,
+        static_cast<size_t>(options.max_tool_rounds),
+        options.tool_capabilities,
+        options.tool_profiles,
+    });
+    std::string deliberation_error;
+    common_agent_deliberation_policy deliberation_policy;
+    if (resolve_common_agent_deliberation_policy(
+            options.thinking_mode,
+            options.max_reflection_rounds,
+            options.max_plan_revisions,
+            options.max_research_iterations,
+            deliberation_policy,
+            deliberation_error)) {
+        deliberation_policy.max_tool_rounds = options.max_tool_rounds > 0
+            ? static_cast<int>(options.max_tool_rounds)
+            : deliberation_policy.max_tool_rounds;
+        turn_request.policy.deliberation_policy = deliberation_policy;
+    }
+    turn_request.runtime_config = make_agent_runtime_config({
+        {options.n_predict, options.planner_n_predict, options.n_threads, options.generation_trace, options.agent_trace, static_cast<size_t>(std::max(0, options.context_size)), options.context_budgets},
+        options.context_budgets,
+        options.memory_learn == "post-turn",
+        {options.memory_learn_min_confidence, options.memory_learn_min_reuse},
+        [embedding_provider](const std::string & text, std::vector<float> & embedding, std::string & error) {
+            return embedding_provider != nullptr &&
+                embedding_provider->embed("memory candidate", text, embedding, error);
+        },
+        options.max_continuations,
+    });
+    turn_request.runtime_config.generation_config.agent_trace = options.agent_trace;
+    turn_request.runtime_config.generation_config.memory_learning_n_predict =
+        options.memory_learning_n_predict;
+    turn_request.runtime_config.generation_config.enable_tool_family_routing =
+        options.agent_plan == "auto";
+    turn_request.orchestration_config = orchestration_config;
+    turn_request.generation_options = generation_options;
+    turn_request.generation_options.generation_trace = options.generation_trace;
+    if (turn_request.generation_options.n_threads < 1) {
+        turn_request.generation_options.n_threads = options.n_threads;
+    }
+    if (!turn_request.generation_options.t_max_predict_ms && options.inference_step_timeout_ms > 0) {
+        turn_request.generation_options.t_max_predict_ms = options.inference_step_timeout_ms;
+    }
+    if (!turn_request.generation_options.t_max_prompt_ms && options.inference_step_timeout_ms > 0) {
+        turn_request.generation_options.t_max_prompt_ms = options.inference_step_timeout_ms;
+    }
+    turn_request.memory_scope = memory_scope;
+    turn_request.memory_enabled = memory_enabled;
+    turn_request.fallback_reason = fallback_reason;
+    return turn_request;
+}
+
+common_agent_runtime_host_inputs make_agent_cli_runtime_host_chat_inputs(
+        common_memory_store & store,
+        args & options,
+        const std::vector<common_chat_msg> & messages,
+        common_memory_scope memory_scope,
+        const std::vector<common_memory_hit> & memories,
+        bool memory_enabled,
+        const std::string & fallback_reason,
+        const common_agent_runtime_tooling & tooling,
+        agent_embedding_provider * embedding_provider,
+        common_agent_runtime_host_post_run post_run,
+        std::vector<common_agent_input_resource> input_resources) {
+    common_agent_scope runtime_scope = common_cli_make_agent_scope_with_matching_plan_scope(options);
+    common_agent_request request;
+    request.messages = messages;
+    common_agent_generation_options generation_options;
+    generation_options.n_threads = options.n_threads;
+    auto turn_request = make_agent_cli_runtime_turn_request(
+        options,
+        runtime_scope,
+        make_agent_orchestration_config({
+            options.prompt,
+            options.agent_plan,
+            options.agent_blueprint,
+            options.agent_bootstrap,
+            options.agent_import,
+            options.agent_export,
+        }),
+        memory_scope,
+        memory_enabled,
+        fallback_reason,
+        embedding_provider,
+        std::move(request),
+        generation_options,
+        std::move(input_resources));
+    common_agent_runtime_host_build_context build_context{
+        store,
+        nullptr,
+        std::move(turn_request),
+        nullptr,
+        nullptr,
+        memories,
+        tooling,
+    };
+    auto inputs = make_agent_runtime_host_chat_inputs(build_context);
+    inputs.reset_session_on_completion = true;
+    inputs.post_run = std::move(post_run);
+    return inputs;
+}
+
+common_agent_runtime_host_inputs make_agent_cli_runtime_host_agent_inputs(
+        common_memory_store & store,
+        common_plan_store & plan_store,
+        args & options,
+        common_agent_scope & scope,
+        std::string & current_plan_id,
+        const std::vector<common_blueprint_candidate> & installed_blueprint_candidates,
+        const common_agent_orchestration_config & orchestration_config,
+        common_memory_scope memory_scope,
+        const std::vector<common_memory_hit> & memories,
+        bool memory_enabled,
+        const std::string & fallback_reason,
+        const common_agent_runtime_tooling & tooling,
+        agent_embedding_provider * embedding_provider,
+        common_agent_runtime_host_post_run post_run,
+        std::vector<common_agent_input_resource> input_resources) {
+    auto turn_request = make_agent_cli_runtime_turn_request(
+        options,
+        scope,
+        orchestration_config,
+        memory_scope,
+        memory_enabled,
+        fallback_reason,
+        embedding_provider);
+    turn_request.request.input_resources = std::move(input_resources);
+    common_agent_runtime_host_build_context build_context{
+        store,
+        &plan_store,
+        std::move(turn_request),
+        &current_plan_id,
+        &installed_blueprint_candidates,
+        memories,
+        tooling,
+    };
+    auto inputs = make_agent_runtime_host_agent_inputs(build_context, orchestration_config);
+    inputs.reset_session_on_completion = true;
+    inputs.post_run = std::move(post_run);
+    return inputs;
+}
+
+int finish_agent_cli_runtime_result(const common_agent_result & result) {
+    std::printf("%s\n", result.response.c_str());
+    std::fprintf(stderr, "decoded %d tokens\n", result.total_decoded_tokens);
+    return 0;
+}

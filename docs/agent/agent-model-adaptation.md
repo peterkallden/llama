@@ -1,0 +1,1962 @@
+# Agent Model Adaptation
+
+## Status
+
+The observation, transaction, candidate, corpus, trainer-job, adapter-registry,
+cause-classification, runtime assembly, artifact-import, and evaluation-report
+contracts exist. The local adaptation worker is implemented as a separate
+queue-consuming process. It can run the deterministic `fake-sft` trainer or an
+explicitly configured external trainer such as the supplied QLoRA helper.
+The shared corpus now supports SFT and same-context DPO projections, and a
+host admission bridge can derive candidates from resolved, host-verified
+FlyDelta relations. The bridge is not yet wired to automatically harvest or
+schedule those records from the daemon. Production training operations,
+production multi-model loading/routing, and daemon-driven automatic adapter
+activation remain separate work.
+
+The purpose of this work is not to make the model self-authorizing or to move
+runtime reasoning into model weights. It introduces a host-supervised path for
+turn evidence to become a reproducible, evaluated adapter candidate when that
+is demonstrably more appropriate than memory, a procedure, or a blueprint.
+
+The preferred name is **model adaptation**. The host owns every promotion and
+activation decision.
+
+### Current implementation status
+
+The local branch currently contains the first contract slices:
+
+- host-owned learning observations with signal, scope, verification, and
+  idempotency fields;
+- an optional runtime observer seam that is invoked for qualifying signals,
+  including failed turns, without affecting the user-facing result;
+- append-only in-memory and JSONL transaction stores with duplicate suppression;
+- destination qualification and a bounded training-candidate contract;
+- a deterministic JSONL corpus builder requiring explicitly approved and
+  redaction-attested candidates, with provenance, revocation, held-out,
+  split, duplicate, byte-bound, and bounded replay handling; objective selects
+  the existing SFT row shape or a DPO `prompt`/`chosen`/`rejected` projection;
+- a FlyDelta admission bridge that consumes resolved, host-verified relations,
+  approved learning cases, and transactions, and rejects unverified,
+  duplicate-task, or revision-mixed groups before using the existing candidate
+  contract;
+- a separate adaptation worker with one-shot and bounded watch modes, an
+  atomic file queue, a deterministic `fake-sft` trainer for protocol testing,
+  and an operator-configured external-trainer seam;
+- an append-only lifecycle journal for candidate, corpus, training-job,
+  training-result, and adapter status events, with idempotency conflict checks;
+- an external training job/result contract and a validated adapter registry
+  with explicit candidate/canary/active/retired/rejected transitions;
+- a host-side adapter artifact verifier that binds a manifest to a canonical
+  artifact root, rejects path and symlink escape, enforces a byte bound, and
+  recomputes the artifact SHA-256 before import;
+- an evaluation report contract that binds a candidate to its corpus, base
+  fingerprint, baseline/candidate profiles, test-suite revision, three
+  promotion gates, and runtime-intervention counts. It is a report binding,
+  not an evaluator or an automatic promotion mechanism;
+- a host-neutral model-profile contract for a base-model identity and bounded
+  adapter overlays, including a cache key that isolates model, tokenizer,
+  template, context, and adapter state;
+- a versioned model catalog contract bound to host configuration, with named
+  generation/embedding bases, explicit profiles, profile selection, relative
+  model paths, load policy, and bounded resident-model limits;
+- a host-level adaptation orchestrator and two smokes: a model-free end-to-end
+  lifecycle smoke using an explicit evaluator seam, and a model-agnostic
+  resident-inference smoke that verifies adaptation-ledger capture can be
+  reopened after a real model turn;
+- conservative host-side cause classification and recovery linking;
+- opt-in assembly wiring with an adaptation-store factory. The factory supports
+  in-memory, Cozo, SQLite, and explicit JSONL backends with the documented
+  priority order.
+
+The host configuration also carries an explicit `runtime.adaptation.flydelta`
+worker reservation. Its budget is validated against `limits.worker_count` and
+the daemon dispatcher owns the optional dedicated nearline lane. The lane is
+started only when the host supplies its FlyDelta evaluator callback, directly,
+through the backend-neutral `common_flydelta_model_host` registration, or
+through the `common_flydelta_model_adapter`; otherwise
+the reservation remains visible as configured-but-idle and no job is consumed.
+Changing this configuration remains restart-required and never silently
+reduces the normal daemon pool.
+
+This FlyDelta worker reservation is separate from the SFT/DPO adaptation
+orchestrator's `dispatch_mode` below; it is not a configuration switch for
+weight-training dispatch.
+
+The same configuration can opt the existing adaptation observer into bounded
+FlyDelta candidate capture with `capture_candidates=true`. This requires the
+normal adaptation capture and collection gates. Optional lifecycle journaling
+is configured separately with `lifecycle_backend` and `lifecycle_path`; a JSONL
+lifecycle journal must not reuse the transaction-ledger JSONL file. Candidate
+capture persists only stable references and fingerprints. It does not create a
+model adapter, run inference, or grant learning credit.
+
+The observation identity hash and corpus bundle hash are currently stable
+non-cryptographic identity hashes used for local deduplication and test
+reproducibility. Resource and artifact integrity must continue to use the
+existing SHA-256 stores. The corpus builder now enforces candidate-level
+redaction attestation, candidate revocation, held-out exclusion, deterministic
+splits, provenance, duplicate handling, and bounded host-selected replay.
+The redaction implementation is still an explicit caller/policy seam rather
+than a PII detector; semantic replay selection and production trainer
+deployment remain later sweeps. The runtime now has a process-wide residency
+seam with CLI and server-context loaders, but the daemon/bootstrap migration
+to named profiles is still pending. The current registry is metadata-only and
+does not load an adapter. The artifact verifier and evaluation report only
+establish import and promotion evidence; they do not train, evaluate, or
+activate a model by themselves. The host-level orchestration smoke performs an
+explicit evaluator call followed by explicit registry activation to exercise
+the lifecycle; the resident daemon does not perform that flow automatically.
+
+The model-profile catalog and router are documented in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+That document is the source of truth for the remaining loader and scheduler
+work; this document only describes how adaptation artifacts become eligible
+profiles.
+
+## Relation to FlyDelta sideband learning
+
+[FlyDelta sideband learning](agent-flydelta.md) is a separate experimental
+sideband for immutable, host-certified activation steering. Its model-free
+experiment, repair-evidence, basis and no-op-gate contracts now reuse this
+path's observation boundary, scope/redaction rules and evaluation discipline.
+It does **not** share the corpus/QLoRA artifact contract and must not be
+inserted into the existing LoRA adapter registry as if it were a weight
+adapter; it is not active runtime adaptation.
+
+The model-adaptation path remains the long-horizon reproducible corpus and
+training route. FlyDelta, if implemented and validated, is a bounded,
+reversible nearline association layer. Neither path may weaken deterministic
+host contracts or automatically activate from a single runtime observation.
+
+FlyDelta now also has a small dedicated experiment queue contract. A
+host-verified seed is wrapped in a typed `donor_capture`, `basis`,
+`counterfactual` or `delta_memory` job and stored as a bounded reference-only
+envelope. A donor job contains only capture-candidate IDs; the host callback
+resolves those IDs, performs fresh capture/inference and returns validated
+redacted manifests. Its
+`pending -> running -> succeeded/failed/cancelled` filesystem lifecycle uses
+the same atomic-rename and duplicate-suppression discipline as this path, but
+it is not the QLoRA worker queue. The existing worker accepts only
+`common_learning_training_job` plus a matching corpus bundle; it must not be
+given a FlyDelta job or be taught to guess FlyDelta semantics. The two paths
+share evidence, lifecycle and host-promotion principles, while keeping their
+artifacts and evaluators separate.
+
+The distinction also applies to workers. The existing
+`llama-agent-adaptation-worker` consumes corpus-backed training jobs and
+produces trainer artifacts. It must not consume a FlyDelta envelope. FlyDelta
+has a dedicated one-job/bounded-slice worker lane with a typed evaluator,
+donor-capture callbacks, resumable state and an explicit `next_action` from
+the FlyDelta orchestrator. The worker validates job identity and bounded
+outcome/manifests, persists the returned state and reports the next action;
+it does not recursively execute the next phase, train, promote or activate
+anything by itself. The host scheduler decides when to enqueue that next
+bounded slice, while FlyDelta retains transition policy. Both workers may be
+scheduled under the same total worker budget, but they retain separate job
+schemas, artifact registries and promotion gates.
+
+Host-taught FlyDelta concept extraction follows the same boundary. It is an
+explicit host-approved relation, such as a verified procedure blueprint with
+matched controls, not automatic reflection, user-correction inference or a
+new SFT route. The extractor produces experimental direction material for the
+existing FlyDelta search lane; it does not create learning credit, modify the
+base model or activate a sideband. The model-capable smoke and the resident
+daemon use the same bounded arm/model-host seam. The daemon binds the
+post-Bootstrap Shallow, Deep, TFO, orthogonal, augmentation and
+concept-capture/synthesis slices through typed state resolvers, lifecycle
+persistence and host callbacks before advertising the corresponding
+capability. The host continues to own scheduling, verification and
+persistence authority; a missing optional teaching-material or donor
+dependency leaves the relevant phase unavailable rather than causing the
+generic worker to guess.
+
+The runtime assembly provides the binding seam for this path through
+host-owned procedure, correction and concept-grounding providers. The host
+resolves semantic relations and minimal contrasts; the assembly forwards only
+resolved, host-approved relations to the existing learning/evidence and
+FlyDelta capture observers. This is a callback after durable transaction
+append, not a recursive worker phase and not a second persistence or registry
+path. A missing or unresolved relation remains diagnostic evidence and cannot
+grant learning credit. Explicit user concepts remain source evidence until the
+host provides independently verified grounded contrasts; user confirmation is
+not an admission source in this phase.
+
+The same assembly may forward each resolved relation to the host-owned
+FlyDelta teaching-material accumulator. That accumulator keeps relation
+references only, groups them by teaching/behavior identity plus the complete
+execution compatibility identity, and exposes separate relation-set and
+trajectory-material readiness. It is independent of capture-candidate
+collection, so concept material does not create a second inference path. A
+terminal augmentation slice with only a relation-ready group first enqueues a
+bounded `concept_capture` job; only a trajectory-ready group may enqueue
+`concept_synthesis`. The model adapter advertises each capability only when
+its corresponding host evaluator callback is actually registered. When the
+shared production material runtime is supplied, the server-host binding
+records the returned trajectory references in that same index before the
+worker reports the slice complete; the capture callback therefore cannot leave
+readiness stale after a successful capture.
+
+Concept synthesis remains a bounded producer of experimental direction
+material. Once its host callback is actually registered, the worker persists an
+immutable direction reference and reports it as a graft reference. The daemon
+scheduler uses that reference to enqueue the ordinary FlyDelta search pipeline
+again, carrying forward the originating capture and behavior-delta references
+while resetting stale search/augmentation state for the new Bootstrap slice.
+The graft does not promote the direction, increase evidence depth, or grant
+learning credit; subsequent utility, host verification and lifecycle gates are
+unchanged. If the model-facing concept callbacks are not registered, the
+capabilities remain unavailable rather than being advertised by the generic
+worker.
+
+The lifecycle stores share one persistence contract: the `payload_json` column
+contains the record payload, not the serialized lifecycle envelope. JSONL,
+SQLite and Cozo must therefore produce the same idempotent read-back; the
+backend contract test covers duplicate append and round-trip behavior.
+
+## Review conclusion and recommended adjustments
+
+The proposed direction is sound, provided that adaptation is treated as a
+second, offline lifecycle rather than as another runtime learning mode. The
+important boundary is:
+
+```text
+resident agent runtime  ->  evidence and bounded learning transactions
+external worker         ->  corpus build and training
+adapter registry        ->  validation, evaluation, activation, rollback
+```
+
+I recommend the following adjustments before implementation:
+
+1. A normal successful turn must not automatically become a training record.
+   Create a transaction only when a qualifying host signal exists, such as a
+   failure, a verified recovery, or an explicit correction. Ordinary success
+   may still contribute aggregate metrics, but must not silently grow a corpus.
+2. `successful_recovery` is evidence that a repaired path completed. It is not
+   by itself proof that the original model behavior was wrong, general, or
+   safe to teach. The candidate gate must require host verification and must
+   distinguish a model defect from a contract, policy, metadata, or missing
+   evidence defect.
+3. Keep one source of truth for runtime evidence. Existing plan observations,
+   memory, procedures, and resources remain evidence sources; adaptation
+   transactions and candidates are immutable derived records. Do not copy all
+   tool output or reflection text into a second durable store.
+4. Make deterministic qualification automatic but make corpus inclusion and
+   adapter activation explicit at first. This preserves throughput without
+   allowing an ambiguous correction to change model behavior silently.
+5. Start with one narrow behavior and SFT. Tool-contract compliance on
+   redacted fixture data is a better first target than free-form planning or
+   project-specific facts. DPO requires same-context chosen/rejected pairs,
+   which a recovery often does not provide; it is an explicit optional
+   objective, never inferred from a recovery.
+6. Start with one active adapter and an adapter-free baseline profile. A full
+   multi-model catalog is useful, but it should not block the first complete
+   transaction-to-adapter path.
+
+These adjustments keep the feature small enough to verify and prevent a
+second, competing memory system from emerging beside the existing learning
+and resource flows.
+
+## Integration with the existing learning path
+
+The existing learning path remains the first consumer of turn evidence. It
+already receives host-produced `learning_signals`, extracts bounded memory
+candidates, validates provenance and scope, stores accepted memory or
+procedures, and promotes verified procedures to blueprints. Model adaptation
+must be joined at the observation boundary, not by reusing the memory
+candidate schema or by creating a second interpretation of the turn.
+
+The shared lifecycle is:
+
+```text
+runtime completes or fails a turn
+             |
+             v
+     host learning observation
+        /                \
+       v                  v
+memory learner      adaptation observer
+       |                  |
+memory/procedure    transaction ledger
+       |                  |
+blueprint           qualification/corpus
+```
+
+The memory learner may continue to require a completed plan and final
+response. The adaptation observer must also be able to record a qualifying
+failure, because a failed turn can be important evidence even when no final
+answer exists. It must never make the runtime turn fail, train in the session
+lane, or change an active model.
+
+### Shared observation, separate destinations
+
+The existing `common_learning_signal` is the beginning of the shared
+observation contract. The adaptation seam should reuse its plan, step, tool,
+and evidence identity, while deriving namespace/project/session scope from
+the host request. It should add host-owned provenance and verification rather
+than asking the model to certify itself:
+
+- relation between a failure and a later recovery;
+- host classification of the suspected cause: model behavior, host contract,
+  policy, missing evidence, or project knowledge;
+- canonical tool family and provider kind (`native`, `mcp`, or `openapi`) when
+  a tool signal is involved; the provider kind is provenance and the family is
+  the model-facing taxonomy;
+- verification status and idempotency key;
+- bounded source references and content hashes.
+
+`common_memory_candidate` must not become the training-candidate contract.
+Memory candidates describe durable scoped knowledge; training candidates must
+describe an approved, redacted, potentially generalizable behavior with an
+explicit input and target. The two paths may share scope, hashing, and
+provenance helpers, but not their promotion policy.
+
+The shared `common_adaptation_evidence` contract is the next derived view over
+this boundary. It binds a source kind to a baseline execution, an alternative
+or repaired execution, a verifier reference and existing transaction IDs. It
+does not duplicate the transaction payload and it does not create an SFT pair.
+The source kind can be `tool_repair`, `reflection_alternative`,
+`planning_revision`, `research_alternative`, `dataset_resource`,
+`workflow_code`, `procedure_blueprint`, or `user_correction`; provider transport remains provenance,
+so native, MCP and OpenAPI tools use the same `tool_repair` path.
+
+The turn router may discover tool-repair, reflection, research,
+user-correction and dataset/resource matches from existing result fields. It
+does not infer a workflow/code or plan-revision relation from a generic status
+flag. The host must supply the comparison and verifier references explicitly.
+This keeps alternative reflection plans useful as candidate material without
+allowing a model-generated reflection to certify itself.
+
+The current runtime derives `successful_recovery` late, after a response has
+been accepted. The runtime finalization seam makes that signal visible to
+both consumers. It should also invoke adaptation for an error result when a
+qualifying signal exists, while retaining the current rule that ordinary
+successful turns do not become training data.
+
+The learning transaction observer exposes an optional read-only source
+collector callback for host integrations. It is invoked after the transaction
+has been appended and receives the discovered source match plus the stored
+transaction. Collection is best-effort: a collector outage must not fail the
+ledger append or the user-facing turn. The callback is a hand-off point only;
+it does not create a comparison relation, training pair, basis update or
+active adapter.
+
+### One ledger, explicit source adapters
+
+The source is preserved through the derived path
+`host signal -> adaptation evidence -> learning case -> training candidate ->
+corpus view`. One shared corpus can therefore contain tool-repair, planning,
+research and procedure/blueprint experience while a worker or evaluator
+selects a bounded source view. These are not separate learning systems: they
+share scope, idempotency, redaction, lifecycle and promotion contracts.
+
+The source-specific signal mapping is explicit:
+
+| signal | source | intended consumer |
+| --- | --- | --- |
+| `tool_failure` / `successful_recovery` | `tool_repair` | tool-repair candidate or FlyDelta experiment |
+| `reflection_hint` | `reflection_alternative` | curator/evaluator; never self-certifying |
+| `planning_revision` | `planning_revision` | planning adapter/corpus view |
+| `research_verification` | `research_alternative` | research evaluator or memory/procedure path |
+| `procedure_verification` / `blueprint_verification` | `procedure_blueprint` | procedure/blueprint learner |
+| `user_correction` | `user_correction` | host-curated memory or adaptation case |
+
+Enabling a domain does not collect every turn that happens to have a plan or
+every recovery. The corresponding host-owned signal and verifier must be
+present. A source may be retained in the shared ledger without being eligible
+for FlyDelta capture, SFT, or an activation overlay.
+
+### Versioned overlays
+
+An overlay is a versioned candidate artifact, not a mutable extension of the
+base model. A later learning sweep can produce `adapter-v2` or a new FlyDelta
+sideband from additional certified evidence. Each revision keeps its base,
+source/corpus and evaluation fingerprints, is evaluated against the prior
+active revision and can be promoted, canaried, retired or rolled back. The
+runtime should select one explicitly approved active revision per profile;
+silently stacking multiple unvalidated overlays would make attribution and
+rollback ambiguous. Consolidation or merging is a later, separately gated
+operation.
+
+FlyDelta uses this same opt-in boundary. Set
+`enable_flydelta_capture_candidates` only together with
+`enable_adaptation_capture=true` and
+`adaptation_config.collection_allowed=true`, then provide the host-owned
+`flydelta_model_profile_fingerprint` and
+`flydelta_capture_layout_revision`. The collector queues only tool-repair
+matches that already contain both failure/recovery evidence references. It
+does not turn reflection, research, user correction or an ordinary successful
+turn into a training pair. Those sources can still enter FlyDelta through an
+explicit host-verified relation. Every relation must carry a stable
+`behavior_key`; it is copied through the capture manifest and behavior delta,
+and the basis configuration matches both source and behavior key. A later
+capture/evaluation worker must create the immutable manifest and decide
+whether the candidate is useful.
+
+## End-to-end process and provider convergence
+
+Native, MCP, and OpenAPI tools enter adaptation through the same host-owned
+execution boundary. Their transport and failure details differ, but the
+learning process does not create a separate training path for each provider:
+
+```text
+model-facing compact tool contract
+              |
+              v
+     binding, normalization, policy
+              |
+       +------+------+
+       |             |
+    native          MCP/OpenAPI adapter
+       |             |
+       +------+------+
+              v
+       common tool execution
+              |
+              v
+       result + evidence IDs
+              |
+              v
+       learning signals
+       - tool_failure
+       - successful_recovery
+       - user_correction
+              |
+              v
+   optional adaptation observer
+              |
+              v
+   scoped learning transaction
+              |
+              v
+   cause classification and routing
+   memory / procedure / retain / candidate
+              |
+              v
+   curator-approved training candidate
+              |
+              v
+   deterministic SFT corpus JSONL
+              |
+              v
+   external trainer -> evaluation -> adapter registry
+```
+
+The provider result must preserve enough bounded provenance to identify the
+provider, operation/tool, plan step, scope, and evidence. An MCP transport
+failure, an OpenAPI authentication failure, a policy denial, and a malformed
+model tool call may all produce a `tool_failure`, but they must not receive the
+same cause classification. Only a verified, repeated model-behavior defect may
+proceed toward a training candidate. Binding, schema, auth, network, policy,
+and server defects are retained as operational evidence and routed for code
+or configuration repair instead.
+
+No provider creates an SFT pair directly. The observer records evidence; a
+curation step supplies the bounded `approved_prompt` and `approved_target`;
+the corpus builder then emits training rows. This keeps MCP and OpenAPI
+results reusable as evidence without allowing remote data, credentials, or a
+single accidental tool failure to become model weights.
+
+### Learning cases and redaction boundary
+
+The intermediate `common_learning_case` is the explicit bridge between an
+observation and a training candidate. It carries only bounded, curator-facing
+fields: source observation, complete scope, evidence ids, a tool/schema
+fingerprint, redacted input, rejected action, and preferred action. The runtime
+does not construct it by copying raw tool output, reflection text, credentials,
+or complete conversation history. A case must be marked `redacted` or
+`approved` before export; `draft` and `revoked` cases are rejected. The case
+content hash and source observation remain available for audit, while the
+corpus builder consumes only the approved prompt/target projection.
+
+The case also carries a separate redaction result: `redaction_policy_id`,
+`redaction_method`, and `redaction_status`. The current implementation is a
+stub seam, not a detector: `caller_asserted` records an explicit host
+assertion and does not prove that secrets or personal data are absent. A real
+redactor can later replace the seam and use `policy_checked`; it must preserve
+the same bounded output and revocation contract.
+
+## Current foundations
+
+The runtime already records several useful signals as bounded plan
+observations and exposes them in the terminal result:
+
+- `tool_failure`;
+- `successful_recovery`;
+- `reflection_hint`;
+- `user_correction`, including the caller-supplied source turn id.
+
+The post-turn memory learner already validates candidate shape and evidence,
+applies confidence and expected-reuse thresholds, detects duplicates and
+conflicts, and can promote a verified procedure to a blueprint. This is the
+right conceptual precedent, but it is not a model-training system.
+
+The deployed compatibility path still has one generation model (`model.path`)
+and an optional separate embedding model (`model.embedding_model`). The
+host-neutral catalog, profile contracts, residency manager and backend loaders
+now describe and implement the target seam, but daemon/bootstrap still needs
+to make that catalog the effective serving configuration. The remaining gap is
+production wiring and profile-aware scheduling behavior, not another
+adaptation or training contract.
+
+## Why a separate adaptation lifecycle is needed
+
+Most corrections should remain outside the weights:
+
+| Observed outcome | Preferred durable destination |
+| --- | --- |
+| User/project preference or current fact | scoped memory |
+| Reusable ordered work pattern | procedure, then blueprint when verified |
+| Missing tool metadata or a host-policy problem | repair the host contract or policy |
+| Missing resource/evidence | resource retrieval or research |
+| Repeated, general model behavior defect | training candidate |
+
+Fine-tuning is therefore an escalation path, not the default learning action.
+For example, a project-specific naming preference belongs in memory, while a
+repeated inability to emit a valid compact tool binding may be an adaptation
+candidate after host-side contract repairs have been ruled out.
+
+## Target architecture
+
+```text
+turn / plan / tool execution
+             |
+             v
+      learning transaction               append-only, host-owned evidence
+             |
+             v
+       qualification policy
+       /        |          \
+  memory   procedure      training candidate
+  or       / blueprint            |
+                                curator
+                                  |
+                                  v
+                         corpus revision + manifest
+                                  |
+                                  v
+                    local or remote external trainer
+                                  |
+                                  v
+                      candidate adapter + manifest
+                                  |
+                                  v
+               offline evaluation -> canary -> active / retired
+                                  |
+                                  v
+                     model profile used by runtime inference
+```
+
+The runtime must never run gradient training in a turn or make model-weight
+changes in-place. A trainer is an external worker, whether it runs as a local
+process or in another trusted instance.
+
+## Core concepts and contracts
+
+### Learning transaction
+
+A learning transaction is an immutable, append-only record of host-observed
+experience. It is not automatically training data. It references source data
+by identity and hash, preserving the facts needed to later audit why a case
+was considered.
+
+The capture rule is deliberately sparse: no transaction is created for an
+ordinary successful turn unless a configured sampling policy explicitly asks
+for a metric-only observation. A qualifying transaction must identify the
+signal, its bounded evidence, and the scope that authorized collection. A
+duplicate signal for the same source turn and evidence hashes must be
+idempotent.
+
+Conceptual shape:
+
+```json
+{
+  "schema_version": 1,
+  "id": "learning://transaction/01J...",
+  "created_at": "2026-08-29T12:00:00Z",
+  "source": {
+    "namespace_id": "local",
+    "project_id": "default",
+    "session_id": "web-123",
+    "turn_id": "turn-9812",
+    "plan_id": "plan-42"
+  },
+  "signals": ["tool_failure", "successful_recovery"],
+  "evidence_ids": ["tool:step_2:failure", "tool:step_3:result"],
+  "runtime_fingerprint": {
+    "agent_commit": "...",
+    "tool_catalog_hash": "sha256:...",
+    "policy_hash": "sha256:...",
+    "model_profile": "agent-default"
+  },
+  "content_policy": "redacted",
+  "payload_hash": "sha256:..."
+}
+```
+
+The transaction may retain host-local references to full material when policy
+allows it. Its portable representation must contain only explicitly admitted,
+redacted fields. Secrets, credentials, raw sensitive resources, opaque tool
+payloads, and internal scratch/reasoning text are excluded by default.
+
+### Training candidate
+
+A training candidate is a curated derivation from one or more transactions. It
+has a stated behavioral hypothesis, qualification evidence, and an approved
+model-facing target. It is distinct from its raw turn history.
+
+```json
+{
+  "schema_version": 1,
+  "id": "learning://candidate/01J...",
+  "transaction_ids": ["learning://transaction/01J..."],
+  "scope": "agent_behavior",
+  "hypothesis": "The model repeatedly emits invalid tool arguments for a stable contract.",
+  "training_kind": "sft",
+  "input": {"approved_prompt": "...", "contract_context": "..."},
+  "target": {"approved_action_or_response": "..."},
+  "qualification": {
+    "observed_occurrences": 18,
+    "verified_recoveries": 17,
+    "contradictions": 0,
+    "confidence": 0.91
+  },
+  "status": "approved_for_corpus"
+}
+```
+
+The first implementation should create supervised fine-tuning (SFT) candidates
+only. A successful recovery is not automatically a valid DPO pair: the repair
+often happens after new tool evidence has changed the context. DPO should be
+added only when rejected and chosen outputs were generated against the same
+bounded input contract. KTO is later work, not a first dependency.
+
+### Corpus revision
+
+A corpus revision is an immutable selection of approved candidates plus a
+manifest. The dataset builder is deterministic: the same candidate ids,
+redaction policy, ordering seed, and builder version must produce the same
+bundle hash.
+
+The manifest records candidate ids, source transaction ids, split counts,
+redaction policy, replay selection, held-out ids, and hashes. Each JSONL row
+also carries its source transaction ids and redaction attestation. A held-out
+candidate is excluded before row generation and cannot also be selected as
+replay material. Identical duplicate candidate records are collapsed; a
+conflicting record with the same id, or overlapping source transactions across
+different candidates, stops the build rather than silently changing
+provenance.
+
+The builder accepts replay ids selected by a host or ledger query and enforces
+`max_replay_candidates`. It does not claim to calculate semantic similarity;
+that selector belongs to a later indexed-ledger/worker layer. This keeps the
+corpus artifact reproducible and prevents an implicit background query from
+changing a revision.
+
+### Shared corpus and deterministic views
+
+The corpus is shared across learning domains. Planning, tool use, research,
+and procedure learning are not separate stores or separate trainer inputs;
+they are candidate metadata and deterministic views over the same approved
+candidate set. A view may select a `learning_domain` and, for tool-use cases,
+the canonical `tool_family`. It may optionally restrict `provider_kind` when
+an evaluation specifically needs native, MCP, or OpenAPI provenance.
+
+For example, a tool-use view for `diagnostics` includes equivalent candidates
+from all three transports when they describe the same model-facing family:
+
+```json
+{
+  "view": {
+    "learning_domain": "tool_use",
+    "tool_family": "diagnostics"
+  }
+}
+```
+
+`provider_kind` is recorded on each JSONL row as provenance, not as a second
+learning taxonomy. The host must provide the canonical family; it must not
+derive `diagnostics` from a transport name such as `mcp_diagnostics`. Empty
+view fields mean all values. Filtering happens before corpus qualification,
+while approval, redaction, bounds, replay, and provenance rules remain
+unchanged. This makes a view a reproducible projection rather than a hidden
+second corpus.
+
+### SFT and DPO projections; FlyDelta admission
+
+The immutable candidate/corpus path remains shared. SFT emits the established
+`input`/`target` rows. DPO is selected explicitly and emits
+`prompt`/`chosen`/`rejected`; admission requires a rejected response plus
+contrast and verifier provenance. A successful recovery alone is not a DPO
+pair. The optional `qlora-dpo` trainer is a separate configured worker command
+and consumes only the DPO projection. Trainer kind and objective are bound in
+the job identity and checked against the corpus manifest.
+
+`common_flydelta_admit_training_cases()` accepts resolved FlyDelta relations,
+their evidence, approved learning cases, and source transactions. The caller
+resolves these records from the existing stores; the bridge creates no second
+evidence store. It verifies host approval, evidence/transaction links,
+independent task fingerprints, and consistent model, tokenizer, template,
+behavior, and Oracle revisions before projecting candidates through the
+existing approval/redaction/qualification contract. At least three independent
+relations are required by default. Missing provenance is rejected rather than
+guessed. The derived candidates and corpus rows retain the relation, evidence,
+learning-case, contrast, model, tokenizer, template, and verifier revision
+references for later offline reproduction.
+
+Corpus splits are grouped by an explicit `split_group_key` when provided,
+otherwise by `teaching_key` (then `behavior_key`), so related examples
+cannot leak across train and held-out splits. If fewer than three
+independent groups are present, all rows are explicitly marked `train` in the
+manifest; this avoids producing a corpus with no training rows. Such a corpus
+does not gain a validation claim: the existing host evaluator remains the gate
+for adapter staging and promotion.
+
+The shared candidate contract also distinguishes
+`observed_model_behavior` from `host_verified_demonstration`. Placement-game
+Semi-Oracle examples use the latter only when the complete minimax ranking is
+persisted and the selected action proof is tied to the active session RuleSet
+revision. A curator must approve the candidate and provide a redaction
+attestation before corpus admission. These examples keep model occurrence and
+recovery counts at zero; the ordinary observed-behavior path retains its
+existing minimum counts. Symmetry-canonical game positions supply
+`split_group_key`, keeping rotated/reflected versions together. This is a
+curated SFT source through the same corpus and trainer-job contracts, not an
+automatic FlyDelta capture or adapter activation path. See
+[`agent-semi-oracle.md`](agent-semi-oracle.md) for the game-specific proof
+and scope rules.
+
+The orchestrator's `dispatch_mode` is currently a host-code setting, not a
+JSON/CLI host-config flag. It defaults to `offline`. To enable threshold-gated
+nearline dispatch in a host that constructs this orchestrator, set it and its
+batch threshold explicitly:
+
+```cpp
+config.dispatch_mode = agent_learning_dispatch_mode::nearline;
+config.auto_training_policy.min_qualified_examples = 6;
+config.training_group.learning_domain = "tool_use"; // optional filter
+config.training_group.tool_family = "data";          // optional filter
+```
+
+Nearline counts qualified, approved candidates in the supplied batch/group;
+the entire submitted batch must match and qualify, and the threshold must be
+met. The orchestrator forces the auto-training gate on when nearline is
+selected. To disable that gate and use the default direct path, leave the mode
+at `offline` or set it explicitly:
+
+```cpp
+config.dispatch_mode = agent_learning_dispatch_mode::offline;
+```
+
+Here `offline` means “do not require the nearline threshold,” not “defer this
+job to a later scheduler”: both modes currently enqueue and consume the worker
+synchronously through the same immutable corpus path. Nearline does not update
+serving weights inside an inference turn. The adaptation end-to-end smoke
+exercises both the offline default and a threshold-gated three-candidate
+nearline batch; run it with:
+
+```bash
+ctest --test-dir build --output-on-failure -R '^llama-agent-adaptation-e2e-ctest$'
+```
+
+Automatic daemon-side relation resolution and scheduled dispatch remain future
+wiring. Captured data remains durable and reproducible independently of when a
+host or operator chooses to dispatch it.
+
+### Adapter revision
+
+An adapter revision is an artifact plus a manifest. The manifest must bind it
+to a compatible base model and describe how it was produced:
+
+```json
+{
+  "schema_version": 1,
+  "id": "agent-adaptation-v1",
+  "status": "candidate",
+  "base": {
+    "architecture": "qwen2",
+    "model_fingerprint": "sha256:...",
+    "tokenizer_fingerprint": "sha256:...",
+    "chat_template_fingerprint": "sha256:..."
+  },
+  "corpus_revision": "learning-corpus@12",
+  "trainer": {"kind": "qlora-sft", "seed": 42, "code_revision": "..."},
+  "artifact": {"path": "adapters/agent-adaptation-v1.gguf", "sha256": "..."},
+  "evaluation": {"suite_revision": "adapter-eval@3", "status": "passed"}
+}
+```
+
+An adapter is never active merely because a trainer produced a file. The
+registry admits only a fully validated manifest. A candidate must then be
+staged as `canary` with a passed evaluation report whose adapter id, corpus
+revision, corpus hash, training fingerprint, and evaluation revision all
+match the manifest. Only a canary can be manually activated. This keeps the
+canary boundary explicit without making the registry run inference or promote
+automatically.
+
+## Data boundaries and privacy
+
+Training data must be materially more restrictive than normal local runtime
+state. The initial policy should be fail-closed:
+
+- collection is disabled by default;
+- each namespace/project chooses whether adaptation collection is allowed;
+- raw user resources and external API responses are excluded by default;
+- credentials, authorization headers, filesystem paths outside approved
+  project scope, and tool diagnostics are redacted or represented by typed
+  categories;
+- model scratch/reasoning and reflection prose are not corpus material;
+- remote export requires an explicit portable-bundle policy, not just a remote
+  trainer URL;
+- deleting or revoking a source scope marks dependent candidates and corpus
+  revisions unusable for future training.
+
+Local-only deployments may deliberately opt into broader retention, but this
+must be visible in configuration and manifests rather than being implied by a
+local file path.
+
+## Local and remote trainer topologies
+
+Both topologies share the same corpus and adapter contracts.
+
+### Local worker
+
+The daemon writes an approved immutable corpus bundle to a bounded work queue.
+A separate worker process consumes it. It has independent CPU/GPU, disk,
+deadline, and cancellation limits. The inference daemon does not share its
+active inference context with the trainer and does not run training work on its
+session lanes.
+
+This is the preferred initial topology for private development use.
+
+The worker is implemented as `llama-agent-adaptation-worker`. It processes at
+most one bundle per invocation:
+
+```text
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs
+```
+
+For a local service rather than a scheduler/cron invocation, use the explicit
+watch mode. It still processes one claimed job at a time; `--max-jobs` is
+useful for a bounded maintenance run:
+
+```text
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs --watch --poll-seconds 10
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs --watch --max-jobs 5
+```
+
+The queue has `pending`, `running`, `succeeded`, `failed`, and `cancelled`
+directories. A complete bundle is written to a staging directory and exposed
+by one atomic rename. Claiming is also an atomic rename, so two workers cannot
+claim the same directory. The worker writes a bounded `state.json`, a
+`result.json`, and a job-local artifact directory. A running state records the
+worker id, update time, and lease expiry. A later invocation moves an expired
+running lease to `failed` with a retryable summary, so a crashed one-shot
+worker does not leave the queue permanently blocked. A long-running external
+trainer is supervised by the worker: it renews state, enforces the deadline,
+checks the job-local cancellation marker, and drains combined child output into
+a bounded `trainer.log`. The child receives no corpus text on its command
+line; only paths inside the claimed directory.
+
+The worker enforces independent positive bounds for job metadata, corpus and
+manifest bytes, result bytes, artifact bytes, and job runtime. The current
+runtime is the minimum of the job deadline and the worker limit; the fake
+trainer is intentionally immediate. Capability
+discovery is explicit and side-effect free:
+
+```text
+llama-agent-adaptation-worker --capabilities
+```
+
+By default the response advertises `cuda: false`, `fake-sft` as the only
+trainer, and `max_parallel_jobs: 1`. An operator-configured trainer kind is
+also listed, but that says only that the worker can start it; it does not claim
+that CUDA, PEFT, a checkpoint, or an evaluation environment is available.
+
+`trainer_kind: "fake-sft"` remains built in. It creates a
+deterministic test artifact and computes its SHA-256, but the artifact is not a
+loadable model adapter. A production trainer is enabled only through an
+operator-owned argv prefix, for example:
+
+```bash
+llama-agent-adaptation-worker --queue var/agent/adaptation/jobs \
+  --trainer-command qlora-sft python3 \
+  --trainer-argument qlora-sft llama-agent-adaptation-qlora-trainer.py \
+  --trainer-argument qlora-sft --model \
+  --trainer-argument qlora-sft /models/Qwen2.5-1.5B-Instruct-hf \
+  --trainer-argument qlora-sft --base-config \
+  --trainer-argument qlora-sft /models/Qwen2.5-1.5B-Instruct-hf \
+  --trainer-argument qlora-sft --converter \
+  --trainer-argument qlora-sft /opt/llama/share/llama-agent/converter/convert_lora_to_gguf.py
+```
+
+The prefix is operator configuration, never model output and never a shell
+string. The worker appends `--job`, `--corpus`, `--corpus-manifest`,
+`--artifacts`, and `--result` itself. The supplied
+`agent-adaptation-qlora-trainer.py` uses a local Hugging Face checkpoint, PEFT,
+and bitsandbytes to produce a LoRA GGUF overlay. It intentionally refuses a Q4
+serving GGUF as a training checkpoint and fails clearly when CUDA or the
+optional Python dependencies are unavailable. The worker does not inspect the
+adaptation ledger, access raw resources, start automatically from the daemon,
+or activate/import an adapter.
+
+The helper is installed beside the worker, while `convert_lora_to_gguf.py`
+and its local converter modules are installed under
+`share/llama-agent/converter`. Their independent requirements files are installed under
+`share/llama-agent/requirements/`; install a PyTorch build that matches the
+worker host's CUDA stack first, then install both manifests in an
+operator-owned Python environment. The helper deliberately has no network
+download path: both `--model` and `--base-config` must be local checkpoint
+directories. The external process inherits the worker environment, so secrets
+must not be placed in that environment unless the configured trainer is fully
+trusted; environment allow-listing is a later hardening step.
+
+#### Worker contract in detail
+
+The worker is intentionally a small file-queue consumer. It does not inspect
+the learning ledger, choose candidates, build a corpus, load an inference
+model, or activate an adapter. A host or an orchestration job must create the
+approved `common_learning_training_job` and its matching corpus bundle first.
+The worker then performs only this transition:
+
+```text
+pending bundle
+    -> atomic claim
+running + lease
+    -> fake-sft or configured external trainer
+    -> result and artifact validation
+succeeded | failed | cancelled
+```
+
+The queue key is derived from the `learning://job/...` id. A normal bundle is:
+
+```text
+<queue-root>/pending/<job-key>/
+  job.json
+  corpus.jsonl
+  corpus-manifest.json
+```
+
+After an atomic claim, the directory is under `running/<job-key>`. The worker
+adds `state.json`, and an external trainer may add `trainer.log`,
+`result.json`, and files below `artifacts/`. The complete directory is moved
+as one unit to `succeeded`, `failed`, or `cancelled`; consumers must read the
+terminal directory rather than a still-running directory.
+
+`job.json` is the versioned trainer contract. The important identity fields
+are `corpus_revision_id`, `corpus_bundle_hash`, `base_training_fingerprint`,
+`trainer_kind`, `trainer_version`, `code_revision`, `seed`, and
+`deadline_seconds`. `trainer_kind` is explicit and participates in the job
+identity. The worker never infers it from a model name, an artifact filename,
+or model output. A result must repeat the job id, corpus bundle hash, base
+fingerprint, trainer kind, and trainer version. It must also contain a
+relative artifact path, a `sha256:` artifact hash, and an explicit evaluation
+status. `not_run` is valid at the worker boundary; it is not sufficient for
+adapter admission.
+
+The default worker limits are deliberately independent:
+
+| Limit | Default |
+| --- | ---: |
+| `max_job_bytes` | 64 KiB |
+| `max_corpus_bytes` | 64 MiB |
+| `max_manifest_bytes` | 1 MiB |
+| `max_result_bytes` | 1 MiB |
+| `max_artifact_bytes` | 64 MiB |
+| `max_job_runtime_seconds` | 86,400 s |
+| `worker_id` | `local-worker` |
+
+They can be lowered or raised per worker with the corresponding command-line
+options. The effective runtime is the smaller of the job deadline and the
+worker limit. These are process and file bounds, not a complete cgroup,
+container, GPU-memory, or disk quota. Production deployment should place the
+worker in an operator-controlled service/container with those additional
+limits.
+
+State handling is host-owned and bounded:
+
+- staging plus atomic rename prevents consumers from seeing a partial bundle;
+- atomic rename from `pending` to `running` prevents two workers claiming the
+  same job;
+- `state.json` is rewritten atomically and contains worker id, update time,
+  and lease expiry;
+- a running external trainer renews its lease while it is alive;
+- a `cancel` marker is checked before, during, and after trainer execution;
+- cancellation ends in `cancelled`, while trainer errors and expired leases
+  end in `failed` with a safe summary;
+- an expired lease is not silently retried. A host/scheduler must decide when
+  and how to enqueue a new job, preserving the original job identity and
+  audit trail.
+
+For an external trainer, the configured command is an argv prefix, not a shell
+string. The worker appends only these fixed path arguments:
+
+```text
+--job <running>/job.json
+--corpus <running>/corpus.jsonl
+--corpus-manifest <running>/corpus-manifest.json
+--artifacts <running>/artifacts
+--result <running>/result.json
+```
+
+The corpus is therefore not placed on a command line. Combined child output
+is drained into a bounded `trainer.log` (currently 64 KiB), and the worker
+checks child exit status, result size, result schema, artifact location,
+artifact size, and artifact SHA-256 before publishing success. Artifact paths
+must resolve to regular files within the job-local artifact root; traversal
+and escape are rejected. The worker requires subprocess support for this
+path. `--capabilities` reports configured trainer kinds, but an advertised
+external kind does not prove that CUDA, Python packages, checkpoints, or an
+evaluation environment are available.
+
+The CLI surface is:
+
+```text
+llama-agent-adaptation-worker --queue PATH [worker limits]
+llama-agent-adaptation-worker --queue PATH --watch [--poll-seconds N] [--max-jobs N]
+llama-agent-adaptation-worker --capabilities
+```
+
+`--watch` is a polling service mode, not a second scheduler. It processes one
+claimed job at a time. Without `--watch`, the process handles at most one
+pending job and exits; this is suitable for cron, a host scheduler, or a
+systemd one-shot invocation. `--max-jobs` bounds a watch session and counts
+terminal jobs handled by that process.
+
+#### Supporting QLoRA Python trainer
+
+`scripts/agent-adaptation-qlora-trainer.py` is the reference external trainer,
+not part of the inference runtime. It accepts the worker's fixed paths plus
+operator-owned options such as rank, alpha, epochs, learning rate, maximum
+sequence length, and target modules. Its current behavior is:
+
+1. validate a schema-version 1 `qlora-sft` job and a corpus manifest;
+2. read only JSONL rows in the `train` split, using `prompt` or `input` and a
+   non-empty `target`;
+3. load a local Hugging Face checkpoint in 4-bit mode with CUDA;
+4. attach a PEFT LoRA configuration and run a bounded SFT job with the job
+   seed;
+5. save the temporary Hugging Face adapter under the job artifact directory;
+6. call `convert_lora_to_gguf.py` to create an `f16` GGUF LoRA overlay; and
+7. write the worker result atomically with `evaluation_status: "not_run"`.
+
+The script deliberately does not download a model or upload a corpus. Both
+`--model` and `--base-config` must be local Hugging Face directories. The
+serving Q4 GGUF is not a training checkpoint and cannot be passed as either
+argument. The converter needs its own Python dependencies, so the package
+installs the complete converter manifest chain:
+
+```text
+share/llama-agent/requirements/requirements-agent-adaptation-qlora-trainer.txt
+share/llama-agent/requirements/requirements-convert_hf_to_gguf.txt
+share/llama-agent/requirements/requirements-convert_legacy_llama.txt
+share/llama-agent/requirements/requirements-convert_lora_to_gguf.txt
+```
+
+The first covers the worker-side Python stack (`transformers`, `peft`,
+`accelerate`, `bitsandbytes`, `safetensors`; install a matching PyTorch build
+separately). The three `convert_*` manifests preserve their nested `-r`
+relationship and cover the repository converter stack. The worker script is
+installed in the package `bin` directory. The converter entrypoint and its
+local support modules (`gguf-py`, `conversion`, and model templates) are
+installed under `share/llama-agent/converter`. The external process inherits
+the worker environment, so the service account/environment must be trusted or
+isolated from unrelated credentials.
+
+This trainer is a real integration entrypoint, but it is not a local smoke
+trainer: a successful run requires CUDA, a compatible PyTorch/bitsandbytes
+installation, a local Hugging Face checkpoint, and the converter environment.
+Evaluation, registry admission, canary staging, and activation remain
+host-controlled steps after the worker returns.
+
+#### Supporting QLoRA DPO trainer
+
+`scripts/agent-adaptation-dpo-trainer.py` uses the same worker bundle, local
+checkpoint requirements, optional Python dependencies, and GGUF converter as
+the SFT helper. Configure it only for `trainer_kind: qlora-dpo`; it rejects SFT
+jobs, non-DPO manifests, and corpus JSONL whose identity does not match the
+manifest. It uses chosen and rejected completions from each train-split row,
+scores both against the same prompt with the adapter enabled and disabled for
+the reference policy, and optimizes the pairwise DPO objective. It emits an
+adapter artifact with `evaluation_status: not_run`; the normal host evaluator
+and registry gates still apply. This helper has not been validated against a
+production checkpoint and requires the same CUDA/PEFT/bitsandbytes environment
+as SFT.
+
+#### Packaging boundary
+
+The agent package contains the complete runtime entrypoint set needed to
+create and consume adaptation jobs: `llama-agent-adaptation-worker`,
+`llama-agent-adaptation-admin`, the reference QLoRA SFT/DPO helpers, and
+`convert_lora_to_gguf.py`. It also contains the four requirements manifests under
+`share/llama-agent/requirements/`. Debian installs the executables under
+`/usr/bin` (with the daemon in `/usr/sbin`), while the tar archive and Docker
+image preserve the package tree under the selected installation prefix.
+
+The compiled OpenAPI implementation is part of the shared
+`libllama-agent-tool-provider` library; the provider bootstrap shell/Python
+helpers and OpenAPI example contracts are installed alongside the other
+provider examples. There is therefore no separate runtime library that an
+operator must copy manually for OpenAPI providers.
+
+The normal Debian, tar, and Docker packages deliberately do not vendor
+PyTorch, CUDA, Transformers, PEFT, bitsandbytes, or the other heavy training
+dependencies. Those versions depend on the host GPU driver and Python
+environment and are not needed for inference or for the file-queue worker's
+`fake-sft` path. An operator enabling `qlora-sft` should create a separate,
+trusted Python environment, install a matching PyTorch/CUDA build first, and
+then install the shipped manifests. The base Docker image only guarantees
+`python3`; it does not install packages from the network or start a trainer
+implicitly. This keeps release images reproducible and prevents a package
+install from silently changing the host's CUDA/Python stack.
+
+### Local orchestration smokes
+
+The host-level orchestration smoke is `llama-agent-adaptation-e2e-smoke`. It
+is model-free and uses an explicit fixture evaluator only to prove composition
+of the host contracts:
+
+```text
+transaction ledger
+  -> approved candidate
+  -> deterministic corpus revision
+  -> queued fake-sft job
+  -> one-shot worker result (evaluation = not_run)
+  -> injected passed evaluation report
+  -> artifact hash verification
+  -> candidate -> canary -> active overlay resolution
+```
+
+The smoke does not imply that the fake artifact is a loadable adapter or that
+the fixture evaluator is a quality evaluator. A real evaluator remains an
+external host-controlled step. In this smoke the host-level orchestrator
+explicitly selects the built-in `fake-sft` trainer, invokes the worker, injects
+an evaluator result, and then exercises canary/activation transitions. That is
+test composition; it is not automatic daemon behavior.
+
+The separate `llama-agent-model-adaptation-smoke` runs one real resident
+inference turn with adaptation capture enabled and reopens the configured
+ledger afterward. It is deliberately model-agnostic:
+
+```bash
+llama-agent-model-adaptation-smoke \
+  --model models/your-generation-model.gguf \
+  --threads 3 --n-predict 32
+```
+
+The same model can be supplied through `LLAMA_AGENT_MODEL`; `--model` takes
+precedence. Any compatible generation model may be used, including small
+Qwen, Phi, Mistral, or other GGUF variants. If no model is available, the
+CTest entry returns skip code 77 rather than passing falsely. The model smoke
+is an inference/ledger integration check, not a training or adapter-promotion
+run.
+
+### Remote worker
+
+The daemon exports a portable bundle; the remote worker returns an adapter
+artifact, manifest, and evaluation report. Initial support should be an
+explicit export/import command or MCP-like job protocol, not an always-on
+implicit uploader. The receiver is trusted only for bundles allowed by the
+source scope's export policy.
+
+Remote execution does not weaken the local promotion gate: the local registry
+still verifies hashes, base compatibility, evaluation provenance, and policy
+before a returned adapter becomes selectable.
+
+## Persistence boundary and deduplication
+
+The system should not introduce a second unstructured copy of the runtime's
+knowledge. The recommended split is:
+
+| Layer | Responsibility | Durable content |
+| --- | --- | --- |
+| Existing runtime stores | plan observations, memories, procedures, resources | source evidence under existing scope rules |
+| Adaptation ledger/index | immutable transactions and candidate state | ids, scope, hashes, signal classification, provenance, status |
+| Corpus/artifact store | portable revisions and model artifacts | canonical JSONL, manifests, adapters, evaluation reports |
+
+The adaptation interface should follow the existing scoped-store conventions.
+The persistence order is deliberate:
+
+1. **in-memory** for the default, for tests, and for hosts without a durable
+   adaptation path;
+2. **Cozo** for the normal desktop/server packaging, because it is the
+   project's general indexed backend outside Android;
+3. **SQLite** for Android and as the final supported persistent fallback.
+
+The first two persistent implementations must share the same transaction-store
+contract and use an adaptation-specific relation/table. They must not write
+adaptation transactions into the ordinary memory store: memory, procedures,
+resources, and adaptation evidence have different retention and promotion
+semantics. Payloads should be referenced by content hash where possible; the
+ledger should not duplicate large resource or tool-result bodies merely to make
+export convenient.
+
+The offline lifecycle uses a separate append-only envelope for state changes.
+`candidate`, `corpus_revision`, `training_job`, `training_result`, and `adapter`
+are subjects; approval, queue, evaluation, and activation changes are new
+events for the same subject. The envelope carries scope, source identity,
+content hash, and canonical typed JSON payload. The implementation has
+in-memory and explicit JSONL stores, plus the same factory contract for the
+optional Cozo and SQLite host adapters. Each backend uses its own
+`agent_learning_lifecycle` relation/table and must not invent backend-specific
+status semantics.
+
+The host-side journal can be inspected or fed an already curated envelope with
+the separate `llama-agent-adaptation-admin` utility. It supports `--list` and
+`--append FILE` over the same `--backend`/`--path` selection as the adaptation
+storage factory. It also supports the FlyDelta-specific `--flydelta-list` and
+`--flydelta-apply FILE --approve` entrypoints. These are deliberately operator
+or host-process interfaces: they do not expose lifecycle mutation or approval
+as model-facing tools, and the FlyDelta review store replays only explicit,
+audited decisions through the existing registry gates.
+
+When the FlyDelta daemon lane is enabled, daemon startup binds this same
+lifecycle backend to the FlyDelta review store and replays its explicit review
+events into the host-owned sideband registry before the resident model binding
+and worker lane start. This is a restore step, not automatic promotion: model
+output cannot create a review event, and replay does not grant learning credit
+to `NEUTRAL` or `UNKNOWN` observations. Daemon status reports both review-store
+binding and replay completion so an operator can distinguish restored review
+state from an available model evaluator.
+
+JSONL remains useful as an explicit portable export/debug representation. It is
+not a competing normal persistence backend. The backend factory must fail
+clearly when a requested backend is not compiled in; `auto` may select Cozo or
+SQLite according to the order above, but must never silently downgrade an
+explicit backend request.
+
+### Current runtime capture configuration
+
+The current daemon/bootstrap path exposes only capture, not training or
+activation. It is disabled by default:
+
+```json
+{
+  "runtime": {
+    "adaptation": {
+      "capture": false,
+      "collection_allowed": false,
+      "max_evidence": 16,
+      "backend": "jsonl",
+      "transaction_path": "var/agent/learning.jsonl",
+      "stable_model_facing_tools": ["dataset.inspect"],
+      "domains": {
+        "planning": true,
+        "tool_use": false,
+        "research": true,
+        "procedure_learning": true,
+        "families": {"data": true}
+      }
+    }
+  }
+}
+```
+
+With an empty `transaction_path`, enabled capture uses an assembly-local
+in-memory store. With a persistent path, `backend: "auto"` selects Cozo when
+that backend is compiled in, then SQLite. `backend: "jsonl"` is explicit and
+keeps the portable append-only representation available for export/debug.
+Explicit requests for a backend that is not compiled in fail clearly; they do
+not silently downgrade. `collection_allowed` is an explicit collection gate: false keeps
+the observer connected but prevents durable transaction collection. The
+stable-tool list is deliberately opt-in; it permits a known, validated
+model-facing contract failure to be classified as model behavior, while
+binding, policy, transport, and provider failures remain host-contract
+evidence. This configuration does not create SFT pairs or change the active
+model. The optional `domains` object filters collection by learning purpose;
+family overrides use canonical model-facing families and apply equally to
+native, MCP, and OpenAPI tools. It does not create separate provider corpora;
+the corpus builder can later create deterministic views from approved
+candidates.
+
+The same complete host-configuration example is available at
+[`examples/agent-host-config-adaptation.json`](../../examples/agent-host-config-adaptation.json).
+
+Every write needs an idempotency key, atomic completion semantics, and a
+content hash. A crash may leave a pending write, but it must not create two
+different meanings for the same source event. Revocation must invalidate
+derived candidates and corpus revisions without rewriting historical audit
+records.
+
+## Inference and model profiles
+
+The current runtime supports one generation model per host configuration. The
+target design introduces named model profiles. A profile selects one base
+model, zero or more approved adapters, and runtime limits. It is the unit a
+session uses, rather than a free model path or adapter path supplied by a
+caller.
+
+The host configuration now accepts the following catalog shape:
+
+```json
+{
+  "schema_version": 1,
+  "model": {"profile": "agent-default"},
+  "models": {
+    "bases": {
+      "qwen-small": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        "load": "resident"
+      },
+      "qwen-research": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "load": "lazy"
+      },
+      "nomic": {
+        "kind": "embedding",
+        "backend": "server-context",
+        "path": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "load": "resident"
+      }
+    },
+    "profiles": {
+      "agent-default": {
+        "base": "qwen-small",
+        "adapters": ["agent-adaptation-v1"],
+        "context_size": 4096,
+        "n_parallel": 1,
+        "n_sequences": 1,
+        "load": "resident"
+      },
+      "agent-baseline": {
+        "base": "qwen-small",
+        "adapters": [],
+        "context_size": 4096,
+        "n_parallel": 1,
+        "n_sequences": 1,
+        "load": "lazy"
+      },
+      "research": {
+        "base": "qwen-research",
+        "adapters": [],
+        "context_size": 8192,
+        "load": "lazy"
+      }
+    },
+    "routing": {
+      "default_profile": "agent-default",
+      "embedding_model": "nomic"
+    },
+    "limits": {
+      "max_loaded_generation_models": 2,
+      "model_eviction": "lru"
+    }
+  }
+}
+```
+
+This is a supported host-configuration shape for catalog parsing, profile
+resolution and multi-model serving. `model.profile` overrides the catalog
+default; daemon bootstrap constructs the process-wide residency manager from
+the catalog and the session host acquires the selected profile for the complete
+turn. If no catalog profiles are configured, the existing `model.path` remains
+the explicit legacy inference input. It intentionally separates
+base-model identity, adapter identity,
+runnable profile, and host-owned routing. The adapter registry owns artifact
+paths and validation; production profile configuration should reference
+adapter ids, not arbitrary paths.
+
+Model profiles may set `tool_output_format` to `json` or `dsl`. `json` maps to
+the runtime's native structured-output mode; `dsl` selects Compact DSL. If the
+field is omitted, the selected model profile does not override the turn's
+`tool_output_format` (including `--tool-output-format`); the turn default is
+`dsl`. Explicit profile values take precedence. The older values `native`,
+`jsonl`, and `compact_dsl`
+remain accepted for compatibility.
+
+In `dsl` mode, tool arguments use the shared flat contract: `open! TOOL_NAME`
+followed by one `field: value` line per argument. Schema annotations may define
+repeatable positional directives for nested object arrays; named slots and
+generic indexed paths remain available. The host parses this surface into the
+canonical argument object and validates it against the registered schema. The
+older nested one-line DSL remains an accepted input during compatibility, but
+is not requested from the model.
+
+The complete target boundary is recorded in
+[Agent model residency and multi-model scheduling](agent-model-residency.md).
+In particular, the adaptation path must not own model loading: it supplies a
+validated adapter/profile identity, while the runtime host pins a selected
+profile for the complete turn and the process-wide residency manager owns
+loaded handles. Baseline and candidate evaluation must use explicitly named
+profiles; the model may not select the candidate adapter itself.
+
+The profile contract allows at most eight unique overlays, each with a bounded
+positive scale, and supports `resident` or `lazy` loading. Its cache key
+includes the ordered overlay list, so changing an adapter or scale cannot
+reuse a resident context created for another profile. It does not itself
+resolve adapter paths, load a model, switch profiles, or authorize a candidate.
+The optional `n_parallel` and `n_sequences` fields describe the model-host
+capacity available to compatible bounded-arm batches. A FlyDelta-enabled
+server-context profile under the default `batch_mode: "auto"` receives a low
+effective capacity of two when GPU layers are configured and the profile has
+not requested a larger capacity. Other profiles retain their explicit scalar
+or parallel setting. They are serving capacity hints, not FlyDelta search
+policy: the host must still advertise a validated batch capability before the
+worker may use more than one physical arm at a time; otherwise the same wave
+uses the scalar fallback.
+
+At the host boundary, registry resolution verifies every referenced overlay
+before a runtime loader sees it. Only `active` adapters are runtime-resolvable;
+each one must match the profile's serving-model, tokenizer, and chat-template
+fingerprints. A baseline profile with no overlays remains valid. Canary adapters
+are evaluation material, not an implicit serving choice.
+
+A session is pinned to a profile for the duration of a turn. The host may
+perform a bounded, visible escalation to another profile, but a model cannot
+silently choose a larger model or activate an adapter. The resident load key
+must include the base-model fingerprint, multimodal projector, adapter ids and
+scales, tokenizer/chat-template fingerprint, and relevant context parameters.
+Changing an adapter set must not reuse a KV cache or resident state built for a
+different profile.
+
+The first adaptation deployment should use one base model plus one active
+adapter and an adapter-free baseline profile. Multiple adapters and dynamic
+per-turn switching add cache, scheduling, memory, and evaluation complexity;
+they are follow-up work.
+
+## Training and deployment constraints
+
+QLoRA/LoRA training normally uses a compatible training checkpoint and trainer
+toolchain, then emits an adapter for inference. It should not be treated as
+direct training of the deployment Q4 GGUF file. The serving runtime uses the
+quantized GGUF base plus a compatible adapter overlay.
+
+The repository already contains LoRA inference and export support. Merging is
+not the initial deployment path: overlays make rollback and A/B evaluation
+simple, while the current merge tool requires f16/f32 adapter tensors. A later
+consolidation workflow may produce a new base generation only after explicit
+evaluation and release policy approval.
+
+## Evaluation and promotion
+
+Loss reduction is insufficient evidence. Candidate adapters require at least:
+
+- held-out correction cases for the intended behavior;
+- replay/retention evaluation against earlier accepted cases;
+- agent contract tests for JSON/tool bindings and policy boundaries;
+- planning and tool-execution regression tests;
+- comparison with the adapter-free baseline under the same profile and test
+  fixture;
+- recorded runtime-intervention metrics.
+
+Useful runtime-oriented measures include completed turns, tool-contract
+violations, failed tool selections, plan revisions, reflection repairs, and
+the number of turns requiring host recovery. The latter can be reported as
+**runtime intervention rate** or **correction pressure**. These measures do
+not replace quality evaluation; they show whether the runtime must compensate
+for the model less often.
+
+Promotion sequence:
+
+```text
+candidate adapter
+  -> offline evaluation passed
+  -> canary profile
+  -> bounded comparison with baseline
+  -> active profile
+  -> retired (reversible)
+```
+
+Automatic promotion to active is out of scope for the first implementation.
+
+The evaluation report is the durable hand-off between an external evaluator
+and the host. It does not claim that the host ran the tests; it records which
+corpus revision, base fingerprint, profiles, and test-suite revision produced
+the result. The three gates are deliberately separate:
+
+```json
+{
+  "revision_id": "evaluation:7",
+  "candidate_adapter_id": "adapter:agent-correction-v1",
+  "baseline_profile_id": "agent-baseline",
+  "candidate_profile_id": "agent-candidate",
+  "corpus_revision_id": "corpus:12",
+  "corpus_bundle_hash": "sha256:...",
+  "base_training_fingerprint": "qwen-small:...",
+  "test_suite_revision": "agent-eval:3",
+  "gates": {
+    "intended_behavior": true,
+    "retention": true,
+    "agent_regression": true
+  },
+  "evaluated_turns": 120,
+  "runtime_interventions": 14,
+  "status": "passed",
+  "evaluated_at": "2026-08-29T00:00:00Z"
+}
+```
+
+The report is valid only when the status agrees with all three gates, the
+baseline and candidate profiles differ, and runtime interventions do not
+exceed evaluated turns. The derived intervention rate is a diagnostic metric,
+not a promotion threshold. A later host-owned policy may require additional
+thresholds, signatures, or human approval before a canary or active transition.
+
+## Verification snapshot
+
+The adaptation contract tests currently pass as a focused group: observation,
+runtime observer, transaction store, candidate qualification, corpus builder,
+trainer protocol, and adapter registry. The model-backed adaptation smoke is
+model-agnostic: it accepts any compatible GGUF generation model through
+`--model` or `LLAMA_AGENT_MODEL`. Qwen, Phi, and similar small models are
+useful local choices, but are not part of the smoke's contract. The smoke runs
+one real resident turn with adaptation capture enabled and verifies that the
+ledger can be reopened; it does not train or activate an adapter during
+inference.
+
+The larger data and document model smokes remain useful regression probes but
+are not adaptation failures. They currently expose an existing compact-model
+binding seam: Qwen sometimes emits an extra `mode` field for `data.query`, or
+emits a direct `document.tables(...)` call instead of the required family
+selection wrapper. Host validation correctly rejects these calls and defers
+the final answer. The next repair belongs to the model-facing tool binding
+path; adaptation must record such a failed/repaired turn, but must not silently
+train on it until the contract defect is classified and verified.
+
+## Implementation plan and sweep gates
+
+Each sweep ends with a local commit and contract tests. A sweep is complete
+only when its exit gate passes; a later sweep must not hide a failed contract
+in an end-to-end smoke. The first usable path is deliberately staged as
+evidence -> candidate -> corpus -> external training -> evaluation -> manual
+activation.
+
+### Sweep 0 — contract fixtures and target definition
+
+Deliverables:
+
+- Choose one first behavior target, preferably valid tool-call structure and
+  argument binding in redacted fixture contexts.
+- Define canonical serialization, content-hash rules, scope inheritance, and
+  the difference between source evidence, a learning transaction, a candidate,
+  and a corpus row.
+- Add minimal fixtures for a failure, a verified recovery, an explicit user
+  correction, a host-contract defect, and an ordinary successful turn.
+
+Tests and exit gate:
+
+- model-free CTests validate schema shape, enum values, canonical hashes,
+  scope checks, bounded payloads, and the rule that ordinary success creates no
+  training transaction;
+- fixtures show that the same source event is idempotent and that a resource
+  body is referenced rather than copied by default.
+
+This sweep prevents the later implementation from guessing what “learning”
+means. It is documentation and contracts only; there is no export or model
+loading.
+
+### Sweep 1 — durable learning transactions
+
+Deliverables:
+
+- Add host-neutral contracts under `common/agent/adaptation/` for transactions,
+  source references, payload classes, hashes, and collection policy.
+- Add an append-only store interface and a local backend following existing
+  scoped-store conventions.
+- Capture bounded records from existing runtime signals only when the
+  qualification trigger is present; preserve plan/tool provenance without
+  persisting raw scratch or unrestricted tool output.
+- Make writes idempotent and recoverable after interruption.
+
+Tests and exit gate:
+
+- CTests cover namespace/project/session isolation, append-only behavior,
+  duplicate suppression, provenance, hash stability, size limits, revoked
+  scope, and partial-write recovery;
+- an integration fixture proves that a failed turn, a verified recovery, and a
+  user correction produce distinct signal records;
+- an ordinary `hi there`-style successful turn contributes metrics only.
+
+No training data is exported in this sweep.
+
+The runtime integration deliberately preserves the existing constructor ABI.
+Adaptation observation is attached through an optional observer setter, so
+existing hosts and shared-library clients do not need a new constructor
+symbol. The observer is finalized after both successful and failed turns and
+must never change the user-facing result. Idempotency covers the complete
+signal/evidence identity for a turn; two distinct failures in the same turn
+must not collapse into one transaction.
+
+### Sweep 2 — qualification policy and training candidates
+
+Deliverables:
+
+- Add an explicit destination classifier: retain, memory,
+  procedure/blueprint, training candidate, or reject.
+- Add the defect classification seam: model behavior, host contract/policy,
+  missing evidence, or project-specific knowledge.
+- Require repeated compatible observations, host-verified recovery or
+  user-approved correction, no unresolved contradiction, and an approved target
+  shape. Deterministic rules may mark a candidate eligible; corpus inclusion
+  remains explicit initially.
+- Add a curator/approval seam without allowing the model to self-certify.
+
+Tests and exit gate:
+
+- CTests cover occurrence thresholds, contradictory examples, cross-context
+  similarity, user-correction provenance, and approval transitions;
+- project facts, raw resources, credentials, and a bad tool description are
+  rejected as general behavior candidates or routed to the correct destination;
+- a successful recovery with no host verification cannot qualify by itself.
+
+The key tradeoff is automation versus safety. Automatic eligibility keeps the
+ledger useful, while explicit corpus approval prevents a single ambiguous
+correction from changing future model behavior.
+
+### Sweep 3 — deterministic corpus builder (completed for the current phase)
+
+Deliverables:
+
+- Build versioned JSONL bundles and manifests from approved candidates.
+- Enforce candidate-level redaction attestation, candidate revocation,
+  deduplication, stable ordering, train/validation/test split assignment, and
+  bounded host-selected replay metadata.
+- Keep held-out evaluation cases out of both training and replay selection.
+- Keep the builder as a pure local contract in this phase. Bounded
+  inspection/export is implemented against an already-built revision; semantic
+  replay selection remains a host/ledger responsibility. Remote export remains
+  opt-in.
+
+Tests and exit gate:
+
+- the same candidate ids, policy, builder version, and seed produce a byte-for-
+  byte identical bundle and manifest;
+- tests verify admission redaction status, no revoked or held-out candidate,
+  no split overlap, stable deduplication, replay and row/byte bounds, and
+  correct provenance;
+- a fixture can reconstruct the exact corpus revision from its manifest.
+
+The current redaction check verifies an explicit policy/method/status
+attestation and never treats a caller assertion as a secret scanner. A later
+redactor may replace `caller_asserted` with `policy_checked` without changing
+the corpus boundary.
+
+### Sweep 3b — shared corpus views (completed)
+
+The corpus builder now carries optional `learning_domain`, canonical
+`tool_family`, and `provider_kind` metadata on training candidates. A
+`common_learning_corpus_view` can deterministically project the shared corpus
+for one domain/family and can optionally narrow transport provenance. The
+contract test verifies that native, MCP, and OpenAPI tool-use candidates join
+the same family view, while research candidates remain in a research view.
+
+Runtime extraction now comes from the resolved tool view at the actual native,
+MCP, or OpenAPI execution boundary. `tool_family` remains the canonical
+model-facing family and `provider_kind` is provenance only. A provider that
+cannot resolve the tool has no metadata to attach; it must not guess from a
+provider-prefixed tool name. Indexed semantic replay selection remains a
+later extension; the current ledger query is bounded and deterministic.
+
+The principal choice is JSONL versus an indexed database. JSONL is portable
+and reproducible; an index is better for scoped queries. The recommended
+boundary is an indexed adaptation ledger plus canonical JSONL artifact bundles,
+rather than two independent sources of truth.
+
+### Sweep 3c — explicit case promotion (completed)
+
+`common_training_candidate_from_approved_case` is the host-owned seam from a
+curator-approved case and a matching verified transaction to an approved
+training candidate. It checks the case status, source identity, evidence
+membership, observation classification, redaction attestation, and bounded
+aggregation counts. A single runtime observation cannot promote itself, and
+the runtime never copies raw tool output into a training pair.
+
+The resulting candidate preserves the case's canonical learning domain,
+family, and provider provenance. It can still fail the normal corpus
+qualification thresholds; approval is authorization to consider the candidate,
+not proof that it belongs in a training run.
+
+### Sweep 3d — bounded ledger replay and corpus inspection (completed)
+
+The ledger exposes a bounded query contract over scope, canonical family,
+provider provenance, and cause. The same selection can produce deterministic
+transaction ids for replay input. The current common helper uses a bounded
+ordered scan for all backends; indexed Cozo/SQLite implementations can replace
+that internal scan without changing callers. `max_scan` and `max_results` are
+part of the contract, and truncation is explicit in the query result.
+
+Corpus revisions also have explicit host APIs for bounded inspection and
+JSONL export. Inspection reports row count, byte count, domain/family/provider
+counts, candidate ids, and truncation. Export writes only the already-built
+revision and enforces a caller-supplied byte bound; it does not rebuild or
+silently broaden a corpus.
+
+### Sweep 4 — external trainer protocol (contract slice completed)
+
+Deliverables:
+
+- Define local-worker job files first, then optional remote export/import using
+  the same corpus and result manifests.
+- Keep Python PEFT/TRL or another trainer outside the daemon and outside agent
+  session lanes. The first worker may be a deterministic fake trainer used to
+  validate the protocol.
+- Require returned adapter artifact, manifest, hash, trainer version, base
+  training fingerprint, conversion information, and evaluation report.
+
+Tests and exit gate:
+
+- malformed, incomplete, duplicate, expired, mismatched-base, and
+  unauthorized results are rejected;
+- a local worker smoke produces a reproducible fake result without CUDA;
+- import never changes an active profile automatically.
+
+Training must bind to a compatible training checkpoint, not silently train the
+deployment Q4 GGUF in place. The conversion manifest must connect the training
+checkpoint to the serving base.
+
+The current trainer contract now binds a job and result to the corpus bundle
+hash and trainer version in addition to the corpus revision, base training
+fingerprint, and trainer kind. Returned artifact paths must be relative and
+normalized, and the result requires a `sha256:` artifact hash plus an
+explicit evaluation status. `not_run` is valid for a trainer result but is
+never sufficient for registry admission; only a separate passed evaluation
+report can open the canary gate. The worker consumes this contract for the
+built-in deterministic fake trainer and for an explicitly configured external
+trainer such as the supplied QLoRA entrypoint. Automatic queue production from
+the live adaptation ledger and daemon-driven adapter activation remain
+unimplemented. The host-level orchestrator can explicitly compose those steps
+for a controlled smoke. The host must select `trainer_kind` explicitly when it
+creates a job. The local orchestration default is `fake-sft`, so the model-free
+smoke cannot accidentally request QLoRA from a worker that has no external
+trainer configured. A real QLoRA run requires `trainer_kind: "qlora-sft"` plus a
+matching worker command registration; the worker does not infer a trainer from
+the artifact filename or from model output.
+
+The generated job identity also includes the base fingerprint, trainer kind
+and version, code revision, and seed. The same corpus can therefore produce
+distinct, auditable training jobs without idempotency collisions.
+
+The trainer-to-registry seam is also host-owned: a validated training result
+can be projected into a candidate adapter manifest without manually copying
+corpus, trainer, base, or artifact identity. Registry admission repeats the
+artifact-path and evaluation checks, so callers cannot bypass them by
+constructing a manifest directly. Activation remains a separate explicit
+operation and never happens as a side effect of import. The current fake
+trainer correctly reports `not_run`; it cannot manufacture a passed evaluation.
+
+The host artifact-import helper adds the filesystem boundary that the metadata
+registry intentionally does not own. It canonicalizes an operator-selected
+artifact root, rejects traversal and symlink escapes, enforces a byte bound,
+and recomputes the manifest's SHA-256. Successful verification returns only a
+safe resolved path; the caller must still admit the adapter as `candidate` and
+must perform evaluation before any explicit activation.
+
+### Sweep 4b — opt-in automatic training threshold (contract slice)
+
+The first automatic-training seam is intentionally small and host-level. A
+maintenance pass may set `auto_train: true` and a minimum of six qualified
+examples. The default remains disabled. The threshold counts distinct,
+approved `common_training_candidate` records that pass the existing candidate
+qualification policy in one explicit `(learning_domain, tool_family,
+provider_kind)` group. It does not count ordinary metrics, raw observations,
+capture candidates, UNKNOWN/NEUTRAL FlyDelta trials, or six repeated
+occurrences represented by one aggregate candidate. Duplicate candidate ids
+are counted once. The trigger returns the exact approved candidate ids for the
+next corpus build; a candidate's transaction ids remain provenance and do not
+silently expand one prompt/target row into several training rows. Repeated
+repairs can therefore count toward the threshold when the host has promoted
+them as separate approved candidate rows.
+
+The trigger only returns `not_ready` or `ready` with a bounded count and a
+stable group key. It does not build a corpus, start a worker, modify model
+weights, activate an adapter, or alter a live turn. The host maintenance layer
+may use `ready` to call the existing corpus/worker orchestrator. The selected
+serving model, tokenizer, chat-template and capture layout are bound when that
+job is created; they are not silently inferred by this threshold helper.
+
+Conceptually:
+
+```text
+turn observation
+  -> host-approved learning case
+  -> qualified training candidate
+  -> six distinct candidates in one group
+  -> queue one corpus/training job
+  -> evaluate candidate
+  -> explicit canary/activation decision
+```
+
+The trigger is deliberately separate from FlyDelta's six-repair deep-search
+gate. Six host-certified repair transitions may open a FlyDelta contrast-set
+experiment, while six approved generic training candidates may open an
+external training job. Neither number is a universal truth threshold, and
+neither path activates a result automatically.
+
+### Sweep 5 — adapter registry and single-profile inference (contract slice in place)
+
+Deliverables:
+
+- Add adapter registry validation and lifecycle states: candidate, canary,
+  active, retired, rejected.
+- Extend model-load identity, status/readiness, and traces with profile and
+  adapter revision.
+- Support one explicitly configured active adapter and an adapter-free baseline
+  against the same base model. Partition or clear KV/resident state when the
+  profile identity changes.
+- Pin a session to its profile for a turn and make activation/rollback host
+  operations.
+
+Tests and exit gate:
+
+- CTests cover manifest compatibility, load/rollback, cache isolation,
+  incompatible adapter rejection, session pinning, and readiness failure;
+- an inference stub proves baseline and adapter profiles are distinguishable;
+- a real model-backed smoke is available after the contract tests pass; the
+  model path is supplied at runtime so the target is not tied to one model
+  family.
+
+The registry, profile contract, and active-overlay resolver now cover the
+metadata and compatibility boundary. The CLI serving path now resolves the
+approved manifest artifacts below a host-selected adapter root, loads the LoRA
+objects with llama.cpp, and applies their scales to each generation context.
+The session carries the profile/cache identity into the inference session so a
+profile change recreates the context and cannot reuse KV state. Server-context
+currently rejects non-empty overlays explicitly; it must grow an equivalent
+backend adapter hook before profiles with adapters are enabled there. The first
+deployment should use an overlay, not merge weights into a new base: unloading
+the adapter provides a simple rollback and A/B comparison.
+
+The runtime binding deliberately does not let a model choose an adapter. The
+host selects a validated profile, the registry permits only `active` manifests,
+and the artifact path is resolved under the configured root. An empty adapter
+list is the explicit adapter-free baseline. Profile identity is metadata for
+readiness/traces and cache isolation; it is not added to the model-facing
+prompt.
+
+### Sweep 6 — evaluation, replay, and canary promotion (report/gate slice in place)
+
+Scope note: this section describes the generic adapter/model-adaptation
+lifecycle. It is not the current FlyDelta pre-canary status source. FlyDelta
+uses its own `common_flydelta_evaluation_report`, bounded experiment job and
+daemon `run_evaluation` binding; that chain is maintained in
+[FlyDelta sideband learning](agent-flydelta.md).
+
+Deliverables:
+
+- Add held-out behavior cases, replay/retention cases, existing agent contract
+  tests, and planning/tool regression coverage.
+- Compare candidate against the adapter-free baseline with the same tool
+  catalog, resource snapshot, profile limits, and reproducibility settings.
+- Record runtime intervention rate: contract violations, failed selections,
+  plan revisions, reflection repairs, and host recoveries.
+- Add manual canary activation and reversible rollback. Automatic promotion is
+  explicitly out of scope.
+
+Tests and exit gate:
+
+- candidate must pass intended-behavior, old-learning retention, and agent
+  regression gates;
+- evaluation metadata binds to corpus, base, adapter, and test revisions;
+- rollback returns to baseline without changing the base model.
+
+The generic report schema, three-gate invariant, canary staging, and manual
+activation boundary are implemented as a contract slice.
+`common_learning_evaluate_candidate` is the generic host-owned evaluator seam:
+it runs the same immutable fixture against baseline and candidate, checks
+comparable turn counts, records both intervention counts, and produces the
+report consumed by the generic adapter lifecycle. The fixture binds
+corpus revision/bundle, base training fingerprint, and test-suite revision;
+the host should additionally freeze tool/resource/profile-limit snapshots in
+that suite revision. A real evaluator still has to connect held-out,
+replay/retention, and agent suites to the runner. Canary activation remains a
+manual runtime operation rather than an automatic registry action.
+
+Only after this gate should DPO be considered, and only for genuinely
+same-context chosen/rejected pairs. Broader continual-learning strategies are
+later work.
+
+### Blueprint hardening before Sweep 7
+
+The blueprint path now has one host-owned structural validation boundary for
+bootstrapped, learned, and imported blueprints. It rejects missing identity,
+duplicate or unknown step/dependency IDs, cycles, excessive sizes, duplicate
+constraint/assumption IDs, and assumptions that are not currently valid. A
+blueprint instance receives the caller's scope but does not silently rewrite
+assumptions to valid. Resume selection also checks the full applicable scope,
+including session, project, and turn identity.
+
+The model-facing selector view is bounded by the host, and blueprint binding
+only considers pending or active reasoning steps. It cannot bind completed,
+blocked, failed, skipped, tool, or final-response steps. Keyword fallback is
+explicitly configurable and requires a unique minimum score. These boundaries
+keep a learned blueprint inspectable and prevent stale or oversized blueprint
+text from becoming an implicit execution authority.
+
+Blueprint provenance is now explicit: an imported or bootstrapped blueprint
+may carry `source_revision`; bootstrap defaults it to `package_name@version`,
+and an instantiated task retains the same value. Resume/selection can require
+an `expected_source_revision`, causing a stale blueprint to be declined before
+the model is asked to select it. This identifies the blueprint package, not a
+snapshot of the active tool catalog; those are deliberately separate
+identities. A canonical tool-catalog revision binding and a dedicated CLI-level
+regression fixture for model-facing truncation and binding refusal remain
+future work. Neither is required for the model catalog router seam below.
+
+### Sweep 7 — model catalog and controlled routing
+
+Status: the catalog contract, host JSON binding, validation, path resolution,
+explicit profile selection, bounded residency manager, concrete CLI and
+server-context loaders, profile-aware session binding, and inference-capacity
+admission are implemented. The manager loads model files outside its global
+mutex, pins the selected profile through the complete turn, and releases the
+profile after the turn. The model-free residency smoke covers admission and
+eviction; the optional two-GGUF smoke covers loading two real files.
+
+Remaining deliverables:
+
+- Keep the single-model configuration only as an explicit legacy fallback; do
+  not add new profile selection logic to `model.path`.
+- Extend the existing host-controlled routing policy when explicit escalation
+  between a small model, baseline, and research model is needed. CLI and
+  `server-context` remain separate backend loaders behind the same residency
+  contract.
+- Keep the embedding model separate from generation profiles.
+
+Tests and exit gate:
+
+- configuration tests cover named profiles, adapter references, memory limits,
+  lazy loading, eviction, and refusal of caller-supplied model overrides;
+- a scheduler fixture proves profile pinning and no cache reuse across model or
+  adapter identity changes;
+- small-model operation remains valid when no adaptation profile is active.
+
+This ordering is intentional: multi-model routing is valuable for production,
+but it is not required to prove the adaptation lifecycle and adds a substantial
+memory/scheduling surface.
+
+## Initial non-goals
+
+- training inside the daemon or on a live inference session;
+- automatic weight mutation or automatic active-adapter promotion;
+- collecting all user prompts, resources, tool payloads, or reflection text;
+- multi-adapter composition or arbitrary per-turn adapter switching;
+- merging adapters into a new base model;
+- distributed/federated training;
+- DPO, KTO, reward modeling, or reinforcement learning in the first slice.
+
+## Decisions to make before implementation
+
+1. Which scopes may opt into collection: installation, namespace, project,
+   session, or user?
+2. Does the first candidate promotion require manual approval, or may a strict
+   deterministic policy approve corpus inclusion locally?
+3. Which first behavior is narrow enough to train safely: compact tool
+   bindings, tool-family selection, structured planning, or another target?
+4. Which base checkpoint and conversion path will be the supported first
+   QLoRA/LoRA training target?
+5. Should remote training initially be export/import only, or is a trusted job
+   service needed in the first release?
+6. What retention and revocation guarantees are required for locally retained
+   raw evidence and exported corpus bundles?
+
+## Completion criteria for the first usable release
+
+The first usable adaptation release is complete when an operator can opt in a
+project, inspect why a transaction became a candidate, reproduce an immutable
+redacted corpus bundle, run an external trainer, import a compatible adapter
+with an evaluation report, compare it against an adapter-free baseline, and
+activate or roll back the adapter without changing the base GGUF model.

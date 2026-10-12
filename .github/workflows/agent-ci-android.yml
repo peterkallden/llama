@@ -1,0 +1,293 @@
+name: Agent verification (Android)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-ci-android.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'vendor/sqlite/**'
+      - 'pocs/agent/**'
+      - 'tools/agent/**'
+      - 'examples/llama.android/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+  pull_request:
+    branches:
+      - feature/llama-agent
+    paths:
+      - '.github/workflows/agent-ci-android.yml'
+      - 'common/agent/**'
+      - 'common/memory/**'
+      - 'common/plan/**'
+      - 'vendor/sqlite/**'
+      - 'pocs/agent/**'
+      - 'tools/agent/**'
+      - 'examples/llama.android/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=4
+  ANDROID_NDK_VERSION: '29.0.13113456'
+
+permissions:
+  contents: read
+
+jobs:
+  agent-android-dev:
+    name: Build agent development app (Android)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
+      - name: Build Android development project
+        working-directory: examples/llama.android
+        run: >-
+          ./gradlew :app:assembleDebug :lib:assembleRelease
+          :lib:testDebugUnitTest --no-daemon --max-workers=3
+
+      - name: Verify Android CPU and Vulkan backends
+        run: |
+          set -euo pipefail
+          aar=$(find examples/llama.android/lib/build/outputs/aar -name '*.aar' -print -quit)
+          test -n "${aar}"
+          unzip -l "${aar}" | grep -q 'jni/arm64-v8a/libggml-cpu-android_armv8.0_1.so'
+          unzip -l "${aar}" | grep -q 'jni/arm64-v8a/libggml-vulkan.so'
+
+      - name: Upload Android development artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-dev-android
+          path: |
+            examples/llama.android/app/build/outputs/**/*.apk
+            examples/llama.android/lib/build/outputs/**/*.aar
+          if-no-files-found: error
+          retention-days: 14
+
+  agent-android-ndk:
+    name: Build agent Android native target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Configure native development build
+        run: |
+          cmake -S . -B build-agent-android -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DGGML_NATIVE=OFF \
+            -DGGML_VULKAN=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_OPENMP=OFF \
+            -DVulkan_GLSLC_EXECUTABLE="${ANDROID_NDK}/shader-tools/linux-x86_64/glslc" \
+            -DVulkan_GLSLANG_VALIDATOR_EXECUTABLE="${ANDROID_NDK}/shader-tools/linux-x86_64/glslc" \
+            -DSPIRV-Headers_DIR="${GITHUB_WORKSPACE}/examples/llama.android/lib/src/main/cpp/cmake/SPIRV-Headers" \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_APP=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_AGENT_RUNTIME=OFF \
+            -DLLAMA_AGENT_STORAGE_SQLITE=OFF
+
+      - name: Build native development target
+        run: cmake --build build-agent-android --parallel 4
+
+      - name: Upload Android native artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: llama-agent-dev-android-native
+          path: build-agent-android/bin/**
+          if-no-files-found: error
+          retention-days: 14
+
+  agent-android-storage-smoke:
+    name: Smoke test native SQLite storage (Android)
+    runs-on: ubuntu-24.04
+    # This job performs a complete native/Gradle build before starting the
+    # emulator. Keep enough wall-clock budget for both phases on a cold runner.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
+      - name: Install Vulkan host headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev
+
+      - name: Install Android NDK for SQLite smoke
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;${ANDROID_NDK_VERSION}"
+
+      # Native compilation can take many minutes on a hosted runner. Build
+      # both APKs before the emulator starts so its system services only need
+      # to remain healthy for installation and instrumentation.
+      - name: Build Android SQLite smoke APKs
+        working-directory: examples/llama.android
+        run: >-
+          ./gradlew :lib:assembleDebug :lib:assembleDebugAndroidTest
+          --no-daemon --max-workers=3
+
+      # android-emulator-runner performs a few ADB calls of its own after boot
+      # and before it invokes `script`.  Keep this marker until our script has
+      # actually begun, so a broken ADB service in that gap gets the same fresh
+      # emulator retry as an unhealthy Package Manager.
+      - name: Arm primary emulator infrastructure retry
+        run: touch "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
+
+      - name: Run Android SQLite instrumentation smoke (primary emulator)
+        id: android_sqlite_smoke_primary
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          # Keep the emulator headless, but provide a Vulkan-capable software
+          # renderer so native Vulkan loading is exercised in CI.
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
+          force-avd-creation: true
+          disable-spellchecker: true
+          disable-animations: false
+          working-directory: examples/llama.android
+          script: |
+            rm -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started"
+            rm -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"
+            adb wait-for-device
+            test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
+            echo "Emulator ABI:"
+            adb shell getprop ro.product.cpu.abilist
+            echo "Emulator storage:"
+            adb shell df -h /data /data/local/tmp
+            adb shell pm uninstall com.arm.aichat.test || true
+            adb shell pm uninstall com.example.llama.aichat || true
+            bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh" || { touch "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy"; exit 75; }
+            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
+
+      - name: Detect unhealthy primary emulator
+        id: android_sqlite_retry
+        if: always()
+        run: |
+          if [[ -f "$GITHUB_WORKSPACE/.agent-android-package-manager-unhealthy" || \
+                -f "$GITHUB_WORKSPACE/.agent-android-primary-script-not-started" ]]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retry Android SQLite instrumentation smoke (fresh emulator)
+        id: android_sqlite_smoke_retry
+        if: steps.android_sqlite_retry.outputs.required == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
+          force-avd-creation: true
+          disable-spellchecker: true
+          disable-animations: false
+          working-directory: examples/llama.android
+          script: |
+            adb wait-for-device
+            test "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
+            echo "Emulator ABI:"
+            adb shell getprop ro.product.cpu.abilist
+            echo "Emulator storage:"
+            adb shell df -h /data /data/local/tmp
+            adb shell pm uninstall com.arm.aichat.test || true
+            adb shell pm uninstall com.example.llama.aichat || true
+            bash "$GITHUB_WORKSPACE/scripts/agent-android-package-manager-ready.sh"
+            ./gradlew :lib:connectedDebugAndroidTest --no-daemon --max-workers=3
+
+      - name: Fail a non-retryable Android smoke failure
+        if: always() && steps.android_sqlite_smoke_primary.outcome == 'failure' && steps.android_sqlite_retry.outputs.required != 'true'
+        run: exit 1
+
+      - name: Require successful fresh-emulator retry
+        if: always() && steps.android_sqlite_retry.outputs.required == 'true' && steps.android_sqlite_smoke_retry.outcome != 'success'
+        run: exit 1

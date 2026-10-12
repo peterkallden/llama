@@ -1,0 +1,173 @@
+#include "tools/agent/runtime/agent-server-context-host.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
+
+#include <string>
+#include <utility>
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+
+int main() {
+    common_agent_inference_options options;
+    options.model = "model.gguf";
+    options.n_parallel = 2;
+    options.n_sequences = 2;
+    options.per_sequence_cvec_batch = true;
+    const auto host_config = make_agent_server_context_host_config(options);
+    CHECK(host_config.context_key.n_parallel == 2);
+    CHECK(host_config.context_key.n_sequences == 2);
+    CHECK(host_config.per_sequence_cvec_batch);
+
+    // The project historically used 99 as an "all layers" convenience
+    // value.  Resident FlyDelta contexts must let the existing fit path
+    // choose a safe offload level so arm/cvec workspace keeps its margin.
+    options.n_gpu_layers = 99;
+    options.fit_params = true;
+    options.reserve_flydelta_workspace = true;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == -1);
+
+    // An explicit smaller layer count remains an explicit caller choice.
+    options.n_gpu_layers = 20;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == 20);
+
+    // Hosts that deliberately disable the reservation retain the legacy
+    // full-offload request for compatibility.
+    options.n_gpu_layers = 99;
+    options.reserve_flydelta_workspace = false;
+    CHECK(make_agent_server_context_params(options).n_gpu_layers == 99);
+
+    common_agent_server_flydelta_binding_callbacks callbacks;
+    callbacks.primitives.capture = true;
+    callbacks.primitives.generation = true;
+    callbacks.primitives.host_verification = true;
+    callbacks.prepare_arm = [](
+            const common_flydelta_arm_request &,
+            common_agent_generation_request &,
+            std::string &) { return true; };
+    callbacks.finalize_arm = [](
+            const common_flydelta_arm_request &,
+            const common_agent_generation_result &,
+            common_flydelta_arm_result &,
+            std::string &) { return true; };
+    callbacks.register_evaluator = [](
+            common_flydelta_evaluator_config &,
+            common_flydelta_evaluator_callbacks &,
+            std::string &) { return true; };
+    callbacks.run_donor_capture = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_capture_manifest> &,
+            std::string &) { return true; };
+    callbacks.run_counterfactual = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_counterfactual_report> &,
+            std::string &) { return true; };
+    callbacks.run_concept_capture = [](
+            const common_flydelta_experiment_job &,
+            std::vector<std::string> &,
+            std::string &) { return true; };
+    callbacks.run_concept_synthesis = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_concept_candidate> &,
+            std::string &) { return true; };
+    callbacks.resolve_decision_pair = [](
+            const common_flydelta_decision_pair_request &,
+            common_flydelta_decision_pair &,
+            std::string &) { return false; };
+    callbacks.resolve_output_head_row = [](
+            int32_t,
+            std::vector<float> &,
+            std::string &) { return false; };
+    callbacks.run_decision_margin_challenger = [](
+            const common_flydelta_experiment_job &,
+            std::vector<common_flydelta_direction_candidate> &,
+            std::string &) { return true; };
+    callbacks.run_representation_augmentation_with_state = [](
+            const common_flydelta_experiment_job &,
+            const common_flydelta_representation_augmentation_state *,
+            common_flydelta_search_pipeline_result &,
+            common_flydelta_representation_augmentation_state &,
+            std::string &) { return true; };
+
+    auto binding = common_agent_server_flydelta_binding_from_callbacks(
+        std::move(callbacks));
+    CHECK(binding.primitives.capture);
+    CHECK(binding.primitives.generation);
+    CHECK(binding.primitives.host_verification);
+    CHECK(static_cast<bool>(binding.prepare_arm));
+    CHECK(static_cast<bool>(binding.finalize_arm));
+    CHECK(static_cast<bool>(binding.register_evaluator));
+    CHECK(static_cast<bool>(binding.run_donor_capture));
+    CHECK(static_cast<bool>(binding.run_counterfactual));
+    CHECK(static_cast<bool>(binding.run_concept_capture));
+    CHECK(static_cast<bool>(binding.run_concept_synthesis));
+    CHECK(static_cast<bool>(binding.resolve_decision_pair));
+    CHECK(static_cast<bool>(binding.resolve_output_head_row));
+    CHECK(static_cast<bool>(binding.run_decision_margin_challenger));
+    CHECK(static_cast<bool>(binding.run_representation_augmentation_with_state));
+
+    common_agent_generation_request diagnostic_request;
+    diagnostic_request.options.n_predict = 96;
+    common_flydelta_arm_request diagnostic_arm;
+    diagnostic_arm.request_generation = false;
+    diagnostic_arm.max_generated_tokens = 0;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        diagnostic_arm, diagnostic_request);
+    CHECK(diagnostic_request.options.n_predict == 0);
+
+    common_agent_generation_request bounded_request;
+    common_flydelta_arm_request bounded_arm;
+    bounded_arm.request_generation = true;
+    bounded_arm.max_generated_tokens = 12;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        bounded_arm, bounded_request);
+    CHECK(bounded_request.options.n_predict == 12);
+
+    common_agent_generation_request already_bounded_request;
+    already_bounded_request.options.n_predict = 8;
+    common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+        bounded_arm, already_bounded_request);
+    CHECK(already_bounded_request.options.n_predict == 8);
+
+    common_flydelta_arm_request arm;
+    common_agent_generation_request request;
+    std::string error;
+    CHECK(binding.prepare_arm(arm, request, error));
+    common_flydelta_arm_result result;
+    common_agent_generation_result generation;
+    CHECK(binding.finalize_arm(arm, generation, result, error));
+
+    common_flydelta_evaluator_config evaluator_config;
+    common_flydelta_evaluator_callbacks evaluator_callbacks;
+    CHECK(binding.register_evaluator(
+        evaluator_config, evaluator_callbacks, error));
+
+    common_agent_server_flydelta_binding_callbacks factory_callbacks;
+    factory_callbacks.primitives = binding.primitives;
+    factory_callbacks.prepare_arm = binding.prepare_arm;
+    factory_callbacks.finalize_arm = binding.finalize_arm;
+    factory_callbacks.register_evaluator = binding.register_evaluator;
+    factory_callbacks.run_donor_capture = binding.run_donor_capture;
+    factory_callbacks.run_counterfactual = binding.run_counterfactual;
+    factory_callbacks.run_concept_capture = binding.run_concept_capture;
+    factory_callbacks.run_concept_synthesis = binding.run_concept_synthesis;
+    factory_callbacks.resolve_decision_pair = binding.resolve_decision_pair;
+    factory_callbacks.resolve_output_head_row = binding.resolve_output_head_row;
+    factory_callbacks.run_decision_margin_challenger =
+        binding.run_decision_margin_challenger;
+    factory_callbacks.run_representation_augmentation_with_state =
+        binding.run_representation_augmentation_with_state;
+    auto factory = common_agent_server_flydelta_binding_factory_from_callbacks(
+        std::move(factory_callbacks));
+    common_agent_server_flydelta_binding produced;
+    auto resident_host = std::make_shared<common_agent_server_context_host>();
+    CHECK(factory(resident_host, produced, error));
+    CHECK(error.empty());
+    CHECK(static_cast<bool>(produced.prepare_arm));
+
+    auto incomplete_factory =
+        common_agent_server_flydelta_binding_factory_from_callbacks({});
+    CHECK(!incomplete_factory(resident_host, produced, error));
+    CHECK(error.find("requires prepare, finalize and evaluator callbacks") !=
+        std::string::npos);
+
+    return 0;
+}

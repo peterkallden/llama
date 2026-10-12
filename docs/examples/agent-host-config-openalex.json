@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "models/model.gguf"
+  },
+  "tools": {
+    "profile": "all-configured",
+    "include_dir": "openalex-provider.d",
+    "families": {
+      "openalex": {
+        "description": "Search OpenAlex works by title, author, institution, topic and year; inspect bounded metadata, abstracts and declared open-access full-text locations"
+      }
+    }
+  }
+}

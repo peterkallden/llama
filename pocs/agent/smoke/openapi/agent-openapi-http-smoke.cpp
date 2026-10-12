@@ -1,0 +1,309 @@
+#include "tools/agent/openapi/agent-openapi-http.h"
+
+#include <cpp-httplib/httplib.h>
+
+#include <cassert>
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <thread>
+
+namespace {
+
+void set_environment_variable(const char * name, const char * value) {
+#ifdef _WIN32
+    assert(_putenv_s(name, value) == 0);
+#else
+    assert(setenv(name, value, 1) == 0);
+#endif
+}
+
+agent_openapi_catalog make_get_sale_catalog(const agent_host_openapi_provider_config & config) {
+    agent_openapi_catalog catalog;
+    catalog.provider_id = "sales-api";
+    catalog.base_url = config.base_url;
+    catalog.prefix = "sales";
+    agent_openapi_operation get_sale;
+    get_sale.operation_id = "getSale";
+    get_sale.method = "get";
+    get_sale.path = "/sales/{id}";
+    get_sale.summary = "Get sale";
+    get_sale.description = "Get sale";
+    get_sale.input_schema_json = R"({"type":"object"})";
+    get_sale.path_parameters = {"id"};
+    get_sale.query_parameters = {"limit"};
+    get_sale.paging.kind = agent_openapi_paging_kind::bounded_collection;
+    get_sale.paging.page_size_parameter = "limit";
+    get_sale.access = agent_openapi_access::read;
+    get_sale.read_only = true;
+    catalog.operations.push_back(std::move(get_sale));
+    agent_openapi_operation get_error;
+    get_error.operation_id = "getHttpError";
+    get_error.method = "get";
+    get_error.path = "/errors/{code}";
+    get_error.summary = "Exercise HTTP error handling";
+    get_error.description = get_error.summary;
+    get_error.input_schema_json = R"({"type":"object"})";
+    get_error.path_parameters = {"code"};
+    get_error.access = agent_openapi_access::read;
+    get_error.read_only = true;
+    catalog.operations.push_back(std::move(get_error));
+    return catalog;
+}
+
+} // namespace
+
+int main() {
+    httplib::Server server;
+    int sale_requests = 0;
+    server.Get("/sales/42", [&sale_requests](const httplib::Request & request, httplib::Response & response) {
+        ++sale_requests;
+        assert(request.get_param_value("limit") == (sale_requests == 1 ? "5" : "10"));
+        response.set_content(R"({"id":42,"total":7})", "application/json");
+    });
+    server.Get(R"(/errors/([a-zA-Z0-9-]+))", [](const httplib::Request & request, httplib::Response & response) {
+        const std::string token = request.matches[1];
+        const int status = std::stoi(token.substr(0, 3));
+        response.status = status;
+        if (token == "429") {
+            response.set_header("Retry-After", "7");
+            response.set_header("RateLimit", "limit=100, remaining=0, reset=11");
+            response.set_header("X-RateLimit-Remaining", "0");
+            response.set_header("X-RateLimit-Reset", "11");
+        } else if (token == "429-date") {
+            const std::time_t retry_at = std::time(nullptr) + 30;
+            std::tm retry_tm{};
+#ifdef _WIN32
+            gmtime_s(&retry_tm, &retry_at);
+#else
+            gmtime_r(&retry_at, &retry_tm);
+#endif
+            std::ostringstream retry_header;
+            retry_header << std::put_time(&retry_tm, "%a, %d %b %Y %H:%M:%S GMT");
+            response.set_header("Retry-After", retry_header.str());
+        } else if (token == "429-reset") {
+            response.set_header("RateLimit-Reset", "13");
+        }
+        response.set_content(R"({"error":"test status"})", "application/json");
+    });
+    server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_header_value("Authorization") == "Basic dXNlcjpwYXNz");
+        response.set_content(R"({"ok":true})", "application/json");
+    });
+    server.Get("/key", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_param_value("api_key") == "key-123");
+        response.set_content(R"({"ok":true})", "application/json");
+    });
+    int oauth_token_requests = 0;
+    server.Post("/token", [&oauth_token_requests](const httplib::Request & request, httplib::Response & response) {
+        ++oauth_token_requests;
+        assert(request.get_header_value("Authorization") == "Basic b2F1dGgtaWQ6b2F1dGgtc2VjcmV0");
+        assert(request.get_param_value("grant_type") == "client_credentials");
+        response.set_content(R"({"access_token":"oauth-access","expires_in":300})", "application/json");
+    });
+    server.Get("/oauth", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_header_value("Authorization") == "Bearer oauth-access");
+        response.set_content(R"({"ok":true})", "application/json");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    assert(port > 0);
+    std::thread server_thread([&server] { server.listen_after_bind(); });
+    // Sanitizer-instrumented clients can reach the test before the listener
+    // thread has entered its accept loop.
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+    agent_host_openapi_provider_config config;
+    config.id = "sales-api";
+    config.base_url = "http://127.0.0.1:" + std::to_string(port);
+    config.connect_timeout_ms = 1000;
+    config.request_timeout_ms = 2000;
+    config.max_result_bytes = 1024;
+    config.default_page_size = 5;
+    config.max_page_size = 10;
+    config.allow_private_network = true;
+    config.operations["getSale"].required_parameters = {"id"};
+    agent_openapi_catalog catalog = make_get_sale_catalog(config);
+
+    int observed_status = 0;
+    std::string observed_mime;
+    agent_openapi_tool_provider provider(std::move(catalog), make_agent_openapi_http_executor(config),
+        [&](const agent_tool_context &, const agent_openapi_operation &,
+            const std::string &,
+            agent_openapi_execution_result & execution, std::string &) {
+            observed_status = execution.http_status;
+            observed_mime = execution.mime_type;
+            return true;
+        });
+    agent_tool_context context;
+    context.allow_network = true;
+    context.max_calls = 64;
+    std::string error;
+    auto view = provider.resolve_tools(context, error);
+    assert(view != nullptr);
+    const auto missing_required = view->call(
+        {"http-required", "sales.getSale", R"({"limit":1})"}, error);
+    assert(!missing_required.ok);
+    assert(missing_required.failure_code == "openapi.required_parameter_missing");
+    assert(missing_required.retryable);
+    assert(missing_required.raw_diagnostic.find("required operation parameter is missing: getSale.id") != std::string::npos);
+    const auto result = view->call({"http-1", "sales.getSale", R"({"id":"42"})"}, error);
+    assert(result.ok);
+    assert(result.content_json.find("\"total\":7") != std::string::npos);
+    assert(observed_status == 200);
+    assert(observed_mime == "application/json");
+    const struct {
+        int status;
+        common_tool_failure_class failure_class;
+        bool retryable;
+    } expected_errors[] = {
+        {400, common_tool_failure_class::validation, false},
+        {401, common_tool_failure_class::policy, false},
+        {403, common_tool_failure_class::policy, false},
+        {404, common_tool_failure_class::not_found, false},
+        {405, common_tool_failure_class::validation, false},
+        {408, common_tool_failure_class::timeout, true},
+        {409, common_tool_failure_class::execution, false},
+        {410, common_tool_failure_class::not_found, false},
+        {413, common_tool_failure_class::limit, false},
+        {415, common_tool_failure_class::validation, false},
+        {422, common_tool_failure_class::validation, false},
+        {425, common_tool_failure_class::network, true},
+        {429, common_tool_failure_class::network, true},
+        {500, common_tool_failure_class::network, true},
+    };
+    for (const auto & expected : expected_errors) {
+        const auto failure = view->call({"http-error", "sales.getHttpError",
+            "{\"code\":\"" + std::to_string(expected.status) + "\"}"}, error);
+        assert(!failure.ok);
+        if (failure.failure_class != expected.failure_class) {
+            std::cerr << "HTTP " << expected.status << " failure class mismatch: expected "
+                      << common_tool_failure_class_name(expected.failure_class) << ", got "
+                      << common_tool_failure_class_name(failure.failure_class)
+                      << "; failure_code=" << failure.failure_code
+                      << "; diagnostic=" << failure.raw_diagnostic << "\n";
+        }
+        assert(failure.failure_class == expected.failure_class);
+        assert(failure.retryable == expected.retryable);
+        assert(failure.failure_code == "openapi.http_status");
+        assert(!failure.safe_summary.empty());
+        if (expected.status == 429) {
+            assert(failure.safe_summary.find("retry_after_seconds=7") != std::string::npos);
+            assert(failure.raw_diagnostic.find("RateLimit=limit=100, remaining=0, reset=11") != std::string::npos);
+            assert(failure.raw_diagnostic.find("X-RateLimit-Remaining=0") != std::string::npos);
+        }
+    }
+    const auto dated_retry = view->call(
+        {"http-error-date", "sales.getHttpError", R"({"code":"429-date"})"}, error);
+    assert(!dated_retry.ok && dated_retry.retryable);
+    assert(dated_retry.safe_summary.find("retry_after_seconds=") != std::string::npos);
+    const auto reset_retry = view->call(
+        {"http-error-reset", "sales.getHttpError", R"({"code":"429-reset"})"}, error);
+    assert(!reset_retry.ok && reset_retry.retryable);
+    assert(reset_retry.safe_summary.find("retry_after_seconds=13") != std::string::npos);
+    const auto capped_result = view->call({"http-1-capped", "sales.getSale", R"({"id":"42","limit":99})"}, error);
+    assert(capped_result.ok);
+
+    config.allow_private_network = false;
+    agent_openapi_tool_provider private_denied_provider(
+        make_get_sale_catalog(config),
+        make_agent_openapi_http_executor(config));
+    auto private_denied_view = private_denied_provider.resolve_tools(context, error);
+    assert(private_denied_view != nullptr);
+    const auto private_denied = private_denied_view->call(
+        {"http-private", "sales.getSale", R"({"id":"42"})"}, error);
+    assert(!private_denied.ok);
+
+    context.allow_network = false;
+    agent_openapi_tool_provider denied_provider(make_get_sale_catalog(config),
+        make_agent_openapi_http_executor(config));
+    auto denied_view = denied_provider.resolve_tools(context, error);
+    assert(denied_view != nullptr);
+    const auto denied = denied_view->call({"http-2", "sales.getSale", R"({"id":"42"})"}, error);
+    assert(!denied.ok);
+
+    config.allow_private_network = true;
+    set_environment_variable("OPENAPI_BASIC_USER", "user");
+    set_environment_variable("OPENAPI_BASIC_PASSWORD", "pass");
+    set_environment_variable("OPENAPI_API_KEY", "key-123");
+    context.allow_network = true;
+    auto run_authenticated = [&](agent_host_openapi_provider_config authenticated_config,
+            agent_openapi_operation authenticated_operation) {
+        agent_openapi_catalog authenticated_catalog;
+        authenticated_catalog.provider_id = authenticated_config.id;
+        authenticated_catalog.base_url = authenticated_config.base_url;
+        authenticated_catalog.prefix = authenticated_config.prefix;
+        authenticated_catalog.operations.push_back(std::move(authenticated_operation));
+        agent_openapi_tool_provider authenticated_provider(
+            std::move(authenticated_catalog),
+            make_agent_openapi_http_executor(authenticated_config));
+        std::string authenticated_error;
+        auto authenticated_view = authenticated_provider.resolve_tools(context, authenticated_error);
+        assert(authenticated_view != nullptr);
+        const auto authenticated_result = authenticated_view->call(
+            {"auth-call", authenticated_config.prefix + ".auth", "{}"}, authenticated_error);
+        assert(authenticated_result.ok);
+        const auto cached_result = authenticated_view->call(
+            {"auth-call-2", authenticated_config.prefix + ".auth", "{}"}, authenticated_error);
+        assert(cached_result.ok);
+    };
+    agent_openapi_operation basic_operation;
+    basic_operation.operation_id = "auth";
+    basic_operation.method = "get";
+    basic_operation.path = "/basic";
+    basic_operation.access = agent_openapi_access::read;
+    basic_operation.read_only = true;
+    basic_operation.auth_required = true;
+    basic_operation.security_schemes = {"basicAuth"};
+    basic_operation.security_definitions = {{"basicAuth", "http", "basic", "", ""}};
+    agent_host_openapi_provider_config basic_config = config;
+    basic_config.prefix = "basic";
+    basic_config.auth.type = "basic";
+    basic_config.auth.scheme = "basicAuth";
+    basic_config.auth.username_env = "OPENAPI_BASIC_USER";
+    basic_config.auth.password_env = "OPENAPI_BASIC_PASSWORD";
+    run_authenticated(basic_config, basic_operation);
+
+    agent_openapi_operation api_key_operation;
+    api_key_operation.operation_id = "auth";
+    api_key_operation.method = "get";
+    api_key_operation.path = "/key";
+    api_key_operation.access = agent_openapi_access::read;
+    api_key_operation.read_only = true;
+    api_key_operation.auth_required = true;
+    api_key_operation.security_schemes = {"apiKeyAuth"};
+    api_key_operation.security_definitions = {{"apiKeyAuth", "apiKey", "", "api_key", "query"}};
+    agent_host_openapi_provider_config api_key_config = config;
+    api_key_config.prefix = "key";
+    api_key_config.auth.type = "api_key";
+    api_key_config.auth.scheme = "apiKeyAuth";
+    api_key_config.auth.token_env = "OPENAPI_API_KEY";
+    run_authenticated(api_key_config, api_key_operation);
+
+    set_environment_variable("OPENAPI_OAUTH_ID", "oauth-id");
+    set_environment_variable("OPENAPI_OAUTH_SECRET", "oauth-secret");
+    agent_openapi_operation oauth_operation;
+    oauth_operation.operation_id = "auth";
+    oauth_operation.method = "get";
+    oauth_operation.path = "/oauth";
+    oauth_operation.access = agent_openapi_access::read;
+    oauth_operation.read_only = true;
+    oauth_operation.auth_required = true;
+    oauth_operation.security_schemes = {"oauthAuth"};
+    oauth_operation.security_definitions = {{"oauthAuth", "oauth2", "", "", "", "clientCredentials", ""}};
+    agent_host_openapi_provider_config oauth_config = config;
+    oauth_config.prefix = "oauth";
+    oauth_config.auth.type = "oauth2_client_credentials";
+    oauth_config.auth.scheme = "oauthAuth";
+    oauth_config.auth.token_url = "http://127.0.0.1:" + std::to_string(port) + "/token";
+    oauth_config.auth.client_id_env = "OPENAPI_OAUTH_ID";
+    oauth_config.auth.client_secret_env = "OPENAPI_OAUTH_SECRET";
+    run_authenticated(oauth_config, oauth_operation);
+    assert(oauth_token_requests == 1);
+
+    server.stop();
+    server_thread.join();
+    std::cout << "agent-openapi-http-smoke: ok\n";
+}

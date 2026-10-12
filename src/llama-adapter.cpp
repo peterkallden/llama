@@ -3,11 +3,14 @@
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
+#include "llama-batch.h"
 
 #include <map>
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstring>
+#include <cinttypes>
 #include <sstream>
 #include <stdexcept>
 
@@ -133,6 +136,326 @@ bool llama_adapter_cvec::apply(
     }
 
     return true;
+}
+
+ggml_tensor * llama_adapter_cvec_batch::tensor_for(int il) const {
+    if (!active || il < 0 || il < layer_start || il > layer_end ||
+            (size_t) il >= tensors.size()) {
+        return nullptr;
+    }
+
+    return tensors[il];
+}
+
+bool llama_adapter_cvec_batch::init(
+        const llama_model & model,
+        const int32_t n_embd,
+        const size_t n_seq,
+        const std::vector<uint32_t> & layer_indices) {
+    const auto & hparams = model.hparams;
+
+    GGML_ASSERT(tensors.empty());
+    GGML_ASSERT(ctxs.empty());
+    GGML_ASSERT(bufs.empty());
+
+    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
+    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
+        auto it = ctx_map.find(buft);
+        if (it == ctx_map.end()) {
+            ggml_init_params params = {
+                /*.mem_size   =*/ hparams.n_layer()*ggml_tensor_overhead(),
+                /*.mem_buffer =*/ nullptr,
+                /*.no_alloc   =*/ true,
+            };
+
+            ggml_context * ctx = ggml_init(params);
+            if (!ctx) {
+                return nullptr;
+            }
+
+            ctx_map[buft] = ctx;
+            ctxs.emplace_back(ctx);
+            return ctx;
+        }
+
+        return it->second;
+    };
+
+    tensors.assign(hparams.n_layer(), nullptr);
+    for (const uint32_t layer : layer_indices) {
+        if (layer < 1 || layer >= hparams.n_layer()) {
+            LLAMA_LOG_ERROR("%s: invalid layer in batch control vector\n", __func__);
+            return false;
+        }
+        ggml_backend_buffer_type_t buft = model.select_buft(layer);
+        ggml_context * ctx = ctx_for_buft(buft);
+        if (!ctx) {
+            LLAMA_LOG_ERROR("%s: failed to allocate context for batch control vector\n", __func__);
+            return false;
+        }
+
+        ggml_tensor * tensor = ggml_new_tensor_2d(
+            // Reserve one backend-zeroed fallback row. A resident server may
+            // build a graph that contains an otherwise inactive sequence;
+            // that sequence must receive no overlay, not another sequence's
+            // sparse row and not a callback failure.
+            ctx, GGML_TYPE_F32, n_embd, static_cast<int64_t>(n_seq + 1));
+        tensors[layer] = tensor;
+    }
+
+    bufs.reserve(ctx_map.size());
+    device_resident_flag = false;
+    for (const auto & [buft, ctx] : ctx_map) {
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        if (!buf) {
+            LLAMA_LOG_ERROR("%s: failed to allocate batch control-vector buffer\n", __func__);
+            return false;
+        }
+        ggml_backend_buffer_clear(buf, 0);
+        const ggml_backend_dev_t device = ggml_backend_buft_get_device(buft);
+        device_resident_flag = device_resident_flag ||
+            (device != nullptr && ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU);
+        bufs.emplace_back(buf);
+    }
+
+    return true;
+}
+
+void llama_adapter_cvec_batch::clear() {
+    active = false;
+    device_resident_flag = false;
+    layer_start = -1;
+    layer_end = -1;
+    n_embd = 0;
+    seq_ids.clear();
+    {
+        std::lock_guard<std::mutex> lock(selector_mutex);
+        selector_states.clear();
+    }
+    tensors.clear();
+    bufs.clear();
+    ctxs.clear();
+}
+
+bool llama_adapter_cvec_batch::apply_impl(
+        const llama_model & model,
+        const std::vector<llama_seq_id> & seq_ids,
+        const std::vector<const float *> & data,
+        const size_t data_len,
+        const int32_t n_embd,
+        const std::vector<uint32_t> & layer_indices,
+        const bool dense_layout) {
+    clear();
+
+    if (seq_ids.empty() || seq_ids.size() != data.size() || n_embd <= 0 ||
+            layer_indices.empty() ||
+            n_embd != static_cast<int32_t>(model.hparams.n_embd)) {
+        return false;
+    }
+
+    if (std::adjacent_find(layer_indices.begin(), layer_indices.end(),
+            [](const uint32_t left, const uint32_t right) { return left >= right; }) !=
+            layer_indices.end() || layer_indices.front() < 1 ||
+            layer_indices.back() >= model.hparams.n_layer()) {
+        return false;
+    }
+
+    const size_t layer_count = dense_layout
+        ? model.hparams.n_layer() - 1
+        : layer_indices.size();
+    const size_t required = static_cast<size_t>(n_embd) * layer_count;
+    if (data_len < required) {
+        return false;
+    }
+    if (std::any_of(data.begin(), data.end(), [](const float * values) {
+            return values == nullptr;
+        })) {
+        return false;
+    }
+
+    std::vector<llama_seq_id> sorted_ids = seq_ids;
+    std::sort(sorted_ids.begin(), sorted_ids.end());
+    if (std::adjacent_find(sorted_ids.begin(), sorted_ids.end()) != sorted_ids.end()) {
+        return false;
+    }
+
+    if (!init(model, n_embd, seq_ids.size(), layer_indices)) {
+        clear();
+        return false;
+    }
+
+    for (size_t layer_index = 0; layer_index < layer_indices.size(); ++layer_index) {
+        const uint32_t layer = layer_indices[layer_index];
+        ggml_tensor * tensor = tensors[layer];
+        for (size_t row = 0; row < data.size(); ++row) {
+            const size_t off = static_cast<size_t>(n_embd) *
+                (dense_layout ? layer - 1 : layer_index);
+            ggml_backend_tensor_set(
+                tensor,
+                data[row] + off,
+                row * static_cast<size_t>(n_embd) * sizeof(float),
+                static_cast<size_t>(n_embd) * sizeof(float));
+        }
+    }
+
+    this->seq_ids = seq_ids;
+    this->n_embd = n_embd;
+    this->layer_start = static_cast<int32_t>(layer_indices.front());
+    this->layer_end = static_cast<int32_t>(layer_indices.back());
+    this->active = true;
+    return true;
+}
+
+bool llama_adapter_cvec_batch::apply(
+        const llama_model & model,
+        const std::vector<llama_seq_id> & seq_ids,
+        const std::vector<const float *> & data,
+        const size_t data_len,
+        const int32_t n_embd,
+        const int32_t il_start,
+        const int32_t il_end) {
+    if (il_start < 1 || il_end < il_start ||
+            static_cast<size_t>(il_end) >= model.hparams.n_layer()) {
+        return false;
+    }
+    std::vector<uint32_t> layer_indices;
+    layer_indices.reserve(static_cast<size_t>(il_end - il_start + 1));
+    for (int32_t layer = il_start; layer <= il_end; ++layer) {
+        layer_indices.push_back(static_cast<uint32_t>(layer));
+    }
+    return apply_impl(model, seq_ids, data, data_len, n_embd, layer_indices, true);
+}
+
+bool llama_adapter_cvec_batch::apply_sparse(
+        const llama_model & model,
+        const std::vector<llama_seq_id> & seq_ids,
+        const std::vector<const float *> & data,
+        const size_t data_len,
+        const int32_t n_embd,
+        const std::vector<uint32_t> & layer_indices) {
+    return apply_impl(model, seq_ids, data, data_len, n_embd, layer_indices, false);
+}
+
+int32_t llama_adapter_cvec_batch::row_for_token(
+        const llama_ubatch & ubatch,
+        const uint32_t token_index) const {
+    int32_t row = -1;
+    bool contains_unbound_sequence = false;
+    for (int32_t s = 0; s < ubatch.n_seq_id[token_index]; ++s) {
+        const llama_seq_id sequence_id = ubatch.seq_id[token_index][s];
+        const auto it = std::find(seq_ids.begin(), seq_ids.end(), sequence_id);
+        if (it == seq_ids.end()) {
+            contains_unbound_sequence = true;
+            continue;
+        }
+
+        const int32_t candidate = static_cast<int32_t>(it - seq_ids.begin());
+        if (row != -1 && row != candidate) {
+            // A token shared by multiple sequences cannot receive two
+            // different overlays.  The server must split such a batch or
+            // provide one shared row instead of silently choosing seq_id[0].
+            return static_cast<int32_t>(seq_ids.size());
+        }
+        row = candidate;
+    }
+    // A token shared with an unbound sequence is not safe to steer: use the
+    // extra zero row. A wholly unbound token uses that same row. The server
+    // never silently selects another request's cvec.
+    return contains_unbound_sequence || row < 0
+        ? static_cast<int32_t>(seq_ids.size())
+        : row;
+}
+
+ggml_tensor * llama_adapter_cvec_batch::apply_callback(
+        ggml_context * ctx,
+        ggml_tensor * cur,
+        const int il,
+        const llama_ubatch & ubatch,
+        void * user_data) {
+    auto * batch = static_cast<llama_adapter_cvec_batch *>(user_data);
+    ggml_tensor * table = batch->tensor_for(il);
+    if (table == nullptr || ubatch.n_tokens == 0) {
+        return cur;
+    }
+
+    if (cur->ne[2] != 1 || cur->ne[3] != 1 || cur->ne[1] <= 0) {
+        LLAMA_LOG_ERROR(
+            "%s: unsupported batched cvec graph shape [%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "]\n",
+            __func__, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
+        return cur;
+    }
+
+    if (table->buffer == nullptr) {
+        LLAMA_LOG_ERROR("%s: batch cvec table has no backend buffer\n", __func__);
+        return cur;
+    }
+
+    const uint32_t index_count = static_cast<uint32_t>(cur->ne[1]);
+
+    std::lock_guard<std::mutex> lock(batch->selector_mutex);
+    auto & selector = batch->selector_states[ctx];
+    if (selector.tensor == nullptr || selector.count != index_count) {
+        selector.tensor = nullptr;
+        selector.count = 0;
+        selector.buf.reset();
+        selector.ctx.reset();
+
+        ggml_init_params params = {
+            /*.mem_size   =*/ ggml_tensor_overhead(),
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        selector.ctx.reset(ggml_init(params));
+        if (!selector.ctx) {
+            return cur;
+        }
+        selector.tensor = ggml_new_tensor_1d(
+            selector.ctx.get(), GGML_TYPE_I32, index_count);
+        if (selector.tensor == nullptr) {
+            selector.ctx.reset();
+            return cur;
+        }
+        selector.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(
+            selector.ctx.get(), ggml_backend_buffer_get_type(table->buffer)));
+        if (!selector.buf) {
+            selector.tensor = nullptr;
+            selector.ctx.reset();
+            return cur;
+        }
+        selector.count = index_count;
+    }
+
+    std::vector<int32_t> indices(index_count, -1);
+    for (uint32_t i = 0; i < index_count; ++i) {
+        int32_t row = -1;
+        if (index_count == ubatch.n_tokens) {
+            row = batch->row_for_token(ubatch, i);
+        } else if (index_count == ubatch.n_seqs_unq && ubatch.seq_id_unq != nullptr) {
+            const auto it = std::find(
+                batch->seq_ids.begin(), batch->seq_ids.end(), ubatch.seq_id_unq[i]);
+            if (it != batch->seq_ids.end()) {
+                row = static_cast<int32_t>(it - batch->seq_ids.begin());
+            } else {
+                row = static_cast<int32_t>(batch->seq_ids.size());
+            }
+        }
+        if (row < 0) {
+            LLAMA_LOG_ERROR(
+                "%s: cannot map graph indices to cvec batch (index_count=%u tokens=%u seqs=%u)\n",
+                __func__, index_count, ubatch.n_tokens, ubatch.n_seqs_unq);
+            return cur;
+        }
+        indices[i] = row;
+    }
+    ggml_backend_tensor_set(
+        selector.tensor, indices.data(), 0, indices.size() * sizeof(int32_t));
+    if (ggml_backend_buffer_get_type(table->buffer) !=
+            ggml_backend_buffer_get_type(selector.buf.get())) {
+        LLAMA_LOG_ERROR("%s: selector and cvec table use incompatible backends\n", __func__);
+        return cur;
+    }
+
+    return ggml_add(ctx, cur, ggml_get_rows(ctx, table, selector.tensor));
 }
 
 // lora

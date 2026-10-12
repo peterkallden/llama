@@ -1,0 +1,521 @@
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/catalog/model-projection.h"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <set>
+
+using json = nlohmann::ordered_json;
+
+namespace {
+
+common_tool_definition tool(
+        const char * name, const char * description, const char * input, const char * result,
+        const char * executor, common_tool_risk_class risk, bool confirmation = false,
+        uint32_t timeout_ms = 1000, size_t max_result_bytes = 16384, const char * policy = "{}") {
+    common_tool_definition definition;
+    definition.name = name;
+    definition.description = description;
+    definition.input_schema_json = input;
+    if (std::string(name) == "resource.inspect") {
+        definition.model_input_schema_json = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","minLength":1,"maxLength":64}}})";
+    } else if (std::string(name) == "resource.read") {
+        definition.model_input_schema_json = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","minLength":1,"maxLength":64},"representation":{"type":"string","enum":["text","bytes"],"default":"text"},"offset":{"type":"integer","minimum":0,"maximum":1073741824},"max_bytes":{"type":"integer","minimum":1,"maximum":32768}}})";
+    }
+    definition.result_schema_json = result;
+    definition.executor_id = executor;
+    definition.risk_class = risk;
+    definition.requires_confirmation = confirmation;
+    definition.timeout_ms = timeout_ms;
+    definition.max_result_bytes = max_result_bytes;
+    definition.policy_json = policy;
+    return definition;
+}
+
+std::vector<common_tool_definition> builtin_definitions() {
+    const char * empty = R"({"type":"object","additionalProperties":false})";
+    const char * object = R"({"type":"object"})";
+    std::vector<common_tool_definition> definitions = {
+        tool("math.calculate", "Evaluate a bounded arithmetic expression.", R"({"type":"object","additionalProperties":false,"required":["expression"],"properties":{"expression":{"type":"string","minLength":1,"maxLength":256}}})", object, "builtin.calculator", common_tool_risk_class::local_read),
+        tool("time.now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false,"properties":{"timezone":{"type":"string","enum":["UTC"]}}})", object, "builtin.time_now", common_tool_risk_class::local_read),
+        tool("memory.search", "Search memories available to the current runtime scope.", R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":1024},"limit":{"type":"integer","minimum":1,"maximum":8}}})", object, "builtin.memory_search", common_tool_risk_class::local_read, false, 30000),
+        tool("memory.get", "Get a previously retrieved memory by its opaque id.", R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string","minLength":1,"maxLength":256}}})", object, "builtin.memory_get", common_tool_risk_class::local_read),
+        tool("memory.inspect", "Inspect bounded memory statistics for the current scope.", empty, object, "builtin.memory_inspect", common_tool_risk_class::local_read),
+        tool("memory.conflict_check", "Find potentially conflicting memories in the current scope.", R"({"type":"object","additionalProperties":false,"required":["content"],"properties":{"content":{"type":"string","minLength":1,"maxLength":2048}}})", object, "builtin.memory_conflict_check", common_tool_risk_class::local_read),
+        tool("oracle.ruleset.define", "Use after the user introduces or corrects explicit rules for a small two-player placement game, or rules for solving a one-variable linear equation. Convert only those user-stated rules into the bounded host RuleSpec DSL; use this once to establish/correct the session RuleSet, not on every move. V1 does not support chess, arbitrary games or general algebra. The host assigns ID, revision and provenance, validates the domain and binds the session.", R"({"type":"object","additionalProperties":false,"required":["ruleset_dsl"],"properties":{"ruleset_dsl":{"type":"string","minLength":1,"maxLength":4096}}})", R"({"type":"object","required":["ruleset_id","revision","domain","action_contract"],"properties":{"ruleset_id":{"type":"string"},"revision":{"type":"integer"},"domain":{"type":"string","enum":["placement_game","linear_algebra"]},"action_contract":{"type":"string"},"active":{"type":"boolean"}}})", "builtin.oracle_ruleset_define", common_tool_risk_class::local_read),
+        tool("oracle.action.verify", "Use only after a session RuleSet is active: submit one proposed placement move or one equivalence-preserving rewrite of a one-variable linear equation. Follow the active RuleSet's field contract; omit unchanged equation sides and the host fills them from current state. Do not supply state, RuleSet IDs, search level, budget or guidance; the host supplies them. The host returns SATISFIED, VIOLATED or UNKNOWN with proof provenance.", R"({"type":"object","additionalProperties":false,"required":["action_dsl"],"properties":{"action_dsl":{"type":"string","minLength":1,"maxLength":4096}}})", R"({"type":"object","required":["verdict","ruleset_id","revision","evaluator","level"],"properties":{"verdict":{"type":"string","enum":["SATISFIED","VIOLATED","UNKNOWN"]},"ruleset_id":{"type":"string"},"revision":{"type":"integer"},"evaluator":{"type":"string"},"level":{"type":"string","enum":["local","bounded","guided"]},"proof":{"type":"object"},"counterexample":{"type":"object"},"reason":{"type":"string"}}})", "builtin.oracle_action_verify", common_tool_risk_class::local_read),
+        tool("memory.remember", "Propose a policy-gated persistent memory.", R"({"type":"object","additionalProperties":false,"required":["kind","content"],"properties":{"kind":{"type":"string","enum":["fact","preference","procedure","constraint","decision","goal","observation","reflection","episode"]},"content":{"type":"string","minLength":1,"maxLength":512},"importance":{"type":"number","minimum":0,"maximum":1},"confidence":{"type":"number","minimum":0,"maximum":1},"rationale":{"type":"string","minLength":1,"maxLength":240}}})", object, "builtin.memory_remember", common_tool_risk_class::memory_proposal, true),
+        tool("memory.propose_update", "Propose a version-checked memory correction or merge.", R"({"type":"object","additionalProperties":false,"required":["id","expected_version","content","rationale"],"properties":{"id":{"type":"string","minLength":1,"maxLength":256},"expected_version":{"type":"integer","minimum":0},"content":{"type":"string","minLength":1,"maxLength":2048},"rationale":{"type":"string","minLength":1,"maxLength":512}}})", object, "builtin.memory_propose_update", common_tool_risk_class::memory_proposal, true),
+        tool("memory.propose_forget", "Propose archival of a memory; never hard-delete it.", R"({"type":"object","additionalProperties":false,"required":["id","rationale"],"properties":{"id":{"type":"string","minLength":1,"maxLength":256},"rationale":{"type":"string","minLength":1,"maxLength":512}}})", object, "builtin.memory_propose_forget", common_tool_risk_class::memory_proposal, true),
+        tool("memory.link", "Propose a typed relationship between two memories or a memory and a plan.", R"({"type":"object","additionalProperties":false,"required":["from","relation","to","rationale"],"properties":{"from":{"type":"string","minLength":1,"maxLength":256},"relation":{"type":"string","minLength":1,"maxLength":64},"to":{"type":"string","minLength":1,"maxLength":256},"rationale":{"type":"string","minLength":1,"maxLength":512}}})", object, "builtin.memory_link", common_tool_risk_class::memory_proposal, true),
+        tool("memory.compact_propose", "Propose consolidation of supplied source memories into one summary.", R"({"type":"object","additionalProperties":false,"required":["source_ids","content","rationale"],"properties":{"source_ids":{"type":"array","minItems":2,"maxItems":8,"items":{"type":"string","minLength":1,"maxLength":256}},"content":{"type":"string","minLength":1,"maxLength":2048},"rationale":{"type":"string","minLength":1,"maxLength":512}}})", object, "builtin.memory_compact_propose", common_tool_risk_class::memory_proposal, true),
+        tool("plan_get", "Return the plan bound to the current runtime turn.", R"({"type":"object","additionalProperties":false,"properties":{"include_completed":{"type":"boolean"},"include_history":{"type":"boolean"}}})", object, "builtin.plan_get", common_tool_risk_class::local_read),
+        tool("plan_propose", "Propose version-checked plan operations for native policy evaluation.", R"({"type":"object","additionalProperties":false,"required":["expected_version","operations"],"properties":{"expected_version":{"type":"integer","minimum":0},"operations":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object"}}}})", object, "builtin.plan_propose", common_tool_risk_class::plan_proposal, true),
+        tool("repository.list", "List a bounded directory tree inside the runtime repository root.", R"({"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512},"depth":{"type":"integer","minimum":0,"maximum":3}}})", object, "builtin.repository.list", common_tool_risk_class::local_read),
+        tool("repository.search", "Search bounded text files inside the runtime repository root.", R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":256},"path":{"type":"string","maxLength":512},"max_results":{"type":"integer","minimum":1,"maximum":32}}})", object, "builtin.repository.search", common_tool_risk_class::local_read),
+        tool("repository.read", "Read a bounded line range from a text file inside the runtime repository root.", R"({"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string","minLength":1,"maxLength":512},"start_line":{"type":"integer","minimum":1,"maximum":1000000},"end_line":{"type":"integer","minimum":1,"maximum":1000000}}})", object, "builtin.repository.read", common_tool_risk_class::local_read),
+        tool("repository.diff", "Return a bounded read-only Git working-tree diff summary.", R"({"type":"object","additionalProperties":false})", object, "builtin.repository.diff", common_tool_risk_class::local_read),
+        tool("repository.log", "Return a bounded read-only Git commit log.", R"({"type":"object","additionalProperties":false,"properties":{"limit":{"type":"integer","minimum":1,"maximum":20}}})", object, "builtin.repository.log", common_tool_risk_class::local_read),
+        tool("repository.status", "Return the bounded Git working-tree status.", R"({"type":"object","additionalProperties":false})", object, "builtin.repository.status", common_tool_risk_class::local_read),
+        tool("repository.changed_files", "List bounded Git working-tree changes.", R"({"type":"object","additionalProperties":false})", object, "builtin.repository.changed_files", common_tool_risk_class::local_read),
+        tool("workspace.list", "List a bounded directory tree inside the host-owned workspace.", R"({"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512},"depth":{"type":"integer","minimum":0,"maximum":3}}})", object, "builtin.workspace.list", common_tool_risk_class::local_read),
+        tool("workspace.read", "Read a bounded line range from a workspace text file.", R"({"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string","minLength":1,"maxLength":512},"start_line":{"type":"integer","minimum":1,"maximum":1000000},"end_line":{"type":"integer","minimum":1,"maximum":1000000}}})", object, "builtin.workspace.read", common_tool_risk_class::local_read),
+        tool("workspace.search", "Search bounded text files inside the host-owned workspace.", R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":256},"path":{"type":"string","maxLength":512},"max_results":{"type":"integer","minimum":1,"maximum":32}}})", object, "builtin.workspace.search", common_tool_risk_class::local_read),
+        tool("workspace.patch", "Apply bounded, hash-checked line operations to a host-owned workspace file.", R"({"type":"object","additionalProperties":false,"required":["path","operations"],"properties":{"path":{"type":"string","minLength":1,"maxLength":512},"expected_hash":{"type":"string","maxLength":128},"operations":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object"}}}})", object, "builtin.workspace.patch", common_tool_risk_class::sandbox_execution, true, 5000, 65536),
+        tool("diagnostics.compile", "Parse bounded compiler output into normalized diagnostics.", R"({"type":"object","additionalProperties":false,"required":["output"],"properties":{"output":{"type":"string","minLength":1,"maxLength":65536}}})", object, "builtin.diagnostics.compile", common_tool_risk_class::local_read, false, 5000, 65536),
+        tool("diagnostics.symbol", "Find bounded symbol definitions using the host diagnostics provider or a text fallback.", R"({"type":"object","additionalProperties":false,"required":["symbol"],"properties":{"symbol":{"type":"string","minLength":1,"maxLength":256},"path_hint":{"type":"string","maxLength":512},"max_results":{"type":"integer","minimum":1,"maximum":64}}})", object, "builtin.diagnostics.symbol", common_tool_risk_class::local_read, false, 10000, 65536),
+        tool("diagnostics.references", "Find bounded symbol references using the host diagnostics provider or a text fallback.", R"({"type":"object","additionalProperties":false,"required":["symbol"],"properties":{"symbol":{"type":"string","minLength":1,"maxLength":256},"definition_path":{"type":"string","maxLength":512},"definition_line":{"type":"integer","minimum":1,"maximum":1000000},"definition_column":{"type":"integer","minimum":1,"maximum":1000000},"max_results":{"type":"integer","minimum":1,"maximum":128}}})", object, "builtin.diagnostics.references", common_tool_risk_class::local_read, false, 10000, 65536),
+        tool("diagnostics.call_hierarchy", "Find bounded callers and callees through the host semantic diagnostics provider.", R"({"type":"object","additionalProperties":false,"required":["symbol"],"properties":{"symbol":{"type":"string","minLength":1,"maxLength":256},"path_hint":{"type":"string","maxLength":512},"line":{"type":"integer","minimum":1,"maximum":1000000},"column":{"type":"integer","minimum":1,"maximum":1000000},"definition_path":{"type":"string","maxLength":512},"definition_line":{"type":"integer","minimum":1,"maximum":1000000},"definition_column":{"type":"integer","minimum":1,"maximum":1000000},"direction":{"type":"string","enum":["callers","callees","both"]},"max_depth":{"type":"integer","minimum":1,"maximum":8},"max_results":{"type":"integer","minimum":1,"maximum":128}}})", object, "builtin.diagnostics.call_hierarchy", common_tool_risk_class::local_read, false, 10000, 65536),
+        tool("diagnostics.test_failures", "Group and summarize bounded test failures from a test result.", R"({"type":"object","additionalProperties":false,"required":["result"],"properties":{"result":{"type":"string","minLength":1,"maxLength":65536}}})", object, "builtin.diagnostics.test_failures", common_tool_risk_class::local_read, false, 5000, 65536),
+        tool("diagnostics.format", "Check bounded formatter output and return a patch proposal when present.", R"({"type":"object","additionalProperties":false,"required":["output"],"properties":{"output":{"type":"string","minLength":1,"maxLength":65536}}})", object, "builtin.diagnostics.format", common_tool_risk_class::local_read, false, 5000, 65536),
+        tool("diagnostics.include_graph", "Build a bounded include graph from compiler-style dependency output.", R"({"type":"object","additionalProperties":false,"required":["output"],"properties":{"output":{"type":"string","minLength":1,"maxLength":65536}}})", object, "builtin.diagnostics.include_graph", common_tool_risk_class::local_read, false, 5000, 65536),
+        tool("diagnostics.native_crash", "Analyze a native executable and its post-mortem core or dump through the host debugger provider.", R"({"type":"object","additionalProperties":false,"required":["executable","dump"],"properties":{"executable":{"type":"string","minLength":1,"maxLength":1024,"x-agent-type":"resource_ref"},"dump":{"type":"string","minLength":1,"maxLength":1024,"x-agent-type":"resource_ref"}}})", R"({"type":"object","required":["kind","status","summary"],"properties":{"kind":{"type":"string","enum":["native_crash"]},"status":{"type":"string","enum":["analyzed","unavailable","invalid_input","invalid_dump","timeout","process_failed","parse_failed"]},"signal_or_exception":{"type":"string"},"fault":{"type":"object"},"stack":{"type":"array","items":{"type":"object"}},"symbol_quality":{"type":"string","enum":["none","partial","full"]},"summary":{"type":"string"}}})", "builtin.diagnostics.native_crash", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("dataset.list", "List bounded registered datasets in deterministic host order.", R"({"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","maxLength":512},"max_results":{"type":"integer","minimum":1,"maximum":256}}})", R"({"type":"object","additionalProperties":false,"required":["datasets","truncated"],"properties":{"datasets":{"type":"array","items":{"type":"string","x-agent-type":"dataset_ref"}},"names":{"type":"array","items":{"type":"string"}},"truncated":{"type":"boolean"}}})", "builtin.dataset.list", common_tool_risk_class::local_read),
+        tool("dataset.select", "Select one registered dataset by its host-visible name.", R"({"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string","minLength":1,"maxLength":256}}})", R"({"type":"object","additionalProperties":false,"required":["dataset","name"],"properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"name":{"type":"string"}}})", "builtin.dataset.select", common_tool_risk_class::local_read),
+        tool("dataset.inspect", "Inspect bounded metadata for a dataset reference, an acquired resource, or legacy file.", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512}}})", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"resource":{"type":"string","x-agent-type":"resource_ref"},"path":{"type":"string"},"format":{"type":"string"},"size_bytes":{"type":"integer"},"name":{"type":"string"},"rows":{"type":"integer"},"columns":{"type":"array","items":{"type":"object"}}}})", "builtin.dataset.inspect", common_tool_risk_class::local_read),
+        tool("dataset.schema", "Return a bounded typed schema for a dataset reference, an acquired resource, or legacy CSV file.", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512},"max_rows":{"type":"integer","minimum":1,"maximum":10000}}})", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"columns":{"type":"array","items":{"type":"object"}}}})", "builtin.dataset.schema", common_tool_risk_class::local_read),
+        tool("dataset.sample", "Return a bounded sample from a dataset reference, an acquired resource, or legacy CSV file.", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512},"rows":{"type":"integer","minimum":1,"maximum":100}}})", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"columns":{"type":"array","items":{"type":"string"}},"rows":{"type":"array","items":{"type":"object"}},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.dataset.sample", common_tool_risk_class::local_read),
+        tool("document.tables", "List bounded tables exposed by a host-owned document representation. Names are model-friendly aliases; node IDs and indexes are stable host addresses.", R"({"type":"object","additionalProperties":false,"required":["resource"],"properties":{"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"max_results":{"type":"integer","minimum":1,"maximum":64}}})", R"({"type":"object","additionalProperties":false,"required":["resource","tables","truncated"],"properties":{"resource":{"type":"string","x-agent-type":"resource_ref"},"tables":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["index","name","node_id"],"properties":{"index":{"type":"integer","minimum":0},"name":{"type":"string","maxLength":256},"caption":{"type":"string","maxLength":512},"node_id":{"type":"string","x-agent-type":"table_ref","maxLength":512}}}},"truncated":{"type":"boolean"}}})", "builtin.document.tables", common_tool_risk_class::local_read),
+        tool("document.table", "Resolve one document table by a unique name, index or node ID and return its bounded dataset handle.", R"({"type":"object","additionalProperties":false,"required":["resource"],"properties":{"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"table":{"type":"string","minLength":1,"maxLength":256,"description":"Unique table name or caption."},"table_index":{"type":"integer","minimum":0,"maximum":1000000},"node_id":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"table_ref"}}})", R"({"type":"object","additionalProperties":false,"required":["table_index","name","node_id","dataset","source_resource"],"properties":{"table_index":{"type":"integer","minimum":0},"name":{"type":"string","maxLength":256},"node_id":{"type":"string","x-agent-type":"table_ref","maxLength":512},"dataset":{"type":"string","x-agent-type":"dataset_ref","minLength":1,"maxLength":512},"source_resource":{"type":"string","x-agent-type":"resource_ref","minLength":1,"maxLength":512}}})", "builtin.document.table", common_tool_risk_class::local_read),
+        tool("dataset.validate", "Validate a host-approved dataset against bounded declarative rules.", R"({"type":"object","additionalProperties":false,"required":["dataset","rules"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref","x-agent-inferable":true},"rules":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object"}}}})", R"({"type":"object","required":["valid","violations"],"properties":{"valid":{"type":"boolean"},"violations":{"type":"array","items":{"type":"object"}}}})", "builtin.dataset.validate", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("data.query", "Run a bounded backend-neutral structured data query. where accepts canonical predicates, a bounded model-friendly object form, or a simple AND expression.", R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"select":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":128}},"where":{"maxLength":2048,"maxItems":16,"items":{"type":"object"}},"order_by":{"type":"array","maxItems":8,"items":{"type":"object"}},"distinct":{"type":"boolean"},"offset":{"type":"integer","minimum":0,"maximum":100000},"limit":{"type":"integer","minimum":1,"maximum":1000},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000},"max_result_rows":{"type":"integer","minimum":1,"maximum":10000},"materialize":{"type":"boolean"},"result_dataset":{"type":"string","minLength":1,"maxLength":512}}})", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.data.query", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("data.filter", "Filter a bounded dataset with declarative predicates. conditions accepts canonical predicates, a bounded model-friendly object form, or a simple AND expression.", R"({"type":"object","additionalProperties":false,"required":["dataset","conditions"],"properties":{"dataset":{"type":"string","maxLength":2048,"maxItems":16,"items":{"type":"object"},"x-agent-type":"dataset_ref","x-agent-inferable":true},"conditions":{"maxLength":2048,"maxItems":16,"items":{"type":"object"}},"limit":{"type":"integer","minimum":1,"maximum":1000},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000},"max_result_rows":{"type":"integer","minimum":1,"maximum":10000},"materialize":{"type":"boolean"},"result_dataset":{"type":"string","minLength":1,"maxLength":512}}})", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.data.filter", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("data.aggregate", "Aggregate a bounded dataset with host-approved functions.", R"({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"group_by":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":128}},"measures":{"type":"array","minItems":1,"maxItems":16,"x-agent-flat":{"directive":"measure","positional":["function","column","as"]},"items":{"type":"object","additionalProperties":false,"required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"]},"column":{"type":"string","minLength":1,"maxLength":128},"as":{"type":"string","minLength":1,"maxLength":128}}}},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000},"max_result_rows":{"type":"integer","minimum":1,"maximum":10000},"materialize":{"type":"boolean"},"result_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"}}})", R"({"type":"object","additionalProperties":false,"properties":{"rows":{"type":"array","maxItems":10000,"items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref","maxLength":512},"materialized":{"type":"boolean"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.data.aggregate", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("data.join", "Join two bounded datasets using declarative key mappings.", R"({"type":"object","additionalProperties":false,"required":["left","right","on"],"properties":{"left":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"right":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"type":{"type":"string","enum":["inner","left"]},"on":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object"}},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000},"max_result_rows":{"type":"integer","minimum":1,"maximum":10000},"materialize":{"type":"boolean"},"result_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"}}})", R"({"type":"object","additionalProperties":false,"properties":{"rows":{"type":"array","maxItems":10000,"items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref","maxLength":512},"materialized":{"type":"boolean"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.data.join", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("data.transform", "Transform a bounded dataset with host-approved column operations.", R"({"type":"object","additionalProperties":false,"required":["dataset","operations"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"operations":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object"}},"materialize":{"type":"boolean"},"result_dataset":{"type":"string","minLength":1,"maxLength":512}}})", R"({"type":"object","properties":{"rows":{"type":"array","items":{"type":"object"}},"dataset":{"type":"string","x-agent-type":"dataset_ref"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.data.transform", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("statistics.describe", "Describe selected or schema-declared numeric columns in a bounded dataset.", R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"columns":{"type":"array","maxItems":32,"description":"Columns to describe; omit for schema-declared numeric columns.","items":{"type":"string","maxLength":128}},"group_by":{"type":"array","maxItems":16,"description":"Return separate statistics for each group.","items":{"type":"string","maxLength":128}},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000}}})", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"rows":{"type":"array","items":{"type":"object"}},"scan_truncated":{"type":"boolean"}}})", "builtin.statistics.describe", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("statistics.outliers", "Identify bounded numeric outliers in a dataset using the host-owned IQR method.", R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"columns":{"type":"array","maxItems":32,"description":"Numeric columns to inspect.","items":{"type":"string","maxLength":128}},"column":{"type":"string","minLength":1,"maxLength":128,"description":"One numeric column to inspect; use instead of columns when singular."},"group_by":{"type":"array","maxItems":16,"description":"Compute thresholds independently for each group.","items":{"type":"string","maxLength":128}},"method":{"type":"string","enum":["iqr"]},"multiplier":{"type":"number","minimum":0.1,"maximum":10.0},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000}}})", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"rows":{"type":"array","items":{"type":"object"}},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.statistics.outliers", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("statistics.value_counts", "Return bounded value frequencies for one dataset column, including nulls.", R"({"type":"object","additionalProperties":false,"required":["dataset","column"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","x-agent-inferable":true},"column":{"type":"string","minLength":1,"maxLength":128},"limit":{"type":"integer","minimum":1,"maximum":1000},"max_scan_rows":{"type":"integer","minimum":1,"maximum":100000}}})", R"({"type":"object","additionalProperties":false,"required":["column","values","distinct_count","null_count"],"properties":{"column":{"type":"string"},"values":{"type":"array","maxItems":1000,"items":{"type":"object"}},"distinct_count":{"type":"integer"},"null_count":{"type":"integer"},"scanned_rows":{"type":"integer"},"scan_truncated":{"type":"boolean"},"result_truncated":{"type":"boolean"}}})", "builtin.statistics.value_counts", common_tool_risk_class::local_read, false, 30000, 65536),
+        tool("artifact.export", "Publish bounded text content or export a bounded dataset as CSV into a host-owned resource artifact.", R"({"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":256},"content":{"type":"string","maxLength":65536},"mime_type":{"type":"string","maxLength":128},"source_dataset":{"type":"string","minLength":1,"maxLength":512},"format":{"type":"string","enum":["csv"]},"max_rows":{"type":"integer","minimum":1,"maximum":10000}},"anyOf":[{"required":["name","content"]},{"required":["source_dataset"]}]})", object, "builtin.artifact.export", common_tool_risk_class::artifact_write, true, 30000, 8192),
+        tool("development.build", "Build a named host-approved target through the sandbox execution runtime.", R"({"type":"object","additionalProperties":false,"required":["target"],"properties":{"target":{"type":"string","minLength":1,"maxLength":256},"configuration":{"type":"string","enum":["Debug","Release","RelWithDebInfo","MinSizeRel"]},"resource_refs":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024}}}})", R"({"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"type":"string","enum":["queued","running","completed","failed","cancelled","timed_out"]},"exit_code":{"type":"integer"},"summary":{"type":"string"},"artifacts":{"type":"array"}}})", "sandbox.development.build", common_tool_risk_class::sandbox_execution, true, 120000, 65536, R"({"execution":"sandbox","execution_class":"developer-build","network":"none","filesystem":"workspace-write","host_owned":true})"),
+        tool("development.test", "Run a named host-approved test selection through the sandbox execution runtime.", R"({"type":"object","additionalProperties":false,"required":["target"],"properties":{"target":{"type":"string","minLength":1,"maxLength":256},"configuration":{"type":"string","enum":["Debug","Release","RelWithDebInfo","MinSizeRel"]},"filter":{"type":"string","maxLength":256},"timeout_ms":{"type":"integer","minimum":1000,"maximum":1800000},"resource_refs":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024}}}})", R"({"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"type":"string","enum":["queued","running","completed","failed","cancelled","timed_out"]},"exit_code":{"type":"integer"},"summary":{"type":"string"},"artifacts":{"type":"array"}}})", "sandbox.development.test", common_tool_risk_class::sandbox_execution, true, 120000, 65536, R"({"execution":"sandbox","execution_class":"developer-build","network":"none","filesystem":"workspace-write","host_owned":true})"),
+        tool("resource.inspect", "Inspect a bounded host-owned resource descriptor and available representations by opaque URI.", R"({"type":"object","additionalProperties":false,"required":["uri"],"properties":{"uri":{"type":"string","minLength":1,"maxLength":512}}})", object, "builtin.resource_inspect", common_tool_risk_class::local_read),
+        tool("resource.read", "Read a bounded host-owned text or base64 byte representation by opaque URI. If representation is omitted, text is preferred.", R"({"type":"object","additionalProperties":false,"required":["uri"],"properties":{"uri":{"type":"string","minLength":1,"maxLength":512},"representation":{"type":"string","minLength":1,"maxLength":64,"default":"text","description":"Requested representation. Defaults to text when omitted."},"offset":{"type":"integer","minimum":0,"maximum":1073741824},"max_bytes":{"type":"integer","minimum":1,"maximum":32768}}})", object, "builtin.resource_read", common_tool_risk_class::local_read, false, 0, 65536),
+        tool("web.search", "Search the public web through a bounded HTTPS provider and return result candidates.", R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":512},"limit":{"type":"integer","minimum":1,"maximum":8},"site":{"type":"string","minLength":1,"maxLength":256}}})", object, "builtin.web_search", common_tool_risk_class::network_read, false, 10000, 65536, R"({"https_only":true,"provider":"duckduckgo-lite","block_private_networks":true})"),
+        tool("web.fetch", "Fetch a public HTTPS URL into a bounded host resource. Returns metadata and a text preview when applicable; resource_ref identifies the authoritative fetched body for later reads, document processing or OpenAPI admission.", R"({"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string","minLength":9,"maxLength":2048},"max_bytes":{"type":"integer","minimum":1,"maximum":8388608}}})", object, "builtin.web_fetch", common_tool_risk_class::network_read, false, 60000, 65536, R"({"https_only":true,"max_redirects":3,"block_private_networks":true})"),
+        tool("openapi.connect", "Admit a public, anonymous, read-only OpenAPI spec already stored as a host resource. Use resource_ref from web.fetch; this registers the provider for subsequent turns in this session.", R"({"type":"object","additionalProperties":false,"required":["spec_resource"],"properties":{"spec_resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref","x-agent-inferable":true}}})", R"({"type":"object","additionalProperties":false,"required":["provider_id","operation_count","available_next_turn"],"properties":{"provider_id":{"type":"string"},"operation_count":{"type":"integer"},"available_next_turn":{"type":"boolean"}}})", "builtin.openapi_connect", common_tool_risk_class::network_read, false, 10000, 4096, R"({"host_owned":true,"anonymous_only":true,"read_only":true,"scope":"session"})"),
+    };
+
+    const auto bind_capability = [&](const char * capability,
+            std::initializer_list<const char *> names) {
+        for (auto & definition : definitions) {
+            if (std::find(names.begin(), names.end(), definition.name) != names.end()) {
+                definition.capabilities.emplace_back(capability);
+            }
+        }
+    };
+    bind_capability("dataset.resolve", {"dataset.select"});
+    bind_capability("dataset.inspect", {"dataset.inspect"});
+    bind_capability("dataset.schema", {"dataset.schema"});
+    bind_capability("dataset.sample", {"dataset.sample"});
+    bind_capability("dataset.validate", {"dataset.validate"});
+    bind_capability("data.query", {"data.query"});
+    bind_capability("data.filter", {"data.filter"});
+    bind_capability("data.aggregate", {"data.aggregate"});
+    bind_capability("data.join", {"data.join"});
+    bind_capability("data.transform", {"data.transform"});
+    bind_capability("statistics.describe", {"statistics.describe"});
+    bind_capability("statistics.outliers", {"statistics.outliers"});
+    bind_capability("statistics.value_counts", {"statistics.value_counts"});
+    bind_capability("repository.list", {"repository.list"});
+    bind_capability("repository.search", {"repository.search"});
+    bind_capability("repository.read", {"repository.read"});
+    bind_capability("repository.diff", {"repository.diff"});
+    bind_capability("repository.log", {"repository.log"});
+    bind_capability("repository.status", {"repository.status"});
+    bind_capability("repository.changed_files", {"repository.changed_files"});
+    bind_capability("workspace.list", {"workspace.list"});
+    bind_capability("workspace.read", {"workspace.read"});
+    bind_capability("workspace.search", {"workspace.search"});
+    bind_capability("workspace.modify", {"workspace.patch"});
+    bind_capability("resource.inspect", {"resource.inspect"});
+    bind_capability("resource.read", {"resource.read"});
+    bind_capability("artifact.export", {"artifact.export"});
+    bind_capability("document.inspect", {"document.tables", "document.table"});
+    bind_capability("web.search", {"web.search"});
+    bind_capability("web.fetch", {"web.fetch"});
+    bind_capability("openapi.connect", {"openapi.connect"});
+    bind_capability("development.build", {"development.build"});
+    bind_capability("development.test", {"development.test"});
+    bind_capability("diagnostics.compile", {"diagnostics.compile"});
+    bind_capability("diagnostics.symbol", {"diagnostics.symbol"});
+    bind_capability("diagnostics.references", {"diagnostics.references"});
+    bind_capability("diagnostics.call_hierarchy", {"diagnostics.call_hierarchy"});
+    bind_capability("diagnostics.test_failures", {"diagnostics.test_failures"});
+    bind_capability("diagnostics.format", {"diagnostics.format"});
+    bind_capability("diagnostics.include_graph", {"diagnostics.include_graph"});
+    bind_capability("diagnostics.native_crash", {"diagnostics.native_crash"});
+
+    const auto set_model_schema = [&](const char * name, const char * schema) {
+        for (auto & definition : definitions) {
+            if (definition.name == name) {
+                definition.model_input_schema_json = schema;
+                // Explicit model projections still inherit host-owned
+                // inferability.  The projection may hide bounds and control
+                // fields, but it must not hide the fact that a typed input
+                // can be supplied by deterministic host dataflow.
+                auto model = json::parse(definition.model_input_schema_json, nullptr, false);
+                const auto host = json::parse(definition.input_schema_json, nullptr, false);
+                if (model.is_object() && host.is_object() &&
+                        model.contains("properties") && host.contains("properties")) {
+                    auto & properties = model["properties"];
+                    const auto host_properties = host["properties"];
+                    json inferable = json::array();
+                    if (properties.is_object() && host_properties.is_object()) {
+                        for (auto it = properties.begin(); it != properties.end(); ++it) {
+                            const auto host_it = host_properties.find(it.key());
+                            if (host_it != host_properties.end() &&
+                                    host_it.value().is_object() &&
+                                    host_it.value().value("x-agent-inferable", false)) {
+                                it.value()["x-agent-inferable"] = true;
+                                inferable.push_back(it.key());
+                            }
+                        }
+                    }
+                    if (!inferable.empty()) model["x-agent-autowire-fields"] = std::move(inferable);
+                    definition.model_input_schema_json = model.dump();
+                }
+                return;
+            }
+        }
+    };
+    const auto set_model_result_schema = [&](const char * name, const char * schema) {
+        for (auto & definition : definitions) {
+            if (definition.name == name) {
+                definition.model_result_schema_json = schema;
+                return;
+            }
+        }
+    };
+    set_model_schema("document.tables", R"({"type":"object","additionalProperties":false,"required":["resource"],"properties":{"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"max_results":{"type":"integer","minimum":1,"maximum":64}}})");
+    // The model-facing view selects a table by its semantic name. Stable
+    // node IDs and numeric indexes remain available only to advanced host
+    // callers through the full execution schema.
+    set_model_schema("document.table", R"({"type":"object","additionalProperties":false,"required":["resource","table"],"properties":{"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"table":{"type":"string","minLength":1,"maxLength":256}}})");
+    set_model_schema("dataset.list", R"({"type":"object","additionalProperties":false,"properties":{"max_results":{"type":"integer","minimum":1,"maximum":256}}})");
+    set_model_schema("dataset.select", R"({"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string","minLength":1,"maxLength":256}}})");
+    set_model_schema("dataset.inspect", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512}}})");
+    set_model_schema("dataset.schema", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512},"max_rows":{"type":"integer","minimum":1,"maximum":10000}}})");
+    set_model_schema("dataset.sample", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref"},"resource":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"resource_ref"},"path":{"type":"string","minLength":1,"maxLength":512},"rows":{"type":"integer","minimum":1,"maximum":100}}})");
+    set_model_schema("dataset.validate", R"({"type":"object","additionalProperties":false,"required":["rules"],"x-agent-examples":[{"dataset":"$orders.dataset","rules":[{"type":"not_null","column":"order_id"},{"type":"unique","column":"order_id"}]}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref","description":"Dataset to validate; omit only when one compatible prior dataset output is unambiguous."},"rules":{"type":"array","minItems":1,"maxItems":32,"description":"Validation checks. Supported types are not_null and unique.","items":{"type":"object","additionalProperties":false,"required":["type","column"],"properties":{"type":{"type":"string","enum":["not_null","unique"],"description":"not_null checks for empty values; unique checks for duplicate values."},"column":{"type":"string","minLength":1,"maxLength":128,"description":"Column name from the dataset schema."}}}}}})");
+    set_model_schema("data.query", R"({"type":"object","additionalProperties":false,"x-agent-examples":[{"dataset":"$orders.dataset","select":["region","amount"],"where":[{"field":"status","operator":"=","value":"paid"}],"order_by":[{"field":"amount","direction":"desc"}],"limit":100}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Source dataset reference; omit only when one compatible prior dataset output is unambiguous."},"select":{"type":"array","maxItems":32,"items":{"type":"string","maxLength":128,"description":"Column name from the source dataset schema."},"description":"Columns to return; omit to return all columns."},"where":{"type":"array","maxItems":16,"description":"Optional predicates combined with AND. Use the canonical predicate objects shown below.","items":{"type":"object","required":["field","operator"],"properties":{"field":{"type":"string","description":"Column name from the source dataset schema."},"operator":{"type":"string","enum":["=","!=",">",">=","<","<=","is_null","not_null"],"description":"Comparison operator. Null checks do not need value."},"value":{"description":"Comparison value; required except for is_null and not_null."}}}},"order_by":{"type":"array","maxItems":8,"items":{"type":"object","required":["field"],"properties":{"field":{"type":"string","description":"Column name to sort by."},"direction":{"type":"string","enum":["asc","desc"],"description":"Sort direction; defaults to asc."}}},"description":"Sort keys in priority order."},"distinct":{"type":"boolean","description":"Return distinct projected rows."},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"Maximum result rows."}}})");
+    set_model_schema("data.filter", R"({"type":"object","additionalProperties":false,"required":["conditions"],"x-agent-examples":[{"dataset":"$orders.dataset","conditions":[{"field":"status","operator":"=","value":"paid"},{"field":"amount","operator":">","value":100}]}],"properties":{"dataset":{"type":"string","maxLength":2048,"x-agent-type":"dataset_ref","description":"Source dataset reference; omit only when one compatible prior dataset output is unambiguous."},"conditions":{"type":"array","minItems":1,"maxItems":16,"description":"Required predicates combined with AND. Use the canonical predicate objects shown below.","items":{"type":"object","required":["field","operator"],"properties":{"field":{"type":"string","description":"Column name from the source dataset schema."},"operator":{"type":"string","enum":["=","!=",">",">=","<","<=","is_null","not_null"],"description":"Comparison operator. Null checks do not need value."},"value":{"description":"Comparison value; required except for is_null and not_null."}}}},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"Maximum rows to return."}}})");
+    set_model_schema("data.aggregate", R"({"type":"object","additionalProperties":false,"x-agent-examples":[{"dataset":"$orders.dataset","measures":[{"function":"sum","column":"amount","as":"total_amount"},{"function":"count","column":"*","as":"order_count"}],"group_by":["region"]}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Source dataset reference; omit only when one compatible prior dataset output is unambiguous."},"measures":{"type":"array","minItems":1,"maxItems":16,"x-agent-flat":{"directive":"measure","positional":["function","column","as"]},"description":"Aggregations to compute. count may use column '*'; sum, avg, min and max require a source column.","items":{"type":"object","additionalProperties":false,"required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"],"description":"Aggregation function."},"column":{"type":"string","minLength":1,"maxLength":128,"description":"Source column; required except count may use '*'."},"as":{"type":"string","minLength":1,"maxLength":128,"description":"Optional output column name."}}}},"group_by":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":128,"description":"Source column used to form groups."},"description":"Optional grouping columns."}}})");
+    set_model_schema("data.join", R"({"type":"object","additionalProperties":false,"required":["left","right","on"],"x-agent-examples":[{"left":"$orders.dataset","right":"$customers.dataset","type":"left","on":[{"left":"customer_id","right":"id"}]}],"properties":{"left":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Left input dataset reference."},"right":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Right input dataset reference."},"type":{"type":"string","enum":["inner","left"],"description":"Join type; defaults to inner."},"on":{"type":"array","minItems":1,"maxItems":16,"x-agent-flat":{"directive":"on","positional":["left","right"]},"description":"At least one mapping from a left column to a right column.","items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","description":"Join-key column in the left dataset."},"right":{"type":"string","description":"Matching join-key column in the right dataset."}}}}}})");
+    set_model_schema("data.transform", R"({"type":"object","additionalProperties":false,"x-agent-examples":[{"dataset":"$orders.dataset","operations":[{"type":"rename","from":"amount","to":"order_amount"},{"type":"drop","column":"internal_note"}]}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Source dataset reference; omit only when one compatible prior dataset output is unambiguous."},"operations":{"type":"array","minItems":1,"maxItems":16,"description":"Apply operations in order. Supported types are rename and drop.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string","enum":["rename","drop"],"description":"rename requires from and to; drop requires column."},"from":{"type":"string","description":"Existing column name for rename."},"to":{"type":"string","description":"New column name for rename."},"column":{"type":"string","description":"Existing column name for drop."}}}}}})");
+    set_model_schema("statistics.describe", R"({"type":"object","additionalProperties":false,"x-agent-rules":["`columns` accepts only source-dataset column names. count, null_count, min, max, mean and stddev are returned statistics, never values for `columns`.","Omit group_by unless the request explicitly asks for separate groups."],"x-agent-examples":[{"dataset":"$orders.dataset","columns":["amount"]}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Dataset to describe; the host may resolve it from the selected workflow."},"columns":{"type":"array","maxItems":32,"description":"Columns to describe; omit for schema-declared numeric columns.","items":{"type":"string","maxLength":128}},"group_by":{"type":"array","maxItems":16,"description":"Return separate statistics for each group.","items":{"type":"string","maxLength":128}}}})");
+    set_model_schema("statistics.outliers", R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Dataset to inspect; the host may resolve it from the selected workflow."},"columns":{"type":"array","maxItems":32,"description":"Numeric columns to inspect.","items":{"type":"string","maxLength":128}},"column":{"type":"string","minLength":1,"maxLength":128,"description":"One numeric column to inspect; use instead of columns when singular."},"group_by":{"type":"array","maxItems":16,"description":"Compute thresholds independently for each group.","items":{"type":"string","maxLength":128}},"method":{"type":"string","enum":["iqr"],"description":"Outlier method."},"multiplier":{"type":"number","minimum":0.1,"maximum":10.0,"description":"IQR multiplier; defaults to 1.5."}}})");
+    set_model_schema("statistics.value_counts", R"({"type":"object","additionalProperties":false,"required":["column"],"x-agent-examples":[{"dataset":"$orders.dataset","column":"status","limit":20}],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref","description":"Dataset to inspect; omit only when one compatible prior dataset output is unambiguous."},"column":{"type":"string","minLength":1,"maxLength":128,"description":"Exact column name from the selected dataset schema."},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":"Maximum distinct values to return."}}})");
+    set_model_schema("artifact.export", R"({"type":"object","additionalProperties":false,"x-agent-rules":["Choose one export mode: provide name and content for text, or source_dataset for CSV.","Dataset export uses format=csv; max_rows is bounded by the host."],"x-agent-examples":[{"name":"summary.txt","content":"Total orders: 42","mime_type":"text/plain"},{"name":"orders.csv","source_dataset":"$orders.dataset","format":"csv","max_rows":1000}],"properties":{"name":{"type":"string","minLength":1,"maxLength":256,"description":"Artifact filename or display name."},"content":{"type":"string","maxLength":65536,"description":"Text content to publish; use with name for text export."},"mime_type":{"type":"string","maxLength":128,"description":"Optional media type for text content."},"source_dataset":{"type":"string","minLength":1,"maxLength":512,"x-agent-type":"dataset_ref","description":"Dataset to export as CSV; use instead of content."},"format":{"type":"string","enum":["csv"],"description":"Dataset export format."},"max_rows":{"type":"integer","minimum":1,"maximum":10000,"description":"Maximum CSV rows to export."}},"anyOf":[{"required":["name","content"]},{"required":["source_dataset"]}]})");
+    // Most tools need no hand-written model input schema. Generate a
+    // conservative projection from the host contract and keep explicit
+    // schemas above only for tools with genuinely different model semantics.
+    for (auto & definition : definitions) {
+        if (definition.model_input_schema_json.empty()) {
+            definition.model_input_schema_json = common_tool_default_model_input_projection(definition);
+        }
+    }
+    // Derive model-facing inference hints from field capabilities in the full
+    // host contract. The host still decides at runtime whether exactly one
+    // compatible source exists. Alternative schemas remain explicit until
+    // their binding semantics are modeled more precisely.
+    for (auto & definition : definitions) {
+        if (definition.model_input_schema_json.empty()) continue;
+        auto schema = json::parse(definition.model_input_schema_json, nullptr, false);
+        const auto host_schema = json::parse(definition.input_schema_json, nullptr, false);
+        if (!schema.is_object() || !host_schema.is_object() ||
+                schema.contains("anyOf") || schema.contains("oneOf")) continue;
+        auto properties = schema.value("properties", json::object());
+        const auto host_properties = host_schema.value("properties", json::object());
+        if (!properties.is_object() || !host_properties.is_object()) continue;
+        json inferable = json::array();
+        for (auto it = properties.begin(); it != properties.end(); ++it) {
+            const auto host_it = host_properties.find(it.key());
+            if (!it.value().is_object() || host_it == host_properties.end() ||
+                    !host_it.value().is_object()) continue;
+            if (host_it.value().value("x-agent-inferable", false)) {
+                inferable.push_back(it.key());
+                it.value()["x-agent-inferable"] = true;
+            }
+        }
+        if (!inferable.empty()) schema["x-agent-autowire-fields"] = std::move(inferable);
+        definition.model_input_schema_json = schema.dump();
+    }
+    // Generate a conservative result projection when a tool has not supplied
+    // an explicit one. Explicit model_result_schema_json remains the escape
+    // hatch for tools whose evidence semantics need a custom view.
+    for (auto & definition : definitions) {
+        if (definition.model_result_schema_json.empty()) {
+            definition.model_result_schema_json = common_tool_default_model_result_projection(definition);
+        }
+    }
+    // Keep execution/result schemas authoritative while presenting only
+    // useful chaining and evidence fields to the model.
+    set_model_result_schema("document.tables", R"({"type":"object","properties":{"resource":{"type":"string","x-agent-type":"resource_ref"},"tables":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("document.table", R"({"type":"object","properties":{"name":{"type":"string"},"dataset":{"type":"string","x-agent-type":"dataset_ref"},"source_resource":{"type":"string","x-agent-type":"resource_ref"}}})");
+    set_model_result_schema("dataset.list", R"({"type":"object","properties":{"datasets":{"type":"array","items":{"type":"string","x-agent-type":"dataset_ref"}},"names":{"type":"array","items":{"type":"string"}},"truncated":{"type":"boolean"}}})");
+    set_model_result_schema("dataset.select", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"name":{"type":"string"}}})");
+    set_model_result_schema("dataset.inspect", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"resource":{"type":"string","x-agent-type":"resource_ref"},"name":{"type":"string"},"rows":{"type":"integer"},"columns":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.schema", R"({"type":"object","properties":{"columns":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.sample", R"({"type":"object","properties":{"columns":{"type":"array","items":{"type":"string"}},"rows":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("dataset.validate", R"({"type":"object","properties":{"valid":{"type":"boolean"},"violations":{"type":"array","items":{"type":"object"}}}})");
+    set_model_result_schema("statistics.describe", R"({"type":"object","properties":{"columns":{"type":"array","description":"per-column count, null_count, min, max, mean and stddev","items":{"type":"object"}},"groups":{"type":"array","description":"the same statistics for each requested group","items":{"type":"object"}},"group_by":{"type":"array","items":{"type":"string"}},"scanned_rows":{"type":"integer"},"scan_truncated":{"type":"boolean"}}})");
+    set_model_result_schema("statistics.outliers", R"({"type":"object","properties":{"method":{"type":"string"},"multiplier":{"type":"number"},"columns":{"type":"array","description":"per-column IQR thresholds and matching rows","items":{"type":"object"}},"group_by":{"type":"array","items":{"type":"string"}},"scanned_rows":{"type":"integer"},"scan_truncated":{"type":"boolean"}}})");
+    set_model_result_schema("web.fetch", R"({"type":"object","properties":{"url":{"type":"string"},"final_url":{"type":"string"},"status":{"type":"integer"},"content_type":{"type":"string"},"title":{"type":"string"},"text_excerpt":{"type":"string"},"text_length":{"type":"integer"},"truncated":{"type":"boolean"},"resource_ref":{"type":"string","x-agent-type":"resource_ref"}}})");
+    return definitions;
+}
+
+common_tool_profile profile(const char * id, const char * description, std::initializer_list<const char *> tools) {
+    common_tool_profile value;
+    value.id = id;
+    value.description = description;
+    for (const auto * name : tools) value.members.push_back({name, 1, true, "{}"});
+    return value;
+}
+
+common_tool_profile policy_profile(
+        common_tool_profile value,
+        bool allow_network,
+        bool allow_policy_gated_writes) {
+    value.allow_network = allow_network;
+    value.allow_policy_gated_writes = allow_policy_gated_writes;
+    return value;
+}
+
+std::vector<common_tool_profile> builtin_profiles() {
+    return {
+        policy_profile(profile("minimal", "Local deterministic utility tools.", {"math.calculate", "time.now"}), false, false),
+        policy_profile(profile("semi-oracle", "Use for explicitly ruled small two-player placement games or one-variable linear-equation steps: define/correct the session rules once, then host-verify each proposed move or rewrite. Not for arbitrary games or general math.", {"oracle.ruleset.define", "oracle.action.verify"}), false, false),
+        policy_profile(profile("memory-read", "Read-only scoped memory, plan and resource inspection.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "plan_get", "resource.inspect", "resource.read"}), false, false),
+        policy_profile(profile("memory", "Memory inspection plus policy-gated memory, plan and resource proposals.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "memory.remember", "memory.propose_update", "memory.propose_forget", "memory.link", "memory.compact_propose", "plan_get", "plan_propose", "resource.inspect", "resource.read"}), false, true),
+        policy_profile(profile("analysis", "Bounded deliberate inspection, user-requested export and host-verified semi-oracle reasoning.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "plan_get", "repository.search", "repository.read", "repository.list", "resource.inspect", "resource.read", "document.tables", "document.table", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "web.search", "web.fetch", "openapi.connect", "oracle.ruleset.define", "oracle.action.verify"}), true, true),
+        policy_profile(profile("research", "Memory profile with host-owned acquisition, bounded analysis and semi-oracle verification.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "memory.remember", "plan_get", "plan_propose", "repository.search", "repository.read", "repository.list", "repository.diff", "resource.inspect", "resource.read", "document.tables", "document.table", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "web.search", "web.fetch", "openapi.connect", "oracle.ruleset.define", "oracle.action.verify"}), true, true),
+        policy_profile(profile("developer-read", "Read-only workspace, repository and resource inspection tools.", {"math.calculate", "time.now", "repository.list", "repository.search", "repository.read", "repository.diff", "repository.log", "repository.status", "repository.changed_files", "workspace.list", "workspace.read", "workspace.search", "diagnostics.symbol", "diagnostics.references", "diagnostics.call_hierarchy", "diagnostics.native_crash", "resource.inspect", "resource.read", "document.tables", "document.table"}), false, false),
+        policy_profile(profile("all-configured", "All catalogued tools, still subject to host policy and confirmation.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "memory.remember", "memory.propose_update", "memory.propose_forget", "memory.link", "memory.compact_propose", "plan_get", "plan_propose", "repository.list", "repository.search", "repository.read", "repository.diff", "repository.log", "repository.status", "repository.changed_files", "workspace.list", "workspace.read", "workspace.search", "workspace.patch", "development.build", "development.test", "diagnostics.compile", "diagnostics.symbol", "diagnostics.references", "diagnostics.call_hierarchy", "diagnostics.test_failures", "diagnostics.format", "diagnostics.include_graph", "diagnostics.native_crash", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "resource.inspect", "resource.read", "document.tables", "document.table", "web.search", "web.fetch", "openapi.connect"}), true, true),
+    };
+}
+
+bool validate(const common_tool_definition & definition, std::string & error) {
+    if (definition.name.empty() || definition.executor_id.empty()) { error = "tool definition requires a name and native executor id"; return false; }
+    const auto input = json::parse(definition.input_schema_json, nullptr, false);
+    const auto model_input = definition.model_input_schema_json.empty()
+        ? input
+        : json::parse(definition.model_input_schema_json, nullptr, false);
+    const auto result = json::parse(definition.result_schema_json, nullptr, false);
+    const auto model_result = definition.model_result_schema_json.empty()
+        ? result
+        : json::parse(definition.model_result_schema_json, nullptr, false);
+    const auto policy = json::parse(definition.policy_json, nullptr, false);
+    if (!input.is_object() || input.value("type", std::string()) != "object" ||
+            !model_input.is_object() || model_input.value("type", std::string()) != "object" ||
+            !result.is_object() || !model_result.is_object() || !policy.is_object()) {
+        error = "tool definition has invalid JSON schema or policy";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+std::string common_tool_model_input_schema(const common_tool_definition & definition) {
+    return definition.model_input_schema_json.empty()
+        ? definition.input_schema_json
+        : definition.model_input_schema_json;
+}
+
+std::string common_tool_model_result_schema(const common_tool_definition & definition) {
+    return definition.model_result_schema_json.empty()
+        ? definition.result_schema_json
+        : definition.model_result_schema_json;
+}
+
+const char * common_tool_risk_class_name(common_tool_risk_class value) {
+    switch (value) {
+        case common_tool_risk_class::local_read: return "local_read";
+        case common_tool_risk_class::memory_proposal: return "memory_proposal";
+        case common_tool_risk_class::plan_proposal: return "plan_proposal";
+        case common_tool_risk_class::artifact_write: return "artifact_write";
+        case common_tool_risk_class::network_read: return "network_read";
+        case common_tool_risk_class::sandbox_execution: return "sandbox_execution";
+    }
+    return "unknown";
+}
+
+bool common_tool_catalog::bootstrap(
+        const std::string & profile_id,
+        common_tool_bootstrap_result & result,
+        std::string & error,
+        const std::map<std::string, std::vector<std::string>> & configured_capabilities,
+        const std::map<std::string, common_tool_profile> & configured_profiles) {
+    result = {};
+    const auto all_definitions = builtin_definitions();
+    const auto all_profiles = builtin_profiles();
+    const auto selected = profile_id.empty() ? "minimal" : profile_id;
+    for (const auto & definition : all_definitions) {
+        if (!validate(definition, error)) return false;
+        const auto key = definition.name + "@" + std::to_string(definition.version);
+        if (definitions.count(key)) result.definitions_unchanged.push_back(key);
+        else { definitions.emplace(key, definition); result.definitions_created.push_back(key); }
+    }
+    for (const auto & profile : all_profiles) {
+        if (profiles.count(profile.id)) result.profiles_unchanged.push_back(profile.id);
+        else { profiles.emplace(profile.id, profile); result.profiles_created.push_back(profile.id); }
+    }
+    for (const auto & capability : configured_capabilities) {
+        if (capability.first.empty()) {
+            error = "configured tool capability id must not be empty";
+            return false;
+        }
+        for (const auto & tool_name : capability.second) {
+            if (tool_name.empty() || find_definition(tool_name) == nullptr) {
+                error = "configured tool capability references an unavailable tool: " + tool_name;
+                return false;
+            }
+        }
+        capabilities[capability.first] = capability.second;
+    }
+    for (const auto & configured : configured_profiles) {
+        common_tool_profile profile = configured.second;
+        profile.id = configured.first;
+        if (profile.id.empty()) {
+            error = "configured tool profile id must not be empty";
+            return false;
+        }
+        for (const auto & capability : profile.include_capabilities) {
+            if (!capabilities.count(capability)) {
+                error = "configured tool profile references an unavailable capability: " + capability;
+                return false;
+            }
+        }
+        for (const auto & capability : profile.exclude_capabilities) {
+            if (!capabilities.count(capability)) {
+                error = "configured tool profile references an unavailable capability: " + capability;
+                return false;
+            }
+        }
+        profiles[profile.id] = std::move(profile);
+    }
+    if (!find_profile(selected)) {
+        error = "tool profile is unavailable: " + selected;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+const common_tool_definition * common_tool_catalog::find_definition(const std::string & name, uint32_t version) const {
+    const auto it = definitions.find(name + "@" + std::to_string(version));
+    if (it != definitions.end()) return &it->second;
+    // Compatibility lookup for pre-namespacing clients/configuration. The
+    // executor suffix is the stable historical spelling (time_now,
+    // memory_search, resource_read, ...), while the catalog name is the
+    // canonical dotted model-facing spelling.
+    for (const auto & entry : definitions) {
+        const auto & definition = entry.second;
+        if (definition.version != version) continue;
+        const auto separator = definition.executor_id.rfind('.');
+        if (separator != std::string::npos && definition.executor_id.substr(separator + 1) == name) {
+            return &definition;
+        }
+    }
+    return nullptr;
+}
+
+const common_tool_profile * common_tool_catalog::find_profile(const std::string & id) const {
+    const auto it = profiles.find(id);
+    return it == profiles.end() ? nullptr : &it->second;
+}
+
+std::vector<common_tool_definition> common_tool_catalog::load_profile(const std::string & id, std::string & error) const {
+    common_tool_profile_snapshot snapshot;
+    if (!resolve_profile(id, snapshot, error)) return {};
+    return snapshot.tools;
+}
+
+bool common_tool_catalog::resolve_profile(
+        const std::string & id,
+        common_tool_profile_snapshot & snapshot,
+        std::string & error) const {
+    snapshot = {};
+    const auto * profile = find_profile(id);
+    if (!profile || !profile->enabled) { error = "tool profile is unavailable"; return false; }
+    snapshot.id = profile->id;
+    snapshot.allow_network = profile->allow_network;
+    snapshot.allow_policy_gated_writes = profile->allow_policy_gated_writes;
+    std::vector<common_tool_definition> loaded;
+    for (const auto & member : profile->members) {
+        if (!member.enabled) continue;
+        const auto * definition = find_definition(member.tool_name, member.tool_version);
+        if (!definition || !definition->enabled) { error = "tool profile references an unavailable tool"; return false; }
+        loaded.push_back(*definition);
+    }
+    std::set<std::string> loaded_names;
+    for (const auto & definition : loaded) loaded_names.insert(definition.name);
+    for (const auto & capability_id : profile->include_capabilities) {
+        const auto capability = capabilities.find(capability_id);
+        if (capability == capabilities.end()) {
+            error = "tool profile references an unavailable capability";
+            return false;
+        }
+        for (const auto & tool_name : capability->second) {
+            const auto * definition = find_definition(tool_name);
+            if (!definition || !definition->enabled) {
+                error = "tool capability references an unavailable tool";
+                return false;
+            }
+            if (loaded_names.insert(definition->name).second) loaded.push_back(*definition);
+        }
+    }
+    if (!profile->exclude_capabilities.empty()) {
+        std::set<std::string> excluded_names;
+        for (const auto & capability_id : profile->exclude_capabilities) {
+            const auto capability = capabilities.find(capability_id);
+            if (capability == capabilities.end()) {
+                error = "tool profile references an unavailable excluded capability";
+                return false;
+            }
+            excluded_names.insert(capability->second.begin(), capability->second.end());
+        }
+        loaded.erase(std::remove_if(loaded.begin(), loaded.end(), [&excluded_names](const common_tool_definition & definition) {
+            return excluded_names.count(definition.name) != 0;
+        }), loaded.end());
+    }
+    for (auto & definition : loaded) {
+        for (const auto & capability : capabilities) {
+            if (std::find(capability.second.begin(), capability.second.end(), definition.name) !=
+                    capability.second.end()) {
+                definition.capabilities.push_back(capability.first);
+            }
+        }
+        std::sort(definition.capabilities.begin(), definition.capabilities.end());
+        definition.capabilities.erase(std::unique(
+            definition.capabilities.begin(), definition.capabilities.end()),
+            definition.capabilities.end());
+    }
+    error.clear();
+    snapshot.tools = std::move(loaded);
+    return true;
+}
+
+bool resolve_common_tool_profile_snapshot(
+        const std::string & profile_id,
+        const std::map<std::string, std::vector<std::string>> & configured_capabilities,
+        const std::map<std::string, common_tool_profile> & configured_profiles,
+        common_tool_profile_snapshot & snapshot,
+        std::string & error) {
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    if (!catalog.bootstrap(
+            profile_id,
+            bootstrap,
+            error,
+            configured_capabilities,
+            configured_profiles)) {
+        return false;
+    }
+    return catalog.resolve_profile(
+        profile_id.empty() ? std::string("minimal") : profile_id,
+        snapshot,
+        error);
+}

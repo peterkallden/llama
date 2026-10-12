@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "model": {"backend": "server-context", "path": "MODEL.gguf"},
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "deliberate"
+  },
+  "tools": {"profile": "minimal", "repository_root": "."},
+  "mcp": {
+    "inbound": {
+      "enabled": true,
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "path": "/mcp",
+      "agent_tools": true,
+      "max_delegation_depth": 1,
+      "tokens": [
+        {
+          "id": "agent-caller",
+          "token_env": "LLAMA_AGENT_AGENT_TOKEN",
+          "audience": "llama-agent",
+          "namespace": "agent-a",
+          "project": "shared-work",
+          "tool_profile": "minimal",
+          "allowed_tools": ["delegate_task", "summarize", "review_plan"],
+          "allow_writes": false
+        }
+      ]
+    }
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1
+  }
+}

@@ -1,0 +1,7 @@
+The Atlas release has three binary variants: CPU, CUDA, and Vulkan.
+
+The release gate requires the relevant test suite to pass before an artifact is published.
+
+Release artifacts must be produced from the Agent CI package rather than from an unrelated local build.
+
+The final report must list passed, failed, and not-run tests separately.

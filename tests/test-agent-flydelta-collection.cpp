@@ -1,0 +1,186 @@
+#include "agent/adaptation/flydelta/flydelta-collection.h"
+
+#include <filesystem>
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+
+static common_adaptation_evidence evidence() {
+    common_adaptation_evidence value;
+    value.id = "evidence://repair/collector-1";
+    value.source = common_adaptation_evidence_source::tool_repair;
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
+    value.scope.namespace_id = "local";
+    value.scope.project_id = "project";
+    value.scope.session_id = "session";
+    value.scope.turn_id = "turn";
+    value.task_fingerprint = "sha256:task";
+    value.baseline_ref = "execution:failed";
+    value.candidate_ref = "execution:repaired";
+    value.verifier_ref = "verifier:v1";
+    value.transaction_ids = {"learning://failed", "learning://repaired"};
+    value.cause = common_learning_cause::model_behavior;
+    value.host_verified = true;
+    return value;
+}
+
+static common_flydelta_experiment_collection_request request() {
+    common_flydelta_experiment_collection_request value;
+    value.enabled = true;
+    value.kind = common_flydelta_experiment_job_kind::counterfactual;
+    value.evidence = evidence();
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
+    value.model_profile_fingerprint = "sha256:model";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.template_fingerprint = "sha256:template";
+    value.execution_context_fingerprint = "sha256:execution-context";
+    value.capture_manifest_ids = {"flydelta://capture/manifest-1"};
+    value.alpha_search.candidates = {0.05f, 0.1f};
+    value.alpha_search.max_candidates = 2;
+    value.code_revision = "collector-test:v1";
+    return value;
+}
+
+int main() {
+    std::string error;
+    const auto root = std::filesystem::temp_directory_path() /
+        "llama-agent-flydelta-collection-test";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+
+    auto value = request();
+    common_flydelta_experiment_collection_result result;
+    CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(std::filesystem::exists(root / "pending"));
+
+    CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+
+    common_flydelta_claimed_experiment_job claimed;
+    CHECK(common_flydelta_experiment_queue_claim_next(root, {}, claimed, error));
+    CHECK(claimed.job.seed.scope.project_id == "project");
+    CHECK(claimed.job.seed.scope.turn_id == "turn");
+    CHECK(claimed.job.kind == common_flydelta_experiment_job_kind::counterfactual);
+    CHECK(claimed.job.capture_manifest_ids.size() == 1);
+
+    auto pipeline_request = request();
+    pipeline_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    pipeline_request.behavior_delta_ids = {"flydelta://delta/pipeline-1"};
+    pipeline_request.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
+    pipeline_request.search_state_ref = "flydelta://state/search/plateau-1";
+    pipeline_request.representation_augmentation_state_ref =
+        "flydelta://state/augmentation/seed";
+    const auto pipeline_root = root / "pipeline";
+    CHECK(common_flydelta_collect_experiment_job(
+        pipeline_root, {}, pipeline_request, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    common_flydelta_claimed_experiment_job pipeline_claimed;
+    CHECK(common_flydelta_experiment_queue_claim_next(pipeline_root, {}, pipeline_claimed, error));
+    CHECK(pipeline_claimed.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_claimed.job.capture_manifest_ids.size() == 1);
+    CHECK(pipeline_claimed.job.behavior_delta_ids.size() == 1);
+    CHECK(pipeline_claimed.job.bootstrap_zoom_state_ref ==
+        "flydelta://state/bootstrap-zoom/seed");
+    CHECK(pipeline_claimed.job.search_state_ref ==
+        "flydelta://state/search/plateau-1");
+    CHECK(pipeline_claimed.job.representation_augmentation_state_ref ==
+        "flydelta://state/augmentation/seed");
+
+    CHECK(common_flydelta_collect_next_action_job(
+        pipeline_root, {}, pipeline_claimed.job,
+        common_flydelta_next_action::run_orthogonal_search,
+        "flydelta://state/bootstrap-zoom/next",
+        "flydelta://state/search/orthogonal",
+        "flydelta://state/augmentation/next",
+        "",
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(common_flydelta_collect_next_action_job(
+        pipeline_root, {}, pipeline_claimed.job,
+        common_flydelta_next_action::run_orthogonal_search,
+        "flydelta://state/bootstrap-zoom/next",
+        "flydelta://state/search/orthogonal",
+        "flydelta://state/augmentation/next",
+        "",
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+    common_flydelta_claimed_experiment_job next_action_job;
+    CHECK(common_flydelta_experiment_queue_claim_next(
+        pipeline_root, {}, next_action_job, error));
+    CHECK(next_action_job.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(next_action_job.job.search_state_ref ==
+        "flydelta://state/search/orthogonal");
+    CHECK(next_action_job.job.representation_augmentation_state_ref ==
+        "flydelta://state/augmentation/next");
+
+    value.enabled = false;
+    CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::disabled);
+
+    value.enabled = true;
+    value.evidence.host_verified = false;
+    CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
+
+    value = request();
+    value.behavior_delta_ids = {"flydelta://delta/invalid-for-counterfactual"};
+    CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
+
+    value = request();
+    value.behavior_key = "tool_use/diagnostics/wrong-tool";
+    CHECK(!common_flydelta_collect_experiment_job(root, {}, value, result, error));
+
+    auto refine_request = request();
+    common_flydelta_search_observation observation;
+    observation.experiment_id = "flydelta://experiment/collector-refine";
+    observation.candidate_id = "flydelta://candidate/refine";
+    observation.outcome = common_flydelta_counterfactual_outcome::unknown;
+    observation.host_evaluated = true;
+    observation.verifier_known = true;
+    observation.diagnostics_available = true;
+    observation.diagnostics = {1, 2, 0.5f, 0.2f, 0.1f};
+    observation.budget_remaining = true;
+    common_flydelta_search_decision decision;
+    CHECK(common_flydelta_decide_search_disposition(observation, decision, error));
+    common_flydelta_candidate_lineage lineage;
+    lineage.candidate_id = observation.candidate_id;
+    lineage.mutation_kind = "scale_refinement";
+    lineage.generation = 2;
+    lineage.direction_id = "flydelta://direction/raw";
+    lineage.layer_indices = {2};
+    lineage.scale = 0.08f;
+    lineage.intervention_budget = 0.08f;
+    const auto refine_root = root / "refine";
+    CHECK(common_flydelta_collect_refinement_job(
+        refine_root, {}, refine_request, observation, decision, lineage, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(common_flydelta_collect_refinement_job(
+        refine_root, {}, refine_request, observation, decision, lineage, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+    common_flydelta_claimed_experiment_job refined;
+    CHECK(common_flydelta_experiment_queue_claim_next(refine_root, {}, refined, error));
+    CHECK(refined.job.kind == common_flydelta_experiment_job_kind::counterfactual);
+    CHECK(refined.job.id.find("/generation/2") != std::string::npos);
+
+    auto pipeline_refine_request = request();
+    pipeline_refine_request.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    pipeline_refine_request.behavior_delta_ids = {"flydelta://delta/pipeline-refine"};
+    pipeline_refine_request.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/resume";
+    pipeline_refine_request.search_state_ref = "flydelta://state/search/resume";
+    const auto pipeline_refine_root = root / "pipeline-refine";
+    CHECK(common_flydelta_collect_search_pipeline_refinement_job(
+        pipeline_refine_root, {}, pipeline_refine_request, observation, decision, lineage,
+        result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    common_flydelta_claimed_experiment_job pipeline_refined;
+    CHECK(common_flydelta_experiment_queue_claim_next(
+        pipeline_refine_root, {}, pipeline_refined, error));
+    CHECK(pipeline_refined.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_refined.job.behavior_delta_ids.size() == 1);
+    CHECK(pipeline_refined.job.bootstrap_zoom_state_ref ==
+        "flydelta://state/bootstrap-zoom/resume");
+    CHECK(pipeline_refined.job.search_state_ref ==
+        "flydelta://state/search/resume");
+
+    std::filesystem::remove_all(root, ignored);
+    return 0;
+}

@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <list>
 #include <map>
+#include <memory>
 
 // TODO: prevent including the whole server-common.h as we only use server_tokens
 #include "server-common.h"
@@ -14,6 +15,9 @@
 
 enum server_task_type {
     SERVER_TASK_TYPE_COMPLETION,
+    // Internal bounded teacher-forced scoring task.  This is not an HTTP
+    // endpoint; agent inference submits it through the resident server queue.
+    SERVER_TASK_TYPE_TEACHER_FORCED_SCORE,
     SERVER_TASK_TYPE_EMBEDDING,
     SERVER_TASK_TYPE_RERANK,
     SERVER_TASK_TYPE_DECISION,
@@ -48,6 +52,180 @@ enum stop_type {
     STOP_TYPE_LIMIT,
 };
 
+// A host-prepared, request-scoped control vector.  The server owns only the
+// execution lifetime of this immutable buffer; it does not resolve artifacts,
+// apply learning policy, or load files from an external path.  A null pointer
+// means that the task uses the model's no-op control-vector state.
+struct server_task_cvec {
+    std::string identity;
+    std::string content_hash;
+    int32_t n_embd = 0;
+    int32_t il_start = 1;
+    int32_t il_end = 0;
+    std::vector<float> data;
+    // Optional layer-sparse material for the per-sequence device batch path.
+    // The dense data remains authoritative for the scalar compatibility path.
+    std::vector<uint32_t> sparse_layer_indices;
+    std::vector<float> sparse_data;
+};
+
+using server_task_cvec_ptr = std::shared_ptr<const server_task_cvec>;
+
+// Compatibility is intentionally weaker than identity equality: different
+// sequence rows may carry different payloads, but the backend table still
+// requires one common dense layout.
+bool server_task_cvec_batch_compatible(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right);
+
+// Backend-neutral ownership and validation view for a future per-sequence
+// cvec binding. It deliberately does not know about llama_context, graph
+// construction or server scheduling. The shared pointers keep every row's
+// payload alive while a backend materializes its own device-resident table.
+struct server_task_cvec_batch {
+    void clear();
+
+    bool add(llama_seq_id seq_id, server_task_cvec_ptr cvec, std::string & error);
+
+    bool materialize(
+            std::vector<llama_seq_id> & seq_ids,
+            std::vector<const float *> & data,
+            size_t & data_len,
+            int32_t & n_embd,
+            int32_t & il_start,
+            int32_t & il_end,
+            std::string & error) const;
+
+    bool materialize_sparse(
+            std::vector<llama_seq_id> & seq_ids,
+            std::vector<const float *> & data,
+            size_t & data_len,
+            int32_t & n_embd,
+            std::vector<uint32_t> & layer_indices,
+            std::string & error) const;
+
+    bool has_sparse() const {
+        return !entries.empty() && entries.front().cvec &&
+            !entries.front().cvec->sparse_layer_indices.empty();
+    }
+
+    size_t size() const { return entries.size(); }
+
+private:
+    struct entry {
+        llama_seq_id seq_id;
+        server_task_cvec_ptr cvec;
+    };
+
+    std::vector<entry> entries;
+};
+
+bool server_task_cvec_equal(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right);
+
+bool server_task_cvec_validate(
+        const server_task_cvec & cvec,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
+
+// Internal FlyDelta capture transport.  These are deliberately generic
+// server-task fields so the server core does not depend on the agent layer.
+// The agent adapter maps them to common_flydelta_hidden_state_capture at the
+// boundary.
+struct server_task_capture_request {
+    bool enabled = false;
+    std::vector<uint32_t> layer_indices;
+    int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
+    int32_t position = 0;
+    size_t max_bytes = 0;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+};
+
+using server_task_capture_request_ptr = std::shared_ptr<const server_task_capture_request>;
+
+struct server_task_capture_result {
+    bool attempted = false;
+    bool captured = false;
+    uint32_t n_embd = 0;
+    int32_t token_index = -1;
+    int32_t token_id = -1;
+    int32_t prompt_token_count = 0;
+    int32_t position = 0;
+    std::vector<uint32_t> layer_indices;
+    std::vector<float> values;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    std::string failure_reason;
+};
+
+struct server_task_layer_reduction {
+    bool enabled = false;
+    std::string group_id;
+    std::string baseline_group_id;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    std::vector<float> direction;
+};
+
+using server_task_layer_reduction_ptr = std::shared_ptr<const server_task_layer_reduction>;
+
+struct server_task_layer_reduction_result {
+    bool available = false;
+    uint32_t layer = 0;
+    float dot_shift_delta = 0.0f;
+    float shift_squared = 0.0f;
+    float delta_squared = 0.0f;
+    float residual_squared = 0.0f;
+    std::string failure_reason;
+};
+
+enum class server_task_residual_patch_operation : uint8_t {
+    replace,
+    add,
+};
+
+enum class server_task_residual_patch_site : uint8_t {
+    layer_input_residual,
+};
+
+// A neutral single-position graph intervention. Values are already scaled;
+// the server neither infers direction semantics nor permits broadcasting.
+struct server_task_residual_patch {
+    server_task_residual_patch_operation operation = server_task_residual_patch_operation::add;
+    server_task_residual_patch_site site = server_task_residual_patch_site::layer_input_residual;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    int32_t sequence_id = -1;
+    std::vector<float> values;
+    bool observe_applied_vector = false;
+    std::string identity;
+};
+
+struct server_task_residual_patch_observation {
+    bool attempted = false;
+    bool applied = false;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    int32_t sequence_id = -1;
+    server_task_residual_patch_site site = server_task_residual_patch_site::layer_input_residual;
+    std::string failure_reason;
+};
+
+using server_task_residual_patch_ptr = std::shared_ptr<const server_task_residual_patch>;
+
+bool server_task_residual_patch_validate(
+        const server_task_residual_patch & patch,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
+
 struct task_params {
     bool stream          = false;
     bool include_usage   = false;
@@ -69,6 +247,12 @@ struct task_params {
     int64_t t_max_predict_ms = -1; // if positive, limit the generation phase to this time limit
 
     std::map<int, float> lora; // mapping adapter ID -> scale
+
+    // Internal typed field; deliberately omitted from task_params::to_json().
+    server_task_cvec_ptr cvec;
+    server_task_capture_request_ptr capture;
+    server_task_layer_reduction_ptr layer_reduction;
+    server_task_residual_patch_ptr residual_patch;
 
     std::vector<std::string> antiprompt;
     std::vector<std::string> response_fields;
@@ -162,6 +346,12 @@ struct server_task {
     std::string             cli_prompt;
     std::vector<raw_buffer> cli_files;
 
+    // Internal teacher-forced scoring material.  The server tokenizes the
+    // target together with cli_prompt and retains only the suffix after the
+    // validated prompt boundary.
+    std::string teacher_forced_target;
+    llama_tokens teacher_forced_tokens;
+
     server_task_type type;
 
     // used by SERVER_TASK_TYPE_SLOT_SAVE, SERVER_TASK_TYPE_SLOT_RESTORE, SERVER_TASK_TYPE_SLOT_ERASE
@@ -233,6 +423,7 @@ struct server_task {
         switch (type) {
             case SERVER_TASK_TYPE_COMPLETION:
             case SERVER_TASK_TYPE_INFILL:
+            case SERVER_TASK_TYPE_TEACHER_FORCED_SCORE:
                 return true;
             case SERVER_TASK_TYPE_DECISION:
                 return !decision.labels.empty();
@@ -360,6 +551,15 @@ struct completion_token_output {
 
 };
 
+struct server_task_result_teacher_score : server_task_result {
+    double total_logprob = 0.0;
+    size_t token_count = 0;
+    // Internal execution provenance; not serialized in public JSON.
+    bool flydelta_device_batch = false;
+
+    virtual json to_json() override;
+};
+
 struct server_task_result_cmpl_final : server_task_result {
     common_chat_input content;
     llama_tokens tokens;
@@ -383,6 +583,15 @@ struct server_task_result_cmpl_final : server_task_result {
     std::vector<std::string>  response_fields;
 
     task_params generation_params;
+
+    // Internal FlyDelta capture, omitted from the public JSON payload.
+    server_task_capture_result capture;
+    server_task_layer_reduction_result layer_reduction;
+    server_task_residual_patch_observation residual_patch_observation;
+
+    // True when this completion used per-sequence overlay rows in a
+    // non-CPU backend graph.
+    bool flydelta_device_batch = false;
 
     // response formatting
     bool               verbose  = false;

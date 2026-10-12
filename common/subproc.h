@@ -12,6 +12,7 @@
 struct subprocess_s {};
 static constexpr int subprocess_option_no_window = 0;
 static constexpr int subprocess_option_combined_stdout_stderr = 0;
+static constexpr int subprocess_option_enable_async = 0;
 static constexpr int subprocess_option_inherit_environment = 0;
 static constexpr int subprocess_option_search_user_path = 0;
 #endif
@@ -41,6 +42,10 @@ struct common_subproc {
     FILE * stdin_file();
     FILE * stdout_file();
     FILE * stderr_file();
+
+    // Reads asynchronously captured stdout when subprocess support is enabled.
+    // A zero return means that no bytes are currently available.
+    unsigned read_stdout(char * buffer, unsigned size);
 
     // close stdin and detach it from the process, so a later join()/destroy() won't double-close it;
     // use this after writing all input to signal EOF to the child while it's still running

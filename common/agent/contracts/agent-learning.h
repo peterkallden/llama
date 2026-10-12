@@ -1,0 +1,86 @@
+#pragma once
+
+#include <string>
+#include <utility>
+
+enum class common_learning_signal_type {
+    tool_failure,
+    repair_echo_failure,
+    successful_recovery,
+    reflection_hint,
+    user_correction,
+    user_taught_concept,
+    planning_revision,
+    research_verification,
+    procedure_verification,
+    blueprint_verification,
+};
+
+inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
+    switch (type) {
+        case common_learning_signal_type::tool_failure: return "tool_failure";
+        case common_learning_signal_type::repair_echo_failure: return "repair_echo_failure";
+        case common_learning_signal_type::successful_recovery: return "successful_recovery";
+        case common_learning_signal_type::reflection_hint: return "reflection_hint";
+        case common_learning_signal_type::user_correction: return "user_correction";
+        case common_learning_signal_type::user_taught_concept: return "user_taught_concept";
+        case common_learning_signal_type::planning_revision: return "planning_revision";
+        case common_learning_signal_type::research_verification: return "research_verification";
+        case common_learning_signal_type::procedure_verification: return "procedure_verification";
+        case common_learning_signal_type::blueprint_verification: return "blueprint_verification";
+    }
+    return "unknown";
+}
+
+struct common_agent_user_correction {
+    std::string source_turn_id;
+    std::string statement;
+};
+
+// An explicit reusable-principle candidate from the user. It remains source
+// evidence only until host grounding supplies verified semantic contrasts.
+struct common_agent_user_taught_concept {
+    std::string source_turn_id;
+    std::string statement;
+};
+
+// Canonical host-owned metadata for a tool-learning signal. The family is the
+// model-facing routing family; provider_kind records where the execution came
+// from without making provider naming part of the model contract.
+struct common_learning_tool_metadata {
+    std::string tool_family;
+    std::string provider_kind;
+};
+
+struct common_learning_signal {
+    common_learning_signal(
+            common_learning_signal_type type = common_learning_signal_type::tool_failure,
+            std::string plan_id = {},
+            std::string step_id = {},
+            std::string tool_name = {},
+            std::string evidence_id = {},
+            std::string summary = {},
+            std::string tool_family = {},
+            std::string provider_kind = {},
+            std::string repair_context_json = {})
+        : type(type), plan_id(std::move(plan_id)), step_id(std::move(step_id)),
+          tool_name(std::move(tool_name)), evidence_id(std::move(evidence_id)),
+          summary(std::move(summary)), tool_family(std::move(tool_family)),
+          provider_kind(std::move(provider_kind)),
+          repair_context_json(std::move(repair_context_json)) {}
+
+    common_learning_signal_type type = common_learning_signal_type::tool_failure;
+    std::string plan_id;
+    std::string step_id;
+    std::string tool_name;
+    std::string evidence_id;
+    std::string summary;
+    // Host-owned canonical metadata. These fields keep learning transport
+    // neutral: provider_kind is provenance, while tool_family is the
+    // model-facing family used for policy and corpus views.
+    std::string tool_family;
+    std::string provider_kind;
+    // Optional bounded host-owned payload for a repair attempt. It is
+    // persisted as evidence context, never treated as a positive repair.
+    std::string repair_context_json;
+};

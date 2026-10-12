@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "model": {
+    "profile": "agent-default"
+  },
+  "models": {
+    "directory": "/models",
+    "bases": {
+      "agent-small": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        "load": "resident"
+      },
+      "agent-research": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+        "load": "lazy"
+      },
+      "nomic": {
+        "kind": "embedding",
+        "backend": "server-context",
+        "path": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "load": "resident"
+      }
+    },
+    "profiles": {
+      "agent-default": {
+        "base": "agent-small",
+        "adapters": [],
+        "context_size": 4096,
+        "load": "resident"
+      },
+      "research": {
+        "base": "agent-research",
+        "adapters": [],
+        "context_size": 8192,
+        "load": "lazy"
+      }
+    },
+    "routing": {
+      "default_profile": "agent-default",
+      "embedding_model": "nomic"
+    },
+    "limits": {
+      "max_loaded_generation_models": 2,
+      "model_eviction": "lru"
+    }
+  }
+}

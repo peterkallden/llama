@@ -1,0 +1,42 @@
+// Host-neutral model and inference configuration.
+//
+// CLI, daemon and Android adapters may translate their platform-specific
+// configuration into these values.  Keep this header free of CLI argument
+// parsing, filesystem policy and Android/JNI types.
+#pragma once
+
+#include <cstddef>
+#include <string>
+
+// These names describe runtime providers, not user-interface entrypoints.
+// `cli` is retained for compatibility with the existing direct llama.cpp
+// provider; a future rename can be handled at the adapter boundary.
+enum class agent_inference_backend {
+    cli,
+    server_context,
+};
+
+struct common_agent_inference_options {
+    // The host resolves this to an accessible model location before creating
+    // a session.  Android may therefore populate it from app-private storage.
+    std::string model;
+    int n_predict = -1;
+    int n_gpu_layers = 0;
+    bool fit_params = true;
+    int n_threads = 2;
+    size_t context_size_tokens = 0;
+    int n_parallel = 1;
+    int n_sequences = 1;
+    // Resident agent contexts must leave a device-memory margin for
+    // FlyDelta overlays, compact diagnostic reductions and transient arm
+    // batches when fit_params is enabled.  This is a host policy seam, not
+    // a search or evidence setting.
+    bool reserve_flydelta_workspace = true;
+    // A typed host decision. The server-context host applies this before the
+    // resident model is loaded; it does not consult process environment for
+    // agent runtime behavior.
+    bool per_sequence_cvec_batch = false;
+    // Explicitly carries --agent-trace into the resident context.
+    bool agent_trace = false;
+    std::string mmproj;
+};

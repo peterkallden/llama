@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "context_size": 8192,
+    "n_predict": 256,
+    "context_budgets": {
+      "plan_chars": 4096,
+      "step_chars": 2400,
+      "tool_observation_chars": 8192,
+      "input_resources_chars": 4096,
+      "deliberate_input_resources_chars": 2400,
+      "resource_chunk_max_bytes": 4096,
+      "resource_chunk_overlap_bytes": 256,
+      "memory_chars": 4096,
+      "memory_per_item_chars": 1000,
+      "overlay_chars": 1600,
+      "overlay_per_item_chars": 240,
+      "deliberate_memory_chars": 1800,
+      "deliberate_memory_per_item_chars": 500,
+      "deliberate_overlay_chars": 1200,
+      "deliberate_overlay_per_item_chars": 300,
+      "working_state": {
+        "max_total_chars": 8192,
+        "max_value_chars": 1024,
+        "max_completed_steps": 64,
+        "max_remaining_steps": 64,
+        "max_constraints": 32,
+        "max_open_questions": 32,
+        "max_resource_refs": 32,
+        "max_chunk_status": 64,
+        "max_tool_results": 32
+      }
+    }
+  },
+  "limits": {
+    "max_continuations": 2
+  }
+}

@@ -1142,7 +1142,9 @@ float * llama_context::get_embeddings_nextn_ith(int32_t i) {
 float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
     output_reorder();
 
-    GGML_ASSERT(lid < embd_layer_inp.size() && embd_layer_inp[lid].has_data());
+    if (lid >= embd_layer_inp.size() || !embd_layer_inp[lid].has_data()) {
+        return nullptr;
+    }
 
     return embd_layer_inp[lid].data;
 }
@@ -1493,11 +1495,37 @@ bool llama_context::set_adapter_cvec(
                 int32_t   il_end) {
     LLAMA_LOG_DEBUG("%s: il_start = %d, il_end = %d\n", __func__, il_start, il_end);
 
+    cvec_batch = nullptr;
+
     bool res = cvec->apply(model, data, len, n_embd, il_start, il_end);
 
     sched_need_reserve = true;
 
     return res;
+}
+
+void llama_context::set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * ref) {
+    cvec_batch = ref;
+    sched_need_reserve = true;
+}
+
+void llama_context::set_residual_patch(const llama_residual_patch_ref * ref) {
+    // The server clears this request-scoped hook before every batch.  A
+    // normal request has no patch, so an unchanged nullptr must not force a
+    // graph re-reservation or otherwise perturb the ordinary generation path.
+    if (residual_patch == ref) {
+        return;
+    }
+    residual_patch = ref;
+    sched_need_reserve = true;
+}
+
+void llama_context::set_layer_reductions(llama_layer_reduction_ref * ref) {
+    if (layer_reductions == ref) {
+        return;
+    }
+    layer_reductions = ref;
+    sched_need_reserve = true;
 }
 
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
@@ -1569,6 +1597,8 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         ret = status;
         return nullptr;
     }
+
+    extract_layer_reductions(res);
 
     ret = GGML_STATUS_SUCCESS;
 
@@ -2387,11 +2417,21 @@ bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
             continue;
         }
         if (!embd_layer_inp[il].has_data()) {
-            GGML_ABORT("output layer input buffer not allocated");
+            // Layer-input capture is an optional diagnostic seam. Some model
+            // graphs do not expose the requested input buffer; report an
+            // empty capture to the caller instead of aborting the whole
+            // server-context request. The agent/FlyDelta seam will then
+            // fail closed with a capture error.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
         ggml_tensor * t = res->get_layer_inp((int) il);
         if (!t) {
-            GGML_ABORT("layer input tensor not found");
+            // The graph may not expose this optional diagnostic seam for the
+            // selected architecture. Leave the output empty so callers get a
+            // controlled capture failure instead of a process assertion.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
 
         const size_t nbytes = ggml_nbytes(t);
@@ -2411,6 +2451,56 @@ bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
         extracted = true;
     }
     return extracted;
+}
+
+void llama_context::extract_layer_reductions(const llm_graph_result * res) {
+    if (layer_reductions == nullptr) {
+        return;
+    }
+    for (const auto & output : res->layer_reduction_outputs) {
+        if (output.entry == nullptr || output.dot_shift_delta == nullptr ||
+                output.shift_squared == nullptr || output.delta_squared == nullptr ||
+                output.residual_squared == nullptr) {
+            continue;
+        }
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(
+            sched.get(), output.dot_shift_delta);
+        if (backend == nullptr) {
+            output.entry->failure_reason = "layer reduction has no backend";
+            continue;
+        }
+        ggml_tensor * reduction_tensors[] = {
+            output.dot_shift_delta,
+            output.shift_squared,
+            output.delta_squared,
+            output.residual_squared,
+        };
+        bool device_reduction = true;
+        for (ggml_tensor * tensor : reduction_tensors) {
+            ggml_backend_t tensor_backend = ggml_backend_sched_get_tensor_backend(
+                sched.get(), tensor);
+            ggml_backend_dev_t tensor_device = tensor_backend
+                ? ggml_backend_get_device(tensor_backend) : nullptr;
+            if (tensor_device == nullptr ||
+                    ggml_backend_dev_type(tensor_device) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+                device_reduction = false;
+                break;
+            }
+        }
+        if (!device_reduction) {
+            output.entry->failure_reason = "layer reduction executed on CPU backend";
+            continue;
+        }
+        ggml_backend_tensor_get(output.dot_shift_delta,
+            &output.entry->dot_shift_delta, 0, sizeof(float));
+        ggml_backend_tensor_get(output.shift_squared,
+            &output.entry->shift_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.delta_squared,
+            &output.entry->delta_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.residual_squared,
+            &output.entry->residual_squared, 0, sizeof(float));
+        output.entry->available = true;
+    }
 }
 
 void llama_context::output_reorder() {
@@ -2690,6 +2780,9 @@ llm_graph_params llama_context::graph_params(
         /*.sched       =*/ sched.get(),
         /*.backend_cpu =*/ backend_cpu,
         /*.cvec        =*/ cvec.get(),
+        /*.cvec_batch  =*/ cvec_batch,
+        /*.residual_patch =*/ residual_patch,
+        /*.layer_reductions =*/ layer_reductions,
         /*.loras       =*/ loras.get(),
         /*.mctx        =*/ mctx,
         /*.cross       =*/ &cross,
@@ -4283,6 +4376,14 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+void llama_set_residual_patch(llama_context * ctx, const llama_residual_patch_ref * ref) {
+    ctx->set_residual_patch(ref);
+}
+
+void llama_set_layer_reductions(llama_context * ctx, llama_layer_reduction_ref * ref) {
+    ctx->set_layer_reductions(ref);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

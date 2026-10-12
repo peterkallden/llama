@@ -1,0 +1,19 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "llamaAgentToken",
+      "description": "Bearer token for the local llama-agent MCP endpoint",
+      "password": true
+    }
+  ],
+  "servers": {
+    "llamaAgentInbound": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:llamaAgentToken}"
+      }
+    }
+  }
+}

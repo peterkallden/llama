@@ -15,6 +15,9 @@ indent_size = 4
 [Makefile]
 indent_style = tab
 
+[debian/rules]
+indent_style = tab
+
 [scripts/*.mk]
 indent_style = tab
 
@@ -47,6 +50,10 @@ insert_final_newline = unset
 
 [vendor/**.patch]
 trim_trailing_whitespace = unset
+
+[vendor/sqlite/**]
+trim_trailing_whitespace = unset
+insert_final_newline = unset
 
 [tools/ui/**]
 indent_style = unset

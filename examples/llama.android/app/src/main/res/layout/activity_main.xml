@@ -14,6 +14,48 @@
         android:layout_marginEnd="4dp"
         tools:context=".MainActivity">
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="8dp">
+
+            <TextView
+                android:id="@+id/runtime_status"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Agent runtime: connecting..." />
+
+            <ProgressBar
+                android:id="@+id/model_progress"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/mcp_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MCP" />
+
+            <Button
+                android:id="@+id/attachment_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Attach" />
+
+            <Button
+                android:id="@+id/settings_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="Agent runtime settings"
+                android:text="⚙" />
+        </LinearLayout>
+
         <ScrollView
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -29,6 +71,15 @@
                 style="@style/TextAppearance.MaterialComponents.Body2" />
 
         </ScrollView>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/events"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fadeScrollbars="false"
+            android:scrollbars="vertical"
+            tools:listitem="@layout/item_agent_event" />
 
         <com.google.android.material.divider.MaterialDivider
             android:layout_width="match_parent"

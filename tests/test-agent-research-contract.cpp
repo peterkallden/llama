@@ -1,0 +1,410 @@
+#include "agent/thinking/research/research-contract.h"
+#include "agent/thinking/research/research-controller.h"
+#include "agent/thinking/research/research-workspace-factory.h"
+#include "agent/thinking/research/research-assessor.h"
+#include "agent/thinking/research/research-workspace.h"
+#include "agent/thinking/research/research-runner.h"
+#include "agent/input-resources.h"
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <cassert>
+
+class terminal_failure_executor final : public common_agent_research_tool_executor {
+public:
+    bool execute(
+            const common_agent_research_action & action,
+            common_agent_research_workspace &,
+            common_agent_research_event & event,
+            std::string &) const override {
+        event.type = common_agent_research_event_type::task_failed;
+        event.task_id = action.task_id;
+        event.gap_id = action.gap_id;
+        event.failure_code = "tool.route_denied";
+        event.failure_summary = "resource.read is outside the active envelope";
+        return true;
+    }
+};
+
+class canonical_resource_tool_runtime final : public common_agent_tool_runtime {
+public:
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+    bool has_execution_envelope() const override { return true; }
+    bool resolve_tool_name(
+            const std::string & requested,
+            std::string & resolved,
+            std::vector<std::string> & candidates) const override {
+        candidates.clear();
+        if (requested != "resource_read") return false;
+        resolved = "resource.read";
+        return true;
+    }
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        last_validated_name = call.name;
+        error.clear();
+        return call.name == "resource.read";
+    }
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        last_executed_name = call.name;
+        return common_tool_execution_result::success(
+            "bounded resource content", "the resource supports the research gap", {resource});
+    }
+
+    common_runtime_resource_ref resource;
+    mutable std::string last_validated_name;
+    mutable std::string last_executed_name;
+};
+
+int main() {
+    common_agent_request factory_request;
+    factory_request.prompt = "Research the bounded runtime contract";
+    factory_request.turn_id = "factory-turn";
+    factory_request.session_id = "factory-session";
+    factory_request.namespace_id = "factory-namespace";
+    factory_request.max_iterations = 3;
+    factory_request.max_tool_batches = 2;
+    factory_request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::research);
+    common_agent_input_resource input_resource;
+    input_resource.resource.uri = "agent-resource://factory-turn/upload-1";
+    input_resource.resource.name = "notes.txt";
+    input_resource.resource.mime_type = "text/plain";
+    input_resource.role = "reference";
+    input_resource.required = true;
+    factory_request.input_resources.push_back(input_resource);
+    common_memory_hit memory_hit;
+    memory_hit.memory.id = "memory-procedure-1";
+    memory_hit.memory.kind = common_memory_kind::procedure;
+    memory_hit.memory.summary = "Use the bounded runtime contract first.";
+    memory_hit.memory.confidence = 0.9f;
+    memory_hit.final_score = 0.9f;
+    factory_request.memories.push_back(memory_hit);
+    common_agent_research_workspace factory_workspace;
+    std::string factory_error;
+    assert(common_agent_research_create_workspace(factory_request, factory_workspace, factory_error));
+    assert(factory_workspace.workspace_id == "research:factory-turn");
+    assert(factory_workspace.gaps.size() == 1);
+    assert(factory_workspace.budget.max_iterations == 4);
+    assert(factory_workspace.budget.max_tool_calls == 2);
+    assert(factory_workspace.sources.size() == 2);
+    assert(factory_workspace.sources.front().kind == common_agent_research_source_kind::user_supplied);
+    assert(factory_workspace.sources.front().resource_ref &&
+        factory_workspace.sources.front().resource_ref->uri == input_resource.resource.uri);
+    assert(factory_workspace.sources.front().role == "reference" &&
+        factory_workspace.sources.front().required &&
+        !factory_workspace.sources.front().primary_source &&
+        factory_workspace.sources.front().content_hash.empty());
+    assert(factory_workspace.sources.back().kind == common_agent_research_source_kind::memory);
+    assert(factory_workspace.sources.back().memory_id == memory_hit.memory.id);
+    assert(factory_workspace.sources.back().memory_kind == common_memory_kind::procedure);
+    assert(factory_workspace.sources.back().availability ==
+        common_agent_research_source_availability::materialized_context);
+    assert(factory_workspace.sources.back().role == "method_context");
+
+    common_agent_research_workspace chunk_workspace;
+    chunk_workspace.workspace_id = "research:chunk-turn";
+    chunk_workspace.objective.objective_id = "chunk-objective";
+    chunk_workspace.objective.question = "What result did the paper report?";
+    chunk_workspace.scope.namespace_id = "chunk-namespace";
+    chunk_workspace.scope.session_id = "chunk-session";
+    chunk_workspace.budget.max_sources = 4;
+    chunk_workspace.gaps.push_back({"chunk-gap", "What result did the paper report?", "", "the question", 1});
+    common_runtime_resource_ref chunk_ref;
+    chunk_ref.uri = "agent-resource://chunk-turn/paper-text";
+    chunk_ref.name = "paper-text";
+    chunk_ref.lineage = {"agent-resource://chunk-turn/paper-text", 2, 3, 4096, 4096, 256,
+        "host.chunk.text.v1"};
+    std::vector<common_plan_observation> chunk_observations{
+        {"chunk-2", "resource_chunk",
+            "Validated resource chunk evidence.\nfinding: Radiation increased.\nevidence: radiation flux increased",
+            1.0f, {}, {chunk_ref}, 0}};
+    assert(common_agent_research_seed_chunk_observations(
+        chunk_workspace, chunk_observations, factory_error));
+    assert(chunk_workspace.sources.size() == 1 && chunk_workspace.evidence.size() == 1);
+    assert(chunk_workspace.evidence.front().origin == common_agent_research_evidence_origin::model_inference);
+    assert(chunk_workspace.evidence.front().model_inferred);
+    assert(chunk_workspace.evidence.front().statement == "Radiation increased.");
+    assert(chunk_workspace.evidence.front().supporting_excerpt == "radiation flux increased");
+    assert(chunk_workspace.evidence.front().supporting_excerpt_host_verified);
+    assert(chunk_workspace.evidence.front().source_location.find("#bytes=4096+4096") != std::string::npos);
+    std::vector<common_agent_research_source> projected_sources;
+    std::vector<common_agent_research_evidence> projected_evidence;
+    assert(common_agent_research_chunk_evidence_from_observations(
+        chunk_observations, "task:projection", projected_sources, projected_evidence, factory_error));
+    assert(projected_sources.size() == 1 && projected_evidence.size() == 1);
+    assert(projected_evidence.front().claim_id == "task:projection");
+    assert(projected_evidence.front().supporting_excerpt_host_verified);
+    assert(projected_evidence.front().source_location == chunk_workspace.evidence.front().source_location);
+    auto no_finding_observation = chunk_observations.front();
+    no_finding_observation.id = "chunk-1";
+    no_finding_observation.summary = "no relevant findings.";
+    no_finding_observation.resource_refs.front().uri = "agent-resource://chunk-turn/empty-chunk";
+    no_finding_observation.resource_refs.front().lineage.chunk_index = 1;
+    assert(common_agent_research_chunk_evidence_from_observations(
+        {no_finding_observation}, "task:projection", projected_sources, projected_evidence, factory_error));
+    assert(projected_sources.empty() && projected_evidence.empty());
+    assert(chunk_workspace.gaps.front().evidence_ids.size() == 1);
+    assert(chunk_workspace.gaps.front().status == common_agent_research_gap_status::open);
+    common_agent_research_bounded_assessor bounded_assessor;
+    assert(common_agent_research_assess_materialized_evidence(
+        chunk_workspace, bounded_assessor, factory_error));
+    assert(chunk_workspace.gaps.front().status == common_agent_research_gap_status::sufficiently_answered);
+    common_agent_research_controller chunk_controller;
+    const auto assessed_action = chunk_controller.begin(chunk_workspace, factory_error);
+    assert(assessed_action.kind == common_agent_research_action_kind::complete);
+    assert(assessed_action.stop_reason == common_agent_research_stop_reason::sufficient_coverage);
+
+    auto ambiguous_chunk_workspace = chunk_workspace;
+    ambiguous_chunk_workspace.sources.clear();
+    ambiguous_chunk_workspace.evidence.clear();
+    ambiguous_chunk_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    ambiguous_chunk_workspace.gaps.front().evidence_ids.clear();
+    ambiguous_chunk_workspace.gaps.push_back(
+        {"chunk-gap-2", "What method was used?", "", "", 1});
+    assert(common_agent_research_seed_chunk_observations(
+        ambiguous_chunk_workspace, chunk_observations, factory_error));
+    assert(ambiguous_chunk_workspace.sources.empty() && ambiguous_chunk_workspace.evidence.empty());
+    assert(ambiguous_chunk_workspace.gaps.front().status == common_agent_research_gap_status::open);
+
+    const auto input_context = common_agent_render_input_resource_context(factory_request.input_resources);
+    assert(input_context.find("id=r1") != std::string::npos);
+    assert(input_context.find("agent-resource://factory-turn/upload-1") == std::string::npos);
+    // Workflow-generated API resources enter the same bounded research
+    // acquisition path without being mislabeled as user uploads.
+    factory_workspace.sources.front().kind = common_agent_research_source_kind::api_result;
+    common_agent_research_controller factory_controller;
+    const auto input_action = factory_controller.begin(factory_workspace, factory_error);
+    assert(input_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(input_action.preferred_tools.size() == 1 && input_action.preferred_tools.front() == "resource_read");
+    assert(input_action.instruction == input_resource.resource.uri);
+
+    // The research controller keeps its historical underscore alias, but the
+    // route-scoped runtime requires the canonical catalog name.
+    canonical_resource_tool_runtime canonical_runtime;
+    canonical_runtime.resource = input_resource.resource;
+    common_agent_research_runtime_adapter canonical_adapter(canonical_runtime);
+    auto canonical_workspace = factory_workspace;
+    common_agent_research_action canonical_action;
+    canonical_action.kind = common_agent_research_action_kind::schedule_task;
+    canonical_action.task_id = "alias-task";
+    canonical_action.gap_id = canonical_workspace.gaps.front().gap_id;
+    canonical_action.instruction = input_resource.resource.uri;
+    canonical_action.preferred_tools = {"resource_read"};
+    common_agent_research_event canonical_event;
+    assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
+    assert(canonical_runtime.last_validated_name == "resource.read");
+    assert(canonical_runtime.last_executed_name == "resource.read");
+    assert(canonical_event.type == common_agent_research_event_type::task_completed);
+
+    factory_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    factory_workspace.tasks.clear();
+    factory_workspace.evidence.clear();
+    factory_workspace.coverage = {};
+    factory_workspace.sources.front().resource_ref.reset();
+    const auto memory_action = factory_controller.begin(factory_workspace, factory_error);
+    assert(memory_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
+        "resource_read") == memory_action.preferred_tools.end());
+    assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
+        "memory_get") == memory_action.preferred_tools.end());
+    assert(memory_action.instruction == factory_workspace.gaps.front().question);
+
+    common_agent_research_workspace workspace;
+    workspace.workspace_id = "research-1";
+    workspace.request_id = "request-1";
+    workspace.turn_id = "turn-1";
+    workspace.session_id = "session-1";
+    workspace.plan_id = "plan-1";
+    workspace.plan_step_id = "research-step";
+    workspace.scope.namespace_id = "project";
+    workspace.scope.session_id = "session-1";
+    workspace.objective.objective_id = "objective-1";
+    workspace.objective.question = "What scheduling gaps remain?";
+    workspace.objective.success_criteria = {"claims are source-backed"};
+    std::string error;
+    assert(common_agent_research_add_gap(workspace, {"gap-1", "Is cancellation bounded?", "The runtime contract is unclear.", "evidence establishes whether cancellation is bounded", 1}, error));
+    assert(common_agent_research_add_task(workspace, {"task-1", "gap-1", "Find cancellation paths", common_agent_research_task_kind::repository_inspection, {"repository.search"}, {}, 1, 0, 1}, error));
+    common_runtime_resource_ref resource;
+    resource.uri = "agent-resource://turn-1/source-1";
+    resource.scope = common_runtime_resource_scope::turn;
+    assert(common_agent_research_add_source(workspace, {"source-1", "runtime-operation.h", "repository", "repository", "now", "hash-1", common_agent_research_source_kind::repository_file, resource, 0.95, true}, error));
+    common_agent_research_evidence evidence;
+    evidence.evidence_id = "evidence-1";
+    evidence.source_id = "source-1";
+    evidence.claim_id = "claim-1";
+    evidence.statement = "Cancellation is represented by a bounded operation state.";
+    evidence.source_location = "runtime-operation.h:42";
+    evidence.relation = common_agent_research_evidence_relation::supports;
+    evidence.origin = common_agent_research_evidence_origin::direct_source;
+    evidence.relevance = 0.95;
+    evidence.confidence = 0.9;
+    evidence.directly_observed = true;
+    assert(common_agent_research_record_evidence(workspace, evidence, error));
+    assert(common_agent_research_update_coverage(workspace, {1, 1, 0, 0, 1.0, 0.9, 1.0}, error));
+    assert(common_agent_research_workspace_validate(workspace, error));
+    auto invalid_verified_excerpt = workspace;
+    invalid_verified_excerpt.evidence.front().supporting_excerpt_host_verified = true;
+    assert(!common_agent_research_workspace_validate(invalid_verified_excerpt, error));
+    assert(error.find("invalid or duplicate evidence") != std::string::npos);
+    auto invalid_dependency_workspace = workspace;
+    invalid_dependency_workspace.tasks.push_back({
+        "task-2", "gap-1", "Use the first result", common_agent_research_task_kind::fetch,
+        {"resource_read"}, {"missing-task"}, 1, 0, 1});
+    assert(!common_agent_research_workspace_validate(invalid_dependency_workspace, error));
+    assert(error.find("invalid task dependency") != std::string::npos);
+    assert(!common_agent_research_record_evidence(workspace, workspace.evidence.front(), error));
+    assert(error.find("already exists") != std::string::npos);
+    workspace.evidence.push_back(workspace.evidence.front());
+    assert(!common_agent_research_workspace_validate(workspace, error));
+    assert(error.find("duplicate evidence") != std::string::npos);
+
+    common_agent_research_controller controller;
+    workspace.evidence.pop_back();
+    workspace.gaps.front().status = common_agent_research_gap_status::open;
+    workspace.tasks.clear();
+    workspace.coverage = {};
+    const auto first_action = controller.begin(workspace, error);
+    assert(first_action.kind == common_agent_research_action_kind::schedule_task);
+    const auto final_action = controller.advance(workspace, {
+        common_agent_research_event_type::task_completed,
+        first_action.task_id,
+        first_action.gap_id,
+        1,
+        {"evidence-1"},
+        true,
+        0.9}, error);
+    assert(final_action.kind == common_agent_research_action_kind::complete);
+    assert(final_action.stop_reason == common_agent_research_stop_reason::sufficient_coverage);
+    const auto research_result = controller.finalize(workspace);
+    assert(research_result.complete && research_result.workspace_id == "research-1");
+    assert(research_result.established_claim_ids.size() == 1);
+    assert(research_result.established_claim_ids.front() == "gap-1");
+    assert(research_result.sources.size() == 1 && research_result.evidence.size() == 1);
+
+    auto assessment_workspace = workspace;
+    assessment_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    assessment_workspace.gaps.front().evidence_ids.clear();
+    assessment_workspace.tasks.clear();
+    assessment_workspace.coverage = {};
+    const auto assessment_start = controller.begin(assessment_workspace, error);
+    assert(assessment_start.kind == common_agent_research_action_kind::schedule_task);
+    const auto assessment_action = controller.advance(assessment_workspace, {
+        common_agent_research_event_type::task_completed,
+        assessment_start.task_id,
+        assessment_start.gap_id,
+        1,
+        {"evidence-1"},
+        true,
+        0.9,
+        "tool completed but criterion was not assessed",
+        {common_agent_research_assessment_status::insufficient, 0.2,
+            "evidence is not sufficient for the completion criterion"}}, error);
+    assert(assessment_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(assessment_workspace.gaps.front().status == common_agent_research_gap_status::investigating);
+
+    common_agent_research_bounded_assessor assessor;
+    const auto sufficient_assessment = assessor.assess(
+        {"gap", "", "", "repository result", 1},
+        {"evidence", "source", "gap", "repository search returned a match", "repository", common_agent_research_evidence_relation::supports,
+            common_agent_research_evidence_origin::normalized_tool_result, 0.8, 0.9});
+    assert(sufficient_assessment.status == common_agent_research_assessment_status::sufficient);
+    const auto insufficient_assessment = assessor.assess(
+        {"gap", "", "", "web result", 1},
+        {"evidence-2", "source", "gap", "repository search returned a match", "repository", common_agent_research_evidence_relation::supports,
+            common_agent_research_evidence_origin::normalized_tool_result, 0.8, 0.9});
+    assert(insufficient_assessment.status == common_agent_research_assessment_status::insufficient);
+
+    auto criteria_request = factory_request;
+    criteria_request.input_resources.clear();
+    criteria_request.memories.clear();
+    criteria_request.objective = common_agent_objective{};
+    criteria_request.objective->success_criteria = {"verify source", "record limitation"};
+    common_agent_research_workspace criteria_workspace;
+    assert(common_agent_research_create_workspace(criteria_request, criteria_workspace, factory_error));
+    assert(criteria_workspace.gaps.size() == 2);
+    assert(criteria_workspace.gaps[0].completion_criterion == "verify source");
+    assert(criteria_workspace.gaps[1].completion_criterion == "record limitation");
+
+    const auto cancelled_action = controller.advance(workspace, {
+        common_agent_research_event_type::cancelled,
+        {}, {}, 0, {}}, error);
+    assert(cancelled_action.kind == common_agent_research_action_kind::complete);
+    assert(cancelled_action.stop_reason == common_agent_research_stop_reason::cancelled);
+
+    auto budget_limited_workspace = workspace;
+    budget_limited_workspace.budget.max_iterations = 0;
+    const auto budget_action = controller.begin(budget_limited_workspace, error);
+    assert(budget_action.kind == common_agent_research_action_kind::complete);
+    assert(budget_action.stop_reason == common_agent_research_stop_reason::budget_exhausted);
+
+    auto retry_workspace = workspace;
+    retry_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    retry_workspace.tasks.clear();
+    retry_workspace.evidence.clear();
+    retry_workspace.coverage = {};
+    retry_workspace.budget.max_iterations = 2;
+    const auto retry_start = controller.begin(retry_workspace, error);
+    assert(retry_start.kind == common_agent_research_action_kind::schedule_task);
+    common_agent_research_event retry_event;
+    retry_event.type = common_agent_research_event_type::task_failed;
+    retry_event.task_id = retry_start.task_id;
+    retry_event.gap_id = retry_start.gap_id;
+    retry_event.retryable = true;
+    const auto retry_action = controller.advance(retry_workspace, retry_event, error);
+    assert(retry_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(retry_action.task_id != retry_start.task_id);
+    assert(retry_action.instruction != retry_start.instruction);
+    assert(retry_action.preferred_tools != retry_start.preferred_tools);
+
+    auto failed_workspace = factory_workspace;
+    failed_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    failed_workspace.gaps.front().evidence_ids.clear();
+    failed_workspace.tasks.clear();
+    failed_workspace.evidence.clear();
+    failed_workspace.budget.max_iterations = 1;
+    failed_workspace.budget.max_tool_calls = 1;
+    failed_workspace.no_progress_iterations = 0;
+    failed_workspace.coverage = {};
+    terminal_failure_executor failure_executor;
+    common_agent_research_runner research_runner;
+    std::string run_error;
+    const auto failed_result = research_runner.run(
+        failed_workspace, failure_executor, run_error);
+    assert(!failed_result.complete);
+    assert(run_error.find("tool.route_denied") != std::string::npos);
+    assert(run_error.find("outside the active envelope") != std::string::npos);
+
+    auto confidence_workspace = workspace;
+    confidence_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    confidence_workspace.gaps.front().evidence_ids.clear();
+    confidence_workspace.budget.minimum_confidence = 0.95;
+    confidence_workspace.coverage = {};
+    const auto confidence_start = controller.begin(confidence_workspace, error);
+    assert(confidence_start.kind == common_agent_research_action_kind::schedule_task);
+    const auto confidence_action = controller.advance(confidence_workspace, {
+        common_agent_research_event_type::task_completed,
+        confidence_start.task_id,
+        confidence_start.gap_id,
+        1,
+        {"evidence-1"}}, error);
+    assert(confidence_action.kind == common_agent_research_action_kind::schedule_task);
+
+    auto insufficient_workspace = workspace;
+    insufficient_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    insufficient_workspace.gaps.front().evidence_ids.clear();
+    insufficient_workspace.coverage = {};
+    const auto insufficient_start = controller.begin(insufficient_workspace, error);
+    assert(insufficient_start.kind == common_agent_research_action_kind::schedule_task);
+    const auto insufficient_action = controller.advance(insufficient_workspace, {
+        common_agent_research_event_type::task_completed,
+        insufficient_start.task_id,
+        insufficient_start.gap_id,
+        1,
+        {"evidence-1"},
+        false,
+        0.9}, error);
+    assert(insufficient_action.kind == common_agent_research_action_kind::schedule_task);
+    assert(insufficient_workspace.gaps.front().status != common_agent_research_gap_status::sufficiently_answered);
+    return 0;
+}

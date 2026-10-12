@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "model": {
+    "profile": "agent-default"
+  },
+  "models": {
+    "schema_version": 1,
+    "directory": "build-agent-vulkan-cozo/tinyllamas",
+    "bases": {
+      "tiny": {
+        "kind": "generation",
+        "backend": "server-context",
+        "path": "stories15M-q4_0.gguf",
+        "load": "resident"
+      }
+    },
+    "profiles": {
+      "agent-default": {
+        "base": "tiny",
+        "adapters": [],
+        "context_size": 128,
+        "n_parallel": 1,
+        "n_sequences": 1,
+        "load": "resident"
+      }
+    },
+    "routing": {
+      "default_profile": "agent-default"
+    },
+    "limits": {
+      "max_loaded_generation_models": 1,
+      "model_eviction": "lru"
+    }
+  },
+  "runtime": {
+    "context_size": 128,
+    "n_predict": 8,
+    "n_threads": 3,
+    "n_gpu_layers": 99,
+    "default_mode": "agent",
+    "thinking_mode": "reflective",
+    "agent_trace": true,
+    "adaptation": {
+      "capture": true,
+      "collection_allowed": true,
+      "max_evidence": 8,
+      "backend": "cozo",
+      "transaction_path": "var/agent/flydelta/tiny-adaptation.cozo",
+      "flydelta": {
+        "enabled": true,
+        "worker_count": 1,
+        "queue_path": "var/agent/flydelta/tiny-queue",
+        "batch_mode": "auto",
+        "batch_parallelism": 1,
+        "capture_candidates": true,
+        "lifecycle_backend": "cozo",
+        "lifecycle_path": "var/agent/flydelta/tiny-lifecycle.cozo",
+        "model_profile_fingerprint": "profile:agent-default",
+        "capture_layout_revision": "layer-input:generation-boundary:v1",
+        "max_capture_candidates": 4
+      }
+    }
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "queue_capacity": 4,
+    "turn_timeout_ms": 30000,
+    "tool_timeout_ms": 5000
+  }
+}

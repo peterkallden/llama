@@ -376,3 +376,334 @@ if (TARGET gguf-model-data)
     target_link_libraries(test-export-graph-ops PRIVATE gguf-model-data)
     target_compile_definitions(test-export-graph-ops PRIVATE LLAMA_HF_FETCH)
 endif()
+
+if (LLAMA_AGENT_RUNTIME)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    foreach(TEST_SOURCE
+        test-agent-contract.cpp
+        test-agent-semi-oracle.cpp
+        test-agent-cognitive-mode.cpp
+        test-agent-prepared-generation.cpp
+        test-agent-model-profile.cpp
+        test-agent-model-catalog.cpp
+        test-agent-model-profile-cache.cpp
+        test-agent-continuation.cpp
+        test-agent-research-contract.cpp
+        test-agent-runtime-json.cpp
+        test-agent-resource-chunker.cpp
+        test-agent-loop.cpp
+        test-agent-tool-failure.cpp
+        test-agent-tool-rounds.cpp
+        test-memory-learning.cpp
+        test-agent-learning-observation.cpp
+        test-agent-learning-domain-policy.cpp
+        test-agent-learning-cause.cpp
+        test-agent-adaptation-evidence.cpp
+        test-agent-adaptation-evidence-routing.cpp
+        test-agent-synthetic-tool-cases.cpp
+        test-agent-learning-case.cpp
+        test-agent-learning-transaction.cpp
+        test-agent-concept-candidate-index.cpp
+        test-agent-concept-input-routing.cpp
+        test-agent-training-candidate.cpp
+        test-agent-flydelta-training-admission.cpp
+        test-agent-auto-training-trigger.cpp
+        test-agent-learning-corpus.cpp
+        test-agent-learning-trainer.cpp
+        test-agent-learning-worker.cpp
+        test-agent-learning-lifecycle.cpp
+        test-agent-learning-adapter.cpp
+        test-agent-learning-adapter-import.cpp
+        test-agent-learning-evaluation.cpp
+        test-agent-flydelta.cpp
+        test-agent-flydelta-contracts.cpp
+        test-agent-flydelta-experiment.cpp
+        test-agent-flydelta-evidence.cpp
+        test-agent-flydelta-basis.cpp
+        test-agent-flydelta-concept.cpp
+        test-agent-flydelta-oracles.cpp
+        test-agent-flydelta-teaching-material.cpp
+        test-agent-flydelta-training.cpp
+        test-agent-flydelta-training-corpus.cpp
+        test-agent-flydelta-job.cpp
+        test-agent-flydelta-queue.cpp
+        test-agent-flydelta-collection.cpp
+        test-agent-flydelta-worker.cpp
+        test-agent-flydelta-worker-budget.cpp
+        test-agent-flydelta-pipeline.cpp
+        test-agent-flydelta-gate.cpp
+        test-agent-flydelta-promotion.cpp
+        test-agent-flydelta-overlay.cpp
+        test-agent-flydelta-activation.cpp
+        test-agent-flydelta-deployment.cpp
+        test-agent-flydelta-sparse-cvec.cpp
+        test-agent-flydelta-sideband.cpp
+        test-agent-flydelta-sideband-review-store.cpp
+        test-agent-flydelta-capture-manifest.cpp
+        test-agent-flydelta-repair-deltas.cpp
+        test-agent-flydelta-representation-diagnostics.cpp
+        test-agent-flydelta-batch-benchmark.cpp
+        test-agent-flydelta-dose-controller.cpp
+        test-agent-flydelta-evidence-depth.cpp
+        test-agent-flydelta-aggregation.cpp
+        test-agent-flydelta-direction-search.cpp
+        test-agent-flydelta-candidate-lifecycle.cpp
+        test-agent-flydelta-runtime-observer.cpp
+        test-agent-flydelta-server-binding.cpp
+test-agent-flydelta-layer-search.cpp
+test-agent-flydelta-scale-search.cpp
+test-agent-flydelta-alpha-response-search.cpp
+        test-agent-flydelta-intervention-region-search.cpp
+        test-agent-flydelta-whirlpool-search.cpp
+        test-agent-flydelta-whirlpool-ab.cpp
+        test-agent-flydelta-search-pipeline.cpp
+        test-agent-flydelta-coefficient-search.cpp
+        test-agent-flydelta-deep-search.cpp
+        test-agent-flydelta-artifact-lifecycle.cpp
+        test-agent-flydelta-hidden-state-hook.cpp
+        test-agent-flydelta-layer-discovery.cpp
+        test-agent-flydelta-two-pass.cpp
+        test-agent-flydelta-artifact-store.cpp
+        test-agent-flydelta-evaluator.cpp
+        test-agent-flydelta-experiment-orchestration.cpp
+        test-agent-flydelta-sideband-controller.cpp
+        test-agent-flydelta-representation-augmentation.cpp
+        test-agent-model-facing-tool-chain.cpp
+        test-memory-policy.cpp
+        test-plan-context.cpp
+        test-plan-json.cpp
+        test-plan-store.cpp
+        test-plan-cozo.cpp
+        test-reflection-json.cpp
+        test-tool-adapters.cpp
+        test-tool-catalog.cpp
+        test-tool-chat-bridge.cpp
+        test-agent-tool-output-codec.cpp
+        test-tool-family-index.cpp
+        test-tool-navigation.cpp
+        test-agent-clangd-protocol.cpp
+        test-agent-native-crash.cpp
+        test-agent-native-crash-smoke.cpp
+        test-agent-native-crash-cdb-smoke.cpp
+        test-agent-config-bootstrap.cpp
+        test-agent-bootstrap.cpp
+        test-agent-route-compiler.cpp
+        test-agent-execution-envelope.cpp
+        test-agent-daemon-scope.cpp
+    )
+        # The Cozo plan-store test references the optional implementation,
+        # which is only compiled when the plan Cozo backend is enabled.
+        if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
+            continue()
+        endif()
+        get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
+        llama_build_and_test(${TEST_SOURCE})
+        target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        # These contract tests use assert() for both checks and setup. Keep
+        # assertions enabled even when the surrounding build is RelWithDebInfo.
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-resource-chunker|plan-cozo|tool-catalog|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+            if (MSVC)
+                target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+            endif()
+        endif()
+        if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-resource-chunker")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-oracles")
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-continuation")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-daemon-scope")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-bootstrap")
+            target_compile_definitions(${TEST_NAME} PRIVATE
+                LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-route-compiler")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-resource-workflow-continuation.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-execution-envelope")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tool-provider)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-prepared-generation")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context vendor::hash llama-agent-flydelta)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-server-binding")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context vendor::hash)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-inference.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-sparse-cvec")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
+            target_link_libraries(${TEST_NAME} PRIVATE server-context)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-native-crash")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-native-crash-smoke")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
+            set_property(TEST ${TEST_NAME} PROPERTY SKIP_RETURN_CODE 77)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-native-crash-cdb-smoke")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp)
+            set_property(TEST ${TEST_NAME} PROPERTY SKIP_RETURN_CODE 77)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-config-bootstrap")
+            file(TO_CMAKE_PATH
+                "${PROJECT_SOURCE_DIR}/scripts/agent-config-bootstrap.sh"
+                AGENT_BOOTSTRAP_SCRIPT_PATH)
+            target_compile_definitions(${TEST_NAME} PRIVATE
+                LLAMA_AGENT_BOOTSTRAP_SCRIPT_PATH="${AGENT_BOOTSTRAP_SCRIPT_PATH}")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-learning-worker")
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-worker.cpp)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core vendor::hash)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-learning-adapter-import")
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-adapter-import.cpp)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+            target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-synthetic-tool-cases")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tooling)
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+        endif()
+        set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+    endforeach()
+
+    llama_build_and_test(test-agent-semi-oracle-teaching.cpp)
+    target_link_libraries(test-agent-semi-oracle-teaching PRIVATE
+        llama-agent-core llama-agent-flydelta)
+    target_include_directories(test-agent-semi-oracle-teaching PRIVATE
+        ${PROJECT_SOURCE_DIR})
+    set_property(TEST test-agent-semi-oracle-teaching PROPERTY LABELS agent-adaptation)
+
+    llama_build_and_test(test-agent-semi-oracle-tool-adapter.cpp)
+    target_link_libraries(test-agent-semi-oracle-tool-adapter PRIVATE
+        llama-agent-core llama-agent-tooling)
+    target_include_directories(test-agent-semi-oracle-tool-adapter PRIVATE
+        ${PROJECT_SOURCE_DIR})
+    set_property(TEST test-agent-semi-oracle-tool-adapter PROPERTY LABELS agent)
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-semi-oracle-cozo.cpp)
+        target_link_libraries(test-agent-semi-oracle-cozo PRIVATE
+            llama-agent-core llama-agent-adaptation-storage)
+        target_include_directories(test-agent-semi-oracle-cozo PRIVATE
+            ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+        set_property(TEST test-agent-semi-oracle-cozo PROPERTY LABELS agent-adaptation)
+    endif()
+
+    llama_test_cmd(
+        ${Python3_EXECUTABLE}
+        NAME test-agent-provider-bootstrap
+        LABEL agent
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        ARGS ${PROJECT_SOURCE_DIR}/tests/test-agent-provider-bootstrap.py ${PROJECT_SOURCE_DIR}
+    )
+
+    llama_build_and_test(test-agent-learning-transaction-backends.cpp)
+    target_link_libraries(test-agent-learning-transaction-backends PRIVATE
+        llama-agent-core llama-agent-adaptation-storage)
+    target_include_directories(test-agent-learning-transaction-backends PRIVATE
+        ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+    if (LLAMA_MEMORY_COZO)
+        target_compile_definitions(test-agent-learning-transaction-backends PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_COZO)
+    endif()
+    if (LLAMA_AGENT_STORAGE_SQLITE)
+        target_compile_definitions(test-agent-learning-transaction-backends PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_SQLITE)
+    endif()
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-flydelta-teaching-material-cozo.cpp)
+        target_link_libraries(test-agent-flydelta-teaching-material-cozo PRIVATE
+            llama-agent-core llama-agent-adaptation-storage)
+        target_include_directories(test-agent-flydelta-teaching-material-cozo PRIVATE
+            ${PROJECT_SOURCE_DIR}/tools/agent/adaptation)
+        target_compile_definitions(test-agent-flydelta-teaching-material-cozo PRIVATE
+            LLAMA_AGENT_ADAPTATION_TEST_COZO)
+        set_property(TEST test-agent-flydelta-teaching-material-cozo PROPERTY LABELS agent-adaptation)
+    endif()
+    set_property(TEST test-agent-learning-transaction-backends PROPERTY LABELS agent)
+
+    # This contract intentionally has no llama/CLI dependency.  Keeping it as
+    # a header-only CTest makes the host-neutral boundary compile-testable on
+    # Android and desktop without relinking the full agent runtime.
+    add_executable(test-agent-runtime-contract test-agent-runtime-contract.cpp)
+    target_include_directories(test-agent-runtime-contract PRIVATE
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/common
+        ${PROJECT_SOURCE_DIR}/vendor
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_compile_features(test-agent-runtime-contract PRIVATE cxx_std_17)
+    add_test(NAME test-agent-runtime-contract COMMAND test-agent-runtime-contract)
+    set_property(TEST test-agent-runtime-contract PROPERTY LABELS agent)
+
+    add_executable(test-agent-event-queue test-agent-event-queue.cpp)
+    target_include_directories(test-agent-event-queue PRIVATE
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/common
+        ${PROJECT_SOURCE_DIR}/vendor
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_compile_features(test-agent-event-queue PRIVATE cxx_std_17)
+    add_test(NAME test-agent-event-queue COMMAND test-agent-event-queue)
+    set_property(TEST test-agent-event-queue PROPERTY LABELS agent)
+
+    if (LLAMA_MEMORY_COZO)
+        llama_build_and_test(test-agent-data-store-cozo.cpp)
+        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)
+        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        set_property(TEST test-agent-data-store-cozo PROPERTY LABELS agent)
+
+        add_executable(llama-agent-data-store-cozo-seed
+            agent-data-store-cozo-seed.cpp)
+        target_link_libraries(llama-agent-data-store-cozo-seed PRIVATE llama-agent-storage-cozo)
+        target_include_directories(llama-agent-data-store-cozo-seed PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        target_compile_features(llama-agent-data-store-cozo-seed PRIVATE cxx_std_17)
+    endif()
+endif()

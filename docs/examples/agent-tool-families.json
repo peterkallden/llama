@@ -1,0 +1,18 @@
+{
+  "tools": {
+    "families": {
+      "data": {
+        "description": "Transform, compare and join structured datasets"
+      },
+      "dataset": {
+        "description": "Select, inspect and materialize datasets for analysis"
+      },
+      "memory": {
+        "description": "Search and manage scoped runtime memory"
+      },
+      "eurostat": {
+        "description": "Query Eurostat statistical datasets and JSON-stat data"
+      }
+    }
+  }
+}

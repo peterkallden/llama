@@ -1,0 +1,597 @@
+#pragma once
+
+#include "agent-daemon-event-collector.h"
+#include "agent-daemon-lifecycle.h"
+#include "agent-daemon-events.h"
+#include "../resource/agent-resource-store.h"
+#include "../runtime/agent-runtime-session-manager.h"
+#include "../runtime/agent-model-residency.h"
+#include "../runtime/agent-server-context-host.h"
+#include "../tooling/agent-tool-provider.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-artifact-store.h"
+#include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-material.h"
+#include "agent/adaptation/semantic-teaching.h"
+#include "agent/adaptation/concept-input-routing.h"
+
+#include "memory/memory-store.h"
+#include "agent/data-store.h"
+#include "agent/turn-summary.h"
+#include "plan/plan-store.h"
+
+#include <memory>
+#include <atomic>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+class common_agent_inference_capacity_gate;
+class common_agent_server_context_host;
+class common_learning_lifecycle_store;
+class common_agent_concept_candidate_index;
+class common_flydelta_sideband_review_store;
+class common_flydelta_sideband_registry;
+struct common_flydelta_evaluator_config;
+struct common_flydelta_evaluator_callbacks;
+
+struct daemon_options;
+
+class common_agent_daemon_config_store {
+public:
+    explicit common_agent_daemon_config_store(
+        std::shared_ptr<const daemon_options> initial);
+
+    std::shared_ptr<const daemon_options> snapshot() const;
+    void replace(std::shared_ptr<const daemon_options> next);
+
+private:
+    mutable std::mutex mutex_;
+    std::shared_ptr<const daemon_options> current_;
+};
+
+enum class common_agent_daemon_command_type {
+    run_turn,
+    execute_tool,
+    cancel_turn,
+    list_sessions,
+    get_session,
+    list_resources,
+    list_memories,
+    list_plans,
+    reset_session,
+    close_session,
+    read_resource,
+    put_resource,
+    enqueue_flydelta_job,
+    flydelta_admin,
+    get_status,
+    drain,
+    shutdown,
+    reload_config,
+};
+
+struct common_agent_daemon_reload_result {
+    uint64_t config_version = 1;
+    std::vector<std::string> applied_fields;
+    std::vector<std::string> restart_required;
+    std::vector<std::string> providers_added;
+    std::vector<std::string> providers_removed;
+    std::vector<std::string> providers_replaced;
+    std::string warning;
+};
+
+struct common_agent_daemon_provider_readiness {
+    std::string id;
+    std::string status = "not_configured";
+    bool required = false;
+    std::string warning;
+};
+
+struct common_agent_daemon_runtime {
+    std::shared_ptr<common_agent_daemon_config_store> config_store;
+    std::unique_ptr<common_memory_store> memory_store;
+    std::unique_ptr<common_plan_store> plan_store;
+    std::unique_ptr<common_agent_data_store> data_store;
+    std::unique_ptr<agent_resource_store> resource_store;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    // Populated by the runtime host when model-facing FlyDelta execution is
+    // available. The dispatcher consumes this registration bundle only.
+    std::shared_ptr<const common_flydelta_model_adapter> flydelta_model_adapter;
+    // Optional backend-neutral host registration. The daemon composes this
+    // into flydelta_model_adapter at startup when no adapter was supplied.
+    std::shared_ptr<const common_flydelta_model_host> flydelta_model_host;
+    // Optional host-owned evaluator registration. The daemon composes this
+    // into flydelta_model_adapter at startup when no adapter was supplied.
+    std::shared_ptr<const common_flydelta_evaluator_config> flydelta_evaluator_config;
+    // Shared host-owned material index. The session assembly and the
+    // production FlyDelta binding must observe the same durable state.
+    std::shared_ptr<common_flydelta_teaching_material_runtime>
+        flydelta_teaching_material_runtime;
+    // Shared projection over the existing lifecycle journal. Runtime
+    // assembly and daemon reuse must observe the same session candidates;
+    // this is not a new evidence store.
+    std::shared_ptr<common_agent_concept_candidate_index>
+        flydelta_concept_candidate_index;
+    std::shared_ptr<const common_flydelta_evaluator_callbacks> flydelta_evaluator_callbacks;
+    // Host-owned learning ingress. These are forwarded into the existing
+    // runtime assembly; the daemon does not interpret semantic evidence.
+    common_agent_procedure_teaching_request_provider
+        procedure_teaching_request_provider;
+    common_agent_user_correction_teaching_request_provider
+        user_correction_teaching_request_provider;
+    common_agent_user_taught_concept_relation_provider
+        user_taught_concept_relation_provider;
+    common_agent_concept_hypothesis_provider
+        semantic_concept_hypothesis_provider;
+    common_agent_concept_hypothesis_batch_provider
+        semantic_concept_hypothesis_batch_provider;
+    common_agent_concept_contrast_provider
+        semantic_concept_contrast_provider;
+    common_agent_concept_grounding_provider
+        semantic_concept_grounding_provider;
+    common_agent_flydelta_teaching_material_observer
+        flydelta_teaching_material_observer;
+    std::function<bool(
+        const common_flydelta_teaching_relation &,
+        const common_learning_transaction &,
+        bool &, std::string &)> flydelta_reuse_first_observer;
+    std::function<bool(
+        const common_flydelta_capture_candidate &,
+        std::string &)> flydelta_capture_job_enqueue;
+    // Optional production composition hook. The daemon resolves the selected
+    // resident server-context model, asks the host integration to bind its
+    // semantic prepare/finalize/verifier callbacks, then registers the
+    // resulting backend-neutral FlyDelta host before starting workers.
+    std::function<bool(
+        const std::shared_ptr<common_agent_server_context_host> &,
+        common_agent_server_flydelta_binding &,
+        std::string &)> flydelta_server_binding_factory;
+    // Optional host-owned callback bundle. Startup converts this into the
+    // existing factory when no explicit factory was supplied.
+    std::optional<common_agent_server_flydelta_binding_callbacks>
+        flydelta_server_binding_callbacks;
+    // The daemon owns the lifecycle journal used by the FlyDelta review store
+    // and keeps the replayed registry alive for the lifetime of the runtime.
+    // Review replay happens before model binding and worker startup; it never
+    // changes search policy or lets model output approve a sideband.
+    std::shared_ptr<common_learning_lifecycle_store>
+        flydelta_review_lifecycle_store;
+    std::shared_ptr<common_flydelta_sideband_review_store>
+        flydelta_sideband_review_store;
+    std::shared_ptr<common_flydelta_sideband_registry>
+        flydelta_sideband_registry;
+    // Shared host-owned artifact reader and request-exposure ledger. Neither
+    // is a second lifecycle/store; lifecycle truth remains in the review
+    // journal and registry above.
+    std::shared_ptr<common_flydelta_artifact_store> flydelta_artifact_store;
+    std::shared_ptr<common_flydelta_observation_budget> flydelta_observation_budget;
+    bool flydelta_sideband_reviews_replayed = false;
+    std::optional<common_agent_runtime_model_resident_handle> flydelta_model_handle;
+    common_flydelta_model_capabilities flydelta_model_capabilities;
+    common_agent_runtime_host_mode default_mode = common_agent_runtime_host_mode::chat;
+    std::unique_ptr<common_agent_runtime_session_manager> host;
+    std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
+    common_agent_runtime_tooling provider_probe_tooling;
+    std::vector<common_agent_daemon_provider_readiness> provider_readiness;
+    std::function<bool(
+        common_agent_runtime_tooling & tooling,
+        std::vector<common_agent_daemon_provider_readiness> & providers,
+        std::string & error)> probe_mcp_providers;
+    std::function<bool(
+        const struct common_agent_daemon_tool_payload & payload,
+        agent_tool_result & result,
+        std::string & error)> tool_executor;
+    std::function<bool(
+        const std::string & path,
+        common_agent_daemon_reload_result & result,
+        std::string & error)> reload_config;
+    std::function<bool(
+        const common_flydelta_experiment_job & job,
+        std::string & error)> flydelta_job_enqueue;
+};
+
+// Registers the host-owned semantic prepare/finalize/verifier callbacks on
+// the daemon runtime. The daemon stores only the resulting backend-neutral
+// adapter; model contexts remain owned by the supplied resident host. This
+// keeps semantic authority in the host while making registration explicit and
+// usable by both the daemon and embedding runtimes.
+bool common_agent_daemon_register_flydelta_server_binding(
+        common_agent_daemon_runtime & runtime,
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error);
+
+// Registers host-owned semantic callbacks before daemon startup. The runtime
+// turns this bundle into the existing resident-host factory during
+// initialization; no semantic fallback is created here.
+inline bool common_agent_daemon_set_flydelta_server_binding_callbacks(
+        common_agent_daemon_runtime & runtime,
+        common_agent_server_flydelta_binding_callbacks callbacks,
+        std::string & error) {
+    error.clear();
+    if (runtime.flydelta_server_binding_factory ||
+            runtime.flydelta_server_binding_callbacks.has_value()) {
+        error = "FlyDelta server binding is already registered";
+        return false;
+    }
+    if (!callbacks.prepare_arm || !callbacks.finalize_arm ||
+            !callbacks.register_evaluator) {
+        error = "FlyDelta callback registration requires prepare, finalize and evaluator callbacks";
+        return false;
+    }
+    runtime.flydelta_server_binding_callbacks = std::move(callbacks);
+    return true;
+}
+
+struct common_agent_daemon_turn_payload {
+    common_agent_runtime_session_manager_turn_request request;
+    bool include_summary = false;
+};
+
+struct common_agent_daemon_tool_payload {
+    common_agent_runtime_session_key session;
+    std::string project_id;
+    std::string tool_profile;
+    std::string tool_name;
+    std::string arguments_json = "{}";
+    // Set by an authenticated caller when its write authority is narrower
+    // than the daemon's configured profile. Empty preserves native defaults.
+    std::optional<bool> allow_policy_gated_writes;
+};
+
+struct common_agent_daemon_session_payload {
+    common_agent_runtime_session_key key;
+};
+
+struct common_agent_daemon_cancel_payload {
+    std::string target_request_id;
+    std::string target_turn_id;
+};
+
+struct common_agent_daemon_resource_payload {
+    std::string uri;
+    agent_resource_read_authority authority;
+    size_t max_bytes = 8192;
+};
+
+struct common_agent_daemon_resource_put_payload {
+    agent_resource_put_request request;
+};
+
+struct common_agent_daemon_scope_payload {
+    agent_resource_read_authority authority;
+};
+
+struct common_agent_daemon_flydelta_admin_payload {
+    std::string operation;
+    std::string candidate_id;
+    std::string candidate_manifest_ref;
+    std::string suite_ref;
+    std::string evaluation_revision;
+    std::string evaluation_report_ref;
+    std::string verifier_revision;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string execution_context_fingerprint;
+    std::string actor_id;
+    std::string decision;
+    std::string reason;
+    std::string binding_key;
+    std::string expected_current_revision_id;
+    std::string canary_behavior_key;
+    std::string canary_scope_fingerprint;
+    std::string canary_event_id;
+    std::string observation_id;
+    std::string allocation_id;
+    std::string scope_step_id;
+    std::string observation_status;
+    std::string counterfactual_report_ref;
+    std::string canary_outcome;
+    std::string next_scope_fingerprint;
+    std::string baseline_deployment_fingerprint;
+    std::string rollback_revision_id;
+    std::string oracle_revision;
+    std::string canary_policy_revision;
+    uint32_t canary_traffic_basis_points = 100;
+    uint64_t canary_expires_at_epoch_ms = 0;
+    size_t canary_max_observations = 0;
+    float canary_max_scale = 0.0f;
+    size_t canary_completed_observations = 0;
+    size_t canary_unique_allocations = 0;
+    size_t canary_harmed_results = 0;
+    float canary_target_gain = 0.0f;
+    float canary_control_regression = 0.0f;
+    float canary_competitor_regression = 0.0f;
+    float canary_target_gain_observation = 0.0f;
+    float canary_control_regression_observation = 0.0f;
+    float canary_competitor_regression_observation = 0.0f;
+    bool canary_next_scope_available = false;
+    bool canary_semantic_evidence_complete = false;
+    bool explicit_host_approval = false;
+    common_flydelta_evaluation_limits limits;
+};
+
+struct common_agent_daemon_command {
+    std::string request_id;
+    common_agent_daemon_command_type type = common_agent_daemon_command_type::run_turn;
+    std::optional<common_agent_daemon_turn_payload> turn;
+    std::optional<common_agent_daemon_tool_payload> tool;
+    std::optional<common_agent_daemon_session_payload> session;
+    std::optional<common_agent_daemon_cancel_payload> cancel;
+    std::optional<common_agent_daemon_resource_payload> resource;
+    std::optional<common_agent_daemon_resource_put_payload> resource_put;
+    // Reference-only bounded FlyDelta work. The daemon validates and stores
+    // the typed envelope in the existing FlyDelta queue; model execution is
+    // performed later by the registered FlyDelta worker lane.
+    std::optional<common_flydelta_experiment_job> flydelta_job;
+    std::optional<common_agent_daemon_flydelta_admin_payload> flydelta_admin;
+    std::optional<common_agent_daemon_scope_payload> scope;
+    std::string reload_path;
+};
+
+struct common_agent_daemon_active_turn_status {
+    std::string request_id;
+    std::string turn_id;
+    std::string phase;
+    std::string disposition;
+    bool cancellation_requested = false;
+    std::string pending_operation_kind;
+    std::string pending_operation_detail;
+};
+
+struct common_agent_daemon_tool_status {
+    std::string name;
+    std::string description;
+    std::string source;
+    std::string state = "active";
+};
+
+struct common_agent_daemon_readiness {
+    // Lifecycle state and operational readiness are intentionally separate.
+    // `health` describes whether the daemon can serve work now.
+    std::string health = "failed";
+    std::string model = "unavailable";
+    std::string inference = "unavailable";
+    std::string memory_store = "unavailable";
+    std::string plan_store = "unavailable";
+    std::string resource_store = "unavailable";
+    std::string tool_profile;
+    std::vector<common_agent_daemon_provider_readiness> providers;
+    std::vector<common_agent_daemon_tool_status> tools;
+    std::vector<std::string> warnings;
+};
+
+struct common_agent_daemon_status {
+    common_agent_daemon_state state = common_agent_daemon_state::starting;
+    bool live = false;
+    bool ready = false;
+    common_agent_daemon_readiness readiness;
+    bool worker_running = false;
+    size_t worker_count = 1;
+    size_t workers_running = 0;
+    // FlyDelta has its own queue and worker lane. The lane can be configured
+    // before a host evaluator callback is attached, so configured and
+    // running are intentionally separate status facts.
+    bool flydelta_worker_configured = false;
+    size_t flydelta_worker_count = 0;
+    size_t flydelta_workers_running = 0;
+    bool flydelta_model_adapter_configured = false;
+    bool flydelta_model_adapter_search_supported = false;
+    bool flydelta_review_store_configured = false;
+    bool flydelta_sideband_reviews_replayed = false;
+    common_flydelta_model_capabilities flydelta_model_capabilities;
+    bool accepting_commands = false;
+    bool shutdown_requested = false;
+    size_t queued_command_count = 0;
+    size_t max_queue_size = 0;
+    size_t queue_capacity_remaining = 0;
+    size_t session_count = 0;
+    std::optional<common_agent_daemon_active_turn_status> active_turn;
+    std::string active_request_id;
+    std::string active_turn_id;
+    std::string active_turn_phase;
+    std::string active_turn_disposition;
+    bool active_cancel_requested = false;
+    std::string active_pending_operation_kind;
+    std::string active_pending_operation_detail;
+    std::vector<common_agent_runtime_session_descriptor> sessions;
+    bool session_snapshot_populated = false;
+    uint64_t commands_accepted = 0;
+    uint64_t commands_completed = 0;
+    uint64_t commands_failed = 0;
+    uint64_t turns_completed = 0;
+    uint64_t tools_completed = 0;
+    uint64_t config_version = 1;
+};
+
+enum class common_agent_daemon_response_kind {
+    turn,
+    tool,
+    status,
+    lifecycle,
+    resource,
+    listing,
+};
+
+struct common_agent_daemon_resource_read_result {
+    agent_resource_descriptor resource;
+    std::string content;
+};
+
+struct common_agent_daemon_memory_summary {
+    std::string id;
+    std::string kind;
+    std::string scope;
+    std::string summary;
+    std::string session_id;
+    std::string project_id;
+    std::string turn_id;
+    int64_t created_at = 0;
+};
+
+struct common_agent_daemon_plan_summary {
+    std::string plan_id;
+    std::string purpose;
+    std::string goal;
+    std::string status;
+    std::string scope;
+    std::string session_id;
+    std::string project_id;
+    std::string turn_id;
+    std::string active_step_id;
+    std::string next_action;
+    uint64_t version = 0;
+    size_t step_count = 0;
+    size_t observation_count = 0;
+};
+
+struct common_agent_daemon_listing_result {
+    std::vector<agent_resource_descriptor> resources;
+    std::vector<common_agent_daemon_memory_summary> memories;
+    std::vector<common_agent_daemon_plan_summary> plans;
+};
+
+struct common_agent_daemon_command_outcome {
+    bool ok = false;
+    std::string request_id;
+    common_agent_daemon_response_kind response_kind = common_agent_daemon_response_kind::turn;
+    std::string event;
+    std::string target_request_id;
+    std::string target_turn_id;
+    common_agent_daemon_status status;
+    common_agent_runtime_session_manager_turn_result turn_result;
+    agent_tool_result tool_result;
+    common_agent_daemon_resource_read_result resource_result;
+    common_agent_daemon_listing_result listing_result;
+    common_agent_daemon_reload_result reload_result;
+    std::optional<common_agent_turn_summary> turn_summary;
+    std::string error;
+    std::string payload_json;
+};
+
+struct common_agent_daemon_command_execution {
+    common_agent_daemon_command_outcome outcome;
+    std::vector<common_agent_daemon_event> events;
+};
+
+struct common_agent_daemon_command_result : common_agent_daemon_command_outcome {
+    size_t daemon_event_count = 0;
+    std::vector<common_agent_daemon_event> events;
+};
+
+common_agent_daemon_command_result project_agent_daemon_command_execution(
+    common_agent_daemon_command_execution execution);
+
+void append_agent_daemon_execution_event(
+    common_agent_daemon_command_execution & execution,
+    common_agent_daemon_event event);
+
+class common_agent_daemon_service {
+public:
+    explicit common_agent_daemon_service(
+        common_agent_daemon_runtime runtime,
+        std::unique_ptr<common_agent_daemon_event_collector> event_collector = nullptr);
+
+    bool execute_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error);
+
+    bool execute(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error);
+
+    bool shutdown_requested() const { return shutdown_requested_flag.load(); }
+    common_agent_runtime_host_mode default_mode() const { return runtime.default_mode; }
+    common_agent_daemon_state state() const { return state_value.load(); }
+    common_agent_daemon_readiness readiness() const;
+    common_agent_daemon_shutdown_mode shutdown_mode() const { return shutdown_mode_value.load(); }
+    std::vector<common_agent_runtime_session_descriptor> list_sessions() const;
+
+    void mark_stopping();
+    void mark_stopped();
+
+    bool populate_status_outcome(
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error) const;
+
+    bool populate_status(
+        common_agent_daemon_command_result & result,
+        std::string & error) const;
+
+    std::optional<common_agent_runtime_active_turn_descriptor> describe_active_turn() const;
+
+    bool request_cancel_active_turn(
+        const std::string & target_request_id,
+        const std::string & target_turn_id,
+        common_agent_runtime_active_turn_descriptor & active_turn,
+        std::string & error);
+
+    void emit_internal_event(common_agent_daemon_event event);
+
+    std::vector<common_agent_daemon_event> take_internal_events();
+
+    std::string subscribe_events(common_agent_event_stream_subscription subscription);
+    void unsubscribe_events(const std::string & subscription_id);
+    common_agent_event_stream_wait_status wait_for_event(
+        const std::string & subscription_id,
+        common_agent_event_stream_delivery & delivery,
+        std::chrono::milliseconds timeout);
+
+private:
+    void initialize_command_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const;
+
+    void initialize_lifecycle_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const;
+
+    void initialize_turn_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const;
+
+    bool fail_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type) const;
+
+    bool fail_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type) const;
+
+    bool execute_flydelta_admin(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error);
+
+    bool succeed_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type,
+        std::string detail = {}) const;
+
+    common_agent_daemon_runtime runtime;
+    std::unique_ptr<common_agent_daemon_event_collector> event_collector;
+    std::atomic<common_agent_daemon_state> state_value = common_agent_daemon_state::starting;
+    std::atomic<common_agent_daemon_shutdown_mode> shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
+    std::atomic<bool> shutdown_requested_flag = false;
+};

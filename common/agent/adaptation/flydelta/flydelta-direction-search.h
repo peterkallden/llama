@@ -1,0 +1,312 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-basis.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+
+// CPU-only direction candidates built from already host-certified repair
+// deltas. This component does not run inference and does not promote or
+// activate a direction.
+enum class common_flydelta_direction_kind {
+    raw_repair,
+    normalized_trimmed_mean,
+    diagonal_whitened_mean,
+    token_margin_direction,
+    execution_boundary_prototype,
+    positive_prototype,
+    positive_prototype_trimmed_mean,
+    positive_prototype_diagonal_whitened_mean,
+    negative_repulsion,
+    negative_repulsion_trimmed_mean,
+    negative_repulsion_diagonal_whitened_mean,
+};
+
+// Direction construction has two deliberately separate policies. Learning
+// mode only consumes positive host evidence. Experimental mode may use
+// bounded UNKNOWN/NEUTRAL observations to propose challengers, but those
+// candidates remain experimental-only until a later host-verified trial.
+enum class common_flydelta_direction_search_mode {
+    learning,
+    experimental,
+};
+
+const char * common_flydelta_direction_search_mode_name(
+        common_flydelta_direction_search_mode mode);
+
+const char * common_flydelta_direction_kind_name(
+        common_flydelta_direction_kind kind);
+
+// A synthesis strategy describes where the intervention semantics came from;
+// the estimator describes how samples from that source were aggregated.  They
+// are intentionally separate so a prototype and a repair can use the same
+// raw/trimmed/whitened estimator without becoming different lifecycle types.
+enum class common_flydelta_synthesis_strategy {
+    contrast_repair,
+    conditioned_prototype,
+    negative_repulsion,
+    decision_output_margin,
+    execution_boundary_prototype,
+};
+
+enum class common_flydelta_synthesis_estimator {
+    raw,
+    trimmed,
+    diagonal_whitened,
+    direct,
+};
+
+const char * common_flydelta_synthesis_strategy_name(
+        common_flydelta_synthesis_strategy strategy);
+const char * common_flydelta_synthesis_estimator_name(
+        common_flydelta_synthesis_estimator estimator);
+
+// This is a comparison descriptor, not a lifecycle or evidence record.  It
+// makes candidate strategies comparable while retaining the fingerprints
+// required before a direction can be reused in a semantic basis.
+struct common_flydelta_synthesis_candidate_descriptor {
+    int schema_version = 1;
+    std::string candidate_ref;
+    std::string strategy_revision = "v1";
+    common_flydelta_synthesis_strategy strategy =
+        common_flydelta_synthesis_strategy::contrast_repair;
+    common_flydelta_synthesis_estimator estimator =
+        common_flydelta_synthesis_estimator::raw;
+    common_adaptation_evidence_source source =
+        common_adaptation_evidence_source::tool_repair;
+    std::string concept_key;
+    std::string behavior_key;
+    std::string source_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string scope_fingerprint;
+    // Decision-output-margin candidates must retain the host-owned pair that
+    // produced them. These are provenance fields, never evidence or lifecycle
+    // authority.
+    std::string decision_pair_ref;
+    std::string decision_score_scope;
+    int32_t decision_first_divergence_index = -1;
+    bool host_verified = false;
+    bool experimental_only = true;
+    bool learning_eligible = false;
+};
+
+bool common_flydelta_synthesis_candidate_descriptor_validate(
+        const common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error);
+
+struct common_flydelta_direction_candidate;
+
+// Derives the semantic strategy/estimator labels from an already-built
+// direction.  It does not infer correctness and does not change the
+// direction's experimental or lifecycle flags.
+bool common_flydelta_synthesis_candidate_descriptor_from_direction(
+        const common_flydelta_direction_candidate & direction,
+        const common_flydelta_synthesis_candidate_descriptor & identity,
+        common_flydelta_synthesis_candidate_descriptor & descriptor,
+        std::string & error);
+
+struct common_flydelta_contrast_sample {
+    common_flydelta_behavior_delta delta;
+    common_flydelta_intervention_credit credit;
+};
+
+// A generic model-facing choice. The alternatives may be tool calls, plan
+// operations, research actions, procedure steps or structured-output values.
+// Raw text stays in the host evidence store; this contract keeps only the
+// bounded token identity needed for a decision-boundary probe.
+struct common_flydelta_decision_pair {
+    int schema_version = 1;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    // Optional host provenance. Older callers may leave these empty, but a
+    // model-facing margin should populate them before it enters a search
+    // trace so the pair cannot be confused with another fixture/surface.
+    std::string decision_pair_id;
+    std::string behavior_key;
+    std::string fixture_revision;
+    std::string positive_ref;
+    std::string negative_ref;
+    // Examples: tool_choice, normalized_call, selected_arguments,
+    // full_continuation.
+    std::string score_scope;
+    std::vector<int32_t> positive_tokens;
+    std::vector<int32_t> negative_tokens;
+    int32_t first_divergence_index = -1;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+};
+
+// Host-owned request for materializing a model-facing decision pair. The
+// common layer supplies identity and semantic scope; the host resolves the
+// opaque relation/fixture references and must return a validated pair. Raw
+// prompts and model outputs do not cross this seam.
+struct common_flydelta_decision_pair_request {
+    int schema_version = 1;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
+    std::string relation_ref;
+    std::string fixture_ref;
+    std::string oracle_ref;
+    std::string oracle_revision;
+    std::string score_scope = "tool_choice";
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+};
+
+bool common_flydelta_decision_pair_request_validate(
+        const common_flydelta_decision_pair_request & request,
+        std::string & error);
+
+using common_flydelta_decision_pair_provider = std::function<bool(
+        const common_flydelta_decision_pair_request & request,
+        common_flydelta_decision_pair & pair,
+        std::string & error)>;
+
+bool common_flydelta_decision_pair_validate(
+        const common_flydelta_decision_pair & pair,
+        std::string & error);
+
+// Finds the first divergent token in two host-tokenized alternatives. The
+// caller supplies the fingerprints and semantic behavior identity; this
+// helper remains independent of tokenizer and llama.cpp internals.
+bool common_flydelta_decision_pair_from_tokens(
+        common_adaptation_evidence_source source,
+        const std::string & behavior_key,
+        const std::string & tokenizer_fingerprint,
+        const std::string & template_fingerprint,
+        const std::vector<int32_t> & positive_tokens,
+        const std::vector<int32_t> & negative_tokens,
+        common_flydelta_decision_pair & pair,
+        std::string & error);
+
+// Generic forward-only decision material. The caller owns tokenization and
+// unembedding; this contract only receives the two comparable output rows.
+struct common_flydelta_token_margin_material {
+    std::vector<float> positive_output_row;
+    std::vector<float> negative_output_row;
+};
+
+using common_flydelta_output_head_row_resolver = std::function<bool(
+        int32_t token,
+        std::vector<float> & row,
+        std::string & error)>;
+
+// Generic host/model boundary material. A positive and negative capture may
+// represent tool choice, planning, research, structured output or another
+// host-verifiable behavior; no tool-specific semantics are stored here.
+struct common_flydelta_boundary_sample {
+    bool positive = false;
+    std::vector<float> values;
+};
+
+struct common_flydelta_direction_search_config {
+    int schema_version = 1;
+    size_t dimension = 0;
+    int32_t layer_index = -1;
+    size_t min_samples = 2;
+    size_t max_samples = 32;
+    float min_median_alignment = 0.25f;
+    float trim_fraction = 0.20f;
+    float variance_ridge = 0.001f;
+    common_flydelta_direction_search_mode mode =
+        common_flydelta_direction_search_mode::learning;
+    common_adaptation_evidence_source source = common_adaptation_evidence_source::tool_repair;
+    std::string behavior_key;
+    std::string model_profile_fingerprint;
+    std::string execution_context_fingerprint;
+    std::string capture_layout_revision;
+};
+
+struct common_flydelta_direction_candidate {
+    int schema_version = 1;
+    common_flydelta_direction_kind kind = common_flydelta_direction_kind::raw_repair;
+    int32_t layer_index = -1;
+    std::vector<float> values;
+    // Optional provenance for builders outside the repair-delta path.
+    std::string origin;
+    std::string extraction_id;
+    std::string strategy_revision;
+    std::string decision_pair_ref;
+    std::string decision_score_scope;
+    int32_t decision_first_divergence_index = -1;
+    size_t source_samples = 0;
+    size_t retained_samples = 0;
+    float median_alignment = 0.0f;
+    // Experimental candidates can guide search but must not be treated as
+    // learned or promotion-eligible basis directions.
+    bool experimental_only = false;
+};
+
+bool common_flydelta_direction_search_config_validate(
+        const common_flydelta_direction_search_config & config,
+        std::string & error);
+bool common_flydelta_direction_candidate_validate(
+        const common_flydelta_direction_candidate & candidate,
+        size_t expected_dimension,
+        std::string & error);
+
+// Builds up to three CPU-cheap WHAT candidates:
+//   raw_repair              one normalized sample, used as a control;
+//   normalized_trimmed_mean robust mean of centrally aligned samples;
+//   diagonal_whitened_mean  the same mean weighted by inverse per-dimension
+//                           variance plus variance_ridge.
+//
+// In learning mode only HELPED, learning-eligible samples are accepted. In
+// experimental mode valid HELPED, NEUTRAL and UNKNOWN samples may seed
+// bounded challenger directions; HARMED samples remain rejected. The host
+// must provide the outcome/credit and this function never infers correctness.
+// Experimental candidates are marked experimental_only and cannot be used as
+// learning or promotion evidence. If there are too few compatible samples,
+// the raw control is still returned and aggregate candidates are omitted.
+bool common_flydelta_build_direction_candidates(
+        const common_flydelta_direction_search_config & config,
+        const std::vector<common_flydelta_contrast_sample> & samples,
+        std::vector<common_flydelta_direction_candidate> & candidates,
+        std::string & error);
+
+// Builds one direct direction from a positive-vs-negative output margin.
+// Output rows are supplied by the host/model adapter so this module remains
+// independent of tokenizer and llama.cpp internals.
+bool common_flydelta_build_token_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_token_margin_material & material,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Resolves the two tokens at the first decision divergence and builds the
+// exact output-head row difference U[t+] - U[t-]. The host owns the resolver;
+// this keeps model access out of the CPU direction-search implementation.
+bool common_flydelta_build_decision_output_margin_candidate(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair & pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Host-seam adapter for the challenger. Pair materialization and output-head
+// access stay host-owned; this helper only enforces identity matching and
+// delegates to the existing pure direction builder.
+bool common_flydelta_build_decision_output_margin_candidate_from_provider(
+        const common_flydelta_direction_search_config & config,
+        const common_flydelta_decision_pair_request & request,
+        const common_flydelta_decision_pair_provider & provide_pair,
+        const common_flydelta_output_head_row_resolver & resolve_row,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);
+
+// Builds one robust, normalized prototype direction from multiple positive
+// and negative boundary captures. This is intentionally the same candidate
+// format used by repair directions and is not restricted to tool use.
+bool common_flydelta_build_boundary_prototype_candidate(
+        const common_flydelta_direction_search_config & config,
+        const std::vector<common_flydelta_boundary_sample> & samples,
+        common_flydelta_direction_candidate & candidate,
+        std::string & error);

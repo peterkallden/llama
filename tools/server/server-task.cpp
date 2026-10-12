@@ -11,6 +11,238 @@
 #include "server-common.h"
 
 #include <sstream>
+#include <cmath>
+#include <limits>
+#include <algorithm>
+bool server_task_cvec_equal(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    if (left == right) {
+        return true;
+    }
+    if (!left || !right) {
+        return false;
+    }
+    if (left->identity != right->identity ||
+            left->content_hash != right->content_hash ||
+            left->n_embd != right->n_embd ||
+            left->il_start != right->il_start ||
+            left->il_end != right->il_end ||
+            left->data.size() != right->data.size()) {
+        return false;
+    }
+    // A host-provided hash is the normal fast path.  Compare the payload when
+    // no hash is available so an incomplete identity can never alias state.
+    return !left->content_hash.empty() || left->data == right->data;
+}
+
+bool server_task_cvec_batch_compatible(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    return left && right && left->n_embd == right->n_embd &&
+        left->il_start == right->il_start && left->il_end == right->il_end &&
+        left->data.size() == right->data.size() &&
+        left->sparse_layer_indices == right->sparse_layer_indices &&
+        left->sparse_data.size() == right->sparse_data.size();
+}
+
+void server_task_cvec_batch::clear() {
+    entries.clear();
+}
+
+bool server_task_cvec_batch::add(
+        const llama_seq_id seq_id,
+        server_task_cvec_ptr cvec,
+        std::string & error) {
+    error.clear();
+    if (!cvec) {
+        error = "per-sequence control vector is null";
+        return false;
+    }
+    if (std::any_of(entries.begin(), entries.end(), [seq_id](const entry & value) {
+            return value.seq_id == seq_id;
+        })) {
+        error = "duplicate sequence id in per-sequence control-vector batch";
+        return false;
+    }
+    if (!entries.empty()) {
+        const server_task_cvec_ptr & first = entries.front().cvec;
+        if (!server_task_cvec_batch_compatible(first, cvec)) {
+            error = "per-sequence control vectors have incompatible geometry";
+            return false;
+        }
+    }
+    entries.push_back({seq_id, std::move(cvec)});
+    return true;
+}
+
+bool server_task_cvec_batch::materialize(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<const float *> & data,
+        size_t & data_len,
+        int32_t & n_embd,
+        int32_t & il_start,
+        int32_t & il_end,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear();
+    data.clear();
+    data_len = 0;
+    n_embd = 0;
+    il_start = 1;
+    il_end = 0;
+    if (entries.empty()) {
+        error = "per-sequence control-vector batch is empty";
+        return false;
+    }
+
+    const server_task_cvec & first = *entries.front().cvec;
+    data_len = first.data.size();
+    n_embd = first.n_embd;
+    il_start = first.il_start;
+    il_end = first.il_end;
+    seq_ids.reserve(entries.size());
+    data.reserve(entries.size());
+    for (const entry & value : entries) {
+        seq_ids.push_back(value.seq_id);
+        data.push_back(value.cvec->data.data());
+    }
+    return true;
+}
+
+bool server_task_cvec_batch::materialize_sparse(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<const float *> & data,
+        size_t & data_len,
+        int32_t & n_embd,
+        std::vector<uint32_t> & layer_indices,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear();
+    data.clear();
+    layer_indices.clear();
+    data_len = 0;
+    n_embd = 0;
+    if (entries.empty() || entries.front().cvec->sparse_layer_indices.empty()) {
+        error = "per-sequence sparse control-vector batch is empty";
+        return false;
+    }
+
+    const server_task_cvec & first = *entries.front().cvec;
+    layer_indices = first.sparse_layer_indices;
+    data_len = first.sparse_data.size();
+    n_embd = first.n_embd;
+    seq_ids.reserve(entries.size());
+    data.reserve(entries.size());
+    for (const entry & value : entries) {
+        if (value.cvec->sparse_layer_indices != layer_indices ||
+                value.cvec->sparse_data.size() != data_len) {
+            error = "per-sequence sparse control vectors have incompatible layer layouts";
+            seq_ids.clear();
+            data.clear();
+            layer_indices.clear();
+            return false;
+        }
+        seq_ids.push_back(value.seq_id);
+        data.push_back(value.cvec->sparse_data.data());
+    }
+    return true;
+}
+
+bool server_task_cvec_validate(
+        const server_task_cvec & cvec,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (cvec.identity.empty() || cvec.n_embd <= 0 || cvec.il_start < 1 ||
+            cvec.il_end < cvec.il_start || model_n_embd == 0 || model_n_layers < 2 ||
+            static_cast<size_t>(cvec.n_embd) != model_n_embd ||
+            static_cast<size_t>(cvec.il_end) >= model_n_layers) {
+        error = "server task cvec identity or dimensions are invalid";
+        return false;
+    }
+    if (!cvec.sparse_layer_indices.empty()) {
+        if (cvec.sparse_data.size() !=
+                cvec.sparse_layer_indices.size() * static_cast<size_t>(cvec.n_embd)) {
+            error = "server task sparse cvec data dimensions are invalid";
+            return false;
+        }
+        uint32_t previous = 0;
+        bool first = true;
+        for (const uint32_t layer : cvec.sparse_layer_indices) {
+            if (layer < static_cast<uint32_t>(cvec.il_start) ||
+                    layer > static_cast<uint32_t>(cvec.il_end) ||
+                    (!first && layer <= previous)) {
+                error = "server task sparse cvec layer indices are invalid";
+                return false;
+            }
+            previous = layer;
+            first = false;
+        }
+        for (const float value : cvec.sparse_data) {
+            if (!std::isfinite(value)) {
+                error = "server task sparse cvec contains a non-finite value";
+                return false;
+            }
+        }
+        if (max_bytes != 0 && cvec.sparse_data.size() > max_bytes / sizeof(float)) {
+            error = "server task sparse cvec exceeds its byte bound";
+            return false;
+        }
+    } else if (cvec.data.size() !=
+            static_cast<size_t>(cvec.n_embd) * (model_n_layers - 1)) {
+        error = "server task dense cvec data dimensions are invalid";
+        return false;
+    }
+    if (model_n_embd > std::numeric_limits<size_t>::max() / (model_n_layers - 1)) {
+        error = "server task cvec dimensions overflow";
+        return false;
+    }
+    const size_t required_values = model_n_embd * (model_n_layers - 1);
+    if (cvec.data.size() < required_values ||
+            (max_bytes != 0 && cvec.data.size() > max_bytes / sizeof(float))) {
+        error = "server task cvec exceeds its byte bound";
+        return false;
+    }
+    for (const float value : cvec.data) {
+        if (!std::isfinite(value)) {
+            error = "server task cvec contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool server_task_residual_patch_validate(
+        const server_task_residual_patch & patch,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (patch.site != server_task_residual_patch_site::layer_input_residual) {
+        error = "unsupported residual patch site";
+        return false;
+    }
+    if (patch.layer >= model_n_layers || patch.absolute_position < 0) {
+        error = "invalid residual patch layer, position or sequence";
+        return false;
+    }
+    if (patch.values.size() != model_n_embd || patch.values.empty() ||
+            patch.values.size() * sizeof(float) > max_bytes) {
+        error = "residual patch vector does not match model embedding width or byte budget";
+        return false;
+    }
+    for (const float value : patch.values) {
+        if (!std::isfinite(value)) {
+            error = "residual patch contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
 
 //
 // task_params
@@ -1484,6 +1716,14 @@ json server_task_result_rerank::to_json() {
         {"index",            index},
         {"score",            score},
         {"tokens_evaluated", n_tokens},
+    };
+}
+
+// server_task_result_teacher_score
+json server_task_result_teacher_score::to_json() {
+    return json {
+        {"total_logprob", total_logprob},
+        {"token_count",   token_count},
     };
 }
 

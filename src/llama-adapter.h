@@ -5,8 +5,69 @@
 #include "ggml-cpp.h"
 
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
+
+struct llama_ubatch;
+
+enum class llama_residual_patch_operation : uint8_t { replace, add };
+
+// Non-owning, single-site graph intervention. It is deliberately unrelated
+// to adapters/cvecs: callers provide a fully prepared vector.
+struct llama_residual_patch_ref {
+    llama_residual_patch_operation operation = llama_residual_patch_operation::add;
+    uint32_t layer = 0;
+    int32_t absolute_position = -1;
+    llama_seq_id sequence_id = -1;
+    const float * values = nullptr;
+    size_t n_embd = 0;
+    bool * applied = nullptr;
+};
+
+// Request-scoped, backend-neutral compact diagnostics. The graph resolves
+// the two sequence/position rows and computes the scalar reductions while
+// the layer inputs remain device-resident. The caller owns the referenced
+// direction data and receives the scalar results in-place.
+struct llama_layer_reduction_entry {
+    uint32_t layer = 0;
+    llama_seq_id baseline_sequence_id = -1;
+    llama_seq_id overlay_sequence_id = -1;
+    int32_t absolute_position = -1;
+    const float * direction = nullptr;
+    size_t n_embd = 0;
+
+    float dot_shift_delta = 0.0f;
+    float shift_squared = 0.0f;
+    float delta_squared = 0.0f;
+    float residual_squared = 0.0f;
+    bool available = false;
+    std::string failure_reason;
+};
+
+struct llama_layer_reduction_ref {
+    std::vector<llama_layer_reduction_entry> entries;
+};
+
+// Non-owning graph hook for a backend that can apply different control
+// vectors to different sequences in one ubatch. The callback runs while the
+// graph is being built and must return `cur` unchanged when no overlay is
+// selected for the layer. It may construct backend tensors in `ctx`, but must
+// not execute the graph or retain `ctx`/`cur` after the callback returns.
+// The scalar cvec path remains the default; the backend owns the table,
+// device buffers and lifetime.
+using llama_adapter_cvec_batch_apply_fn = ggml_tensor * (*) (
+        ggml_context * ctx,
+        ggml_tensor * cur,
+        int il,
+        const llama_ubatch & ubatch,
+        void * user_data);
+
+struct llama_adapter_cvec_batch_ref {
+    // The reference and user_data must remain valid through graph execution.
+    llama_adapter_cvec_batch_apply_fn apply = nullptr;
+    void * user_data = nullptr;
+};
 
 // TODO: pimpl
 
@@ -40,6 +101,103 @@ private:
 };
 
 using llama_adapter_cvec_ptr = std::shared_ptr<llama_adapter_cvec>;
+
+// Backend-resident per-sequence control-vector table. Row order follows
+// seq_ids; the graph callback selects the row for each token in the current
+// ubatch. This is the low-level implementation behind
+// llama_adapter_cvec_batch_ref. It is deliberately unaware of FlyDelta,
+// server slots and search policy.
+struct llama_adapter_cvec_batch {
+    llama_adapter_cvec_batch() = default;
+    ~llama_adapter_cvec_batch() = default;
+
+    llama_adapter_cvec_batch(const llama_adapter_cvec_batch &) = delete;
+    llama_adapter_cvec_batch & operator=(const llama_adapter_cvec_batch &) = delete;
+    llama_adapter_cvec_batch(llama_adapter_cvec_batch &&) = delete;
+    llama_adapter_cvec_batch & operator=(llama_adapter_cvec_batch &&) = delete;
+
+    LLAMA_API bool apply(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            int32_t il_start,
+            int32_t il_end);
+
+    // Sparse counterpart for device-aware backends. Each row contains only
+    // the layers listed in layer_indices, in sorted layer-major order.
+    LLAMA_API bool apply_sparse(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices);
+
+    LLAMA_API void clear();
+
+    bool enabled() const { return active; }
+
+    // Telemetry: true when at least one per-layer table buffer is owned by a
+    // non-CPU backend. The graph callback remains backend-neutral.
+    bool device_resident() const { return device_resident_flag; }
+
+    const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
+
+private:
+    static LLAMA_API ggml_tensor * apply_callback(
+            ggml_context * ctx,
+            ggml_tensor * cur,
+            int il,
+            const llama_ubatch & ubatch,
+            void * user_data);
+
+    bool init(
+            const llama_model & model,
+            int32_t n_embd,
+            size_t n_seq,
+            const std::vector<uint32_t> & layer_indices);
+    bool apply_impl(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::vector<const float *> & data,
+            size_t data_len,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices,
+            bool dense_layout);
+    ggml_tensor * tensor_for(int il) const;
+    int32_t row_for_token(const llama_ubatch & ubatch, uint32_t token_index) const;
+
+    int32_t layer_start = -1;
+    int32_t layer_end   = -1;
+    int32_t n_embd      = 0;
+    bool active         = false;
+    bool device_resident_flag = false;
+
+    std::vector<llama_seq_id> seq_ids;
+    // The row-selector is a small host-resident graph input.  It cannot be
+    // written through ggml_set_i32_1d() on the graph metadata context because
+    // that context is created with no_alloc=true.  A selector is kept per
+    // graph context: concurrent server slots must never rewrite one another's
+    // indices while their graphs are being built or executed.
+    struct selector_state {
+        ggml_context_ptr ctx;
+        ggml_tensor * tensor = nullptr;
+        ggml_backend_buffer_ptr buf;
+        uint32_t count = 0;
+    };
+    mutable std::mutex selector_mutex;
+    std::unordered_map<ggml_context *, selector_state> selector_states;
+    std::vector<ggml_context_ptr> ctxs;
+    std::vector<ggml_backend_buffer_ptr> bufs;
+    std::vector<ggml_tensor *> tensors;
+
+    llama_adapter_cvec_batch_ref batch_ref {
+        /* .apply = */ apply_callback,
+        /* .user_data = */ this,
+    };
+};
 
 //
 // llama_adapter_lora

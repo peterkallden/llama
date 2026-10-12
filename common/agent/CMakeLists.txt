@@ -1,0 +1,326 @@
+set(TARGET llama-agent-core)
+
+# Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
+# mobile clients can share the wire contract without linking agent semantics.
+add_library(llama-agent-protocol STATIC
+    protocol/agent-jsonl.cpp protocol/agent-jsonl.h
+    protocol/agent-sse.cpp protocol/agent-sse.h
+)
+target_include_directories(llama-agent-protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-protocol PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-protocol PUBLIC llama-common)
+set_target_properties(llama-agent-protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (LLAMA_AGENT_SANDBOX)
+    add_library(llama-agent-sandbox
+        sandbox/sandbox-docker-runtime.cpp
+        sandbox/sandbox-docker-runtime.h
+        sandbox/sandbox-kubernetes-runtime.cpp
+        sandbox/sandbox-kubernetes-runtime.h
+        sandbox/sandbox-lxc-runtime.cpp
+        sandbox/sandbox-lxc-runtime.h
+        sandbox/sandbox-local-runtime.cpp
+        sandbox/sandbox-local-runtime.h
+    )
+    target_include_directories(llama-agent-sandbox PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_compile_features(llama-agent-sandbox PUBLIC cxx_std_17)
+    target_link_libraries(llama-agent-sandbox PUBLIC llama-common PRIVATE cpp-httplib)
+    if (WIN32)
+        target_compile_definitions(llama-agent-sandbox PRIVATE LLAMA_AGENT_WEB_USE_WINHTTP=1)
+        target_link_libraries(llama-agent-sandbox PRIVATE winhttp)
+    endif()
+    if (BUILD_SHARED_LIBS)
+        set_target_properties(llama-agent-sandbox PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        set_target_properties(llama-agent-sandbox PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
+endif()
+
+add_library(llama-agent-dataset-contracts dataset-contracts.cpp dataset-contracts.h)
+target_include_directories(llama-agent-dataset-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-dataset-contracts PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-dataset-contracts PUBLIC llama-common)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-dataset-contracts PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(${TARGET}
+    agent-bootstrap.cpp agent-bootstrap.h
+    agent-package-json.cpp agent-package-json.h
+    agent-prepared-generation.cpp agent-prepared-generation.h
+    runtime/model-profile.cpp runtime/model-profile.h
+    runtime/model-catalog.cpp runtime/model-catalog.h
+    runtime/model-profile-cache.cpp runtime/model-profile-cache.h
+    credentials/agent-credential-provider.h
+    learning/blueprint-selector.cpp learning/blueprint-selector.h
+    tooling/catalog/model-projection.cpp tooling/catalog/model-projection.h
+    thinking/deliberation-policy.cpp thinking/deliberation-policy.h
+    thinking/cognitive-mode.cpp thinking/cognitive-mode.h
+    agent-runtime-context.h
+    agent-runtime-context.cpp
+    thinking/phases/agent-runtime-reflection-phase.cpp
+    thinking/phases/agent-runtime-research-phase.cpp
+    agent-runtime.cpp agent-runtime.h
+    runtime-json-contracts.cpp runtime-json-contracts.h
+    learning/memory-learning.cpp learning/memory-learning.h
+    adaptation/learning-observation.cpp adaptation/learning-observation.h
+    adaptation/learning-case.cpp adaptation/learning-case.h
+    adaptation/learning-cause-classifier.cpp adaptation/learning-cause-classifier.h
+    adaptation/learning-domain-policy.cpp adaptation/learning-domain-policy.h
+    adaptation/adaptation-observer.h
+    adaptation/learning-transaction.cpp adaptation/learning-transaction.h
+    adaptation/adaptation-evidence.cpp adaptation/adaptation-evidence.h
+    adaptation/adaptation-evidence-routing.cpp adaptation/adaptation-evidence-routing.h
+    adaptation/training-candidate.cpp adaptation/training-candidate.h
+    adaptation/flydelta/flydelta-training-admission.cpp adaptation/flydelta/flydelta-training-admission.h
+    adaptation/auto-training-trigger.cpp adaptation/auto-training-trigger.h
+    adaptation/corpus-builder.cpp adaptation/corpus-builder.h
+    adaptation/trainer-protocol.cpp adaptation/trainer-protocol.h
+    adaptation/adapter-registry.cpp adaptation/adapter-registry.h
+    adaptation/lifecycle-store.cpp adaptation/lifecycle-store.h
+    adaptation/evaluation-contract.cpp adaptation/evaluation-contract.h
+    adaptation/flydelta/flydelta.cpp adaptation/flydelta/flydelta.h
+    adaptation/flydelta/flydelta-contracts.cpp adaptation/flydelta/flydelta-contracts.h
+    adaptation/flydelta/flydelta-experiment.cpp adaptation/flydelta/flydelta-experiment.h
+    adaptation/flydelta/flydelta-experiment-orchestration.cpp adaptation/flydelta/flydelta-experiment-orchestration.h
+    adaptation/flydelta/experiment/flydelta-experiment-routes.cpp adaptation/flydelta/experiment/flydelta-experiment-routes.h
+    adaptation/flydelta/experiment/flydelta-rank1-plateau.cpp
+    adaptation/flydelta/experiment/flydelta-utility-gate.cpp
+    adaptation/flydelta/experiment/flydelta-orthogonal-search.cpp
+    adaptation/flydelta/experiment/flydelta-bootstrap-zoom.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-basis.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-proposals.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-standard.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-staged.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-batched.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-tfo.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h
+    adaptation/flydelta/flydelta-bootstrap-zoom-state-store.cpp adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h
+    adaptation/flydelta/flydelta-evaluator.cpp adaptation/flydelta/flydelta-evaluator.h
+    adaptation/flydelta/flydelta-causal-diagnostic.cpp adaptation/flydelta/flydelta-causal-diagnostic.h
+    adaptation/flydelta/flydelta-model-adapter.cpp adaptation/flydelta/flydelta-model-adapter.h
+    adaptation/flydelta/flydelta-sideband-controller.cpp adaptation/flydelta/flydelta-sideband-controller.h
+    adaptation/flydelta/flydelta-sideband-review-store.cpp adaptation/flydelta/flydelta-sideband-review-store.h
+    adaptation/flydelta/flydelta-evidence.cpp adaptation/flydelta/flydelta-evidence.h
+    adaptation/flydelta/flydelta-basis.cpp adaptation/flydelta/flydelta-basis.h
+    adaptation/flydelta/flydelta-training.cpp adaptation/flydelta/flydelta-training.h
+    adaptation/flydelta/flydelta-job.cpp adaptation/flydelta/flydelta-job.h
+    adaptation/flydelta/flydelta-queue.cpp adaptation/flydelta/flydelta-queue.h
+    adaptation/flydelta/flydelta-collection.cpp adaptation/flydelta/flydelta-collection.h
+    adaptation/flydelta/flydelta-worker.cpp adaptation/flydelta/flydelta-worker.h
+    adaptation/flydelta/flydelta-worker-budget.cpp adaptation/flydelta/flydelta-worker-budget.h
+    adaptation/flydelta/flydelta-gate.cpp adaptation/flydelta/flydelta-gate.h
+    adaptation/flydelta/flydelta-promotion.cpp adaptation/flydelta/flydelta-promotion.h
+    adaptation/flydelta/flydelta-overlay.cpp adaptation/flydelta/flydelta-overlay.h
+    adaptation/flydelta/flydelta-activation.cpp adaptation/flydelta/flydelta-activation.h
+    adaptation/flydelta/flydelta-deployment.cpp adaptation/flydelta/flydelta-deployment.h
+    adaptation/flydelta/flydelta-sideband-registry.cpp adaptation/flydelta/flydelta-sideband-registry.h
+    adaptation/flydelta/flydelta-capture.cpp adaptation/flydelta/flydelta-capture.h
+    adaptation/flydelta/flydelta-hidden-state-hook.cpp adaptation/flydelta/flydelta-hidden-state-hook.h
+    adaptation/flydelta/flydelta-layer-discovery.cpp adaptation/flydelta/flydelta-layer-discovery.h
+    adaptation/flydelta/flydelta-two-pass.cpp adaptation/flydelta/flydelta-two-pass.h
+    adaptation/flydelta/flydelta-representation-diagnostics.cpp adaptation/flydelta/flydelta-representation-diagnostics.h
+    adaptation/flydelta/flydelta-dose-controller.cpp adaptation/flydelta/flydelta-dose-controller.h
+    adaptation/flydelta/flydelta-direction-search.cpp adaptation/flydelta/flydelta-direction-search.h
+    adaptation/flydelta/flydelta-candidate-lifecycle.cpp adaptation/flydelta/flydelta-candidate-lifecycle.h
+    adaptation/flydelta/flydelta-runtime-observer.cpp adaptation/flydelta/flydelta-runtime-observer.h
+adaptation/flydelta/flydelta-layer-search.cpp adaptation/flydelta/flydelta-layer-search.h
+adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale-search.h
+    adaptation/flydelta/flydelta-alpha-response-search.cpp adaptation/flydelta/flydelta-alpha-response-search.h
+    adaptation/flydelta/flydelta-intervention-region-search.cpp adaptation/flydelta/flydelta-intervention-region-search.h
+    adaptation/flydelta/flydelta-whirlpool-search.cpp adaptation/flydelta/flydelta-whirlpool-search.h
+    adaptation/flydelta/flydelta-search-pipeline.cpp adaptation/flydelta/flydelta-search-pipeline.h
+    adaptation/flydelta/flydelta-coefficient-search.cpp adaptation/flydelta/flydelta-coefficient-search.h
+    adaptation/flydelta/flydelta-decision-margin.cpp adaptation/flydelta/flydelta-decision-margin.h
+    adaptation/flydelta/flydelta-deep-search.cpp adaptation/flydelta/flydelta-deep-search.h
+    adaptation/flydelta/flydelta-evidence-depth.cpp adaptation/flydelta/flydelta-evidence-depth.h
+    adaptation/flydelta/flydelta-aggregation.cpp adaptation/flydelta/flydelta-aggregation.h
+    adaptation/flydelta/flydelta-artifact-lifecycle.cpp adaptation/flydelta/flydelta-artifact-lifecycle.h
+    adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
+    adaptation/flydelta/flydelta-representation-augmentation.cpp adaptation/flydelta/flydelta-representation-augmentation.h
+    adaptation/flydelta/flydelta-representation-augmentation-state-store.cpp adaptation/flydelta/flydelta-representation-augmentation-state-store.h
+    adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
+    adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
+    adaptation/flydelta/oracles/contracts.cpp adaptation/flydelta/oracles/contracts.h
+    adaptation/semi-oracle.cpp adaptation/semi-oracle.h adaptation/semi-oracle-store.h
+    adaptation/semi-oracle-sft-candidate.cpp adaptation/semi-oracle-sft-candidate.h
+    adaptation/semi-oracle-tool.cpp adaptation/semi-oracle-tool.h
+    adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
+    adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
+    adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h
+    adaptation/flydelta/oracles/tool-contract.cpp adaptation/flydelta/oracles/tool-contract.h
+    adaptation/flydelta/oracles/openapi-operation.cpp adaptation/flydelta/oracles/openapi-operation.h
+    adaptation/flydelta/oracles/workflow.cpp adaptation/flydelta/oracles/workflow.h
+    adaptation/flydelta/oracles/procedure.cpp adaptation/flydelta/oracles/procedure.h
+    adaptation/flydelta/oracles/workflow-proposal.cpp adaptation/flydelta/oracles/workflow-proposal.h
+    adaptation/flydelta/oracles/blueprint-workflow.cpp adaptation/flydelta/oracles/blueprint-workflow.h
+    adaptation/flydelta/flydelta-teaching-relation.cpp adaptation/flydelta/flydelta-teaching-relation.h
+    adaptation/flydelta/flydelta-teaching-material.cpp adaptation/flydelta/flydelta-teaching-material.h
+    adaptation/flydelta/flydelta-concept-capture.cpp adaptation/flydelta/flydelta-concept-capture.h
+    adaptation/semantic-teaching.cpp adaptation/semantic-teaching.h
+    adaptation/concept-input-routing.cpp adaptation/concept-input-routing.h
+    adaptation/concept-candidate-index.cpp adaptation/concept-candidate-index.h
+    thinking/reflection-json.cpp thinking/reflection-json.h
+    tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
+    tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
+    tooling/adapters/families/memory-adapters.cpp tooling/adapters/families/memory-adapters.h
+    tooling/adapters/families/oracle-adapters.cpp tooling/adapters/families/oracle-adapters.h
+    tooling/adapters/families/data-adapters.cpp tooling/adapters/families/data-adapters.h
+    tooling/adapters/families/document-adapters.cpp tooling/adapters/families/document-adapters.h
+    tooling/adapters/families/repository-adapters.cpp tooling/adapters/families/repository-adapters.h
+    tooling/adapters/families/diagnostics-adapters.cpp tooling/adapters/families/diagnostics-adapters.h
+    tooling/adapters/families/resource-adapters.cpp tooling/adapters/families/resource-adapters.h
+    tooling/adapters/support/adapter-support.h
+    tooling/catalog/tool-catalog.cpp tooling/catalog/tool-catalog.h
+    tooling/bridge/tool-chat-bridge.cpp tooling/bridge/tool-chat-bridge.h
+    tooling/registry/tool-registry.cpp tooling/registry/tool-registry.h
+    tooling/contracts/tool-result-contracts.cpp tooling/contracts/tool-result-contracts.h
+    tooling/schema/tool-schema-compact.cpp tooling/schema/tool-schema-compact.h
+    tooling/schema/tool-output-codec.cpp tooling/schema/tool-output-codec.h
+    tooling/synthetic/synthetic-tool-cases.cpp tooling/synthetic/synthetic-tool-cases.h
+    tooling/routing/tool-navigation.cpp tooling/routing/tool-navigation.h
+    thinking/research/research-contract.h
+    thinking/research/research-workspace.cpp thinking/research/research-workspace.h
+    thinking/research/research-workspace-factory.cpp thinking/research/research-workspace-factory.h
+    thinking/research/research-controller.cpp thinking/research/research-controller.h
+    thinking/research/research-runner.cpp thinking/research/research-runner.h)
+
+# Tool registration, schema projection and native adapter execution form a
+# stable agent-only seam. Keep them out of the core runtime library so changes
+# to a tool family do not relink the planning/thinking implementation.
+set(AGENT_TOOLING_SOURCES
+    tooling/catalog/model-projection.cpp
+    tooling/contracts/schema-contract.cpp
+    tooling/adapters/tool-adapters.cpp
+    tooling/adapters/families/memory-adapters.cpp
+    tooling/adapters/families/oracle-adapters.cpp
+    tooling/adapters/families/data-adapters.cpp
+    tooling/adapters/families/document-adapters.cpp
+    tooling/adapters/families/repository-adapters.cpp
+    tooling/adapters/families/diagnostics-adapters.cpp
+    tooling/adapters/families/resource-adapters.cpp
+    tooling/catalog/tool-catalog.cpp
+    tooling/bridge/tool-chat-bridge.cpp
+    tooling/registry/tool-registry.cpp
+    tooling/contracts/tool-result-contracts.cpp
+    tooling/schema/tool-schema-compact.cpp
+    tooling/schema/tool-output-codec.cpp
+    tooling/synthetic/synthetic-tool-cases.cpp
+    tool-family-index.cpp
+    tool-workflow-index.cpp
+    tooling/routing/tool-navigation.cpp
+)
+get_target_property(AGENT_CORE_SOURCES ${TARGET} SOURCES)
+list(REMOVE_ITEM AGENT_CORE_SOURCES ${AGENT_TOOLING_SOURCES})
+# FlyDelta remains part of common/agent, but has its own host-neutral target.
+# Keep the dependency one-way: FlyDelta may use stable agent contracts, while
+# the generic core must not depend back on the adaptation implementation.
+set(AGENT_FLYDELTA_SOURCES ${AGENT_CORE_SOURCES})
+list(FILTER AGENT_FLYDELTA_SOURCES INCLUDE REGEX "adaptation/flydelta/")
+list(REMOVE_ITEM AGENT_CORE_SOURCES ${AGENT_FLYDELTA_SOURCES})
+# Concept routing and candidate indexing consume FlyDelta teaching contracts,
+# so keep that complete adaptation seam with the FlyDelta target as well.
+list(REMOVE_ITEM AGENT_CORE_SOURCES
+    adaptation/semantic-teaching.cpp
+    adaptation/semantic-teaching.h
+    adaptation/concept-input-routing.cpp
+    adaptation/concept-input-routing.h
+    adaptation/concept-candidate-index.cpp
+    adaptation/concept-candidate-index.h
+)
+list(APPEND AGENT_FLYDELTA_SOURCES
+    adaptation/semi-oracle-teaching.cpp
+    adaptation/semi-oracle-teaching.h
+    adaptation/semantic-teaching.cpp
+    adaptation/semantic-teaching.h
+    adaptation/concept-input-routing.cpp
+    adaptation/concept-input-routing.h
+    adaptation/concept-candidate-index.cpp
+    adaptation/concept-candidate-index.h
+)
+set_property(TARGET ${TARGET} PROPERTY SOURCES ${AGENT_CORE_SOURCES})
+
+add_library(llama-agent-tooling ${AGENT_TOOLING_SOURCES})
+target_include_directories(llama-agent-tooling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-tooling
+    PUBLIC llama-common llama-agent-dataset-contracts llama-agent-plan llama-agent-memory
+    PRIVATE cpp-httplib
+)
+if (LLAMA_AGENT_SANDBOX)
+    target_link_libraries(llama-agent-tooling PUBLIC llama-agent-sandbox)
+endif()
+if (LLAMA_AGENT_TOOLS_CLANG)
+    target_compile_definitions(llama-agent-tooling PRIVATE LLAMA_AGENT_TOOLS_USE_CLANG=1)
+endif()
+if (WIN32)
+    target_compile_definitions(llama-agent-tooling PRIVATE LLAMA_AGENT_WEB_USE_WINHTTP=1)
+    target_link_libraries(llama-agent-tooling PRIVATE winhttp)
+endif()
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-tooling PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(llama-agent-tooling PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
+
+add_library(llama-agent-flydelta ${AGENT_FLYDELTA_SOURCES})
+target_include_directories(llama-agent-flydelta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-flydelta PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-flydelta
+    PUBLIC llama-agent-core
+    PRIVATE vendor::hash llama-agent-tooling
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-flydelta PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+add_library(llama-agent-poc ALIAS ${TARGET})
+target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(${TARGET} PUBLIC cxx_std_17)
+target_link_libraries(${TARGET}
+    PUBLIC
+        llama-agent-dataset-contracts
+        llama-agent-plan
+        llama-agent-memory
+        llama-agent-tooling
+        llama-agent-protocol
+)
+target_link_libraries(${TARGET} PRIVATE cpp-httplib vendor::hash)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(${TARGET} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
+
+if (LLAMA_MEMORY_COZO)
+    add_library(llama-agent-storage-cozo
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-schema.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-query.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-aggregate.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-join.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-reader.cpp
+        ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-cozo-encoding.cpp
+    )
+    target_include_directories(llama-agent-storage-cozo
+        PUBLIC
+            ${PROJECT_SOURCE_DIR}/common
+            ${PROJECT_SOURCE_DIR}/tools/agent/data
+        PRIVATE ${COZO_INCLUDE_DIR}
+    )
+    target_compile_features(llama-agent-storage-cozo PUBLIC cxx_std_17)
+    target_link_libraries(llama-agent-storage-cozo
+        PUBLIC llama-agent-core
+        PRIVATE Threads::Threads
+    )
+    llama_link_cozo(llama-agent-storage-cozo)
+    if (BUILD_SHARED_LIBS)
+        set_target_properties(llama-agent-storage-cozo PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            WINDOWS_EXPORT_ALL_SYMBOLS ON
+        )
+    endif()
+endif()

@@ -1,0 +1,54 @@
+{
+  "type": "openapi",
+  "id": "openalex",
+  "enabled": true,
+  "required": true,
+  "prefix": "openalex",
+  "auth": {
+    "type": "none"
+  },
+  "base_url": "https://api.openalex.org",
+  "spec_path": "openalex-openapi.json",
+  "policy": {
+    "access": "read_only",
+    "exposure": "include",
+    "operations": {
+      "listWorks": {
+        "enabled": true,
+        "default_projection": "id,display_name,publication_year,doi,cited_by_count,primary_topic,topics"
+      },
+      "getWork": {
+        "enabled": true,
+        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,primary_topic,topics"
+      },
+      "listAuthors": {
+        "enabled": true,
+        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions"
+      },
+      "getAuthor": {
+        "enabled": true,
+        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions"
+      },
+      "listInstitutions": {
+        "enabled": true,
+        "default_projection": "id,display_name,country_code,works_count,ror"
+      },
+      "getInstitution": {
+        "enabled": true,
+        "default_projection": "id,display_name,country_code,works_count,ror"
+      },
+      "listTopics": {
+        "enabled": true,
+        "default_projection": "id,display_name,works_count,subfield,field,domain"
+      },
+      "getTopic": {
+        "enabled": true,
+        "default_projection": "id,display_name,works_count,subfield,field,domain"
+      }
+    }
+  },
+  "limits": {
+    "default_page_size": 5,
+    "max_page_size": 10
+  }
+}

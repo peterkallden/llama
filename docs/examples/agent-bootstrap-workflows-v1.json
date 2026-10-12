@@ -1,0 +1,677 @@
+{
+  "schema_version": 1,
+  "name": "agent-workflows-starter",
+  "version": "v11",
+  "procedures": [
+    {
+      "id": "code-orientation-v1",
+      "summary": "code orientation",
+      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer semantic symbol/reference diagnostics when available; otherwise use bounded repository search and reads.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "small-coherent-change-v1",
+      "summary": "small coherent change",
+      "content": "Prefer one coherent behavioral change at a time. Separate unrelated refactoring from behavior changes, preserve existing abstractions when they already express the needed contract, and verify the change in the same sweep.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "verification-ladder-v1",
+      "summary": "verification ladder",
+      "content": "Verify at the narrowest authoritative level first: contract or unit test, then functional smoke, then broader affected tests. Do not claim model-backed verification unless that run completed.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "data-understanding-v1",
+      "summary": "data understanding",
+      "content": "Before analysing an unfamiliar dataset, establish its identity and the fields needed by the question. Inspect schema or sample only as far as necessary; a host-trusted schema may satisfy this requirement.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "choose-data-operation-v1",
+      "summary": "choose data operation",
+      "content": "Use aggregation for measures such as sum, count, average, minimum or maximum. Use describe for numeric properties, filter for row selection, query for bounded projection or retrieval, value counts for category frequency, and outliers only when anomaly detection is part of the question.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "analysis-evidence-v1",
+      "summary": "analysis evidence",
+      "content": "Distinguish dataset facts from interpretation. A successful tool operation is evidence about the selected dataset; conclusions beyond that result must be identified as inference rather than directly observed data.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "document-table-analysis-v1",
+      "summary": "document table analysis",
+      "content": "Resolve the host resource first, enumerate exposed tables, select a table by its unique host identity, and use the returned dataset handle for bounded analysis. Do not invent resource URIs, table node IDs or dataset references.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "web-source-evidence-v1",
+      "summary": "web source evidence",
+      "content": "Use search results for discovery, then fetch the source that directly supports each material claim. Prefer primary sources, check publication or update dates when relevant, and separate retrieved facts from inference.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "summary": "connect to a public API from its OpenAPI document",
+      "content": "Use web.fetch to retrieve the official JSON OpenAPI document as a host resource, then pass its returned resource_ref to openapi.connect. The host admits only anonymous read-only HTTPS operations. The provider is available on the next turn: wait for the updated tool view, choose an operation from its exposed schema, and keep arguments and results within the host's bounds. Never invent a server URL, operation name, credentials, or raw HTTP request. If the user provided an API base URL but no spec URL, search for the official OpenAPI document first and fetch that document.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "scholarly-search-evidence-v1",
+      "summary": "scholarly search evidence",
+      "content": "For a scholarly search, state the question, search terms and material limits before querying. Keep the returned record identity, title, publication year and source provenance separate from interpretation. Treat a bounded OpenAlex result as discovery evidence, not proof that the literature is exhaustive.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "bibliographic-record-validation-v1",
+      "summary": "bibliographic record validation",
+      "content": "When identifying a scholarly work, use a host-returned OpenAlex work identifier or a user-provided DOI. Verify title, authorship and publication metadata from the retrieved record before citing it. Do not merge similarly named works or infer unavailable full text, citation context or study conclusions from metadata alone.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "literature-review-boundaries-v1",
+      "summary": "literature review boundaries",
+      "content": "For a literature overview, make the search scope, query terms, date limits, returned page size and selection criteria visible. Use a bounded candidate set, distinguish search ranking from research quality, and preserve the returned records as a resource or exported artifact when the user needs to continue the analysis.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-entity-resolution-v1",
+      "summary": "OpenAlex entity resolution",
+      "content": "When a request names an author, institution or research topic, search the corresponding configured OpenAlex collection first. Compare bounded returned candidates and retain only an ID from a returned record. For a topic, use the Topic collection; work records carry up to three assigned topics and a primary_topic. Use a topic ID in the works filter, then present the returned title and year separately from interpretation.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-filtered-work-retrieval-v1",
+      "summary": "bounded OpenAlex filtered work retrieval",
+      "content": "Use works search for text across titles, abstracts and other text fields. Use filter for structured constraints such as publication_year:2024, author.id:A…, institutions.id:I… and topics.id:T…. The topics filter matches assigned topics; primary_topic is the top-ranked topic. Request a bounded page and include display_name, publication_year and relevant topic metadata in the projection. A bounded result set is not exhaustive coverage or a quality judgment.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-full-text-evidence-v1",
+      "summary": "OpenAlex abstract and full-text evidence",
+      "content": "First verify the OpenAlex work record and interpret its abstract when available. Treat the abstract as author-supplied summary evidence, not a substitute for methods, results or limitations. Only when the question requires more, use a host-returned open-access content_url or best_oa_location URL with web.fetch. The returned resource_ref is the authoritative fetched body: inspect/read it before making claims. For a PDF, request its text representation through resource.read; report when the body is truncated, text extraction is unavailable, or only metadata/abstract is available. Read conclusions for the authors' stated claim, then results and methods to assess support; use discussion for interpretation and limitations.",
+      "importance": 0.9,
+      "confidence": 1.0
+    }
+  ],
+  "workflows": [
+    {
+      "id": "dataset-analysis-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "workflow_ref": "workflow://dataset/analysis",
+      "workflow_revision": "v2",
+      "family": "dataset",
+      "graph_revision": "dataset-analysis-graph@v2",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.query", "data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.dataset.available"]
+    },
+    {
+      "id": "dataset-quality-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "workflow_ref": "workflow://dataset/quality",
+      "workflow_revision": "v2",
+      "family": "dataset",
+      "graph_revision": "dataset-quality-graph@v2",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "dataset.schema", "dataset.validate", "data.aggregate", "data.filter", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.dataset.available"]
+    },
+    {
+      "id": "dataset-join-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "workflow_ref": "workflow://dataset/join",
+      "workflow_revision": "v2",
+      "family": "dataset",
+      "graph_revision": "dataset-join-graph@v2",
+      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.join"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.dataset.multiple_available"]
+    },
+    {
+      "id": "repository-inspection-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://repository/inspection",
+      "workflow_revision": "v1",
+      "family": "repository",
+      "graph_revision": "repository-inspection-graph@v1",
+      "required_capabilities": ["repository.list", "repository.search", "repository.read"],
+      "required_context": ["context.repository.available"]
+    },
+    {
+      "id": "repository-change-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://repository/change",
+      "workflow_revision": "v1",
+      "family": "repository",
+      "graph_revision": "repository-change-graph@v1",
+      "required_capabilities": ["repository.search", "repository.read", "workspace.read", "workspace.modify", "development.build", "development.test"],
+      "required_context": ["context.repository.available"]
+    },
+    {
+      "id": "resource-document-analysis-path-v5",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://resource/document-analysis",
+      "workflow_revision": "v5",
+      "family": "resource",
+      "graph_revision": "resource-document-analysis-graph@v5",
+      "resource_read_policy": "chunked",
+      "required_capabilities": ["resource.inspect", "resource.read", "document.inspect", "dataset.inspect"],
+      "optional_capabilities": ["artifact.export"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "required_context": ["context.resource.available"]
+    },
+    {
+      "id": "web-research-path-v4",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://web/research",
+      "workflow_revision": "v4",
+      "family": "web",
+      "graph_revision": "web-research-graph@v4",
+      "resource_read_policy": "chunked",
+      "required_capabilities": ["web.search", "web.fetch"],
+      "optional_capabilities": ["resource.read", "dataset.inspect", "artifact.export"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "required_context": ["context.network.allowed"]
+    },
+    {
+      "id": "openapi-resource-onboarding-path-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "workflow_ref": "workflow://openapi/resource-onboarding",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openapi-resource-onboarding-graph@v1",
+      "required_capabilities": ["web.fetch", "openapi.connect"],
+      "optional_capabilities": ["web.search", "openapi.read", "artifact.export"],
+      "required_context": ["context.network.allowed"]
+    },
+    {
+      "id": "openalex-work-search-path-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://openalex/work-search",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "openalex-work-search-graph@v2",
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "search_pending",
+      "terminal_states": ["works_retrieved"],
+      "transitions": [
+        {"id": "search-works", "from": "search_pending", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+      ]
+    },
+    {
+      "id": "openalex-work-lookup-path-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "workflow_ref": "workflow://openalex/work-lookup",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-work-lookup-graph@v1",
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "identifier_pending",
+      "terminal_states": ["work_retrieved"],
+      "transitions": [
+        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"}
+      ]
+    },
+    {
+      "id": "openalex-literature-review-path-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://openalex/literature-review",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "openalex-literature-review-graph@v2",
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "review_pending",
+      "terminal_states": ["candidates_retrieved"],
+      "transitions": [
+        {"id": "retrieve-candidates", "from": "review_pending", "to": "candidates_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+      ]
+    },
+    {
+      "id": "openalex-entity-filtered-search-path-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://openalex/entity-filtered-work-search",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "openalex-entity-filtered-work-search-graph@v2",
+      "required_capabilities": ["openapi.read"],
+      "optional_capabilities": ["resource.read", "artifact.export"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "required_context": ["context.openapi.available"],
+      "start_state": "entity_pending",
+      "terminal_states": ["works_retrieved"],
+      "transitions": [
+        {"id": "resolve-author", "from": "entity_pending", "to": "author_candidates", "tool": "openalex.listAuthors", "arguments": "{}"},
+        {"id": "resolve-institution", "from": "entity_pending", "to": "institution_candidates", "tool": "openalex.listInstitutions", "arguments": "{}"},
+        {"id": "resolve-topic", "from": "entity_pending", "to": "topic_candidates", "tool": "openalex.listTopics", "arguments": "{}"},
+        {"id": "choose-author", "from": "author_candidates", "to": "author_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "choose-institution", "from": "institution_candidates", "to": "institution_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "choose-topic", "from": "topic_candidates", "to": "topic_selected", "kind": "model_choice", "candidates": "/results"},
+        {"id": "retrieve-author-works", "from": "author_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"author.id:$choice\"}"},
+        {"id": "retrieve-institution-works", "from": "institution_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"institutions.id:$choice\"}"},
+        {"id": "retrieve-topic-works", "from": "topic_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"topics.id:$choice\"}"}
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-path-v2",
+      "source_revision": "agent-workflows-starter@v10",
+      "workflow_ref": "workflow://openalex/full-text-evidence",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "openalex-full-text-evidence-graph@v2",
+      "resource_read_policy": "chunked",
+      "required_capabilities": ["openapi.read", "web.fetch", "resource.inspect", "resource.read"],
+      "optional_capabilities": ["artifact.export"],
+      "required_context": ["context.openapi.available", "context.network.allowed"],
+      "start_state": "identifier_pending",
+      "terminal_states": ["abstract_complete", "text_read"],
+      "transitions": [
+        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"},
+        {"id": "choose-evidence-depth", "from": "work_retrieved", "to": "full_text_pending", "kind": "model_choice", "choices": [
+          {"id": "answer_from_abstract", "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.", "to": "abstract_complete"},
+          {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract.", "to": "full_text_pending", "requires": ["/result/best_oa_location/pdf_url"]}
+        ]},
+        {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":8388608}", "bindings": [
+          {"target": "/url", "from": "get-work", "source": "/result/best_oa_location/pdf_url"}
+        ]},
+        {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [
+          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
+        ]},
+        {"id": "read-full-text", "from": "resource_inspected", "to": "text_read", "tool": "resource.read", "arguments": "{\"representation\":\"text\",\"max_bytes\":8192}", "optional": true, "bindings": [
+          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
+        ]}
+      ]
+    },
+    {
+      "id": "repository-regression-repair-path-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "workflow_ref": "workflow://development/regression-repair",
+      "workflow_revision": "v1",
+      "family": "development",
+      "graph_revision": "development-regression-repair-graph@v1",
+      "required_capabilities": ["repository.search", "repository.read", "workspace.modify", "development.build", "development.test", "diagnostics.compile", "diagnostics.test_failures"],
+      "required_context": ["context.repository.available"]
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "repository-investigation-v1",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Investigate a repository question without modifying the workspace.",
+      "purpose": "Establish repository evidence before proposing a change.",
+      "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities": ["tool.repository"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://repository/inspection", "workflow_revision": "v1"}
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {"id": "read-only", "description": "Do not modify the workspace during investigation.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "orient", "title": "Orient", "objective": "Identify the relevant repository area and available evidence."},
+        {"id": "trace", "title": "Trace contract", "objective": "Inspect the contract, implementation, direct callers and relevant tests.", "depends_on": ["orient"]},
+        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Distinguish observed behavior from unverified inference.", "depends_on": ["trace"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer from the established evidence.", "depends_on": ["establish-evidence"]}
+      ]
+    },
+    {
+      "id": "repository-change-v2",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Implement a scoped repository change and verify the result.",
+      "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
+      "goal": "Implement the requested repository change safely.",
+      "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified, and the resulting diff is inspected.",
+      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://repository/change", "workflow_revision": "v1"}
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {"id": "minimal-scope", "description": "Keep the change within the requested scope.", "hard": true},
+        {"id": "evidence", "description": "Do not claim verification without test or inspection evidence.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "orient", "title": "Orient", "objective": "Identify affected code, contracts and relevant tests."},
+        {"id": "design", "title": "Design", "objective": "Choose the smallest coherent change that satisfies the request.", "depends_on": ["orient"]},
+        {"id": "implement", "title": "Implement", "objective": "Apply the scoped implementation change.", "depends_on": ["design"]},
+        {"id": "verify", "title": "Verify", "objective": "Run focused verification and retain the evidence.", "depends_on": ["implement"]},
+        {"id": "inspect-diff", "title": "Inspect diff", "objective": "Inspect the resulting diff for scope and unintended changes.", "depends_on": ["verify"]},
+        {"id": "answer", "title": "Answer", "objective": "Report the verified outcome and remaining limits.", "depends_on": ["inspect-diff"]}
+      ]
+    },
+    {
+      "id": "regression-repair-v2",
+      "source_revision": "agent-workflows-starter@v1",
+      "selection_description": "Reproduce, isolate and repair a regression with a focused guard.",
+      "purpose": "Repair a regression while preserving the responsible trust boundary.",
+      "goal": "Diagnose and correct the reported regression.",
+      "success_criteria": "The failure is reproduced or bounded by evidence, the responsible boundary is isolated, a focused guard exists, and adjacent verification passes.",
+      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://development/regression-repair", "workflow_revision": "v1"}
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {"id": "trust-boundary", "description": "Do not broaden model authority while correcting the regression.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "reproducible", "statement": "A bounded failing scenario can be reproduced or inspected.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "reproduce", "title": "Reproduce", "objective": "Establish a minimal failing scenario and capture its evidence."},
+        {"id": "classify", "title": "Classify", "objective": "Classify the failure and establish expected behavior.", "depends_on": ["reproduce"]},
+        {"id": "isolate", "title": "Isolate boundary", "objective": "Locate the responsible contract, implementation and execution boundary.", "depends_on": ["classify"]},
+        {"id": "guard", "title": "Establish guard", "objective": "Add or identify a focused regression guard before the repair.", "depends_on": ["isolate"]},
+        {"id": "repair", "title": "Repair", "objective": "Make the smallest correction at the responsible boundary.", "depends_on": ["guard"]},
+        {"id": "verify", "title": "Verify", "objective": "Run the focused guard and adjacent affected verification.", "depends_on": ["repair"]},
+        {"id": "answer", "title": "Answer", "objective": "Report diagnosis, correction and verification evidence.", "depends_on": ["verify"]}
+      ]
+    },
+    {
+      "id": "dataset-analysis-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "selection_description": "Analyse a dataset through a host-resolved workflow and verified result.",
+      "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
+      "goal": "Analyse a resolved dataset and explain the verified result.",
+      "success_criteria": "Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
+      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["data-understanding-v1", "choose-data-operation-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {"id": "host-tool-contract", "description": "Use host-resolved dataset contracts; do not invent tool names or arguments.", "hard": true},
+        {"id": "evidence-before-answer", "description": "Do not present an unverified tool result as a completed answer.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "dataset-access", "statement": "The host exposes an applicable dataset operation.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned resource and dataset authority."},
+        {"id": "understand-data", "title": "Establish data understanding", "objective": "Establish the fields needed by the question, using trusted schema or bounded inspection.", "depends_on": ["resolve-dataset"]},
+        {"id": "choose-operation", "title": "Choose operation", "objective": "Choose the smallest semantic operation that answers the question.", "depends_on": ["understand-data"]},
+        {"id": "execute-analysis", "title": "Execute analysis", "objective": "Execute the host-validated operation and retain its result as evidence.", "depends_on": ["choose-operation"]},
+        {"id": "verify-result", "title": "Verify result", "objective": "Check that the result matches the requested dataset and operation.", "depends_on": ["execute-analysis"]},
+        {"id": "answer", "title": "Answer", "objective": "Explain the verified result and its material limitations.", "depends_on": ["verify-result"]}
+      ]
+    },
+    {
+      "id": "dataset-quality-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "selection_description": "Assess dataset quality through bounded validation, profiling and anomaly evidence.",
+      "purpose": "Separate declared data-quality violations from descriptive observations.",
+      "goal": "Assess relevant quality properties of a resolved dataset.",
+      "success_criteria": "Schema, explicit validation rules, bounded profile checks and relevant anomaly observations are evaluated before findings are summarized.",
+      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["data-understanding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
+        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"}
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {"id": "violations-versus-observations", "description": "Do not present an outlier or descriptive observation as a data-quality violation without an explicit rule.", "hard": true},
+        {"id": "bounded-analysis", "description": "Keep validation, profiling and anomaly checks within host-provided bounds.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "dataset-access", "statement": "The host exposes applicable dataset validation or profiling operations.", "confidence": 0.8}
+      ],
+      "steps": [
+        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned authority."},
+        {"id": "establish-schema", "title": "Establish schema", "objective": "Establish the relevant schema and field semantics.", "depends_on": ["resolve-dataset"]},
+        {"id": "validate-rules", "title": "Validate rules", "objective": "Evaluate explicit data-quality rules when available.", "depends_on": ["establish-schema"]},
+        {"id": "profile-data", "title": "Profile data", "objective": "Profile relevant missingness, distributions or cardinality within bounds.", "depends_on": ["validate-rules"]},
+        {"id": "inspect-anomalies", "title": "Inspect anomalies", "objective": "Inspect relevant anomalies without treating them as violations by default.", "depends_on": ["profile-data"]},
+        {"id": "verify-findings", "title": "Verify findings", "objective": "Separate verified violations from descriptive observations.", "depends_on": ["inspect-anomalies"]},
+        {"id": "answer", "title": "Answer", "objective": "Summarize verified quality findings and limitations.", "depends_on": ["verify-findings"]}
+      ]
+    },
+    {
+      "id": "resource-document-analysis-v5",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Analyse a supplied document or resource using host-resolved representations.",
+      "purpose": "Answer a document question from bounded resource content or structured tables.",
+      "goal": "Establish and explain evidence from the supplied resource.",
+      "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, and claims are grounded in the returned content.",
+      "required_capabilities": ["resource.read", "document.inspect", "dataset.inspect"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v5"}
+      ],
+      "constraints": [
+        {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},
+        {"id": "bounded-inspection", "description": "Keep resource reads and table analysis within host-provided bounds.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-resource", "title": "Resolve resource", "objective": "Use the host-provided resource identity."},
+        {"id": "inspect-resource", "title": "Inspect resource", "objective": "Inspect available representations and relevant structure.", "depends_on": ["resolve-resource"]},
+        {"id": "inspect-tables", "title": "Inspect tables", "objective": "If structured tables are present, resolve one through its host identity.", "depends_on": ["inspect-resource"]},
+        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Ground the answer in returned text or bounded table results.", "depends_on": ["inspect-resource", "inspect-tables"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer with resource-grounded evidence and limitations.", "depends_on": ["establish-evidence"]}
+      ]
+    },
+    {
+      "id": "web-research-v4",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Research a question using bounded search and source retrieval.",
+      "purpose": "Build a traceable answer from sources that directly support its claims.",
+      "goal": "Answer the research question from retrieved source evidence.",
+      "success_criteria": "Material claims are supported by fetched sources, time-sensitive details are checked, and inference is distinguished from retrieved fact.",
+      "required_capabilities": ["web.search", "web.fetch"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["web-source-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://web/research", "workflow_revision": "v4"}
+      ],
+      "constraints": [
+        {"id": "source-grounding", "description": "Do not state material web claims without retrieved source evidence.", "hard": true},
+        {"id": "safe-fetch", "description": "Use only host-authorized safe HTTPS search and fetch tools.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-question", "title": "Scope question", "objective": "Identify what evidence would answer the request."},
+        {"id": "discover-sources", "title": "Discover sources", "objective": "Search for relevant sources, favoring primary authorities.", "depends_on": ["scope-question"]},
+        {"id": "retrieve-evidence", "title": "Retrieve evidence", "objective": "Fetch candidate sources and inspect the supporting content.", "depends_on": ["discover-sources"]},
+        {"id": "verify-claims", "title": "Verify claims", "objective": "Match material claims to retrieved evidence and note dates or uncertainty.", "depends_on": ["retrieve-evidence"]},
+        {"id": "answer", "title": "Answer", "objective": "Provide a sourced answer and distinguish any inference.", "depends_on": ["verify-claims"]}
+      ]
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "selection_description": "Connect to a public read-only API from its OpenAPI document and use a permitted operation.",
+      "purpose": "Turn a user-provided API or documentation URL into bounded, host-validated API tools.",
+      "goal": "Answer the API request using an admitted OpenAPI operation and its verified response.",
+      "success_criteria": "The OpenAPI document is fetched into a host resource, admitted by openapi.connect, and a permitted operation is used with bounded arguments and response evidence.",
+      "required_capabilities": ["workflow.openapi"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["openapi-resource-onboarding-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openapi/resource-onboarding", "workflow_revision": "v1"}
+      ],
+      "next_action": "locate-specification",
+      "constraints": [
+        {"id": "admitted-spec-only", "description": "Use only operations exposed from the admitted OpenAPI document; do not issue raw HTTP requests.", "hard": true},
+        {"id": "anonymous-read-only", "description": "Use only anonymous read-only HTTPS operations permitted by the host.", "hard": true},
+        {"id": "host-resource-identity", "description": "Pass only the host-returned resource_ref to openapi.connect.", "hard": true}
+      ],
+      "assumptions": [
+        {"id": "network-authorized", "statement": "The host has enabled public HTTPS access for this request.", "confidence": 0.9}
+      ],
+      "steps": [
+        {"id": "locate-specification", "title": "Locate specification", "objective": "Use the provided spec URL, or find the official JSON OpenAPI document for the requested API."},
+        {"id": "fetch-specification", "title": "Fetch specification", "objective": "Fetch the OpenAPI document with web.fetch and retain its host resource_ref.", "depends_on": ["locate-specification"]},
+        {"id": "admit-provider", "title": "Admit provider", "objective": "Pass the returned resource_ref to openapi.connect and use its admission result.", "depends_on": ["fetch-specification"]},
+        {"id": "invoke-operation", "title": "Invoke operation", "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.", "depends_on": ["admit-provider"]},
+        {"id": "verify-response", "title": "Verify response", "objective": "Ground the answer in the bounded API response and report relevant limitations.", "depends_on": ["invoke-operation"]},
+        {"id": "answer", "title": "Answer", "objective": "Answer the user from the verified API result.", "depends_on": ["verify-response"]}
+      ]
+    },
+    {
+      "id": "openalex-work-search-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
+      "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
+      "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
+      "success_criteria": "The search terms, bounded result set, record identities and material limitations are explicit before presenting candidates.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["scholarly-search-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/work-search", "workflow_revision": "v2"}
+      ],
+      "next_action": "scope-search",
+      "constraints": [
+        {"id": "configured-provider-only", "description": "Use only OpenAlex operations already exposed by the host provider.", "hard": true},
+        {"id": "bounded-result-set", "description": "Keep each API request within the host page and projection bounds.", "hard": true},
+        {"id": "ranking-is-not-quality", "description": "Do not present OpenAlex search ranking as a quality or relevance judgement without separate evidence.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-search", "title": "Scope search", "objective": "Make the scholarly question and material search terms explicit."},
+        {"id": "search-works", "title": "Search works", "objective": "Use the configured OpenAlex works search with bounded projection and page size.", "depends_on": ["scope-search"]},
+        {"id": "inspect-records", "title": "Inspect records", "objective": "Retain returned work identities and inspect the metadata needed for the answer.", "depends_on": ["search-works"]},
+        {"id": "answer", "title": "Answer", "objective": "Present retrieved candidates, search boundaries and any inference separately.", "depends_on": ["inspect-records"]}
+      ]
+    },
+    {
+      "id": "openalex-work-lookup-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "selection_description": "Verify a known scholarly work from an OpenAlex ID or DOI through the configured provider.",
+      "purpose": "Establish bibliographic metadata for one identified scholarly work without relying on guessed citations.",
+      "goal": "Retrieve and verify the requested OpenAlex work record.",
+      "success_criteria": "A host-validated identifier is used and the returned title, authorship and publication metadata are distinguished from unavailable content or interpretation.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["bibliographic-record-validation-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/work-lookup", "workflow_revision": "v1"}
+      ],
+      "next_action": "resolve-identifier",
+      "constraints": [
+        {"id": "identifier-evidence", "description": "Use a user-provided identifier or one returned by an earlier host operation; do not invent work identities.", "hard": true},
+        {"id": "metadata-boundary", "description": "Do not infer full-text claims, study conclusions or citation context from bibliographic metadata alone.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-identifier", "title": "Resolve identifier", "objective": "Use the supplied DOI/OpenAlex identifier or a host-returned candidate identity."},
+        {"id": "retrieve-work", "title": "Retrieve work", "objective": "Call the configured OpenAlex work lookup operation with its validated identifier.", "depends_on": ["resolve-identifier"]},
+        {"id": "verify-metadata", "title": "Verify metadata", "objective": "Verify the requested bibliographic fields against the returned record.", "depends_on": ["retrieve-work"]},
+        {"id": "answer", "title": "Answer", "objective": "Return verified metadata and state what the record does not establish.", "depends_on": ["verify-metadata"]}
+      ]
+    },
+    {
+      "id": "openalex-literature-review-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Build a bounded, reproducible literature-review candidate set from configured OpenAlex search.",
+      "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
+      "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
+      "success_criteria": "Search scope, returned record identities, coverage limits and any exported artifact are grounded in the configured provider response.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["scholarly-search-evidence-v1", "literature-review-boundaries-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [
+        {"workflow_ref": "workflow://openalex/literature-review", "workflow_revision": "v2"}
+      ],
+      "next_action": "define-review-scope",
+      "constraints": [
+        {"id": "bounded-review", "description": "A single bounded OpenAlex retrieval is a candidate set, not a claim of exhaustive coverage.", "hard": true},
+        {"id": "preserve-provenance", "description": "Retain the returned provider resource or a user-requested exported artifact for follow-up work.", "hard": true}
+      ],
+      "steps": [
+        {"id": "define-review-scope", "title": "Define review scope", "objective": "State the question, search terms and intended limits for the candidate set."},
+        {"id": "retrieve-candidates", "title": "Retrieve candidates", "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.", "depends_on": ["define-review-scope"]},
+        {"id": "preserve-results", "title": "Preserve results", "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.", "depends_on": ["retrieve-candidates"]},
+        {"id": "answer", "title": "Answer", "objective": "Summarize the candidate set and make the review boundary explicit.", "depends_on": ["preserve-results"]}
+      ]
+    },
+    {
+      "id": "openalex-entity-filtered-work-search-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Search OpenAlex works by title or text, author, institution, research topic and publication year.",
+      "purpose": "Turn a research question into a traceable, bounded set of works using text and structured metadata.",
+      "goal": "Return works grounded in explicit search terms, host-returned entity identities and OpenAlex filters.",
+      "success_criteria": "Search terms, entity identity where used, applied filters, returned title/year/topic metadata and coverage limits are explicit.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["openalex-entity-resolution-v1", "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://openalex/entity-filtered-work-search", "workflow_revision": "v2"}],
+      "next_action": "resolve-entity",
+      "constraints": [
+        {"id": "returned-entity-only", "description": "Use only an author, institution or topic ID returned by the configured provider.", "hard": true},
+        {"id": "explicit-filter-boundary", "description": "Keep year and entity filters explicit and within the configured API contract.", "hard": true},
+        {"id": "text-search-boundary", "description": "Use works search for title and full-text discovery; use the returned metadata to verify title, year and topic.", "hard": true}
+      ],
+      "steps": [
+        {"id": "scope-search", "title": "Scope search", "objective": "Identify title/text terms and any author, institution, topic or year constraints."},
+        {"id": "resolve-entity", "title": "Resolve entity", "objective": "When a named author, institution or research topic is requested, search its configured collection and retain a returned identity.", "depends_on": ["scope-search"]},
+        {"id": "bind-filters", "title": "Bind filters", "objective": "Combine any returned entity identity with explicit year and other requested works filters.", "depends_on": ["resolve-entity"]},
+        {"id": "retrieve-works", "title": "Retrieve works", "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.", "depends_on": ["bind-filters"]},
+        {"id": "answer", "title": "Answer", "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.", "depends_on": ["retrieve-works"]}
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-v2",
+      "source_revision": "agent-workflows-starter@v10",
+      "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
+      "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
+      "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
+      "success_criteria": "The work identity is verified; abstract limits are explicit; any full-text resource is fetched from a returned open-access location and inspected before its claims are used.",
+      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "workflow_policy": "required",
+      "procedure_refs": ["bibliographic-record-validation-v1", "openalex-full-text-evidence-v1", "analysis-evidence-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://openalex/full-text-evidence", "workflow_revision": "v2"}],
+      "next_action": "resolve-work",
+      "constraints": [
+        {"id": "abstract-first", "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.", "hard": true},
+        {"id": "returned-open-location-only", "description": "Fetch only a content URL or open-access location returned by the verified work record, using host-authorized web.fetch.", "hard": true},
+        {"id": "full-text-provenance", "description": "Ground full-text claims in the returned host resource and disclose truncation or unavailable text representation.", "hard": true}
+      ],
+      "steps": [
+        {"id": "resolve-work", "title": "Resolve work", "objective": "Use a user-provided DOI/OpenAlex ID or a host-returned work identity."},
+        {"id": "retrieve-record", "title": "Retrieve record", "objective": "Retrieve the configured OpenAlex work record including abstract and declared open-access locations.", "depends_on": ["resolve-work"]},
+        {"id": "interpret-abstract", "title": "Interpret abstract", "objective": "Establish what the metadata and abstract directly support, and whether that answers the question.", "depends_on": ["retrieve-record"]},
+        {"id": "acquire-full-text", "title": "Acquire full text when needed", "objective": "If abstract evidence is insufficient and an open location is returned, fetch that exact URL into a host resource.", "depends_on": ["interpret-abstract"]},
+        {"id": "inspect-full-text", "title": "Inspect full text", "objective": "Read the host-materialized text representation; assess conclusions against results and methods, using discussion for interpretation and limitations.", "depends_on": ["acquire-full-text"]},
+        {"id": "answer", "title": "Answer", "objective": "State which claims come from metadata, abstract or full text, and disclose unavailable or truncated evidence.", "depends_on": ["interpret-abstract", "inspect-full-text"]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,617 @@
+# Agent runtime seams and ownership
+
+This document describes the integration seams that connect the host, compact
+model contracts, plan runtime, native tools, MCP providers, OpenAPI providers,
+resources and datasets. It is a companion to [Agent Runtime](agent-runtime.md)
+and records the ownership rules that keep those components from becoming
+parallel orchestration systems.
+
+The central rule is:
+
+```text
+model proposes meaning
+host resolves identity, scope and authority
+runtime validates and executes the canonical operation
+```
+
+The model may propose a tool, a name, a column or a relationship. It does not
+choose a filesystem path, dataset URI, provider credential, network target,
+scope, backend or execution permission.
+
+## Boundary map
+
+```text
+JSON configuration and host policy
+          |
+          v
+effective provider/tool catalog
+  native + MCP + OpenAPI, filtered by profile/capabilities
+          |
+          v
+host-owned turn snapshot
+  scope + resources + dataset inventory + tool view
+          |
+          +--> family preflight --> ordinary chat/tool driver (narrow fast path)
+          |
+          +--> compact planner --> normalized plan --> tool runtime
+          |                                      |
+          |                                      +--> native adapter
+          |                                      +--> MCP provider
+          |                                      +--> OpenAPI provider
+          |
+          +--> deliberate/research review and bounded synthesis
+
+resource refs, dataset_refs, observations and events
+          ^
+          |
+host-owned result normalization and materialization
+```
+
+There is one runtime execution path. Family routing, workflow slot filling and
+provider adapters are projections or adapters around that path; they do not
+grant authority or introduce a second plan representation.
+
+## Helper placement and ownership
+
+Cross-cutting helpers follow the contract they interpret, not the caller that
+happens to need them. This keeps the implementation discoverable and prevents
+CLI, daemon and provider layers from growing parallel versions of the same
+rule:
+
+| Helper responsibility | Home | Must not depend on |
+| --- | --- | --- |
+| Agent scope, turn identity and request contracts | `common/agent/` | CLI, daemon or a provider |
+| Dataset refs, dataset URI, provenance and dataset scope | `common/agent/` dataset contract area | OpenAPI or a transport |
+| Resource identity and read authority | `common/resource/` | Tool selection or model prompts |
+| Runtime inventory and policy snapshots | `tools/agent/runtime/` or a shared common contract when transport-independent | CLI-specific defaults |
+| Tool exposure facts and policy projection | `tools/agent/tooling/` | One particular transport |
+| OpenAPI response materialization | `tools/agent/openapi/` | Native/MCP implementation details |
+
+Helpers should have names that state the contract they serve, such as
+`dataset-uri`, `dataset-ref-json`, `agent-turn-inventory` or
+`agent-tool-policy`. Avoid generic `utils` files for rules that affect
+authority, binding, persistence or model-visible output.
+
+The distinction is important:
+
+```text
+same meaning + same safety invariant
+    -> one shared helper at the lower common layer
+
+same meaning + different boundary representation
+    -> shared codec/projection with an explicit representation name
+
+same-looking condition + different authority
+    -> separate helpers, composed at the owning boundary
+```
+
+For example, native and MCP tool filtering should share normalized exposure
+facts and policy predicates, but retain transport-specific authentication and
+caller-session checks. Likewise, a full dataset checkpoint projection must not
+be silently substituted for a compact model-facing dataset inventory.
+
+Every new helper should answer three questions in its header or documentation:
+
+1. Which canonical object or contract does it interpret?
+2. Which layer owns the decision and which layers only consume the result?
+3. Is its output full, checkpoint-safe, model-facing, or another bounded
+   projection?
+
+This is deliberately not a single universal validator. Small helpers at the
+correct level are preferable to a central utility that accumulates CLI,
+daemon, provider and persistence policy.
+
+## General responsibility-oriented modularization principle
+
+This is the general refactoring direction for agent components and adjacent
+workflows. A concentrated workflow should be decomposed by responsibility and
+side-effect ownership, not merely by file size:
+
+```text
+stable public facade
+  -> workflow/routes
+  -> typed host-neutral domain algorithms and results
+  -> host/resource/runtime adapters
+  -> external side effects and persistence
+```
+
+The facade preserves existing callers while ownership moves in bounded
+chunks. Routes translate state into the next bounded action; they do not run
+models, write lifecycle state or decide semantic truth. Algorithms propose
+typed results, adapters perform external work, Oracle/evaluator seams
+establish semantic truth, and centralized writer/transition seams decide what
+becomes durable. Test fixtures, trace extraction and reporting remain outside
+the production algorithm modules.
+
+Each refactor must first map
+`contract -> implementation -> registration -> invocation -> persistence ->
+consumer/decision`, record invariants and golden behavior, and then move one
+complete responsibility chunk at a time. The change is verified with focused
+deterministic tests, trace/diff inspection, a correction pass and a local
+commit before the next chunk. This is an incremental,
+hexagonal/ports-and-adapters-inspired structure refactor; it is not a new
+runtime, parallel store/evaluator, microservice split or implicit algorithm,
+policy, evidence or promotion change.
+
+### FlyDelta daemon host split
+
+FlyDelta uses the existing daemon, resident server-context host, resource
+store and lifecycle journal. Its host integration is split by the boundary it
+owns, rather than by the callback that first reaches it:
+
+| Responsibility | Home | Boundary |
+| --- | --- | --- |
+| Arm preparation, batch execution, teacher-forced scoring, capture, generation and verification | `tools/agent/runtime/agent-flydelta-server-host.cpp` | Resident server-context model host |
+| Scoped resource resolution, capture and trajectory materialization, teaching material, composed directions and augmentation material | `tools/agent/adaptation/flydelta/resource-adapter.cpp` plus the neighboring `flydelta/` units | Resource authority and durable refs |
+| Concept capture workflow and negative-material admission | `tools/agent/daemon/flydelta/concept-capture.cpp` | Teaching material → batch execution → persisted trajectories |
+| Concept synthesis workflow and candidate construction | `tools/agent/daemon/flydelta/concept-synthesis.cpp` | Persisted trajectories → common synthesis algorithms |
+| Search/evaluation/augmentation workflow callbacks and binding factory | `tools/agent/daemon/agent-daemon-flydelta.cpp` | Daemon lifecycle and worker registration |
+
+`agent-daemon-flydelta-internal.h` is a private host-context contract for
+these three implementation files. It is not a common FlyDelta contract and
+does not introduce another queue, evaluator, registry or runtime path. The
+generic `agent-daemon-runtime.cpp` only invokes the thin FlyDelta
+configuration facade.
+
+This is a structural ownership split only: algorithm policy, callback
+signatures, resource formats, diagnostic/full execution, HARMED safety and
+promotion semantics remain unchanged.
+
+Concept capture and synthesis are separate daemon workflow responsibilities,
+but they keep the same private `agent-daemon-flydelta-internal.h` contract and
+the same `common_agent_server_flydelta_binding` callbacks. Capture owns only
+the preparation and execution of the existing baseline/conditioned/control
+batch, host-verification checks and trajectory persistence. Synthesis owns
+only the reading and validation of persisted trajectories and the construction
+of existing concept/prototype/negative candidates. Neither workflow owns a
+queue, evaluator, lifecycle transition or model runtime. The capture result
+continues to reach synthesis through the existing durable teaching-material
+and evaluator seams.
+
+## Identity and representation vocabulary
+
+The following values look similar in logs but have different owners:
+
+| Value | Meaning | Owner | May the model invent it? |
+| --- | --- | --- | --- |
+| `resource://...` | Canonical identity for bounded source bytes, MIME type and lineage | Resource authority | No |
+| `dataset://...` | Canonical identity for a structured analytical view | Dataset/data authority | No |
+| `r1`, `r2`, ... | Prompt-only handles for current-turn attachments | Host prompt projection | No; select from the presented list |
+| `s1`, `s2`, ... | Prompt-only handles for host-listed scoped resources | Host prompt projection | No; select from the presented list |
+| `d1`, `d2`, ... | Prompt-only handles for the current host dataset snapshot | Host prompt projection | No; select from the presented list |
+| `$datasets.datasets[index].dataset` | Stable reference into that host snapshot | Planner binding normalizer | No; use only an advertised index |
+| `$step.field` | Binding to an earlier completed plan step | Plan runtime | No; the producer must exist and be complete |
+| `dataset_refs` | Host-generated output references for later steps | Tool/result contract | No |
+
+The prompt handles are not storage URIs. They are resolved by the host before
+an adapter receives the call. `dataset://` is the canonical dataset scheme;
+there is no second `agent-dataset://` identity in the current design.
+
+## Seam 1: configuration to effective tool catalog
+
+Configuration, command-line options and provider fragments are inputs to the
+host configuration loader. The loader produces one validated effective
+configuration and one host-owned provider/tool catalog:
+
+```text
+main JSON + include_dir fragments + CLI policy
+    -> validated host configuration
+    -> active profile and capability map
+    -> native/MCP/OpenAPI provider resolution
+    -> immutable per-instance tool view
+```
+
+Provider fragments are expanded before validation; they are not merged into a
+second runtime configuration. Provider IDs must remain unique across inline
+and fragment definitions. A reload validates a complete candidate and keeps the
+previous active configuration if the candidate is invalid. See
+[Agent configuration fragments](agent-config-fragments.md).
+
+The active profile, capabilities, network policy, write policy and provider
+availability are host decisions. A caller may narrow an exposed view where the
+protocol allows it, but cannot select a host profile or widen the view. The
+generated family index is made from this already filtered view, never from the
+raw provider configuration.
+
+### Failure pattern at this seam
+
+The dangerous failure is a catalog that is visible in diagnostics but not
+executable, or a model-facing catalog that is wider than the executor's
+authority. The invariant is:
+
+```text
+model-facing tools == executable tools == host-approved tools
+```
+
+The catalog, provider and tool-view tests should therefore check both exposure
+and execution, not only that a definition can be parsed.
+
+### Model-facing tool projection
+
+Provider definitions keep two related but separate input views when needed:
+
+```text
+canonical input_schema_json
+    -> host normalization, validation and execution
+
+optional model_input_schema_json
+    -> compact model contract and resolved chat-tool parameters
+```
+
+The existing common schema projection helper may add host-known mandatory
+parameters to the model-facing view, but only when those names already exist
+in the canonical schema properties. OpenAPI uses this for configured
+`host_required_parameters`; the OpenAPI provider still executes against the
+original operation schema. A mismatch fails provider resolution rather than
+silently creating a model-only argument. This keeps native, MCP and OpenAPI
+providers on the same model-facing seam while preserving transport-neutral
+execution validation.
+
+The practical invariant is:
+
+```text
+model sees all host-required inputs before planning
+host still validates the canonical call before execution
+repair is fallback for invalid/missing values, not normal parameter discovery
+```
+
+## Seam 2: host turn selection to runtime request
+
+The host assembles the turn scope and discovers current inputs before creating
+the runtime request. The request must carry the same scoped snapshot that was
+used to prepare the model context:
+
+```text
+authenticated request
+    -> bind namespace/project/session/turn
+    -> resolve current resources and scoped resource candidates
+    -> list usable dataset descriptors
+    -> resolve tool profile and family view
+    -> common_agent_runtime_driver_execution
+    -> common_agent_request
+```
+
+The important fields are:
+
+```text
+input_resources       current-turn attachments
+available_resources   host-listed r/s resource candidates
+available_datasets    host-listed dataset descriptors for this turn
+scope                 namespace, project, session and turn authority
+tooling               resolved tool view and execution policy
+```
+
+`available_datasets` is a request field, not a model-generated binding. The
+runtime planner renders it as a bounded `<runtime_dataset_inventory>` context,
+including the host name, canonical URI and the advertised
+`$datasets.datasets[index].dataset` reference. A host that populates the
+inventory but drops it while rebuilding `common_agent_request` creates a
+misleading partial success: the model can emit a plausible dataset reference,
+but the binder has no declared candidates. The runtime request builder must
+therefore copy resources, datasets and scope as one snapshot.
+
+The same rule applies to attachments. A single current attachment may be the
+default source for an inspection request. Multiple attachments or multiple
+host-owned matches require an explicit selection. An unknown or ambiguous name
+produces a bounded `Choose one of` diagnostic; it is never interpreted as a
+filesystem path.
+
+## Seam 3: compact model proposal to canonical plan
+
+The model-facing planner contract is intentionally smaller than the execution
+contract. The canonical compact plan shape is:
+
+```json
+{
+  "goal": "inspect the selected dataset",
+  "steps": [
+    {"tool": "dataset.select", "args": {"name": "orders"}, "as": "orders"},
+    {"tool": "data.query", "args": {"dataset": "$orders.dataset"}}
+  ]
+}
+```
+
+For planner output, `args` is an ordinary JSON object. It is not a JSON-encoded
+string. The internal `agent_tool_call.arguments_json` field is the serialized
+transport representation used after normalization and validation. It is not a
+second model-facing plan field. A provider executor receives that canonical
+serialized object through its adapter contract.
+
+### Structured-output parser boundary
+
+The planner and reflection may receive the registered tool view in their
+model-facing prompt, but when a generation carries an explicit JSON schema its
+response contract is schema JSON. The server-context response parser must not
+reinterpret that payload as the chat template's native tool-call format merely
+because tools were presented. Native tool-call parsing applies only to turns
+whose output contract is native tool calls; planner JSON continues to the host
+schema, compact-plan and repair validators. This keeps tool visibility and
+output parsing as separate concerns, and prevents a valid structured plan from
+being discarded before host validation.
+
+The compatibility boundary may unwrap bounded older wrappers such as nested
+`tool`/`arguments` shapes, but it must end in the same canonical `{tool,args}`
+operation. Compatibility normalization must not create another scheduler,
+another binding language or another execution path. Unknown tools, malformed
+arguments and references outside the host view remain failures.
+
+The host owns generated step identity, dependency order, canonical bindings,
+scope and defaults. The model owns semantic choices such as a dataset name,
+columns, a filter or an OpenAPI operation's business parameters.
+
+### Binding rules
+
+Binding is valid only when the producer is available at the point of use:
+
+```text
+dataset.list       -> discovery result
+dataset.select     -> selected dataset binding
+data.join          -> left and right completed dataset bindings
+data.aggregate     -> one completed dataset binding
+statistics.*       -> one completed dataset binding
+```
+
+A direct host dataset URI may satisfy a step without a preceding selection
+step. An indexed `$datasets.datasets[index]` reference is valid only against the
+inventory snapshot in the same request. An out-of-range index, unknown name or
+ambiguous name fails with bounded candidates rather than a guessed identity.
+
+## Seam 4: resource, dataset and scope authority
+
+Resources are the authority for source bytes and lineage. Datasets are
+structured views over an authorized source or a bounded derived result. The
+dataset adapter must resolve every structured-data input through one shared
+scope helper, including:
+
+```text
+dataset.inspect / schema / sample
+dataset.select and dataset.list
+data.query / aggregate / statistics
+data.join.left and data.join.right
+```
+
+The scope helper accepts only descriptors whose source is readable through the
+active resource authority, a current-turn derived dataset, or an explicitly
+allowed repository-backed source under the configured repository root. A
+descriptor shown by listing must therefore be usable by the next authorized
+operation.
+
+Materialization is bounded and host-owned:
+
+```text
+source resource or provider response
+    -> bounded classification
+    -> resource registration
+    -> optional dataset projection
+    -> dataset_refs + provenance
+```
+
+An eligible shallow, reasonably regular JSON array may become a temporary
+dataset. A nested or heterogeneous response remains a bounded JSON resource.
+The dataset's `source_resource_uri` points to the saved response. Derived
+results carry `dataset://` URIs, turn/session scope and lineage. Rows or pages
+are not fetched implicitly beyond configured byte, row and page limits.
+
+`dataset_refs` is a result contract and can be carried by native, MCP and
+OpenAPI results. It is not an instruction to the model and does not make an
+external URI local. A later `data.*` step must still pass the same source and
+scope authority checks.
+
+### Dataset-ref JSON projections
+
+`common_agent_dataset_ref` has one canonical codec in the dataset contract
+library. Callers must choose the projection explicitly:
+
+```text
+compact
+  uri, name, row_count, column_count,
+  source_resource_uri, source_representation
+
+full
+  compact fields + source_provider, source_operation,
+  source_request_json, retrieved_at, content_hash
+```
+
+Compact is for model-facing or bounded tool-result output. Full is for
+host-owned persistence and resumable state. A persistence backend must not
+silently reconstruct a compact ref and thereby lose provenance. Conversely,
+full provenance must not be added to a prompt merely because the underlying
+object contains it.
+
+SQLite and other dataset backends should round-trip the full projection. Their
+parity test should include provider, operation, canonical request, retrieval
+timestamp, content hash and source resource URI, not only the dataset name and
+row counts.
+
+## Seam 5: provider execution and materialization
+
+Native, MCP and OpenAPI providers converge at `agent_tool_view`. They expose
+the same high-level responsibilities:
+
+```text
+resolve_tools(context)
+    -> filtered tool view
+validate(agent_tool_call)
+    -> canonical arguments or bounded error
+call(agent_tool_call)
+    -> normalized agent_tool_result
+```
+
+The provider-specific differences belong below that seam:
+
+| Provider | Provider owns | Host still owns |
+| --- | --- | --- |
+| Native | Adapter implementation and local store/backend call | Scope, profile, policy, bounds and result normalization |
+| MCP | Transport, remote definition and remote call | Exposed name, argument normalization, policy, deadline and result bounds |
+| OpenAPI | Operation catalog, path/parameter mapping and bounded HTTP request | Spec/base URL policy, auth reference, network policy, access class, redirects and materialization |
+
+The OpenAPI HTTP executor returns the bounded provider result. An optional
+host-owned result materializer may save the response as a resource and derive
+`dataset_refs`, but it must not start another model generation, follow an
+unvalidated pagination/export URL or hide a second tool call. OpenAPI Links
+are planning hints; they are not automatic execution chains.
+
+For collection/item APIs, a row-level candidate is only a selection handle. The
+host retains the provider, collection operation, item operation, parameter name
+and actual item identifier, then maps the selection back to a validated API
+operation. The model never turns a row value into a free-form URL.
+
+## Seam 6: family routing, planning and review
+
+Family selection is a preflight over the host-approved tool view:
+
+```text
+request
+  -> compact family selection
+      ordinary request:
+        NO_TOOLS -> ordinary conversation
+        TOOLS: ... -> selected tools -> plan or narrow singleton fast path
+      required request:
+        {"families":[...]} -> selected tools -> plan or narrow singleton fast path
+        (NO_TOOLS/needs_tools:false is invalid)
+```
+
+Selecting a family means that the request needs external evidence. The host
+sets the existing `require_tool_execution` contract, so an answer-only model
+response cannot silently replace the required tool work.
+
+The singleton fast path is limited to one authorized operation when the host
+has already resolved its required arguments. It uses a bounded native
+operation-selection generation and immediately materializes the result into
+the ordinary persisted plan representation. The normal tool driver,
+host-binding merge, provider validation, tool observation, follow-up and
+reflection then remain in force. When semantic arguments are still unresolved,
+the model-facing operation contract keeps those arguments available and the
+ordinary planner/repair path is used. Multiple tools, dataflow, resource
+workflows and active plans remain in ordinary planning. The bounded selection
+does not bypass scope, policy, cancellation, deadlines, result bounds or
+tool-round limits, and it does not create a parallel executor.
+
+The native selection phase has no authority over host-bound fields. If a small
+model emits such fields anyway, the host drops those fields and materializes
+the configured binding before the ordinary validation path. Conflicting
+model-supplied values remain rejected in the ordinary planner/repair path.
+
+For a singleton family the required family schema also has exactly one
+possible array item. This is still an explicit model selection; it only keeps
+the grammar from producing repeated copies of the same host-authorized family.
+
+Reflection is a bounded quality pass after execution, not a second discovery
+orchestration. Its context is compact and bounded. Once required tool work has
+closed, reflection may revise the answer but may not reopen completed tool work.
+Deliberate planning owns multi-step ordering and bounded repair. Research owns
+its acquisition controller and evidence workspace; it does not create a
+parallel tool scheduler.
+
+With `--agent-trace`, the CLI emits the host-owned runtime trace after the
+turn, including plan, tool, observation and reflection entries. It also emits
+the trace before reporting a runtime failure, so a failed model response does
+not hide whether the required tool was actually dispatched.
+
+### Required-tool repair boundary
+
+The normative model-facing and host-facing contract is documented separately
+in [Required-tool repair contract](agent-repair-contract.md). This section
+records the seam ownership and runtime consequences; it is not the sole
+definition of the JSON contract.
+
+A failed mandatory tool step has priority over user-facing draft generation.
+The runtime records the host-verified failure and its repair context, then
+invokes reflection with no draft rather than attempting a response from an
+unrepaired plan. This keeps a response-format failure from masking a repairable
+tool precondition.
+
+For a retryable validation failure, the model-facing reflection contract
+requires exactly one `replace_steps` entry for the failed step. The entry names
+the host-bound failed-step identifier and already registered tool name, then
+supplies corrected `args`; those two identifiers are schema-bound values, not
+free model strings. Prose in
+`next_action`, a generic retry, or an unrelated added step is not a repair.
+The runtime still merges only compatible prior arguments, canonicalizes the
+call, validates policy and the provider contract, and then reruns the repaired
+step. If no valid replacement is returned, the turn remains fail-closed and
+final synthesis is blocked.
+
+The same runtime gate is applied again immediately before execution. A
+dependent step cannot bypass repair merely because it was already marked
+`active` by a restored or model-authored plan: every dependency must be
+completed. If a producer is failed or incomplete, the dependent step is
+deferred and the failed producer remains the repair target. This is generic
+plan orchestration for native, MCP and OpenAPI providers; it is not a
+provider-specific repair rule.
+
+The compact plan parser keeps the same boundary: model-emitted step IDs do
+not imply model-owned dependencies. If `after` and `depends_on` are omitted,
+the host assigns the bounded sequential chain; only explicit dependency fields
+select the advanced dependency form.
+
+This is an orchestration contract, not OpenAPI-specific behavior. OpenAPI may
+classify a missing host-required operation parameter as retryable validation,
+but native and MCP providers use the same failed-step/repair boundary when they
+provide the corresponding host facts.
+
+## Seam 7: protocol and event projection
+
+JSONL is the transport-neutral command/event contract. TCP, Unix sockets, HTTP
+and SSE are adapters around it:
+
+```text
+runtime event
+    -> common event contract
+    -> JSONL/daemon serialization
+    -> SSE or UI projection
+```
+
+The web client may format, group or collapse events, but it must not reinterpret
+runtime success, tool completion, scope or policy. Diagnostics belong in the
+bounded event/detail fields and logs; raw resource contents and credentials do
+not belong in events.
+
+This seam is particularly important for asynchronous operations. A pending
+operation has one owner for cancellation, deadline and completion. A UI retry
+or a protocol reconnect must not create a second hidden runtime call.
+
+## Verification at the seams
+
+Tests should be named after the boundary they protect:
+
+| Seam | Minimum verification |
+| --- | --- |
+| Config/catalog | Parse, validation, profile filtering and executable tool view |
+| Host/request | Scope binding plus resources and dataset inventory in the first planner request |
+| Compact plan | `{tool,args}` normalization, binding order and bounded repair |
+| Dataset authority | `dataset://`, `source_resource_uri`, provenance, TTL/turn scope and bounds |
+| Providers | Native/MCP/OpenAPI result normalization and policy enforcement |
+| Orchestration | Family preflight, required execution, fast-path boundaries and reflection closure |
+| Protocol | JSONL/SSE event mapping without semantic changes |
+
+Model-free tests must exercise the runtime unconditionally. Do not put the
+runtime call or the only meaningful assertion inside `assert`, because release
+builds define `NDEBUG`. Use explicit failure checks for setup, side effects,
+request contents and observed calls; assertions may remain as additional debug
+checks.
+
+The Qwen+Nomic smoke is complementary rather than a replacement for these
+contracts. It checks that a compact model can follow the visible inventory and
+produce a useful plan, while deterministic tests prove that a malformed or
+ambiguous proposal cannot escape host validation.
+
+## Change checklist
+
+When changing one of these components, verify the adjacent seams in this
+order:
+
+1. Update the common contract or host-owned binding first.
+2. Update the model-facing compact projection and state what is deliberately
+   not exposed.
+3. Update the native/MCP/OpenAPI adapter without adding a parallel executor.
+4. Add a deterministic contract test that fails in release builds as well as
+   debug builds.
+5. Add or update the relevant model-free smoke, then run Qwen/Nomic if the
+   change affects compact planning or context size.
+6. Update [Agent Bugs](bugs.md) when a seam failure exposed a new invariant.
+
+The final documentation should name the owner of every identity, permission,
+retry, pagination decision and materialization step. If ownership cannot be
+named, the design is probably introducing an accidental second orchestration
+path.

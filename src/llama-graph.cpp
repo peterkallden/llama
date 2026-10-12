@@ -17,6 +17,7 @@
 #include "llama-memory-hybrid-iswa.h"
 #include "llama-memory-recurrent.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -1386,6 +1387,7 @@ void llm_graph_result::reset() {
 
     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
+    layer_reduction_outputs.clear();
 
     t_sampled.clear();
     t_sampled_probs.clear();
@@ -1430,12 +1432,113 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
     if (t_h_nextn != nullptr) {
         ggml_set_output(t_h_nextn);
     }
+
+    if (params.layer_reductions != nullptr) {
+        class layer_reduction_input final : public llm_graph_input_i {
+        public:
+            layer_reduction_input(llama_layer_reduction_entry & entry, int64_t width)
+                : entry(entry), width(width) {}
+
+            void set_input(const llama_ubatch *) override {
+                if (direction == nullptr || entry.direction == nullptr ||
+                        entry.n_embd != static_cast<size_t>(width)) {
+                    return;
+                }
+                ggml_backend_tensor_set(direction, entry.direction, 0,
+                    static_cast<size_t>(width) * sizeof(float));
+            }
+
+            bool can_reuse(const llm_graph_params & params) override {
+                return params.layer_reductions != nullptr;
+            }
+
+            llama_layer_reduction_entry & entry;
+            int64_t width;
+            ggml_tensor * direction = nullptr;
+        };
+
+        const auto find_row = [&](llama_seq_id sequence_id, int32_t position) -> int64_t {
+            if (sequence_id < 0 || params.ubatch.pos == nullptr ||
+                    params.ubatch.seq_id == nullptr || params.ubatch.n_seq_id == nullptr) {
+                return -1;
+            }
+            int64_t last = -1;
+            for (uint32_t row = 0; row < params.ubatch.n_tokens; ++row) {
+                if ((position >= 0 && params.ubatch.pos[row] != position) ||
+                        params.ubatch.n_seq_id[row] == 0 ||
+                        params.ubatch.seq_id[row][0] != sequence_id) {
+                    continue;
+                }
+                last = static_cast<int64_t>(row);
+                if (position >= 0) return last;
+            }
+            return last;
+        };
+
+        for (auto & entry : params.layer_reductions->entries) {
+            entry.available = false;
+            entry.failure_reason.clear();
+            if (entry.layer >= t_layer_inp.size() || t_layer_inp[entry.layer] == nullptr ||
+                    entry.direction == nullptr || entry.n_embd == 0) {
+                entry.failure_reason = "layer input or direction is unavailable";
+                continue;
+            }
+            ggml_tensor * layer_input = t_layer_inp[entry.layer];
+            if (layer_input->ne[0] != static_cast<int64_t>(entry.n_embd) ||
+                    layer_input->ne[1] <= 0) {
+                entry.failure_reason = "layer input dimensions are not reduction-compatible";
+                continue;
+            }
+            const int64_t baseline_row = find_row(entry.baseline_sequence_id, entry.absolute_position);
+            const int64_t overlay_row = find_row(entry.overlay_sequence_id, entry.absolute_position);
+            if (baseline_row < 0 || overlay_row < 0) {
+                entry.failure_reason = "baseline/overlay rows are not in the same graph batch";
+                continue;
+            }
+
+            auto input = std::make_unique<layer_reduction_input>(entry,
+                static_cast<int64_t>(entry.n_embd));
+            input->direction = ggml_new_tensor_1d(ctx_compute.get(), GGML_TYPE_F32, entry.n_embd);
+            ggml_set_input(input->direction);
+            ggml_tensor * direction = input->direction;
+            add_input(std::move(input));
+
+            const size_t row_bytes = entry.n_embd * sizeof(float);
+            ggml_tensor * baseline = ggml_view_1d(ctx_compute.get(), layer_input,
+                entry.n_embd, static_cast<size_t>(baseline_row) * row_bytes);
+            ggml_tensor * overlay = ggml_view_1d(ctx_compute.get(), layer_input,
+                entry.n_embd, static_cast<size_t>(overlay_row) * row_bytes);
+            ggml_tensor * shift = ggml_sub(ctx_compute.get(), overlay, baseline);
+            ggml_tensor * dot = ggml_sum(ctx_compute.get(), ggml_mul(ctx_compute.get(), shift, direction));
+            ggml_tensor * shift_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), shift));
+            ggml_tensor * delta_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), direction));
+            ggml_tensor * progress = ggml_div(ctx_compute.get(), dot, delta_squared);
+            ggml_tensor * residual = ggml_sub(ctx_compute.get(), shift,
+                ggml_mul(ctx_compute.get(), direction, progress));
+            ggml_tensor * residual_squared = ggml_sum(ctx_compute.get(), ggml_sqr(ctx_compute.get(), residual));
+
+            ggml_build_forward_expand(gf, dot);
+            ggml_build_forward_expand(gf, shift_squared);
+            ggml_build_forward_expand(gf, delta_squared);
+            ggml_build_forward_expand(gf, residual_squared);
+            ggml_set_output(dot);
+            ggml_set_output(shift_squared);
+            ggml_set_output(delta_squared);
+            ggml_set_output(residual_squared);
+            layer_reduction_outputs.push_back({
+                &entry, dot, shift_squared, delta_squared, residual_squared});
+        }
+    }
     {
         const auto & embeddings_layer_inp = params.cparams.embeddings_layer_inp;
         for (size_t il = 0; il < embeddings_layer_inp.size(); ++il) {
             if (embeddings_layer_inp[il]) {
-                GGML_ASSERT(t_layer_inp[il] != nullptr && "layer input tensor is null");
-                ggml_set_output(t_layer_inp[il]);
+                // Not every graph publishes layer-input tensors. Capture
+                // requests must fail closed at the API boundary instead of
+                // asserting while building an otherwise valid model graph.
+                if (t_layer_inp[il] != nullptr) {
+                    ggml_set_output(t_layer_inp[il]);
+                }
             }
         }
     }
@@ -1553,6 +1656,8 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     sched            (params.sched),
     backend_cpu      (params.backend_cpu),
     cvec             (params.cvec),
+    cvec_batch       (params.cvec_batch),
+    residual_patch   (params.residual_patch),
     loras            (params.loras),
     mctx             (params.mctx),
     cross            (params.cross),
@@ -1578,6 +1683,9 @@ void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
 ggml_tensor * llm_graph_context::build_cvec(
          ggml_tensor * cur,
                  int   il) const {
+    if (cvec_batch != nullptr && cvec_batch->apply != nullptr) {
+        return cvec_batch->apply(ctx0, cur, il, ubatch, cvec_batch->user_data);
+    }
     return cvec->apply_to(ctx0, cur, il);
 }
 
@@ -1610,6 +1718,52 @@ ggml_tensor * llm_graph_context::build_hadamard_input(
     x = llama_mul_mat_hadamard(ctx0, x, t.rot);
     res->set_hdmd_input(cur, t.rot, x);
     return x;
+}
+
+ggml_tensor * llm_graph_context::build_residual_patch(ggml_tensor * cur, int il) const {
+    if (residual_patch == nullptr || residual_patch->layer != static_cast<uint32_t>(il)) return cur;
+    class residual_patch_input final : public llm_graph_input_i {
+    public:
+        residual_patch_input(const llama_residual_patch_ref & ref, int64_t width) : ref(ref), width(width) {}
+        void set_input(const llama_ubatch * batch) override {
+            std::vector<float> patch(static_cast<size_t>(width) * batch->n_tokens, 0.0f);
+            std::vector<float> mask(patch.size(), 0.0f);
+            for (uint32_t row = 0; row < batch->n_tokens; ++row) {
+                if (batch->pos[row] != ref.absolute_position || batch->n_seq_id[row] != 1 ||
+                        batch->seq_id[row][0] != ref.sequence_id) continue;
+                std::copy(ref.values, ref.values + width, patch.begin() + static_cast<size_t>(row) * width);
+                std::fill(mask.begin() + static_cast<size_t>(row) * width,
+                    mask.begin() + static_cast<size_t>(row + 1) * width, 1.0f);
+                if (ref.applied != nullptr) *ref.applied = true;
+            }
+            ggml_backend_tensor_set(values, patch.data(), 0, patch.size()*sizeof(float));
+            if (one != nullptr && one->buffer != nullptr) {
+                const float one_value = 1.0f;
+                ggml_backend_tensor_set(one, &one_value, 0, sizeof(one_value));
+            }
+            // The selection tensor is only part of the graph for replacement
+            // patches.  Setting an unused input is invalid because the graph
+            // scheduler is allowed to leave it without a backend buffer.
+            if (selection->buffer != nullptr) {
+                ggml_backend_tensor_set(selection, mask.data(), 0, mask.size()*sizeof(float));
+            }
+        }
+        bool can_reuse(const llm_graph_params & params) override { return params.residual_patch == &ref; }
+        const llama_residual_patch_ref & ref; int64_t width;
+        ggml_tensor * values = nullptr; ggml_tensor * selection = nullptr; ggml_tensor * one = nullptr;
+    };
+    auto input = std::make_unique<residual_patch_input>(*residual_patch, n_embd);
+    input->values = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
+    input->selection = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, n_tokens);
+    ggml_set_input(input->values); ggml_set_input(input->selection);
+    auto * values = input->values; auto * selection = input->selection;
+    res->add_input(std::move(input));
+    if (residual_patch->operation == llama_residual_patch_operation::add) return ggml_add(ctx0, cur, values);
+    auto * patch_input = static_cast<residual_patch_input *>(res->inputs.back().get());
+    patch_input->one = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, 1);
+    ggml_set_input(patch_input->one);
+    auto * one = patch_input->one;
+    return ggml_add(ctx0, ggml_mul(ctx0, cur, ggml_sub(ctx0, ggml_repeat(ctx0, one, selection), selection)), values);
 }
 
 ggml_tensor * llm_graph_context::build_lora_mm(

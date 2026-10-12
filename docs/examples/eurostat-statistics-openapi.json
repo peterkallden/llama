@@ -1,0 +1,28 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Eurostat Statistics API adapter",
+    "version": "1.0"
+  },
+  "paths": {
+    "/data/{datasetCode}": {
+      "get": {
+        "operationId": "getData",
+        "summary": "Get a Eurostat JSON-stat dataset",
+        "parameters": [
+          {"name": "datasetCode", "in": "path", "required": true,
+           "schema": {"type": "string"}},
+          {"name": "lang", "in": "query", "schema": {"type": "string"}},
+          {"name": "geo", "in": "query", "schema": {"type": "string"}},
+          {"name": "time", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON-stat 2.0 dataset",
+            "content": {"application/json": {"schema": {"type": "object"}}}
+          }
+        }
+      }
+    }
+  }
+}

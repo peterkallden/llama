@@ -1,0 +1,434 @@
+#include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+
+namespace {
+
+std::string environment_value(const char * name) {
+    const char * value = std::getenv(name);
+    return value != nullptr ? value : std::string();
+}
+
+void set_environment(const char * name, const std::string & value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+void unset_environment(const char * name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+}
+
+struct environment_guard {
+    std::string llama_agent_config = environment_value("LLAMA_AGENT_CONFIG");
+    std::string xdg_config_home = environment_value("XDG_CONFIG_HOME");
+    std::string home = environment_value("HOME");
+
+    ~environment_guard() {
+        if (llama_agent_config.empty()) unset_environment("LLAMA_AGENT_CONFIG");
+        else set_environment("LLAMA_AGENT_CONFIG", llama_agent_config);
+        if (xdg_config_home.empty()) unset_environment("XDG_CONFIG_HOME");
+        else set_environment("XDG_CONFIG_HOME", xdg_config_home);
+        if (home.empty()) unset_environment("HOME");
+        else set_environment("HOME", home);
+    }
+};
+
+bool write_config(const std::filesystem::path & path) {
+    std::ofstream output(path);
+    output << R"({"model":{"path":"fake.gguf"}})";
+    return output.good();
+}
+
+bool expect_path(
+        const std::string & explicit_path,
+        const std::filesystem::path & expected,
+        const char * label) {
+    std::string path;
+    std::string error;
+    if (!resolve_agent_host_config_path(explicit_path, path, error) ||
+            std::filesystem::path(path) != expected) {
+        std::fprintf(stderr, "%s resolution failed: %s\n", label, error.c_str());
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+int main() {
+    environment_guard guard;
+    agent_host_config default_config;
+    std::string default_error;
+    if (!parse_agent_host_config_json(nlohmann::ordered_json::object(),
+            default_config, default_error) ||
+            default_config.tool_timeout_ms != 18000 ||
+            default_config.n_predict != 256 ||
+            default_config.agent_plan != "auto" ||
+            default_config.agent_blueprint != "auto") {
+        std::fprintf(stderr, "unexpected automatic agent defaults: n_predict=%d plan=%s blueprint=%s timeout=%u (%s)\n",
+            default_config.n_predict, default_config.agent_plan.c_str(),
+            default_config.agent_blueprint.c_str(), default_config.tool_timeout_ms,
+            default_error.c_str());
+        return 1;
+    }
+    agent_host_config flydelta_config;
+    std::string flydelta_error;
+    const nlohmann::ordered_json flydelta_json = {
+        {"runtime", {
+            {"adaptation", {
+                {"capture", true},
+                {"collection_allowed", true},
+                {"flydelta", {
+                    {"enabled", true},
+                    {"worker_count", 1},
+                    {"queue_path", "var/agent/flydelta/jobs"},
+                    {"batch_mode", "auto"},
+                    {"batch_parallelism", 2},
+                    {"capture_candidates", true},
+                    {"lifecycle_backend", "jsonl"},
+                    {"lifecycle_path", "var/agent/flydelta/lifecycle.jsonl"},
+                    {"model_profile_fingerprint", "profile:config-smoke"},
+                    {"capture_layout_revision", "flydelta-capture-v1"},
+                    {"max_capture_candidates", 32},
+                    {"canary", {
+                        {"mode", "policy"},
+                        {"allow_auto_admission", true},
+                        {"allow_scope_expansion", true},
+                        {"allow_promotion", true},
+                        {"auto_close_on_harmed", true},
+                        {"initial_traffic_basis_points", 500},
+                        {"initial_max_evaluated_observations", 6},
+                        {"initial_expiry_ms", 28800000},
+                        {"traffic_steps_basis_points", nlohmann::ordered_json::array({100U, 500U, 1000U})},
+                        {"scope_step_fingerprints", nlohmann::ordered_json::array()},
+                    }},
+                }},
+            }},
+        }},
+        {"limits", {{"worker_count", 4}}},
+    };
+    if (!parse_agent_host_config_json(flydelta_json, flydelta_config, flydelta_error) ||
+            !validate_agent_host_config(flydelta_config, flydelta_error) ||
+            !flydelta_config.adaptation_flydelta_enabled ||
+            flydelta_config.adaptation_flydelta_worker_count != 1 ||
+            flydelta_config.adaptation_flydelta_queue_path != "var/agent/flydelta/jobs" ||
+            flydelta_config.adaptation_flydelta_batch_mode != "auto" ||
+            flydelta_config.adaptation_flydelta_batch_parallelism != 2 ||
+            !flydelta_config.adaptation_flydelta_capture_candidates ||
+            flydelta_config.adaptation_flydelta_canary_policy.mode != common_flydelta_canary_mode::policy ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_auto_admission ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_scope_expansion ||
+            !flydelta_config.adaptation_flydelta_canary_policy.allow_promotion ||
+            flydelta_config.adaptation_flydelta_canary_policy.initial_traffic_basis_points != 500 ||
+            flydelta_config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations != 6 ||
+            flydelta_config.adaptation_flydelta_lifecycle_backend != "jsonl" ||
+            flydelta_config.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl" ||
+            flydelta_config.adaptation_flydelta_model_profile_fingerprint != "profile:config-smoke" ||
+            flydelta_config.adaptation_flydelta_capture_layout_revision != "flydelta-capture-v1" ||
+            flydelta_config.adaptation_flydelta_max_capture_candidates != 32) {
+        std::fprintf(stderr, "FlyDelta worker reservation was not parsed: %s\n", flydelta_error.c_str());
+        return 1;
+    }
+    const auto flydelta_serialized = agent_host_config_to_json(flydelta_config);
+    if (flydelta_serialized["runtime"].contains("agent_plan") ||
+            flydelta_serialized["runtime"].contains("agent_blueprint")) {
+        std::fprintf(stderr, "legacy plan/blueprint configuration leaked into new config output\n");
+        return 1;
+    }
+    if (!flydelta_serialized["runtime"]["adaptation"]["flydelta"]["enabled"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["worker_count"] != 1 ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_mode"] != "auto" ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["batch_parallelism"] != 2 ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["capture_candidates"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["mode"] != "policy" ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["allow_scope_expansion"].get<bool>() ||
+            !flydelta_serialized["runtime"]["adaptation"]["flydelta"]["canary"]["allow_promotion"].get<bool>() ||
+            flydelta_serialized["runtime"]["adaptation"]["flydelta"]["max_capture_candidates"] != 32) {
+        std::fprintf(stderr, "FlyDelta worker reservation was not serialized\n");
+        return 1;
+    }
+    daemon_options flydelta_options;
+    apply_agent_host_config_to_daemon_options(flydelta_config, flydelta_options);
+    if (!flydelta_options.adaptation_flydelta_enabled ||
+            flydelta_options.adaptation_flydelta_worker_count != 1 ||
+            flydelta_options.adaptation_flydelta_batch_mode != "auto" ||
+            flydelta_options.adaptation_flydelta_batch_parallelism != 2 ||
+            !flydelta_options.adaptation_flydelta_capture_candidates ||
+            !flydelta_options.adaptation_flydelta_canary_policy.allow_scope_expansion ||
+            !flydelta_options.adaptation_flydelta_canary_policy.allow_promotion ||
+            flydelta_options.adaptation_flydelta_lifecycle_path != "var/agent/flydelta/lifecycle.jsonl") {
+        std::fprintf(stderr, "FlyDelta worker reservation was not copied to daemon options\n");
+        return 1;
+    }
+    agent_host_config invalid_flydelta_config;
+    const nlohmann::ordered_json invalid_flydelta_json = {
+        {"runtime", {
+            {"adaptation", {
+                {"flydelta", {
+                    {"enabled", true},
+                    {"worker_count", 5},
+                    {"queue_path", "var/agent/flydelta/jobs"},
+                }},
+            }},
+        }},
+        {"limits", {{"worker_count", 4}}},
+    };
+    if (parse_agent_host_config_json(invalid_flydelta_json, invalid_flydelta_config, flydelta_error) ||
+            flydelta_error.find("cannot exceed") == std::string::npos) {
+        std::fprintf(stderr, "invalid FlyDelta worker reservation was accepted\n");
+        return 1;
+    }
+    invalid_flydelta_config = flydelta_config;
+    invalid_flydelta_config.adaptation_flydelta_batch_mode = "unexpected";
+    if (validate_agent_host_config(invalid_flydelta_config, flydelta_error) ||
+            flydelta_error.find("batch_mode") == std::string::npos) {
+        std::fprintf(stderr, "invalid FlyDelta batch mode was accepted\n");
+        return 1;
+    }
+    const auto root = std::filesystem::temp_directory_path() / "llama-agent-config-discovery-smoke";
+    std::error_code cleanup_error;
+    std::filesystem::remove_all(root, cleanup_error);
+    std::filesystem::create_directories(root / "xdg" / "llama-agent");
+    std::filesystem::create_directories(root / "home" / ".config" / "llama-agent");
+
+    const auto explicit_path = root / "explicit.json";
+    const auto environment_path = root / "environment.json";
+    const auto xdg_path = root / "xdg" / "llama-agent" / "config.json";
+    const auto home_path = root / "home" / ".config" / "llama-agent" / "config.json";
+    if (!write_config(explicit_path) || !write_config(environment_path) ||
+            !write_config(xdg_path) || !write_config(home_path)) {
+        std::fprintf(stderr, "failed to create config discovery fixtures\n");
+        return 1;
+    }
+
+    set_environment("LLAMA_AGENT_CONFIG", environment_path.string());
+    if (!expect_path(explicit_path.string(), explicit_path, "explicit")) return 1;
+    if (!expect_path("", environment_path, "environment")) return 1;
+
+    unset_environment("LLAMA_AGENT_CONFIG");
+    set_environment("XDG_CONFIG_HOME", (root / "xdg").string());
+    set_environment("HOME", (root / "missing-home").string());
+    if (!expect_path("", xdg_path, "XDG")) return 1;
+
+    unset_environment("XDG_CONFIG_HOME");
+    set_environment("HOME", (root / "home").string());
+    if (!expect_path("", home_path, "HOME")) return 1;
+
+    std::string path;
+    std::string error;
+    set_environment("LLAMA_AGENT_CONFIG", (root / "missing.json").string());
+    if (resolve_agent_host_config_path("", path, error) ||
+            error.find("LLAMA_AGENT_CONFIG") == std::string::npos) {
+        std::fprintf(stderr, "missing explicit environment config was accepted\n");
+        return 1;
+    }
+
+    agent_host_config processor_config;
+    const nlohmann::ordered_json processor_policy_config = {
+        {"resources", {
+            {"processor_policies", {
+                {"pdf.page_image", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "kubernetes"},
+                    {"image", "registry.example/pdf-worker@sha256:test"},
+                    {"expected_version", "mupdf-1.26"},
+                    {"max_pages", 20},
+                }},
+                {"pdf.text", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "mutool"},
+                }},
+                {"odt.text", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "pandoc"},
+                    {"expected_version", "pandoc 3.10.1"},
+                }},
+                {"html.text", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "docker"},
+                    {"image", "registry.example/document-worker@sha256:test"},
+                }},
+                {"xlsx.workbook", {
+                    {"execution", "local_preferred"},
+                    {"backend", "auto"},
+                    {"executable", "python"},
+                    {"script", "scripts/agent-xlsx-to-json.py"},
+                }},
+            }},
+        }},
+    };
+    if (!parse_agent_host_config_json(processor_policy_config, processor_config, error) ||
+            !validate_agent_host_config(processor_config, error) ||
+            processor_config.resource_processor_policies.size() != 5 ||
+            processor_config.resource_processor_policies.at("pdf.page_image").execution != "sandbox_required" ||
+            processor_config.resource_processor_policies.at("pdf.page_image").backend != "kubernetes" ||
+            processor_config.resource_processor_policies.at("pdf.page_image").max_pages != 20 ||
+            processor_config.resource_processor_policies.at("odt.text").executable != "pandoc" ||
+            processor_config.resource_processor_policies.at("html.text").backend != "docker" ||
+            processor_config.resource_processor_policies.at("xlsx.workbook").script != "scripts/agent-xlsx-to-json.py") {
+        std::fprintf(stderr, "resource processor execution policy was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto serialized = agent_host_config_to_json(processor_config);
+    if (!serialized.contains("resources") ||
+            !serialized["resources"].contains("processor_policies") ||
+            serialized["resources"]["processor_policies"]["pdf.text"]["executable"] != "mutool" ||
+            serialized["resources"]["processor_policies"]["pdf.page_image"]["max_pages"] != 20) {
+        std::fprintf(stderr, "resource processor execution policy was not serialized\n");
+        return 1;
+    }
+
+    agent_host_config multimodal_config;
+    const nlohmann::ordered_json multimodal_json = {
+        {"model", {
+            {"path", "models/qwen2-vl.gguf"},
+            {"mmproj", "models/qwen2-vl-mmproj.gguf"},
+        }},
+    };
+    if (!parse_agent_host_config_json(multimodal_json, multimodal_config, error) ||
+            multimodal_config.model_path != "models/qwen2-vl.gguf" ||
+            multimodal_config.mmproj_path != "models/qwen2-vl-mmproj.gguf") {
+        std::fprintf(stderr, "multimodal model configuration was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto multimodal_serialized = agent_host_config_to_json(multimodal_config);
+    if (multimodal_serialized["model"]["mmproj"] != "models/qwen2-vl-mmproj.gguf") {
+        std::fprintf(stderr, "multimodal model configuration was not serialized\n");
+        return 1;
+    }
+
+    agent_host_config catalog_config;
+    const nlohmann::ordered_json catalog_json = {
+        {"bootstrap", {{"package", "/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json"}}},
+        {"model", {{"path", "legacy.gguf"}}},
+        {"models", {
+            {"schema_version", 1},
+            {"directory", "/models"},
+            {"bases", {
+                {"small", {{"kind", "generation"}, {"path", "small.gguf"}, {"load", "resident"}}},
+                {"nomic", {{"kind", "embedding"}, {"path", "nomic.gguf"}}},
+            }},
+            {"profiles", {
+                {"agent-default", {{"base", "small"}, {"context_size", 4096}}},
+            }},
+            {"routing", {{"default_profile", "agent-default"}, {"embedding_model", "nomic"}}},
+            {"limits", {{"max_loaded_generation_models", 2}, {"model_eviction", "lru"}}},
+        }},
+        {"runtime", {
+            {"adaptation", {
+                {"domains", {
+                    {"planning", false},
+                    {"tool_use", false},
+                    {"research", true},
+                    {"procedure_learning", false},
+                    {"families", {{"diagnostics", true}}},
+                }},
+            }},
+        }},
+    };
+    if (!parse_agent_host_config_json(catalog_json, catalog_config, error) ||
+            !validate_agent_host_config(catalog_config, error) ||
+            catalog_config.model_path != "legacy.gguf" ||
+            catalog_config.model_catalog.bases.size() != 2 ||
+            catalog_config.model_catalog.profiles.size() != 1 ||
+            catalog_config.model_catalog.embedding_model_id != "nomic" ||
+            catalog_config.bootstrap_package != "/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json" ||
+            !catalog_config.adaptation_domains.configured ||
+            catalog_config.adaptation_domains.tool_use ||
+            !catalog_config.adaptation_domains.tool_use_families.at("diagnostics")) {
+        std::fprintf(stderr, "model catalog configuration was not parsed: %s\n", error.c_str());
+        return 1;
+    }
+    common_agent_model_selection selected_model;
+    if (!resolve_agent_host_model_selection(catalog_config, selected_model, error) ||
+            selected_model.path != (std::filesystem::path("/models") / "small.gguf").lexically_normal().string() ||
+            selected_model.context_size_tokens != 4096) {
+        std::fprintf(stderr, "model catalog profile was not resolved: %s\n", error.c_str());
+        return 1;
+    }
+    const auto catalog_serialized = agent_host_config_to_json(catalog_config);
+    if (!catalog_serialized.contains("models") ||
+            catalog_serialized["bootstrap"]["package"] != catalog_config.bootstrap_package ||
+            catalog_serialized["models"]["profiles"]["agent-default"]["base"] != "small") {
+        std::fprintf(stderr, "model catalog configuration was not serialized\n");
+        return 1;
+    }
+    daemon_options catalog_options;
+    apply_agent_host_config_to_daemon_options(catalog_config, catalog_options);
+    if (catalog_options.model_profile != catalog_config.model_profile ||
+            catalog_options.bootstrap_package != catalog_config.bootstrap_package ||
+            catalog_options.model_catalog.bases.size() != 2 ||
+            catalog_options.model_catalog.profiles.size() != 1) {
+        std::fprintf(stderr, "model catalog was not copied into daemon options\n");
+        return 1;
+    }
+
+    agent_host_config invalid_processor_config;
+    const nlohmann::ordered_json invalid_policy_config = {
+        {"resources", {
+            {"processor_policies", {
+                {"pdf.page_image", {
+                    {"execution", "sandbox_required"},
+                    {"backend", "local"},
+                }},
+            }},
+        }},
+    };
+    if (parse_agent_host_config_json(invalid_policy_config, invalid_processor_config, error)) {
+        std::fprintf(stderr, "invalid resource processor execution policy was accepted\n");
+        return 1;
+    }
+
+    const auto bootstrap_path = std::filesystem::temp_directory_path() /
+        ("llama-agent-bootstrap-smoke-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+    {
+        std::ofstream bootstrap(bootstrap_path);
+        bootstrap << R"({"schema_version":1,"name":"daemon-startup-smoke","version":"v1","procedures":[],"blueprints":[],"workflows":[{"id":"startup-smoke","workflow_ref":"workflow://startup-smoke","workflow_revision":"v1","family":"test","graph_revision":"test-v1","required_capabilities":["test.run"]}]})";
+        if (!bootstrap) {
+            std::fprintf(stderr, "failed to write daemon startup bootstrap fixture\n");
+            return 1;
+        }
+    }
+    daemon_options bootstrap_options;
+    bootstrap_options.bootstrap_package = bootstrap_path.string();
+    bootstrap_options.backend = "in-memory";
+    bootstrap_options.plan_backend = "in-memory";
+    bootstrap_options.data_backend = "disabled";
+    bootstrap_options.resource_blob_backend = "in-memory";
+    bootstrap_options.resource_metadata_backend = "in-memory";
+    common_agent_daemon_runtime bootstrap_runtime;
+    if (!initialize_agent_daemon_environment(bootstrap_options, bootstrap_runtime, error)) {
+        std::filesystem::remove(bootstrap_path);
+        std::fprintf(stderr, "daemon startup did not import its configured package: %s\n", error.c_str());
+        return 1;
+    }
+    const auto installed_plans = bootstrap_runtime.plan_store->list(error);
+    std::filesystem::remove(bootstrap_path);
+    if (!error.empty() || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
+            return plan.id == "bootstrap:llama-agent-host:global:workflow:startup-smoke" &&
+                plan.workflow_definition.has_value();
+        })) {
+        std::fprintf(stderr, "daemon bootstrap package workflow was not persisted: %s\n", error.c_str());
+        return 1;
+    }
+
+    std::printf("config_discovery=passed\n");
+    return 0;
+}

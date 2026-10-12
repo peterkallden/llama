@@ -1,0 +1,2088 @@
+#include "agent-daemon-service.h"
+#include "agent-daemon-adapter.h"
+#include "../mcp/agent-mcp-server-tool-registry.h"
+#include "../runtime/agent-server-context-host.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
+#include "hash/hash.h"
+
+#include <nlohmann/json.hpp>
+
+#include <set>
+#include <chrono>
+#include <algorithm>
+
+using json = nlohmann::ordered_json;
+
+common_agent_daemon_config_store::common_agent_daemon_config_store(
+        std::shared_ptr<const daemon_options> initial)
+    : current_(std::move(initial)) {}
+
+std::shared_ptr<const daemon_options> common_agent_daemon_config_store::snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_;
+}
+
+void common_agent_daemon_config_store::replace(
+        std::shared_ptr<const daemon_options> next) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    current_ = std::move(next);
+}
+
+bool common_agent_daemon_register_flydelta_server_binding(
+        common_agent_daemon_runtime & runtime,
+        std::shared_ptr<common_agent_server_context_host> host,
+        common_agent_server_flydelta_binding binding,
+        std::string & error) {
+    error.clear();
+    if (!host) {
+        error = "FlyDelta daemon registration requires a resident server host";
+        return false;
+    }
+
+    auto model_host = common_agent_server_context_host_make_flydelta_model_host(
+        std::move(host), std::move(binding), error);
+    if (!model_host) return false;
+
+    auto adapter = common_flydelta_model_adapter_from_host(*model_host, error);
+    if (!adapter) return false;
+
+    runtime.flydelta_model_host = std::move(model_host);
+    runtime.flydelta_model_adapter = std::move(adapter);
+    runtime.flydelta_model_capabilities = runtime.flydelta_model_adapter->capabilities;
+    error.clear();
+    return true;
+}
+
+namespace {
+
+std::string bounded_summary_text(const std::string & value) {
+    constexpr size_t max_summary_text = 512;
+    return value.size() <= max_summary_text ? value : value.substr(0, max_summary_text);
+}
+
+common_flydelta_counterfactual_outcome parse_canary_outcome(const std::string & value) {
+    if (value == "helped") return common_flydelta_counterfactual_outcome::helped;
+    if (value == "neutral") return common_flydelta_counterfactual_outcome::neutral;
+    if (value == "harmed") return common_flydelta_counterfactual_outcome::harmed;
+    return common_flydelta_counterfactual_outcome::unknown;
+}
+
+common_agent_turn_summary make_turn_summary(
+        const common_agent_runtime_session_host_turn_request & request,
+        const common_agent_runtime_session_host_turn_result & result) {
+    common_agent_turn_summary summary;
+    summary.mode = request.mode == common_agent_runtime_host_mode::agent ? "agent" : "chat";
+    summary.status = result.cancelled ? "cancelled" : (result.ok ? "completed" : "failed");
+    summary.objective = bounded_summary_text(request.prompt);
+    summary.verified = result.ok && !result.cancelled;
+    summary.stop_reason = common_agent_generation_stop_reason_name(result.response_stop_reason);
+
+    std::set<std::string> seen_phases;
+    std::set<std::string> seen_tools;
+    const auto add_phase = [&](const std::string & phase) {
+        if (seen_phases.insert(phase).second) {
+            summary.phases.push_back(phase);
+        }
+    };
+    for (const auto & event : result.events) {
+        switch (event.type) {
+            case common_agent_event_type::plan_created: add_phase("plan_created"); break;
+            case common_agent_event_type::plan_updated: add_phase("plan_updated"); break;
+            case common_agent_event_type::reflection_completed: add_phase("reflection_completed"); break;
+            case common_agent_event_type::research_started: add_phase("research_started"); break;
+            case common_agent_event_type::research_completed: add_phase("research_completed"); break;
+            case common_agent_event_type::research_incomplete:
+                add_phase("research_incomplete");
+                if (!event.detail.empty()) {
+                    summary.unresolved.push_back(bounded_summary_text(event.detail));
+                }
+                break;
+            case common_agent_event_type::research_source_recorded: ++summary.sources; break;
+            case common_agent_event_type::research_evidence_recorded: ++summary.evidence_items; break;
+            case common_agent_event_type::plan_revision_requested: ++summary.plan_revisions; break;
+            case common_agent_event_type::tool_executed:
+                if (!event.tool_name.empty()) seen_tools.insert(event.tool_name);
+                break;
+            default: break;
+        }
+    }
+    for (const auto & entry : result.trace) {
+        if (!entry.tool_name.empty()) seen_tools.insert(entry.tool_name);
+        switch (entry.stage) {
+            case common_runtime_trace_stage::plan: add_phase("plan"); break;
+            case common_runtime_trace_stage::research: add_phase("research"); break;
+            case common_runtime_trace_stage::reflection: add_phase("reflection"); break;
+            case common_runtime_trace_stage::response: add_phase("response"); break;
+            default: break;
+        }
+    }
+    summary.tools_used.assign(seen_tools.begin(), seen_tools.end());
+    summary.unresolved_items = summary.unresolved.size();
+    return summary;
+}
+
+common_agent_event_context make_command_event_context(
+        const common_agent_daemon_command & command) {
+    common_agent_event_context context;
+    context.request_id = command.request_id;
+    if (command.turn.has_value()) {
+        context.namespace_id = command.turn->request.turn.namespace_id;
+        context.project_id = command.turn->request.turn.project_id;
+        context.session_id = command.turn->request.turn.session_id;
+        context.turn_id = command.turn->request.turn.turn_id;
+        return context;
+    }
+    if (command.session.has_value()) {
+        context.namespace_id = command.session->key.namespace_id;
+        context.session_id = command.session->key.session_id;
+        return context;
+    }
+    if (command.scope.has_value()) {
+        context.namespace_id = command.scope->authority.namespace_id;
+        context.project_id = command.scope->authority.project_id;
+        context.session_id = command.scope->authority.session_id;
+        context.turn_id = command.scope->authority.turn_id;
+        return context;
+    }
+    if (command.resource.has_value()) {
+        context.namespace_id = command.resource->authority.namespace_id;
+        context.project_id = command.resource->authority.project_id;
+        context.session_id = command.resource->authority.session_id;
+        context.turn_id = command.resource->authority.turn_id;
+        return context;
+    }
+    return context;
+}
+
+std::string command_turn_id(const common_agent_daemon_command & command) {
+    if (!command.turn.has_value()) {
+        return {};
+    }
+    return command.turn->request.turn.turn_id;
+}
+
+common_agent_failure_class classify_daemon_turn_failure(
+        const common_agent_daemon_command & command) {
+    if (command.turn.has_value() &&
+            command.turn->request.turn.execution_control.is_deadline_exceeded()) {
+        return common_agent_failure_class::timeout;
+    }
+    return common_agent_failure_class::execution;
+}
+
+void populate_daemon_failed_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_runtime_session_manager_turn_result & turn_result,
+        const std::string & error) {
+    turn_result.error = error;
+    turn_result.cancelled =
+        command.turn.has_value() &&
+        command.turn->request.turn.execution_control.should_stop();
+    turn_result.failure_class = classify_daemon_turn_failure(command);
+    turn_result.response_generation_status =
+        turn_result.cancelled
+            ? common_agent_generation_status::cancelled
+            : common_agent_generation_status::errored;
+    turn_result.response_stop_reason =
+        turn_result.cancelled
+            ? common_agent_generation_stop_reason::cancelled
+            : common_agent_generation_stop_reason::error;
+}
+
+void emit_plan_and_resource_events_from_turn(
+        common_agent_daemon_service & service,
+        const common_agent_daemon_command & command,
+        const common_agent_runtime_session_manager_turn_result & turn_result) {
+    const auto command_context = make_command_event_context(command);
+    std::set<std::string> emitted_keys;
+
+    const auto emit_once = [&](
+            common_agent_daemon_event_type type,
+            const std::string & detail) {
+        const std::string key =
+            std::string(common_agent_daemon_event_type_name(type)) + "|" + detail;
+        if (!emitted_keys.insert(key).second) {
+            return;
+        }
+        auto context = command_context;
+        service.emit_internal_event(make_common_agent_daemon_event(
+            type,
+            context.request_id,
+            context.turn_id,
+            detail,
+            0,
+            std::move(context)));
+    };
+
+    for (const auto & event : turn_result.events) {
+        switch (event.type) {
+            case common_agent_event_type::plan_created:
+                emit_once(
+                    common_agent_daemon_event_type::plan_created,
+                    event.plan_id.value_or(event.detail));
+                break;
+            case common_agent_event_type::plan_updated:
+                emit_once(
+                    common_agent_daemon_event_type::plan_updated,
+                    event.plan_id.value_or(event.detail));
+                break;
+            case common_agent_event_type::observation_recorded:
+                emit_once(
+                    common_agent_daemon_event_type::observation_recorded,
+                    !event.observation_id.empty() ? event.observation_id : event.detail);
+                break;
+            case common_agent_event_type::resource_chunk_planned:
+                emit_once(
+                    common_agent_daemon_event_type::resource_chunk_planned,
+                    !event.observation_id.empty() ? event.observation_id : event.detail);
+                break;
+            case common_agent_event_type::resource_chunk_processed:
+                emit_once(
+                    common_agent_daemon_event_type::resource_chunk_processed,
+                    !event.observation_id.empty() ? event.observation_id : event.detail);
+                break;
+            case common_agent_event_type::resource_created:
+                emit_once(
+                    common_agent_daemon_event_type::resource_created,
+                    !event.resource_uri.empty() ? event.resource_uri : event.detail);
+                break;
+            case common_agent_event_type::resource_attached:
+                emit_once(
+                    common_agent_daemon_event_type::resource_attached,
+                    !event.resource_uri.empty() ? event.resource_uri : event.detail);
+                break;
+            default:
+                break;
+        }
+    }
+
+    for (const auto & trace : turn_result.trace) {
+        if (trace.stage == common_runtime_trace_stage::step) {
+            if (trace.kind == common_runtime_trace_kind::started) {
+                emit_once(
+                    common_agent_daemon_event_type::plan_step_started,
+                    !trace.step_id.empty() ? trace.step_id : trace.detail);
+            } else if (trace.kind == common_runtime_trace_kind::completed) {
+                emit_once(
+                    common_agent_daemon_event_type::plan_step_completed,
+                    !trace.step_id.empty() ? trace.step_id : trace.detail);
+            }
+        }
+        if (trace.stage == common_runtime_trace_stage::observation &&
+                trace.kind == common_runtime_trace_kind::recorded) {
+            emit_once(
+                common_agent_daemon_event_type::observation_recorded,
+                !trace.observation_id.empty() ? trace.observation_id : trace.detail);
+        }
+    }
+}
+
+} // namespace
+
+common_agent_daemon_command_result project_agent_daemon_command_execution(
+        common_agent_daemon_command_execution execution) {
+    common_agent_daemon_command_result result;
+    static_cast<common_agent_daemon_command_outcome &>(result) = std::move(execution.outcome);
+    result.daemon_event_count = execution.events.size();
+    result.events = std::move(execution.events);
+    return result;
+}
+
+void append_agent_daemon_execution_event(
+        common_agent_daemon_command_execution & execution,
+        common_agent_daemon_event event) {
+    execution.events.push_back(std::move(event));
+}
+
+void emit_agent_daemon_execution_typed_event(
+        common_agent_daemon_command_execution & execution,
+        common_agent_daemon_event_type type,
+        common_agent_event_context context,
+        std::string detail) {
+    execution.events.push_back(make_common_agent_daemon_event(
+        type,
+        std::move(context.request_id),
+        std::move(context.turn_id),
+        std::move(detail),
+        0,
+        std::move(context)));
+}
+
+common_agent_daemon_service::common_agent_daemon_service(
+        common_agent_daemon_runtime runtime,
+        std::unique_ptr<common_agent_daemon_event_collector> event_collector)
+    : runtime(std::move(runtime))
+    , event_collector(std::move(event_collector)) {
+    if (!this->event_collector) {
+        this->event_collector = std::make_unique<common_agent_daemon_event_collector>();
+    }
+    if (this->runtime.host) {
+        this->runtime.host->set_event_sink([this](common_agent_daemon_event event) {
+            emit_internal_event(std::move(event));
+        });
+    }
+    state_value = (this->runtime.host || this->runtime.tool_executor)
+        ? common_agent_daemon_state::ready
+        : common_agent_daemon_state::failed;
+    if (this->runtime.probe_mcp_providers) {
+        std::string probe_error;
+        if (!this->runtime.probe_mcp_providers(
+                this->runtime.provider_probe_tooling,
+                this->runtime.provider_readiness,
+                probe_error)) {
+            state_value = common_agent_daemon_state::failed;
+        }
+    }
+}
+
+namespace {
+
+common_agent_daemon_readiness make_daemon_readiness(
+        const common_agent_daemon_runtime & runtime,
+        common_agent_daemon_state state) {
+    common_agent_daemon_readiness readiness;
+    readiness.model = runtime.host ? "loaded" : "unavailable";
+    readiness.inference = runtime.host ? "available" : "unavailable";
+    readiness.memory_store = runtime.memory_store ? "ready" : "unavailable";
+    readiness.plan_store = runtime.plan_store ? "ready" : "unavailable";
+    readiness.resource_store = runtime.resource_store ? "ready" : "unavailable";
+    if (runtime.config_store) {
+        const auto options = runtime.config_store->snapshot();
+        if (options) {
+            readiness.tool_profile = options->tool_profile.empty()
+                ? "minimal"
+                : options->tool_profile;
+            for (const auto & configured : options->mcp_providers) {
+                if (!configured.enabled) {
+                    continue;
+                }
+                common_agent_daemon_provider_readiness provider;
+                provider.id = configured.id.empty() ? configured.server_name : configured.id;
+                provider.required = configured.required;
+                provider.status = "unprobed";
+                provider.warning = "provider probe has not run";
+                readiness.providers.push_back(std::move(provider));
+            }
+            common_tool_profile_snapshot profile_snapshot;
+            std::string profile_error;
+            if (resolve_common_tool_profile_snapshot(
+                    options->tool_profile,
+                    options->tool_capabilities,
+                    options->tool_profiles,
+                    profile_snapshot,
+                    profile_error)) {
+                for (const auto & definition : profile_snapshot.tools) {
+                    if (!definition.enabled) continue;
+                    readiness.tools.push_back({definition.name, definition.description, "profile", "active"});
+                }
+            }
+        }
+    }
+
+    std::set<std::string> known_tool_names;
+    for (const auto & tool : readiness.tools) known_tool_names.insert(tool.name);
+    for (const auto & tool : runtime.provider_probe_tooling.tools) {
+        if (known_tool_names.insert(tool.name).second) {
+            readiness.tools.push_back({tool.name, tool.description, "mcp", "active"});
+        }
+    }
+
+    if (!runtime.provider_readiness.empty()) {
+        readiness.providers = runtime.provider_readiness;
+    }
+
+    bool required_provider_failed = false;
+    bool optional_provider_degraded = false;
+    for (const auto & provider : readiness.providers) {
+        if (provider.status == "ready") {
+            continue;
+        }
+        if (provider.required) {
+            required_provider_failed = true;
+        } else if (provider.status == "degraded") {
+            optional_provider_degraded = true;
+        }
+    }
+
+    const bool core_ready = runtime.host != nullptr &&
+        runtime.memory_store != nullptr &&
+        runtime.plan_store != nullptr;
+    if (state == common_agent_daemon_state::failed || !core_ready || required_provider_failed) {
+        readiness.health = "failed";
+        if (!runtime.host) readiness.warnings.push_back("runtime is not initialized");
+        if (!runtime.memory_store) readiness.warnings.push_back("memory store is unavailable");
+        if (!runtime.plan_store) readiness.warnings.push_back("plan store is unavailable");
+    } else if (state == common_agent_daemon_state::ready) {
+        readiness.health = optional_provider_degraded ? "degraded" : "ready";
+        if (optional_provider_degraded) {
+            readiness.warnings.push_back("one or more optional MCP providers are degraded");
+        }
+    } else {
+        readiness.health = "draining";
+    }
+    return readiness;
+}
+
+}
+
+common_agent_daemon_readiness common_agent_daemon_service::readiness() const {
+    return make_daemon_readiness(runtime, state_value);
+}
+
+bool common_agent_daemon_service::execute(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_result & result,
+        std::string & error) {
+    common_agent_daemon_command_execution execution;
+    const bool ok = execute_outcome(command, execution.outcome, execution.events, error);
+    result = project_agent_daemon_command_execution(std::move(execution));
+    return ok;
+}
+
+void common_agent_daemon_service::emit_internal_event(
+        common_agent_daemon_event event) {
+    if (!event_collector) {
+        return;
+    }
+    event_collector->append(std::move(event));
+}
+
+std::vector<common_agent_daemon_event> common_agent_daemon_service::take_internal_events() {
+    if (!event_collector) {
+        return {};
+    }
+    return event_collector->take();
+}
+
+std::string common_agent_daemon_service::subscribe_events(
+        common_agent_event_stream_subscription subscription) {
+    return event_collector
+        ? event_collector->subscribe(std::move(subscription))
+        : std::string();
+}
+
+void common_agent_daemon_service::unsubscribe_events(
+        const std::string & subscription_id) {
+    if (event_collector) {
+        event_collector->unsubscribe(subscription_id);
+    }
+}
+
+common_agent_event_stream_wait_status common_agent_daemon_service::wait_for_event(
+        const std::string & subscription_id,
+        common_agent_event_stream_delivery & delivery,
+        std::chrono::milliseconds timeout) {
+    return event_collector
+        ? event_collector->wait_next(subscription_id, delivery, timeout)
+        : common_agent_event_stream_wait_status::not_found;
+}
+
+void common_agent_daemon_service::initialize_command_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const {
+    auto target_request_id = std::move(outcome.target_request_id);
+    auto target_turn_id = std::move(outcome.target_turn_id);
+    outcome = {};
+    outcome.request_id = command.request_id;
+    outcome.target_request_id = std::move(target_request_id);
+    outcome.target_turn_id = std::move(target_turn_id);
+}
+
+void common_agent_daemon_service::initialize_lifecycle_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const {
+    initialize_command_outcome(command, outcome);
+    outcome.response_kind = common_agent_daemon_response_kind::lifecycle;
+}
+
+void common_agent_daemon_service::initialize_turn_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome) const {
+    initialize_command_outcome(command, outcome);
+    outcome.response_kind = common_agent_daemon_response_kind::turn;
+}
+
+bool common_agent_daemon_service::fail_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type) const {
+    initialize_lifecycle_outcome(command, outcome);
+    outcome.ok = false;
+    outcome.event = std::move(event);
+    outcome.error = error;
+    common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
+    auto context = make_command_event_context(command);
+    context.turn_id.clear();
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        std::move(context),
+        error);
+    outcome = std::move(execution.outcome);
+    events = std::move(execution.events);
+    return false;
+}
+
+bool common_agent_daemon_service::fail_turn_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type) const {
+    initialize_turn_outcome(command, outcome);
+    outcome.ok = false;
+    outcome.event = std::move(event);
+    outcome.error = error;
+    populate_daemon_failed_turn_result(command, outcome.turn_result, error);
+    common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        make_command_event_context(command),
+        error);
+    outcome = std::move(execution.outcome);
+    events = std::move(execution.events);
+    return false;
+}
+
+bool common_agent_daemon_service::succeed_lifecycle_result(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error,
+        std::string event,
+        common_agent_daemon_event_type event_type,
+        std::string detail) const {
+    initialize_lifecycle_outcome(command, outcome);
+    outcome.ok = true;
+    outcome.event = std::move(event);
+    common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
+    auto context = make_command_event_context(command);
+    context.turn_id.clear();
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        event_type,
+        std::move(context),
+        std::move(detail));
+    outcome = std::move(execution.outcome);
+    events = std::move(execution.events);
+    error.clear();
+    return true;
+}
+
+void common_agent_daemon_service::mark_stopping() {
+    if (state_value == common_agent_daemon_state::failed ||
+            state_value == common_agent_daemon_state::stopped) {
+        return;
+    }
+    state_value = common_agent_daemon_state::stopping;
+}
+
+void common_agent_daemon_service::mark_stopped() {
+    if (state_value == common_agent_daemon_state::failed) {
+        return;
+    }
+    state_value = common_agent_daemon_state::stopped;
+}
+
+bool common_agent_daemon_service::populate_status(
+        common_agent_daemon_command_result & result,
+        std::string & error) const {
+    common_agent_daemon_command_execution execution;
+    execution.outcome.request_id = result.request_id;
+    const bool ok = populate_status_outcome(execution.outcome, execution.events, error);
+    result = project_agent_daemon_command_execution(std::move(execution));
+    return ok;
+}
+
+bool common_agent_daemon_service::populate_status_outcome(
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error) const {
+    outcome.ok = runtime.host != nullptr;
+    outcome.response_kind = common_agent_daemon_response_kind::status;
+    outcome.event = "status";
+    outcome.status.state = state_value;
+    outcome.status.live = state_value != common_agent_daemon_state::stopped;
+    outcome.status.readiness = readiness();
+    outcome.status.flydelta_review_store_configured =
+        runtime.flydelta_sideband_review_store != nullptr &&
+        runtime.flydelta_sideband_registry != nullptr;
+    outcome.status.flydelta_sideband_reviews_replayed =
+        runtime.flydelta_sideband_reviews_replayed;
+    outcome.status.ready = state_value == common_agent_daemon_state::ready &&
+        outcome.status.readiness.health != "failed";
+    if (runtime.host) {
+        outcome.status.sessions = runtime.host->list_sessions();
+        outcome.status.session_count = outcome.status.sessions.size();
+    }
+    common_agent_daemon_command_execution execution{std::move(outcome), std::move(events)};
+    emit_agent_daemon_execution_typed_event(
+        execution,
+        common_agent_daemon_event_type::status_reported,
+        common_agent_event_context{{}, {}, {}, execution.outcome.request_id, {}, {}},
+        common_agent_daemon_state_name(execution.outcome.status.state));
+    outcome = std::move(execution.outcome);
+    events = std::move(execution.events);
+    error.clear();
+    return outcome.ok;
+}
+
+namespace {
+
+bool filter_session_descriptor(
+        const common_agent_runtime_session_descriptor & session,
+        const common_agent_runtime_session_key & key) {
+    return session.key.namespace_id == key.namespace_id &&
+        session.key.session_id == key.session_id;
+}
+
+std::optional<common_agent_runtime_session_descriptor> find_session_descriptor(
+        common_agent_runtime_session_manager * host,
+        const agent_resource_read_authority & authority) {
+    if (host == nullptr) {
+        return std::nullopt;
+    }
+    for (const auto & session : host->list_sessions()) {
+        if (session.key.namespace_id == authority.namespace_id &&
+                session.key.session_id == authority.session_id) {
+            return session;
+        }
+    }
+    return std::nullopt;
+}
+
+common_agent_daemon_memory_summary summarize_memory(
+        const common_memory_record & memory) {
+    return {
+        memory.id,
+        common_memory_kind_name(memory.kind),
+        common_memory_scope_name(memory.scope),
+        !memory.summary.empty() ? memory.summary : memory.content,
+        memory.session_id,
+        memory.project_id,
+        memory.turn_id,
+        memory.created_at,
+    };
+}
+
+common_agent_daemon_plan_summary summarize_plan(
+        const common_plan_state & plan) {
+    const auto plan_status_name = [](common_plan_status status) {
+        switch (status) {
+            case common_plan_status::proposed: return "proposed";
+            case common_plan_status::active: return "active";
+            case common_plan_status::completed: return "completed";
+            case common_plan_status::blocked: return "blocked";
+            case common_plan_status::failed: return "failed";
+            case common_plan_status::cancelled: return "cancelled";
+        }
+        return "proposed";
+    };
+    const auto plan_scope_name = [](common_plan_scope scope) {
+        switch (scope) {
+            case common_plan_scope::turn: return "turn";
+            case common_plan_scope::session: return "session";
+            case common_plan_scope::project: return "project";
+            case common_plan_scope::global: return "global";
+        }
+        return "turn";
+    };
+    return {
+        plan.id,
+        plan.purpose,
+        plan.goal,
+        plan_status_name(plan.status),
+        plan_scope_name(plan.scope),
+        plan.session_id,
+        plan.project_id,
+        plan.turn_id,
+        plan.active_step_id.value_or(""),
+        plan.next_action.value_or(""),
+        plan.version,
+        plan.steps.size(),
+        plan.observations.size(),
+    };
+}
+
+}
+
+std::optional<common_agent_runtime_active_turn_descriptor> common_agent_daemon_service::describe_active_turn() const {
+    if (!runtime.host) {
+        return std::nullopt;
+    }
+    return runtime.host->describe_active_turn();
+}
+
+std::vector<common_agent_runtime_session_descriptor> common_agent_daemon_service::list_sessions() const {
+    if (!runtime.host) {
+        return {};
+    }
+    return runtime.host->list_sessions();
+}
+
+bool common_agent_daemon_service::request_cancel_active_turn(
+        const std::string & target_request_id,
+        const std::string & target_turn_id,
+        common_agent_runtime_active_turn_descriptor & active_turn,
+        std::string & error) {
+    if (!runtime.host) {
+        error = "daemon host is not initialized";
+        return false;
+    }
+    return runtime.host->request_cancel_active_turn(
+        target_request_id,
+        target_turn_id,
+        active_turn,
+        error);
+}
+
+bool common_agent_daemon_service::execute_flydelta_admin(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> &,
+        std::string & error) {
+    error.clear();
+    if (!command.flydelta_admin.has_value()) {
+        error = "FlyDelta admin command missing payload";
+        outcome.error = error;
+        return false;
+    }
+    const auto & request = *command.flydelta_admin;
+    if (!runtime.flydelta_review_lifecycle_store ||
+            !runtime.flydelta_sideband_review_store ||
+            !runtime.flydelta_sideband_registry) {
+        error = "FlyDelta review lifecycle is not configured";
+        outcome.error = error;
+        return false;
+    }
+    outcome.response_kind = common_agent_daemon_response_kind::lifecycle;
+    auto fail = [&](const std::string & message) {
+        error = message;
+        outcome.error = error;
+        outcome.ok = false;
+        outcome.event = "flydelta.admin.failed";
+        return false;
+    };
+    if (request.operation == "flydelta.get_binding") {
+        if (request.binding_key.empty()) return fail("FlyDelta binding_key is required");
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        std::vector<common_flydelta_sideband_review> open_canaries;
+        if (runtime.flydelta_sideband_review_store) {
+            open_canaries = runtime.flydelta_sideband_review_store->open_canaries(error);
+            if (!error.empty()) return fail(error);
+        }
+        json canaries = json::array();
+        for (const auto & review : open_canaries) {
+            if (!review.has_canary_envelope ||
+                    review.canary_envelope.binding_key != request.binding_key) continue;
+            const auto & envelope = review.canary_envelope;
+            canaries.push_back({
+                {"event_id", review.event_id},
+                {"candidate_revision_id", envelope.candidate_revision_id},
+                {"traffic_basis_points", envelope.traffic_basis_points},
+                {"expires_at_epoch_ms", envelope.expires_at_epoch_ms},
+                {"max_observations", envelope.max_observations},
+                {"max_scale", envelope.max_scale},
+                {"behavior_key", envelope.behavior_key},
+                {"scope_fingerprint", envelope.scope_fingerprint},
+                {"baseline_deployment_fingerprint", envelope.baseline_deployment_fingerprint},
+                {"rollback_revision_id", envelope.rollback_revision_id},
+                {"oracle_revision", envelope.oracle_revision},
+                {"policy_revision", envelope.policy_revision},
+            });
+        }
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.loaded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
+            {"open_canaries", canaries},
+        }.dump();
+        return true;
+    }
+    const auto manifest_it = runtime.flydelta_sideband_registry->list().find(request.candidate_id);
+    const auto require_manifest = [&]() -> const common_flydelta_sideband_manifest * {
+        if (manifest_it == runtime.flydelta_sideband_registry->list().end()) return nullptr;
+        return &manifest_it->second;
+    };
+    if (request.operation == "flydelta.close_canary") {
+        if (!request.explicit_host_approval) {
+            return fail("FlyDelta canary close requires explicit host approval");
+        }
+        if (request.reason.empty()) {
+            return fail("FlyDelta canary close requires a reason");
+        }
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.manifest.id == request.candidate_id &&
+                (request.canary_event_id.empty() || item.event_id == request.canary_event_id) &&
+                (request.binding_key.empty() ||
+                 item.canary_envelope.binding_key == request.binding_key);
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        common_flydelta_sideband_review close;
+        close.event_id = it->event_id + ":close:explicit";
+        close.actor_id = request.actor_id.empty() ? "host" : request.actor_id;
+        close.policy_revision = "flydelta-canary-manual-v1";
+        close.reason = request.reason;
+        close.source = common_flydelta_review_source::operator_action;
+        close.action = common_flydelta_review_action::close_canary;
+        close.manifest = it->manifest;
+        close.canary_envelope_event_id = it->event_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.closed";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"canary_event_id", it->event_id},
+            {"fallback", "active"},
+            {"reason", close.reason},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.complete_canary_observation" ||
+            request.operation == "flydelta.attach_canary_evaluation") {
+        if (!request.explicit_host_approval) {
+            return fail("FlyDelta canary observation write requires explicit host approval");
+        }
+        if (request.canary_event_id.empty() || request.observation_id.empty()) {
+            return fail("FlyDelta canary observation requires event and observation ids");
+        }
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.event_id == request.canary_event_id &&
+                item.manifest.id == request.candidate_id;
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        common_flydelta_sideband_review observation;
+        observation.event_id = request.canary_event_id + ":observation:" +
+            request.observation_id + ":" + request.operation.substr(17);
+        observation.actor_id = request.actor_id.empty() ? "host" : request.actor_id;
+        observation.policy_revision = "flydelta-canary-observation-v1";
+        observation.source = common_flydelta_review_source::host_automation;
+        observation.manifest = it->manifest;
+        observation.canary_envelope_event_id = it->event_id;
+        observation.observation_id = request.observation_id;
+        observation.allocation_id = request.allocation_id;
+        observation.scope_step_id = request.scope_step_id.empty()
+            ? it->canary_envelope.scope_fingerprint : request.scope_step_id;
+        observation.observation_status = common_flydelta_canary_observation_status::generation_failed;
+        std::string observation_status_error;
+        if (request.observation_status.empty() ||
+                !parse_common_flydelta_canary_observation_status(
+                    request.observation_status, observation.observation_status,
+                    observation_status_error)) {
+            return fail(observation_status_error.empty()
+                ? "FlyDelta canary observation requires a terminal status"
+                : observation_status_error);
+        }
+        if (request.operation == "flydelta.complete_canary_observation") {
+            observation.action = common_flydelta_review_action::complete_canary_observation;
+            observation.evaluation_report_ref = request.evaluation_report_ref;
+            observation.reason = request.reason;
+        } else {
+            if (observation.observation_status != common_flydelta_canary_observation_status::evaluated) {
+                return fail("FlyDelta evaluation attachment requires evaluated status");
+            }
+            observation.action = common_flydelta_review_action::attach_canary_evaluation;
+            observation.evaluation_report_ref = request.evaluation_report_ref;
+            observation.counterfactual_report_ref = request.counterfactual_report_ref;
+            observation.canary_outcome = parse_canary_outcome(request.canary_outcome);
+            observation.target_gain = request.canary_target_gain_observation;
+            observation.control_regression = request.canary_control_regression_observation;
+            observation.competitor_regression = request.canary_competitor_regression_observation;
+        }
+        if (!runtime.flydelta_sideband_review_store->append(observation, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = request.operation == "flydelta.complete_canary_observation"
+            ? "flydelta.canary.observation.completed"
+            : "flydelta.canary.evaluation.attached";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"canary_event_id", it->event_id},
+            {"observation_id", observation.observation_id},
+            {"status", common_flydelta_canary_observation_status_name(observation.observation_status)},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.canary_disposition") {
+        std::vector<common_flydelta_sideband_review> open;
+        if (runtime.flydelta_sideband_review_store) {
+            open = runtime.flydelta_sideband_review_store->open_canaries(error);
+        }
+        if (!error.empty()) return fail(error);
+        const auto it = std::find_if(open.begin(), open.end(), [&](const auto & item) {
+            return item.manifest.id == request.candidate_id &&
+                (request.canary_event_id.empty() || item.event_id == request.canary_event_id) &&
+                (request.binding_key.empty() ||
+                 item.canary_envelope.binding_key == request.binding_key);
+        });
+        if (it == open.end()) return fail("FlyDelta canary envelope is not open");
+        const auto current_options = runtime.config_store
+            ? runtime.config_store->snapshot() : std::shared_ptr<const daemon_options>();
+        if (!current_options) return fail("FlyDelta daemon configuration is unavailable");
+        std::string journal_error;
+        const auto all_reviews = runtime.flydelta_sideband_review_store
+            ? runtime.flydelta_sideband_review_store->list(journal_error)
+            : std::vector<common_flydelta_sideband_review>{};
+        if (!journal_error.empty()) return fail(journal_error);
+        common_flydelta_canary_policy_snapshot snapshot;
+        if (!common_flydelta_build_canary_policy_snapshot(
+                all_reviews, it->event_id, snapshot, error)) return fail(error);
+        common_flydelta_canary_policy_input input;
+        input.completed_observations = snapshot.evaluated_observations;
+        input.unique_allocations = snapshot.unique_allocations;
+        input.harmed_results = snapshot.harmed_results;
+        input.target_gain = snapshot.target_gain;
+        input.control_regression = snapshot.control_regression;
+        input.competitor_regression = snapshot.competitor_regression;
+        input.current_traffic_basis_points = it->canary_envelope.traffic_basis_points;
+        input.next_scope_available = request.canary_next_scope_available;
+        input.semantic_evidence_complete = snapshot.semantic_evidence_complete;
+        common_flydelta_canary_policy_decision decision;
+        if (!common_flydelta_decide_canary_disposition(
+                current_options->adaptation_flydelta_canary_policy, input, decision, error)) {
+            return fail(error);
+        }
+        if (decision.disposition == common_flydelta_canary_disposition::close) {
+            common_flydelta_sideband_review close;
+            close.event_id = it->event_id + ":close:" +
+                std::to_string(request.canary_harmed_results);
+            close.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            close.policy_revision = current_options->adaptation_flydelta_canary_policy.mode ==
+                common_flydelta_canary_mode::policy ? "flydelta-canary-policy-v1" : "flydelta-canary-manual-v1";
+            close.reason = request.reason.empty() ? decision.reason : request.reason;
+            close.source = common_flydelta_review_source::host_automation;
+            close.action = common_flydelta_review_action::close_canary;
+            close.manifest = it->manifest;
+            close.canary_envelope_event_id = it->event_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+        } else if (decision.disposition == common_flydelta_canary_disposition::promote_active) {
+            if (!current_options->adaptation_flydelta_canary_policy.allow_promotion) {
+                return fail("FlyDelta canary policy does not allow active promotion");
+            }
+            common_flydelta_activation_binding binding;
+            const std::string binding_key = request.binding_key.empty()
+                ? it->canary_envelope.binding_key : request.binding_key;
+            if (!runtime.flydelta_sideband_registry->binding(binding_key, binding, error)) {
+                return fail(error);
+            }
+            common_flydelta_sideband_review promote;
+            promote.event_id = it->event_id + ":promote-active";
+            promote.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            promote.policy_revision = "flydelta-canary-promotion-v1";
+            promote.reason = request.reason.empty() ? decision.reason : request.reason;
+            promote.source = common_flydelta_review_source::host_automation;
+            promote.action = common_flydelta_review_action::activate;
+            promote.manifest = it->manifest;
+            promote.binding_key = binding_key;
+            promote.expected_current_revision_id = binding.selected_revision_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, promote, true, error)) return fail(error);
+        } else if (decision.disposition == common_flydelta_canary_disposition::expand_scope) {
+            const auto & configured_scopes =
+                current_options->adaptation_flydelta_canary_policy.scope_step_fingerprints;
+            std::string next_scope = request.next_scope_fingerprint;
+            if (!configured_scopes.empty()) {
+                const auto current_scope = std::find(
+                    configured_scopes.begin(), configured_scopes.end(),
+                    it->canary_envelope.scope_fingerprint);
+                if (current_scope == configured_scopes.end() ||
+                        std::next(current_scope) == configured_scopes.end()) {
+                    return fail("FlyDelta expansion has no next configured scope step");
+                }
+                const std::string expected_scope = *std::next(current_scope);
+                if (next_scope.empty()) {
+                    next_scope = expected_scope;
+                } else if (next_scope != expected_scope) {
+                    return fail("FlyDelta expansion must use the immediate next configured scope step");
+                }
+            } else if (next_scope.empty()) {
+                next_scope = it->canary_envelope.scope_fingerprint;
+            }
+            common_flydelta_sideband_review close;
+            close.event_id = it->event_id + ":expand-close:" +
+                std::to_string(decision.next_traffic_basis_points);
+            close.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            close.policy_revision = "flydelta-canary-policy-v1";
+            close.reason = "replace envelope for next configured canary step";
+            close.source = common_flydelta_review_source::host_automation;
+            close.action = common_flydelta_review_action::close_canary;
+            close.manifest = it->manifest;
+            close.canary_envelope_event_id = it->event_id;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, close, true, error)) return fail(error);
+            common_flydelta_sideband_review expanded = *it;
+            expanded.event_id = it->event_id + ":expand:" +
+                std::to_string(decision.next_traffic_basis_points);
+            expanded.actor_id = request.actor_id.empty() ? "policy" : request.actor_id;
+            expanded.source = common_flydelta_review_source::host_automation;
+            expanded.canary_envelope_event_id = expanded.event_id;
+            expanded.canary_envelope.traffic_basis_points = decision.next_traffic_basis_points;
+            expanded.canary_envelope.scope_fingerprint = next_scope;
+            if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                    *runtime.flydelta_sideband_registry, expanded, true, error)) return fail(error);
+        }
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.dispositioned";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"disposition", common_flydelta_canary_disposition_name(decision.disposition)},
+            {"reason", decision.reason},
+            {"next_traffic_basis_points", decision.next_traffic_basis_points},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.evaluate_candidate") {
+        if (!runtime.flydelta_job_enqueue) return fail("FlyDelta queue is not configured");
+        const auto * candidate_manifest = require_manifest();
+        if (!candidate_manifest) return fail("FlyDelta candidate is not registered");
+        if (candidate_manifest->status != common_flydelta_sideband_status::candidate ||
+                request.candidate_manifest_ref != candidate_manifest->artifact_path) {
+            return fail("FlyDelta evaluation candidate manifest identity is incompatible");
+        }
+        if (candidate_manifest->compatibility.tokenizer_fingerprint !=
+                    request.tokenizer_fingerprint ||
+                candidate_manifest->compatibility.template_fingerprint !=
+                    request.template_fingerprint ||
+                (!candidate_manifest->applicability.verifier_revision.empty() &&
+                 candidate_manifest->applicability.verifier_revision != request.verifier_revision)) {
+            return fail("FlyDelta evaluation model or verifier identity is incompatible");
+        }
+        common_flydelta_experiment_job job;
+        job.id = "flydelta://evaluation/" + hash_sha256_hex(
+            (request.candidate_id + "\n" + request.suite_ref + "\n" +
+                request.evaluation_revision).data(),
+            request.candidate_id.size() + 1 + request.suite_ref.size() + 1 +
+                request.evaluation_revision.size()).substr(0, 32);
+        job.kind = common_flydelta_experiment_job_kind::evaluation;
+        job.seed.id = job.id;
+        job.seed.behavior_key = "flydelta/pre-canary-evaluation";
+        job.seed.source = common_adaptation_evidence_source::tool_repair;
+        job.seed.scope.namespace_id = "default-namespace";
+        job.seed.scope.session_id = "default-session";
+        job.seed.task_fingerprint = request.suite_ref;
+        job.seed.model_profile_fingerprint = request.model_profile_fingerprint;
+        job.seed.tokenizer_fingerprint = request.tokenizer_fingerprint;
+        job.seed.template_fingerprint = request.template_fingerprint;
+        job.seed.execution_context_fingerprint = request.execution_context_fingerprint;
+        job.seed.baseline_ref = "flydelta://evaluation/baseline/" + request.candidate_id;
+        job.seed.candidate_ref = request.candidate_manifest_ref;
+        job.seed.verifier_ref = request.verifier_revision;
+        job.seed.evidence_ref = candidate_manifest->artifact_hash;
+        job.evaluation_candidate_id = request.candidate_id;
+        job.evaluation_suite_ref = request.suite_ref;
+        job.evaluation_revision = request.evaluation_revision;
+        job.evaluation_limits = request.limits;
+        job.alpha_search.candidates = {1.0f};
+        job.alpha_search.max_candidates = 1;
+        job.code_revision = request.evaluation_revision;
+        if (!common_flydelta_experiment_job_validate(job, 128, error) ||
+                !runtime.flydelta_job_enqueue(job, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.evaluation.queued";
+        outcome.target_request_id = job.id;
+        outcome.payload_json = json{{"operation", request.operation}, {"job_id", job.id}}.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.get_evaluation") {
+        if (!require_manifest()) return fail("FlyDelta candidate is not registered");
+        common_flydelta_evaluation_report report;
+        std::vector<common_flydelta_evaluation_fixture_result> fixtures;
+        if (!common_flydelta_load_evaluation_report(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                report, &fixtures, error)) return fail(error);
+        json result = {
+            {"operation", request.operation},
+            {"report", json::parse(common_flydelta_evaluation_report_to_json(report))},
+            {"fixtures", json::array()},
+        };
+        for (const auto & fixture : fixtures) result["fixtures"].push_back(
+            json::parse(common_flydelta_evaluation_fixture_result_to_json(fixture)));
+        outcome.ok = true;
+        outcome.event = "flydelta.evaluation.loaded";
+        outcome.payload_json = result.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.get_promotion_summary") {
+        if (!require_manifest()) return fail("FlyDelta candidate is not registered");
+        common_flydelta_promotion_summary stored_summary;
+        std::string stored_error;
+        if (common_flydelta_load_promotion_summary(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                stored_summary, stored_error)) {
+            outcome.ok = true;
+            outcome.event = "flydelta.promotion_summary.loaded";
+            outcome.payload_json = json{
+                {"operation", request.operation},
+                {"summary", json::parse(
+                    common_flydelta_promotion_summary_to_json(stored_summary))},
+            }.dump();
+            return true;
+        }
+        if (!stored_error.empty() && stored_error !=
+                "FlyDelta promotion summary was not found") return fail(stored_error);
+        std::vector<common_flydelta_counterfactual_report> reports;
+        if (!common_flydelta_load_counterfactual_reports(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                reports, error) || reports.empty()) return fail(
+                    error.empty() ? "FlyDelta candidate has no counterfactual reports" : error);
+        common_flydelta_promotion_policy policy;
+        common_flydelta_promotion_summary summary;
+        if (!common_flydelta_promotion_summary_from_reports(
+                "flydelta://promotion/" + request.candidate_id,
+                reports, policy, summary, error)) return fail(error);
+        common_flydelta_lifecycle_event_context context;
+        context.event_id = summary.id;
+        context.idempotency_key = summary.id;
+        context.source_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        context.scope.namespace_id = "default-namespace";
+        context.scope.session_id = "default-session";
+        context.content_hash = summary.candidate_id;
+        context.created_at = summary.id;
+        if (!common_flydelta_append_promotion_summary_lifecycle(
+                *runtime.flydelta_review_lifecycle_store, context, summary, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.promotion_summary.loaded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"summary", json::parse(common_flydelta_promotion_summary_to_json(summary))},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.review_candidate") {
+        if (request.decision != "approve_canary" && request.decision != "reject") {
+            return fail("FlyDelta review decision must be approve_canary or reject");
+        }
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        common_flydelta_sideband_review review;
+        const std::string decision_suffix = request.evaluation_revision.empty()
+            ? hash_sha256_hex(request.reason.data(), request.reason.size()).substr(0, 16)
+            : request.evaluation_revision;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":" +
+            request.decision + ":" + decision_suffix;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-promotion-v1";
+        review.evaluation_revision = request.evaluation_revision;
+        review.reason = request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = request.decision == "approve_canary"
+            ? common_flydelta_review_action::approve_canary
+            : common_flydelta_review_action::reject;
+        review.manifest = *manifest;
+        if (review.action == common_flydelta_review_action::approve_canary) {
+            if (!common_flydelta_load_evaluation_report(
+                    *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                    review.evaluation, nullptr, error) ||
+                    !common_flydelta_load_promotion_summary(
+                        *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                        review.promotion_summary, error)) return fail(error);
+            review.has_promotion_evidence = true;
+            review.evaluation_revision = review.evaluation.revision_id;
+            review.promotion_policy = {};
+            review.promotion_summary_ref = review.promotion_summary.id;
+            review.evaluation_report_ref = "flydelta://evaluation/" + request.candidate_id + ":" +
+                review.evaluation.revision_id;
+        }
+        if (!runtime.flydelta_sideband_review_store->append(review, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.review.recorded";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"review", json::parse(common_flydelta_sideband_review_to_json(review))},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.stage_canary") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta canary staging requires explicit host approval");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        common_flydelta_evaluation_report evaluation;
+        common_flydelta_promotion_summary summary;
+        if (!common_flydelta_load_evaluation_report(
+                *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                evaluation, nullptr, error) ||
+                !common_flydelta_load_promotion_summary(
+                    *runtime.flydelta_review_lifecycle_store, request.candidate_id,
+                    summary, error)) return fail(error);
+        std::string review_error;
+        bool approved = false;
+        const std::string evaluation_report_ref = "flydelta://evaluation/" +
+            request.candidate_id + ":" + evaluation.revision_id;
+        for (const auto & item : runtime.flydelta_sideband_review_store->list(review_error)) {
+            if (item.action == common_flydelta_review_action::approve_canary &&
+                    item.manifest.id == request.candidate_id &&
+                    item.evaluation_revision == evaluation.revision_id &&
+                    item.promotion_summary_ref == summary.id &&
+                    item.evaluation_report_ref == evaluation_report_ref) {
+                approved = true;
+                break;
+            }
+        }
+        if (!review_error.empty() || !approved) return fail(
+            review_error.empty() ? "FlyDelta canary requires a durable approve_canary review" : review_error);
+        const bool already_canary = manifest->status == common_flydelta_sideband_status::canary;
+        if (!already_canary && manifest->status != common_flydelta_sideband_status::candidate) {
+            return fail("FlyDelta candidate is not stageable");
+        }
+        common_flydelta_promotion_policy policy;
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":stage_canary:" +
+            evaluation.revision_id;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-promotion-v1";
+        review.evaluation_revision = evaluation.revision_id;
+        review.reason = request.reason.empty() ? "pre-canary evaluation passed" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::stage_canary;
+        review.manifest = *manifest;
+        review.has_promotion_evidence = true;
+        review.promotion_policy = policy;
+        review.promotion_summary = summary;
+        review.evaluation = evaluation;
+        review.promotion_summary_ref = summary.id;
+        review.evaluation_report_ref = evaluation_report_ref;
+        if (request.binding_key.empty()) return fail("FlyDelta canary staging requires binding_key");
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(request.binding_key, binding, error)) {
+            return fail(error);
+        }
+        review.binding_key = request.binding_key;
+        review.has_canary_envelope = true;
+        review.canary_envelope_event_id = review.event_id;
+        review.canary_envelope.binding_key = request.binding_key;
+        review.canary_envelope.candidate_revision_id = manifest->id;
+        review.canary_envelope.behavior_key = request.canary_behavior_key.empty()
+            ? manifest->applicability.behavior_key : request.canary_behavior_key;
+        review.canary_envelope.scope_fingerprint = request.canary_scope_fingerprint.empty()
+            ? manifest->applicability.scope_fingerprint : request.canary_scope_fingerprint;
+        review.canary_envelope.traffic_basis_points = request.canary_traffic_basis_points;
+        review.canary_envelope.expires_at_epoch_ms = request.canary_expires_at_epoch_ms;
+        review.canary_envelope.max_observations = request.canary_max_observations;
+        review.canary_envelope.max_scale = request.canary_max_scale;
+        review.canary_envelope.compatibility = manifest->compatibility;
+        review.canary_envelope.oracle_revision = request.oracle_revision.empty()
+            ? manifest->oracle_revision : request.oracle_revision;
+        review.canary_envelope.policy_revision = request.canary_policy_revision.empty()
+            ? "flydelta-canary-manual-v1" : request.canary_policy_revision;
+        review.canary_envelope.baseline_deployment_fingerprint = request.baseline_deployment_fingerprint;
+        review.canary_envelope.rollback_revision_id = request.rollback_revision_id.empty()
+            ? binding.selected_revision_id : request.rollback_revision_id;
+        // Apply and persist as one durable boundary. The review store applies
+        // to a registry copy before appending; the live registry advances only
+        // after the journal write succeeds. This prevents a failed append from
+        // exposing an unjournaled canary.
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.canary.staged";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"candidate_id", request.candidate_id},
+            {"evaluation_revision", evaluation.revision_id},
+            {"status", "canary"},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.activate_candidate") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta activation requires explicit host approval");
+        if (request.binding_key.empty()) return fail(
+            "FlyDelta activation requires binding_key");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta candidate is not registered");
+        if (manifest->status != common_flydelta_sideband_status::canary) {
+            return fail("FlyDelta candidate must be in canary before activation");
+        }
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.candidate_id + ":activate:" +
+            request.binding_key;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-activation-v1";
+        review.evaluation_revision = manifest->evaluation_revision;
+        review.reason = request.reason.empty() ? "explicit sideband activation" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::activate;
+        review.manifest = *manifest;
+        review.binding_key = request.binding_key;
+        review.expected_current_revision_id = request.expected_current_revision_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.activated";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
+        }.dump();
+        return true;
+    }
+    if (request.operation == "flydelta.rollback_candidate") {
+        if (!request.explicit_host_approval) return fail(
+            "FlyDelta rollback requires explicit host approval");
+        if (request.binding_key.empty()) return fail(
+            "FlyDelta rollback requires binding_key");
+        const auto * manifest = require_manifest();
+        if (!manifest) return fail("FlyDelta rollback revision is not registered");
+        if (manifest->status != common_flydelta_sideband_status::active) {
+            return fail("FlyDelta rollback revision must remain active");
+        }
+        common_flydelta_activation_binding current;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, current, error)) return fail(error);
+        if (current.previous_revision_id.empty() ||
+                request.candidate_id != current.previous_revision_id) {
+            return fail("FlyDelta rollback target is not the previous selected revision");
+        }
+        common_flydelta_sideband_review review;
+        review.event_id = "flydelta://review/" + request.binding_key + ":rollback:" +
+            request.candidate_id;
+        review.actor_id = request.actor_id.empty() ? "jsonl-admin" : request.actor_id;
+        review.policy_revision = "flydelta-activation-v1";
+        review.reason = request.reason.empty() ? "explicit sideband rollback" : request.reason;
+        review.source = common_flydelta_review_source::operator_action;
+        review.action = common_flydelta_review_action::rollback;
+        review.manifest = *manifest;
+        review.binding_key = request.binding_key;
+        review.expected_current_revision_id = current.selected_revision_id;
+        if (!runtime.flydelta_sideband_review_store->apply_and_append(
+                *runtime.flydelta_sideband_registry, review, true, error)) return fail(error);
+        common_flydelta_activation_binding binding;
+        if (!runtime.flydelta_sideband_registry->binding(
+                request.binding_key, binding, error)) return fail(error);
+        outcome.ok = true;
+        outcome.event = "flydelta.binding.rolled_back";
+        outcome.payload_json = json{
+            {"operation", request.operation},
+            {"binding_key", binding.binding_key},
+            {"selected_revision_id", binding.selected_revision_id},
+            {"previous_revision_id", binding.previous_revision_id},
+        }.dump();
+        return true;
+    }
+    return fail("unsupported FlyDelta admin operation");
+}
+
+bool common_agent_daemon_service::execute_outcome(
+        const common_agent_daemon_command & command,
+        common_agent_daemon_command_outcome & outcome,
+        std::vector<common_agent_daemon_event> & events,
+        std::string & error) {
+    initialize_command_outcome(command, outcome);
+    const auto command_context = make_command_event_context(command);
+    common_agent_event_emitter command_events(
+        [&events](common_agent_daemon_event event) {
+            events.push_back(std::move(event));
+        },
+        command_context);
+
+    switch (command.type) {
+        case common_agent_daemon_command_type::flydelta_admin:
+            return execute_flydelta_admin(command, outcome, events, error);
+        case common_agent_daemon_command_type::get_status:
+            return populate_status_outcome(outcome, events, error);
+
+        case common_agent_daemon_command_type::cancel_turn:
+            error = "cancel_turn is handled by the daemon dispatcher";
+            outcome.error = error;
+            command_events.emit(common_agent_daemon_event_type::turn_cancel_rejected, error);
+            return false;
+
+        case common_agent_daemon_command_type::list_sessions:
+            outcome.ok = runtime.host != nullptr;
+            outcome.response_kind = common_agent_daemon_response_kind::status;
+            outcome.event = "sessions_listed";
+            outcome.status.state = state_value;
+            outcome.status.live = state_value != common_agent_daemon_state::stopped;
+            outcome.status.ready = state_value == common_agent_daemon_state::ready;
+            outcome.status.session_snapshot_populated = true;
+            if (runtime.host) {
+                outcome.status.sessions = runtime.host->list_sessions();
+                outcome.status.session_count = outcome.status.sessions.size();
+            } else {
+                outcome.error = "daemon host is not initialized";
+            }
+            command_events.emit(common_agent_daemon_event_type::sessions_listed, std::to_string(outcome.status.session_count));
+            error = outcome.error;
+            return outcome.ok;
+
+        case common_agent_daemon_command_type::get_session:
+            if (!command.session.has_value()) {
+                error = "get_session command missing session payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_lookup_failed",
+                    common_agent_daemon_event_type::session_lookup_failed);
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_lookup_failed",
+                    common_agent_daemon_event_type::session_lookup_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::status;
+            outcome.event = "session_found";
+            outcome.status.state = state_value;
+            outcome.status.live = state_value != common_agent_daemon_state::stopped;
+            outcome.status.ready = state_value == common_agent_daemon_state::ready;
+            outcome.status.session_snapshot_populated = true;
+            for (const auto & session : runtime.host->list_sessions()) {
+                if (filter_session_descriptor(session, command.session->key)) {
+                    outcome.status.sessions.push_back(session);
+                }
+            }
+            outcome.status.session_count = outcome.status.sessions.size();
+            if (outcome.status.sessions.empty()) {
+                error = "session is not active";
+                outcome.error = error;
+                outcome.event = "session_not_found";
+                outcome.ok = false;
+                command_events.emit(common_agent_daemon_event_type::session_not_found, error);
+                return false;
+            }
+            outcome.ok = true;
+            command_events.emit(common_agent_daemon_event_type::session_found, outcome.status.sessions.front().key.session_id);
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::list_resources:
+            if (!command.scope.has_value()) {
+                error = "list_resources command missing scope payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resources_list_failed",
+                    common_agent_daemon_event_type::resources_list_failed);
+            }
+            if (!runtime.resource_store) {
+                error = "daemon resource store is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resources_list_failed",
+                    common_agent_daemon_event_type::resources_list_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::listing;
+            outcome.event = "resources_listed";
+            outcome.status.state = state_value;
+            outcome.status.live = state_value != common_agent_daemon_state::stopped;
+            outcome.status.ready = state_value == common_agent_daemon_state::ready;
+            outcome.ok = runtime.resource_store->list(command.scope->authority, outcome.listing_result.resources, error);
+            if (!outcome.ok) {
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::resources_list_failed, error);
+                return false;
+            }
+            command_events.emit(common_agent_daemon_event_type::resources_listed, std::to_string(outcome.listing_result.resources.size()));
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::list_memories:
+            if (!command.scope.has_value()) {
+                error = "list_memories command missing scope payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "memories_list_failed",
+                    common_agent_daemon_event_type::memories_list_failed);
+            }
+            if (!runtime.memory_store) {
+                error = "daemon memory store is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "memories_list_failed",
+                    common_agent_daemon_event_type::memories_list_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::listing;
+            outcome.event = "memories_listed";
+            outcome.status.state = state_value;
+            outcome.status.live = state_value != common_agent_daemon_state::stopped;
+            outcome.status.ready = state_value == common_agent_daemon_state::ready;
+            {
+                std::vector<common_memory_record> collected;
+                const auto session = find_session_descriptor(runtime.host.get(), command.scope->authority);
+
+                common_memory_query query;
+                query.namespace_id = command.scope->authority.namespace_id;
+                query.session_id = command.scope->authority.session_id;
+                query.project_id = command.scope->authority.project_id;
+                query.turn_id = command.scope->authority.turn_id;
+                query.limit = 1024;
+
+                query.scope = common_memory_scope::session;
+                auto session_memories = runtime.memory_store->list(query, error);
+                if (!error.empty()) {
+                    outcome.error = error;
+                    command_events.emit(common_agent_daemon_event_type::memories_list_failed, error);
+                    return false;
+                }
+                collected.insert(collected.end(), session_memories.begin(), session_memories.end());
+
+                const std::string project_id =
+                    !query.project_id.empty()
+                        ? query.project_id
+                        : (session.has_value() ? session->project_id : std::string());
+                if (!project_id.empty()) {
+                    query.scope = common_memory_scope::project;
+                    query.project_id = project_id;
+                    auto project_memories = runtime.memory_store->list(query, error);
+                    if (!error.empty()) {
+                        outcome.error = error;
+                        command_events.emit(common_agent_daemon_event_type::memories_list_failed, error);
+                        return false;
+                    }
+                    collected.insert(collected.end(), project_memories.begin(), project_memories.end());
+                }
+
+                for (const auto & memory : collected) {
+                    outcome.listing_result.memories.push_back(summarize_memory(memory));
+                }
+                outcome.ok = true;
+            }
+            command_events.emit(common_agent_daemon_event_type::memories_listed, std::to_string(outcome.listing_result.memories.size()));
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::list_plans:
+            if (!command.scope.has_value()) {
+                error = "list_plans command missing scope payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "plans_list_failed",
+                    common_agent_daemon_event_type::plans_list_failed);
+            }
+            if (!runtime.plan_store) {
+                error = "daemon plan store is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "plans_list_failed",
+                    common_agent_daemon_event_type::plans_list_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::listing;
+            outcome.event = "plans_listed";
+            outcome.status.state = state_value;
+            outcome.status.live = state_value != common_agent_daemon_state::stopped;
+            outcome.status.ready = state_value == common_agent_daemon_state::ready;
+            {
+                const auto session = find_session_descriptor(runtime.host.get(), command.scope->authority);
+                const std::string project_id =
+                    !command.scope->authority.project_id.empty()
+                        ? command.scope->authority.project_id
+                        : (session.has_value() ? session->project_id : std::string());
+                auto plans = runtime.plan_store->list(error);
+                if (!error.empty()) {
+                    outcome.error = error;
+                    command_events.emit(common_agent_daemon_event_type::plans_list_failed, error);
+                    return false;
+                }
+                for (const auto & plan : plans) {
+                    const bool matches_session = common_plan_scope_matches(
+                        plan,
+                        common_plan_scope::session,
+                        command.scope->authority.namespace_id,
+                        command.scope->authority.session_id,
+                        project_id,
+                        command.scope->authority.turn_id);
+                    const bool matches_project = !project_id.empty() && common_plan_scope_matches(
+                        plan,
+                        common_plan_scope::project,
+                        command.scope->authority.namespace_id,
+                        command.scope->authority.session_id,
+                        project_id,
+                        command.scope->authority.turn_id);
+                    if (!matches_session && !matches_project) {
+                        continue;
+                    }
+                    outcome.listing_result.plans.push_back(summarize_plan(plan));
+                }
+                outcome.ok = true;
+            }
+            command_events.emit(common_agent_daemon_event_type::plans_listed, std::to_string(outcome.listing_result.plans.size()));
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::reset_session:
+            if (!command.session.has_value()) {
+                error = "reset_session command missing session payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
+            }
+            outcome.ok = runtime.host->reset_session(command.session->key, error);
+            if (!outcome.ok) {
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_reset_failed",
+                    common_agent_daemon_event_type::session_reset_failed);
+            }
+            return succeed_lifecycle_result(
+                command,
+                outcome,
+                events,
+                error,
+                "session_reset",
+                common_agent_daemon_event_type::session_reset,
+                "session reset");
+
+        case common_agent_daemon_command_type::close_session:
+            if (!command.session.has_value()) {
+                error = "close_session command missing session payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
+            }
+            outcome.ok = runtime.host->close_session(command.session->key, error);
+            if (!outcome.ok) {
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "session_close_failed",
+                    common_agent_daemon_event_type::session_close_failed);
+            }
+            return succeed_lifecycle_result(
+                command,
+                outcome,
+                events,
+                error,
+                "session_closed",
+                common_agent_daemon_event_type::session_closed,
+                "session closed");
+
+        case common_agent_daemon_command_type::read_resource:
+            if (!command.resource.has_value()) {
+                error = "read_resource command missing resource payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_read_failed",
+                    common_agent_daemon_event_type::resource_read_failed);
+            }
+            if (!runtime.resource_store) {
+                error = "daemon resource store is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_read_failed",
+                    common_agent_daemon_event_type::resource_read_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::resource;
+            if (!runtime.resource_store->stat(command.resource->uri, command.resource->authority, outcome.resource_result.resource, error)) {
+                outcome.ok = false;
+                outcome.event = "resource_not_found";
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::resource_not_found, error);
+                return false;
+            }
+            if (!runtime.resource_store->read_text(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error)) {
+                outcome.ok = false;
+                outcome.event = "resource_read_failed";
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::resource_read_failed, error);
+                return false;
+            }
+            outcome.ok = true;
+            outcome.event = "resource_read";
+            command_events.emit(common_agent_daemon_event_type::resource_read, outcome.resource_result.resource.uri);
+            error.clear();
+            return true;
+
+        case common_agent_daemon_command_type::put_resource: {
+            if (!command.resource_put.has_value()) {
+                error = "put_resource command missing resource payload";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_create_failed",
+                    common_agent_daemon_event_type::resource_create_failed);
+            }
+            if (!runtime.resource_store) {
+                error = "daemon resource store is not initialized";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_create_failed",
+                    common_agent_daemon_event_type::resource_create_failed);
+            }
+            const size_t payload_size = command.resource_put->request.bytes_are_authoritative
+                ? command.resource_put->request.bytes.size()
+                : command.resource_put->request.text.size();
+            if (payload_size > 1024 * 1024) {
+                error = "put_resource payload exceeds the 1 MiB limit";
+                return fail_lifecycle_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "resource_create_failed",
+                    common_agent_daemon_event_type::resource_create_failed);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::resource;
+            auto put_request = command.resource_put->request;
+            put_request.source_provider = "jsonl-admin";
+            put_request.source_tool = "put_resource";
+            const bool stored = put_request.bytes_are_authoritative
+                ? runtime.resource_store->put_bytes(put_request, outcome.resource_result.resource, error)
+                : runtime.resource_store->put_text(put_request, outcome.resource_result.resource, error);
+            if (!stored) {
+                outcome.ok = false;
+                outcome.event = "resource_create_failed";
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::resource_create_failed, error);
+                return false;
+            }
+            outcome.ok = true;
+            outcome.event = "resource_created";
+            command_events.emit(common_agent_daemon_event_type::resource_created, outcome.resource_result.resource.uri);
+            error.clear();
+            return true;
+        }
+
+        case common_agent_daemon_command_type::drain:
+            state_value = common_agent_daemon_state::draining;
+            return succeed_lifecycle_result(
+                command,
+                outcome,
+                events,
+                error,
+                "drain",
+                common_agent_daemon_event_type::drain_requested,
+                "drain requested");
+
+        case common_agent_daemon_command_type::shutdown:
+            shutdown_requested_flag = true;
+            shutdown_mode_value = common_agent_daemon_shutdown_mode::drain;
+            state_value = common_agent_daemon_state::draining;
+            return succeed_lifecycle_result(
+                command,
+                outcome,
+                events,
+                error,
+                "shutdown",
+                common_agent_daemon_event_type::shutdown_requested,
+                "shutdown requested");
+
+        case common_agent_daemon_command_type::reload_config:
+            initialize_lifecycle_outcome(command, outcome);
+            outcome.response_kind = common_agent_daemon_response_kind::lifecycle;
+            command_events.emit(common_agent_daemon_event_type::config_reload_started, command.reload_path);
+            if (!runtime.reload_config) {
+                error = "config reload is not enabled for this daemon";
+                outcome.ok = false;
+                outcome.event = "config.reload.rejected";
+                outcome.error = error;
+                command_events.emit(common_agent_daemon_event_type::config_reload_rejected, error);
+                return false;
+            }
+            if (!runtime.reload_config(command.reload_path, outcome.reload_result, error)) {
+                outcome.ok = false;
+                outcome.event = "config.reload.rejected";
+                outcome.error = error;
+                command_events.emit(
+                    common_agent_daemon_event_type::config_reload_rejected,
+                    outcome.reload_result.warning.empty() ? error : outcome.reload_result.warning);
+                return false;
+            }
+            outcome.ok = outcome.reload_result.restart_required.empty();
+            outcome.event = outcome.ok ? "config.reload.completed" : "config.reload.rejected";
+            outcome.error = outcome.ok ? std::string() : "configuration change requires daemon restart";
+            if (outcome.ok) {
+                for (const auto & provider : outcome.reload_result.providers_added) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_added, provider);
+                }
+                for (const auto & provider : outcome.reload_result.providers_removed) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_removed, provider);
+                }
+                for (const auto & provider : outcome.reload_result.providers_replaced) {
+                    command_events.emit(common_agent_daemon_event_type::mcp_provider_replaced, provider);
+                }
+            }
+            command_events.emit(
+                outcome.ok
+                    ? common_agent_daemon_event_type::config_reload_completed
+                    : common_agent_daemon_event_type::config_reload_rejected,
+                outcome.ok ? std::to_string(outcome.reload_result.config_version) : outcome.error);
+            error = outcome.error;
+            return outcome.ok;
+
+        case common_agent_daemon_command_type::execute_tool:
+            if (!command.tool.has_value()) {
+                error = "execute_tool command missing tool payload";
+                outcome.error = error;
+                outcome.event = "tool_failed";
+                command_events.emit(common_agent_daemon_event_type::command_failed, error);
+                return false;
+            }
+            if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
+                error = "daemon is not accepting new tools";
+                outcome.error = error;
+                outcome.event = "tool_rejected";
+                command_events.emit(common_agent_daemon_event_type::command_rejected, error);
+                return false;
+            }
+            if (!runtime.tool_executor) {
+                error = "daemon tool executor is not initialized";
+                outcome.error = error;
+                outcome.event = "tool_failed";
+                command_events.emit(common_agent_daemon_event_type::command_failed, error);
+                return false;
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::tool;
+            command_events.emit(common_agent_daemon_event_type::tool_queued, command.tool->tool_name);
+            command_events.emit(common_agent_daemon_event_type::tool_started, command.tool->tool_name);
+            outcome.ok = runtime.tool_executor(*command.tool, outcome.tool_result, error);
+            outcome.event = outcome.ok ? "tool_completed" : "tool_failed";
+            outcome.error = error.empty() ? outcome.tool_result.raw_diagnostic : error;
+            if (!outcome.tool_result.safe_summary.empty()) {
+                command_events.emit(common_agent_daemon_event_type::tool_output, outcome.tool_result.safe_summary);
+            }
+            for (const auto & resource_ref : outcome.tool_result.resource_refs) {
+                command_events.emit(
+                    common_agent_daemon_event_type::tool_artifact_created,
+                    resource_ref.uri.empty() ? resource_ref.name : resource_ref.uri);
+            }
+            command_events.emit(
+                outcome.ok ? common_agent_daemon_event_type::tool_completed : common_agent_daemon_event_type::tool_failed,
+                outcome.tool_result.safe_summary);
+            return outcome.ok;
+
+        case common_agent_daemon_command_type::run_turn:
+            if (!command.turn.has_value()) {
+                error = "run_turn command missing turn payload";
+                return fail_turn_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "turn_failed",
+                    common_agent_daemon_event_type::turn_failed);
+            }
+            if (shutdown_requested_flag || state_value != common_agent_daemon_state::ready) {
+                error = "daemon is not accepting new turns";
+                return fail_turn_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "turn_rejected",
+                    common_agent_daemon_event_type::turn_rejected);
+            }
+            if (!runtime.host) {
+                error = "daemon host is not initialized";
+                return fail_turn_result(
+                    command,
+                    outcome,
+                    events,
+                    error,
+                    "turn_failed",
+                    common_agent_daemon_event_type::turn_failed);
+            }
+
+            error.clear();
+            runtime.host->run_turn(command.turn->request, outcome.turn_result, error);
+            if (command.turn->include_summary) {
+                outcome.turn_summary = make_turn_summary(
+                    command.turn->request.turn,
+                    outcome.turn_result);
+            }
+            outcome.response_kind = common_agent_daemon_response_kind::turn;
+            outcome.ok = outcome.turn_result.ok;
+            if (!error.empty() && outcome.turn_result.error.empty()) {
+                outcome.turn_result.error = error;
+            }
+            if (!outcome.turn_result.error.empty()) {
+                outcome.error = outcome.turn_result.error;
+            }
+            outcome.event =
+                outcome.turn_result.cancelled
+                    ? "turn_cancelled"
+                    : (outcome.turn_result.ok ? "turn_completed" : "turn_failed");
+            const auto command_context = make_command_event_context(command);
+            std::set<std::string> queued_tools;
+            std::set<std::string> started_tools;
+            for (const auto & trace : outcome.turn_result.trace) {
+                if (trace.stage != common_runtime_trace_stage::tool || trace.tool_name.empty()) {
+                    continue;
+                }
+                const std::string tool_identity = trace.tool_name + "|" + trace.step_id;
+                if ((trace.kind == common_runtime_trace_kind::started ||
+                        trace.kind == common_runtime_trace_kind::succeeded ||
+                        trace.kind == common_runtime_trace_kind::completed ||
+                        trace.kind == common_runtime_trace_kind::failed) &&
+                        queued_tools.insert(tool_identity).second) {
+                    auto event_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_queued,
+                        event_context.request_id,
+                        event_context.turn_id,
+                        trace.tool_name,
+                        0,
+                        std::move(event_context)));
+                }
+                if (trace.kind == common_runtime_trace_kind::started ||
+                        trace.kind == common_runtime_trace_kind::succeeded ||
+                        trace.kind == common_runtime_trace_kind::completed ||
+                        trace.kind == common_runtime_trace_kind::failed) {
+                    if (!started_tools.insert(tool_identity).second) {
+                        continue;
+                    }
+                    auto event_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_started,
+                        event_context.request_id,
+                        event_context.turn_id,
+                        trace.tool_name,
+                        0,
+                        std::move(event_context)));
+                }
+                if (trace.kind == common_runtime_trace_kind::succeeded ||
+                        trace.kind == common_runtime_trace_kind::completed) {
+                    auto event_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_completed,
+                        event_context.request_id,
+                        event_context.turn_id,
+                        trace.tool_name,
+                        0,
+                        std::move(event_context)));
+                    auto output_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_output,
+                        output_context.request_id,
+                        output_context.turn_id,
+                        trace.detail.empty() ? trace.tool_name : trace.detail,
+                        0,
+                        std::move(output_context)));
+                } else if (trace.kind == common_runtime_trace_kind::failed) {
+                    auto event_context = command_context;
+                    emit_internal_event(make_common_agent_daemon_event(
+                        common_agent_daemon_event_type::tool_failed,
+                        event_context.request_id,
+                        event_context.turn_id,
+                        trace.detail.empty() ? trace.tool_name : trace.tool_name + ":" + trace.detail,
+                        0,
+                        std::move(event_context)));
+                }
+            }
+            emit_plan_and_resource_events_from_turn(*this, command, outcome.turn_result);
+            if (outcome.turn_result.memory_learning_related_count > 0 ||
+                    (!outcome.turn_result.memory_learning_summary.empty() &&
+                        outcome.turn_result.memory_learning_summary != "none")) {
+                auto memory_context = command_context;
+                emit_internal_event(make_common_agent_daemon_event(
+                    common_agent_daemon_event_type::memory_learned,
+                    memory_context.request_id,
+                    memory_context.turn_id,
+                    outcome.turn_result.memory_learning_summary,
+                    0,
+                    std::move(memory_context)));
+            }
+            command_events.emit(
+                outcome.turn_result.cancelled
+                    ? common_agent_daemon_event_type::turn_cancelled
+                    : (outcome.turn_result.ok
+                        ? common_agent_daemon_event_type::turn_completed
+                        : common_agent_daemon_event_type::turn_failed),
+                outcome.error);
+            return outcome.turn_result.ok;
+    }
+
+    error = "unsupported daemon command";
+    return fail_lifecycle_result(
+        command,
+        outcome,
+        events,
+        error,
+        {},
+        common_agent_daemon_event_type::command_failed);
+}

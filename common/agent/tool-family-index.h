@@ -1,0 +1,78 @@
+#pragma once
+
+#include "chat.h"
+
+#include <cstddef>
+#include <map>
+#include <string>
+#include <vector>
+
+// A generated model-facing index over an already resolved tool view. It does
+// not grant access to tools; the input vector must already be filtered by the
+// active host profile and policy.
+struct common_tool_family_index {
+    std::string id;
+    std::string description;
+    std::vector<std::string> tool_names;
+};
+
+struct common_tool_family_selection {
+    bool needs_tools = false;
+    std::vector<std::string> family_ids;
+};
+
+std::vector<common_tool_family_index> common_generate_tool_family_index(
+    const std::vector<common_chat_tool> & tools,
+    const std::map<std::string, std::string> & descriptions = {});
+
+std::string common_render_tool_family_index(
+    const std::vector<common_tool_family_index> & families,
+    size_t max_chars = 2048);
+
+std::string common_tool_family_required_selection_prompt(
+    const std::vector<common_tool_family_index> & families);
+std::string common_tool_family_required_selection_repair_prompt();
+
+std::vector<common_chat_tool> common_filter_tools_by_families(
+    const std::vector<common_chat_tool> & tools,
+    const std::vector<std::string> & family_ids);
+
+// Add narrowly scoped host-owned prerequisite tools for selected families.
+// The returned tools must still come from the already policy-filtered input.
+std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
+    const std::vector<common_chat_tool> & tools,
+    const std::vector<std::string> & family_ids);
+
+std::string common_tool_family_selection_schema();
+
+// Required-mode family selection has no NO_TOOLS branch: the model must
+// choose one or more ids from the host-filtered family index.
+std::string common_tool_family_required_selection_schema(
+    const std::vector<common_tool_family_index> & families);
+
+bool common_parse_tool_family_required_selection(
+    const std::string & json_text,
+    const std::vector<common_tool_family_index> & families,
+    common_tool_family_selection & selection,
+    std::string & error);
+
+bool common_parse_tool_family_selection(
+    const std::string & json_text,
+    common_tool_family_selection & selection,
+    std::string & error);
+
+// Small-model preflight contract. This deliberately avoids JSON grammar.
+bool common_parse_tool_family_selection_text(
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error);
+
+// Conservative recovery for a small model that emits an exact registered
+// tool call before the family prefix. This selects only the owning family;
+// arguments are intentionally left for the normal tool schema/validator.
+bool common_infer_tool_family_selection_from_tool_call(
+        const std::string & text,
+        const std::vector<common_tool_family_index> & families,
+        common_tool_family_selection & selection,
+        std::string & error);

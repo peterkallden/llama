@@ -1,0 +1,786 @@
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+#include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/runtime/agent-model-loaders.h"
+#include "tools/server/server-context.h"
+
+#include "agent/adaptation/flydelta/flydelta-collection.h"
+#include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-material.h"
+#include "agent/adaptation/flydelta/flydelta-worker.h"
+#include "agent/runtime/model-catalog.h"
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <unistd.h>
+#include <vector>
+
+using ordered_json = nlohmann::ordered_json;
+
+namespace {
+
+constexpr const char * kDefaultConfig =
+    "docs/examples/agent-host-config-flydelta-full.json";
+constexpr const char * kTokenizerFingerprint = "daemon:tokenizer-unspecified-v1";
+constexpr const char * kTemplateFingerprint = "daemon:template-unspecified-v1";
+constexpr const char * kExecutionContextFingerprint = "daemon:server-context-v1";
+
+struct smoke_args {
+    std::string config_path = kDefaultConfig;
+    std::string model_path;
+    int threads = 4;
+    int n_predict = 64;
+    int n_gpu_layers = 99;
+};
+
+int fail(const std::string & message) {
+    std::cerr << "flydelta_concept_synthesis_model_smoke=failed reason=" << message << '\n';
+    return 1;
+}
+
+bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string value = argv[i];
+        const auto next = [&](const char * name, std::string & output) {
+            if (i + 1 >= argc) {
+                error = std::string("missing value for ") + name;
+                return false;
+            }
+            output = argv[++i];
+            return true;
+        };
+        if (value == "--config") {
+            if (!next("--config", args.config_path)) return false;
+        } else if (value == "--model") {
+            if (!next("--model", args.model_path)) return false;
+        } else if (value == "--threads") {
+            std::string text;
+            if (!next("--threads", text)) return false;
+            args.threads = std::stoi(text);
+        } else if (value == "--n-predict") {
+            std::string text;
+            if (!next("--n-predict", text)) return false;
+            args.n_predict = std::stoi(text);
+        } else if (value == "--n-gpu-layers") {
+            std::string text;
+            if (!next("--n-gpu-layers", text)) return false;
+            args.n_gpu_layers = std::stoi(text);
+        } else if (value == "--help" || value == "-h") {
+            std::cout << "usage: " << argv[0]
+                      << " --model PATH [--config PATH] [--threads N]"
+                      << " [--n-predict N] [--n-gpu-layers N]\n";
+            std::exit(0);
+        } else {
+            error = "unknown argument: " + value;
+            return false;
+        }
+    }
+    if (args.model_path.empty()) {
+        const char * environment_model = std::getenv("LLAMA_AGENT_MODEL");
+        if (environment_model != nullptr) args.model_path = environment_model;
+    }
+    if (args.model_path.empty()) {
+        error = "a model is required through --model or LLAMA_AGENT_MODEL";
+        return false;
+    }
+    if (args.threads < 1 || args.n_predict < 1 || args.n_gpu_layers < 0) {
+        error = "threads, n-predict and n-gpu-layers have invalid values";
+        return false;
+    }
+    return true;
+}
+
+bool load_config(const std::string & path, daemon_options & options, std::string & error) {
+    agent_host_config config;
+    if (!load_agent_host_config(path, config, error)) return false;
+    apply_agent_host_config_to_daemon_options(config, options);
+    return true;
+}
+
+void configure_model_catalog(daemon_options & options, const smoke_args & args) {
+    options.model = args.model_path;
+    options.model_profile = "agent-default";
+    options.n_threads = args.threads;
+    options.n_predict = args.n_predict;
+    options.n_gpu_layers = args.n_gpu_layers;
+    options.context_size = std::max(options.context_size, 2048);
+
+    options.model_catalog = {};
+    options.model_catalog.directory = std::filesystem::path(args.model_path).parent_path().string();
+    options.model_catalog.default_profile = options.model_profile;
+    options.model_catalog.max_loaded_generation_models = 1;
+    common_agent_model_base_spec base;
+    base.kind = "generation";
+    base.backend = "server-context";
+    base.path = std::filesystem::path(args.model_path).filename().string();
+    base.load_policy = "resident";
+    options.model_catalog.bases.emplace("smoke-model", std::move(base));
+    common_agent_model_profile_spec profile;
+    profile.base_model_id = "smoke-model";
+    profile.context_size_tokens = static_cast<size_t>(options.context_size);
+    profile.n_parallel = 2;
+    profile.n_sequences = 2;
+    profile.load_policy = "resident";
+    options.model_catalog.profiles.emplace(options.model_profile, std::move(profile));
+    options.adaptation_flydelta_model_profile_fingerprint = "profile:" + options.model_profile;
+}
+
+ordered_json model_facing_dataset_tools(bool aggregate_only = false, bool describe_only = false) {
+    ordered_json tools = ordered_json::array({
+        {
+            {"type", "function"},
+            {"function", {
+                {"name", "data.aggregate"},
+                {"description", "Aggregate measures, optionally grouped, from a bounded dataset."},
+                {"parameters", ordered_json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measures":{"type":"array","items":{"type":"object","required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"]},"column":{"type":"string"}}}}}})")}
+            }}
+        },
+        {
+            {"type", "function"},
+            {"function", {
+                {"name", "statistics.describe"},
+                {"description", "Describe selected numeric columns in a bounded dataset."},
+                {"parameters", ordered_json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string"},"columns":{"type":"array","items":{"type":"string"}},"group_by":{"type":"array","items":{"type":"string"}}}})")}
+            }}
+        }
+    });
+    if (aggregate_only) tools.erase(tools.begin() + 1);
+    if (describe_only) tools.erase(tools.begin());
+    return tools;
+}
+
+ordered_json model_facing_grouped_aggregate_output_schema() {
+    return ordered_json{
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", {"name", "arguments"}},
+        {"properties", {
+            {"name", {{"type", "string"}, {"enum", {"data.aggregate"}}}},
+            {"arguments", {
+                {"type", "object"},
+                {"additionalProperties", false},
+                {"required", {"dataset", "group_by", "measures"}},
+                {"properties", {
+                    {"dataset", {{"type", "string"}}},
+                    {"group_by", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                    {"measures", {{"type", "array"}, {"minItems", 1}, {"items", {
+                        {"type", "object"},
+                        {"required", {"function", "column"}},
+                        {"properties", {
+                            {"function", {{"type", "string"}, {"enum", {"sum"}}}},
+                            {"column", {{"type", "string"}}}
+                        }}
+                    }}}}
+                }}
+            }}
+        }}
+    };
+}
+
+common_agent_scope smoke_scope() {
+    common_agent_scope scope;
+    scope.namespace_id = "concept-synthesis-smoke";
+    scope.project_id = "flydelta-model-smoke";
+    scope.session_id = "qwen-concept-synthesis";
+    scope.turn_id = "turn-1";
+    return scope;
+}
+
+bool put_json_resource(
+        agent_resource_store & resources,
+        const common_agent_scope & scope,
+        const std::string & name,
+        const ordered_json & value,
+        std::string & uri,
+        std::string & error) {
+    agent_resource_put_request request;
+    request.name = name;
+    request.description = "portable FlyDelta concept synthesis smoke resource";
+    request.mime_type = "application/json";
+    request.text = value.dump();
+    request.scope = common_runtime_resource_scope::session;
+    request.namespace_id = scope.namespace_id;
+    request.session_id = scope.session_id;
+    request.project_id = scope.project_id;
+    request.turn_id = scope.turn_id;
+    request.source_provider = "llama-agent-smoke";
+    request.source_tool = "flydelta.concept_synthesis_model_smoke";
+    agent_resource_descriptor descriptor;
+    if (!resources.put_text(request, descriptor, error)) return false;
+    uri = descriptor.uri;
+    if (uri.empty()) {
+        error = "resource store returned an empty URI";
+        return false;
+    }
+    agent_resource_read_authority authority;
+    authority.namespace_id = scope.namespace_id;
+    authority.session_id = scope.session_id;
+    authority.project_id = scope.project_id;
+    authority.turn_id = scope.turn_id;
+    authority.now = static_cast<int64_t>(std::time(nullptr));
+    std::string readback;
+    if (!resources.read_text(uri, authority, 4U * 1024U * 1024U, readback, error)) {
+        error = "resource read-back failed for " + name + ": " + error;
+        return false;
+    }
+    return true;
+}
+
+common_flydelta_teaching_relation make_relation(
+        const common_agent_scope & scope,
+        const std::string & id,
+        const std::string & baseline,
+        const std::string & conditioned,
+        const std::string & control,
+        const std::string & verifier) {
+    common_flydelta_teaching_relation relation;
+    relation.id = "teaching://concept-synthesis/" + id;
+    relation.teaching_key = "dataset.grouped-aggregation.v1";
+    // This fixture stands in for the already host-grounded output of the
+    // user-taught-concept provider.  Keep the dataset Oracle because it is
+    // deterministic; changing the source must not silently change semantics.
+    relation.source = common_adaptation_evidence_source::user_taught_concept;
+    relation.behavior_key = "dataset/grouped-aggregation";
+    relation.scope = scope;
+    relation.task_fingerprint = "task:concept-synthesis:" + id;
+    relation.baseline_ref = baseline;
+    relation.conditioned_ref = conditioned;
+    relation.control_ref = control;
+    relation.verifier_ref = verifier;
+    relation.evidence_ref = "evidence://concept-synthesis/" + id;
+    relation.contrast_ref = "contrast://concept-synthesis/" + id;
+    relation.procedure_ref = "procedure://dataset-grouped-aggregation/v1";
+    relation.blueprint_ref = "blueprint://dataset-grouped-aggregation/v1";
+    relation.status = common_flydelta_teaching_relation_status::resolved;
+    relation.baseline_origin = common_flydelta_teaching_origin::host_derived;
+    relation.conditioned_origin = common_flydelta_teaching_origin::host_derived;
+    relation.control_origin = common_flydelta_teaching_origin::host_counterfactual;
+    relation.confidence = 1.0f;
+    relation.host_approved = true;
+    return relation;
+}
+
+common_flydelta_experiment_collection_request make_search_request(
+        const common_agent_scope & scope,
+        const std::string & baseline_ref,
+        const std::string & direction_ref,
+        const std::string & group_ref,
+        const std::string & profile,
+        const std::vector<std::string> & delta_refs,
+        const std::string & verifier_ref) {
+    common_flydelta_experiment_collection_request request;
+    request.enabled = true;
+    request.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    request.evidence.id = "evidence://concept-synthesis/search";
+    request.evidence.source = common_adaptation_evidence_source::user_taught_concept;
+    request.evidence.scope = scope;
+    request.evidence.behavior_key = "dataset/grouped-aggregation";
+    request.evidence.task_fingerprint = "task:concept-synthesis/search";
+    request.evidence.baseline_ref = baseline_ref;
+    request.evidence.candidate_ref = direction_ref;
+    request.evidence.verifier_ref = verifier_ref;
+    request.evidence.transaction_ids = {"transaction://concept-synthesis/search"};
+    request.evidence.cause = common_learning_cause::host_contract;
+    request.evidence.host_verified = true;
+    request.behavior_key = request.evidence.behavior_key;
+    request.model_profile_fingerprint = profile;
+    request.tokenizer_fingerprint = kTokenizerFingerprint;
+    request.template_fingerprint = kTemplateFingerprint;
+    request.execution_context_fingerprint = kExecutionContextFingerprint;
+    request.capture_manifest_ids = {"capture://concept-synthesis/search"};
+    request.behavior_delta_ids = delta_refs;
+    request.alpha_search.candidates = {0.01f, 0.02f};
+    request.alpha_search.max_candidates = 2;
+    request.code_revision = "concept-synthesis-model-smoke:v1";
+    request.teaching_material_group_ref = group_ref;
+    return request;
+}
+
+bool report_succeeded(
+        const common_flydelta_experiment_worker_report & report,
+        common_flydelta_experiment_job_kind kind,
+        std::string & error) {
+    if (report.state != common_flydelta_experiment_queue_state::succeeded) {
+        const std::string detail = error.empty() ? report.safe_summary : error;
+        error = std::string("worker did not succeed for ") +
+            common_flydelta_experiment_job_kind_name(kind) +
+            (detail.empty() ? std::string() : ": " + detail);
+        return false;
+    }
+    if (report.completed_job.kind != kind) {
+        error = "worker completed an unexpected FlyDelta job kind";
+        return false;
+    }
+    return true;
+}
+
+void print_search_summary(
+        const common_flydelta_experiment_worker_report & report,
+        const char * phase) {
+    ordered_json whirlpool = ordered_json::array();
+    for (const auto & trace : report.trace.whirlpool) {
+        ordered_json rounds = ordered_json::array();
+        for (const auto & round : trace.rounds) {
+            rounds.push_back({
+                {"round", round.round},
+                {"centre_before", round.centre_before},
+                {"centre_after", round.centre_after},
+                {"radius_before", round.radius_before},
+                {"radius_after", round.radius_after},
+                {"probed_layers", round.probed_layers},
+                {"best_probe_layer", round.best_probe_layer},
+                {"best_probe_score", round.best_probe_score},
+            });
+        }
+        whirlpool.push_back({
+            {"model_evaluations", trace.model_evaluations},
+            {"best_trial_index", trace.best_trial_index},
+            {"best_search_score", trace.best_search_score},
+            {"final_centre", trace.final_centre},
+            {"final_radius", trace.final_radius},
+            {"rounds", std::move(rounds)},
+        });
+    }
+    ordered_json arms = ordered_json::array();
+    for (const auto & arm : report.trace.arms) {
+        arms.push_back({
+            {"arm_id", arm.arm_id},
+            {"layers", arm.layer_indices},
+            {"requested_scale", arm.requested_scale},
+            {"executed_scale", arm.executed_scale},
+            {"margin_available", arm.margin_available},
+            {"margin_delta_total", arm.margin_delta_total},
+            {"margin_delta_normalized", arm.margin_delta_normalized},
+            {"geometry_available", arm.geometry_available},
+            {"cosine", arm.cosine},
+            {"progress", arm.progress},
+            {"leakage", arm.leakage},
+            {"shift_norm", arm.shift_norm},
+            {"search_score", arm.search_score},
+            {"safe_to_continue", arm.safe_to_continue},
+            {"host_evaluated", arm.host_evaluated},
+            {"verifier_known", arm.verifier_known},
+            {"verifier_passed", arm.verifier_passed},
+            {"candidate_passed", arm.candidate_passed},
+            {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+            {"semantic_progress", {
+                {"comparable", arm.semantic_progress.comparable},
+                {"outcome", common_flydelta_semantic_progress_outcome_name(
+                    arm.semantic_progress.outcome)},
+                {"baseline_score", arm.semantic_progress.baseline_score},
+                {"candidate_score", arm.semantic_progress.candidate_score},
+                {"improved_dimensions", arm.semantic_progress.improved_dimensions},
+                {"regressed_dimensions", arm.semantic_progress.regressed_dimensions},
+                {"residual_dimensions", arm.semantic_progress.residual_dimensions},
+            }},
+            {"observed_decision", arm.observed_decision_summary},
+            {"expected_decision", arm.expected_decision_summary},
+            {"verifier_reason", arm.verifier_reason},
+        });
+    }
+    std::cout << "flydelta_concept_synthesis_search=" << ordered_json{
+        {"phase", phase},
+        {"state", common_flydelta_experiment_queue_state_name(report.state)},
+        {"algorithm", "Whirlpool/BootstrapZoom via production search_pipeline"},
+        {"arms", report.trace.arms.size()},
+        {"model_evaluations", report.trace.model_evaluations},
+        {"search_status", report.trace.search_status},
+        {"next_action", common_flydelta_next_action_name(report.next_action)},
+        {"bootstrap_state_ref", report.bootstrap_zoom_state_ref},
+        {"search_state_ref", report.search_state_ref},
+        {"graft_direction_ref", report.completed_job.seed.candidate_ref},
+        {"arms_detail", std::move(arms)},
+        {"whirlpool", std::move(whirlpool)},
+    }.dump() << '\n';
+}
+
+} // namespace
+
+int main(int argc, char ** argv) {
+    smoke_args args;
+    std::string error;
+    if (!parse_args(argc, argv, args, error)) {
+        if (error == "a model is required through --model or LLAMA_AGENT_MODEL") return 77;
+        return fail(error);
+    }
+
+    daemon_options options;
+    if (!load_config(args.config_path, options, error)) return fail("config: " + error);
+    configure_model_catalog(options, args);
+
+    const std::string suffix = "concept-synthesis-model-smoke-" +
+        std::to_string(static_cast<long long>(getpid()));
+    options.adaptation_capture = true;
+    options.adaptation_collection_allowed = false;
+    options.adaptation_flydelta_enabled = true;
+    options.adaptation_flydelta_capture_candidates = true;
+    options.adaptation_flydelta_worker_count = 2;
+    options.worker_count = 4;
+    options.inference_max_active = 1;
+    options.queue_capacity = 8;
+    options.agent_trace = true;
+    options.adaptation_flydelta_queue_path = "var/agent/flydelta/" + suffix + "-queue";
+    options.adaptation_flydelta_lifecycle_path = "var/agent/flydelta/" + suffix + "-lifecycle.cozo";
+    options.adaptation_transaction_path = "var/agent/flydelta/" + suffix + "-adaptation.cozo";
+    options.adaptation_transaction_backend = "cozo";
+    options.adaptation_flydelta_lifecycle_backend = "cozo";
+
+    common_agent_daemon_runtime runtime;
+    if (!initialize_agent_daemon_environment(options, runtime, error)) {
+        return fail("daemon environment: " + error);
+    }
+    if (!runtime.flydelta_model_handle || !runtime.flydelta_model_host ||
+            !runtime.flydelta_model_adapter || !runtime.resource_store ||
+            !runtime.flydelta_teaching_material_runtime) {
+        return fail("production daemon did not expose resident FlyDelta/server-context seams");
+    }
+    const auto loaded = common_agent_runtime_loaded_model_cast(runtime.flydelta_model_handle->model);
+    if (!loaded || !loaded->server_context_host) {
+        return fail("resident server-context host is unavailable");
+    }
+    const auto * context = loaded->server_context_host->server().get_llama_context();
+    const auto * model = context == nullptr ? nullptr : llama_get_model(context);
+    if (model == nullptr) return fail("resident llama model is unavailable");
+    const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model));
+    const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model));
+    if (n_embd == 0 || n_layers < 3) return fail("resident model dimensions are incompatible");
+
+    common_flydelta_evaluator_config evaluator_config;
+    common_flydelta_evaluator_callbacks callbacks;
+    if (!runtime.flydelta_model_host->register_evaluator(
+            evaluator_config, callbacks, error)) {
+        return fail("production evaluator registration: " + error);
+    }
+    if (!callbacks.run_concept_capture || !callbacks.run_concept_synthesis ||
+            !callbacks.persist_experimental_direction ||
+            !callbacks.run_search_pipeline_with_state) {
+        return fail("production evaluator did not register concept and search callbacks");
+    }
+
+    const common_agent_scope scope = smoke_scope();
+    std::string baseline_ref;
+    if (!put_json_resource(
+            *runtime.resource_store, scope, "concept-synthesis-baseline.json",
+            ordered_json{{"prompt",
+                "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. For this baseline attempt, deliberately inspect the dataset instead of computing the grouped total. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                 {"tools", model_facing_dataset_tools(false, true)},
+                 {"tool_choice", "required"},
+                 {"n_predict", 64}}, baseline_ref, error)) {
+        return fail("baseline resource: " + error);
+    }
+    std::string verifier_ref;
+    if (!put_json_resource(
+            *runtime.resource_store, scope, "concept-synthesis-fixture.json",
+            ordered_json{
+                {"verification_mode", "normalized_call"},
+                {"semantic_kind", "dataset_operation"},
+                {"oracle_ref", "flydelta://oracle/dataset-operation"},
+                {"oracle_revision", "dataset-operation:v1"},
+                {"oracle_policy_revision", "dataset-operation-policy:v1"},
+                {"expected_decision", {
+                    {"operation", "aggregate"},
+                    {"dataset", "dataset://local/sales"},
+                    {"group_by", {"region"}},
+                    {"measure", "amount"},
+                }},
+            }, verifier_ref, error)) {
+        return fail("fixture resource: " + error);
+    }
+    std::string direction_ref;
+    ordered_json direction = ordered_json{{"directions", ordered_json::array()}};
+    ordered_json values = ordered_json::array();
+    for (size_t index = 0; index < n_embd; ++index) values.push_back(index == 0 ? 1.0f : 0.0f);
+    direction["directions"].push_back({{"layer_index", 1}, {"values", std::move(values)}});
+    if (!put_json_resource(
+            *runtime.resource_store, scope, "concept-synthesis-direction.json",
+            direction, direction_ref, error)) {
+        return fail("direction resource: " + error);
+    }
+
+    std::vector<std::string> delta_refs;
+    for (size_t index = 0; index < 2; ++index) {
+        ordered_json delta_values = ordered_json::array();
+        for (size_t value_index = 0; value_index < n_embd; ++value_index) {
+            delta_values.push_back(value_index == 0 ? 1.0f : 0.0f);
+        }
+        std::string delta_ref;
+        if (!put_json_resource(
+                *runtime.resource_store, scope,
+                "concept-synthesis-delta-" + std::to_string(index) + ".json",
+                ordered_json{
+                    {"kind", "flydelta_behavior_delta"},
+                    {"id", "delta://concept-synthesis/search/" + std::to_string(index)},
+                    {"source", "user_taught_concept"},
+                    {"behavior_key", "dataset/grouped-aggregation"},
+                    {"capture_manifest_id", baseline_ref},
+                    {"host_evidence_ref", "evidence://concept-synthesis/search"},
+                    {"scope_fingerprint", "scope:concept-synthesis-smoke"},
+                    {"tokenizer_fingerprint", kTokenizerFingerprint},
+                    {"template_fingerprint", kTemplateFingerprint},
+                    {"generation_semantics_fingerprint", "generation:bounded-qwen-v1"},
+                    {"model_profile_fingerprint", options.adaptation_flydelta_model_profile_fingerprint},
+                    {"execution_context_fingerprint", kExecutionContextFingerprint},
+                    {"capture_layout_revision", options.adaptation_flydelta_capture_layout_revision},
+                    {"layer_index", 1},
+                    {"values", std::move(delta_values)},
+                    {"credit", {
+                        {"experiment_id", "experiment://concept-synthesis/search"},
+                        {"candidate_id", direction_ref},
+                        {"fixture_id", verifier_ref},
+                        {"outcome", "unknown"},
+                        {"quality_delta", 0.0f},
+                        {"eligible_for_learning", false},
+                    }},
+                }, delta_ref, error)) {
+            return fail("behavior delta resource: " + error);
+        }
+        delta_refs.push_back(std::move(delta_ref));
+    }
+
+    std::vector<common_flydelta_teaching_relation> relations;
+    for (size_t index = 0; index < 2; ++index) {
+        std::string conditioned_ref;
+        if (!put_json_resource(
+                *runtime.resource_store, scope,
+                "concept-synthesis-conditioned-" + std::to_string(index) + ".json",
+                ordered_json{{"prompt", index == 0
+                    ? "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. Use the host-required grouped aggregation call. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."
+                     : "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. The required operation is grouped aggregation: sum amount grouped by region. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."},
+                     {"tools", model_facing_dataset_tools(true, false)},
+                     {"tool_choice", "required"},
+                     {"json_schema", model_facing_grouped_aggregate_output_schema()},
+                     {"n_predict", 64}}, conditioned_ref, error)) {
+            return fail("conditioned resource: " + error);
+        }
+        std::string control_ref;
+        if (!put_json_resource(
+                *runtime.resource_store, scope,
+                "concept-synthesis-control-" + std::to_string(index) + ".json",
+                ordered_json{{"prompt", "You are a dataset tool-calling agent. Acknowledge the request without selecting the requested grouped aggregation. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
+                     {"tools", model_facing_dataset_tools(false, true)},
+                     {"tool_choice", "required"},
+                     {"n_predict", 32}}, control_ref, error)) {
+            return fail("control resource: " + error);
+        }
+        relations.push_back(make_relation(
+            scope, std::to_string(index), baseline_ref, conditioned_ref, control_ref,
+            verifier_ref));
+        if (!runtime.flydelta_teaching_material_observer(
+                relations.back(), error)) {
+            return fail("teaching relation observation: " + error);
+        }
+    }
+
+    common_flydelta_teaching_material_identity material_identity;
+    material_identity.model_profile_fingerprint = options.adaptation_flydelta_model_profile_fingerprint;
+    material_identity.tokenizer_fingerprint = kTokenizerFingerprint;
+    material_identity.template_fingerprint = kTemplateFingerprint;
+    material_identity.capture_layout_revision = options.adaptation_flydelta_capture_layout_revision;
+    material_identity.execution_context_fingerprint = kExecutionContextFingerprint;
+    material_identity.scope_fingerprint = "daemon:teaching-material-v1";
+    material_identity.verifier_revision = "daemon:host-verifier-v1";
+    common_flydelta_teaching_material_group group;
+    if (!runtime.flydelta_teaching_material_runtime->store().group_ready(
+            "dataset.grouped-aggregation.v1", "dataset/grouped-aggregation",
+            material_identity, 2, group, error) || !group.relation_set_ready) {
+        return fail("teaching material group: " + error);
+    }
+
+    const auto request = make_search_request(
+        scope, baseline_ref, direction_ref, group.group_ref,
+        options.adaptation_flydelta_model_profile_fingerprint, delta_refs, verifier_ref);
+    common_flydelta_experiment_collection_result collection_result;
+    const std::filesystem::path queue_root = options.adaptation_flydelta_queue_path;
+    if (!common_flydelta_collect_experiment_job(
+            queue_root, {}, request, collection_result, error) ||
+            collection_result != common_flydelta_experiment_collection_result::enqueued) {
+        return fail("initial search queue: " + error);
+    }
+
+    common_flydelta_experiment_worker_report search_report;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(
+            queue_root, {}, evaluator_config, callbacks, search_report, error) ||
+            !report_succeeded(
+                search_report, common_flydelta_experiment_job_kind::search_pipeline, error)) {
+        return fail("initial production search: " + error);
+    }
+    print_search_summary(search_report, "initial");
+    if (search_report.bootstrap_zoom_state_ref.empty() && search_report.search_state_ref.empty()) {
+        return fail("initial search produced no persisted localized anchor state");
+    }
+
+    if (!common_flydelta_collect_next_action_job(
+            queue_root, {}, search_report.completed_job,
+            common_flydelta_next_action::prepare_concept_material,
+            search_report.bootstrap_zoom_state_ref, search_report.search_state_ref,
+            search_report.representation_augmentation_state_ref, {},
+            collection_result, error) ||
+            collection_result != common_flydelta_experiment_collection_result::enqueued) {
+        return fail("concept capture queue: " + error);
+    }
+    common_flydelta_experiment_worker_report capture_report;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(
+            queue_root, {}, evaluator_config, callbacks, capture_report, error) ||
+            !report_succeeded(
+                capture_report, common_flydelta_experiment_job_kind::concept_capture, error) ||
+            capture_report.concept_trajectory_refs.size() != 2) {
+        return fail("production concept capture: " + error);
+    }
+    std::cout << "flydelta_concept_capture_model=" << ordered_json{
+        {"state", common_flydelta_experiment_queue_state_name(capture_report.state)},
+        {"relations", group.relation_refs.size()},
+        {"arms_per_relation", 3},
+        {"capture_arms", group.relation_refs.size() * 3},
+        {"trajectory_refs", capture_report.concept_trajectory_refs.size()},
+        {"server_context", true},
+        {"batch_boundary", "production common_flydelta_arm_batch"},
+        {"learning_credit", "none"},
+    }.dump() << '\n';
+
+    if (!common_flydelta_collect_next_action_job(
+            queue_root, {}, capture_report.completed_job,
+            common_flydelta_next_action::run_concept_synthesis,
+            capture_report.bootstrap_zoom_state_ref, capture_report.search_state_ref,
+            capture_report.representation_augmentation_state_ref, {},
+            collection_result, error) ||
+            collection_result != common_flydelta_experiment_collection_result::enqueued) {
+        return fail("concept synthesis queue: " + error);
+    }
+    common_flydelta_experiment_worker_report synthesis_report;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(
+            queue_root, {}, evaluator_config, callbacks, synthesis_report, error) ||
+            !report_succeeded(
+                synthesis_report, common_flydelta_experiment_job_kind::concept_synthesis, error) ||
+            synthesis_report.concept_candidates.empty() ||
+            synthesis_report.graft_direction_ref.empty()) {
+        return fail("production concept synthesis: " + error);
+    }
+    ordered_json candidates = ordered_json::array();
+    for (const auto & candidate : synthesis_report.concept_candidates) {
+        candidates.push_back({
+            {"kind", common_flydelta_concept_candidate_kind_name(candidate.kind)},
+            {"synthesis_semantics", common_flydelta_concept_synthesis_semantics_name(
+                candidate.synthesis_semantics)},
+            {"concept_key", candidate.concept_key},
+            {"layer_index", candidate.layer_index},
+            {"source_trajectories", candidate.source_trajectories},
+            {"retained_trajectories", candidate.retained_trajectories},
+            {"median_alignment", candidate.median_alignment},
+            {"control_residualized", candidate.control_residualized},
+            {"control_trajectories", candidate.control_trajectories},
+            {"negative_trajectories", candidate.negative_trajectories},
+            {"retained_negative_trajectories", candidate.retained_negative_trajectories},
+            {"experimental_only", candidate.experimental_only},
+            {"learning_eligible", candidate.learning_eligible},
+        });
+    }
+    ordered_json frontier_semantics = ordered_json::array();
+    const auto frontier_indices = common_flydelta_select_concept_synthesis_frontier(
+        synthesis_report.concept_candidates,
+        evaluator_config.concept_frontier_max_candidates);
+    const bool paired_intervention = synthesis_report.has_paired_intervention;
+    if ((!paired_intervention &&
+            frontier_indices.size() != synthesis_report.graft_direction_refs.size()) ||
+            (paired_intervention &&
+                (synthesis_report.graft_direction_refs.size() != 1 ||
+                 synthesis_report.paired_intervention.prefer_role !=
+                     common_flydelta_intervention_component_role::prefer ||
+                 synthesis_report.paired_intervention.avoid_role !=
+                     common_flydelta_intervention_component_role::avoid_support))) {
+        return fail("concept synthesis frontier trace does not match persisted directions");
+    }
+    if (paired_intervention) {
+        frontier_semantics.push_back("paired_prefer_avoid_support");
+    } else {
+        for (const size_t index : frontier_indices) {
+            frontier_semantics.push_back(common_flydelta_concept_synthesis_semantics_name(
+                synthesis_report.concept_candidates[index].synthesis_semantics));
+        }
+    }
+    std::cout << "flydelta_concept_synthesis_model=" << ordered_json{
+        {"state", common_flydelta_experiment_queue_state_name(synthesis_report.state)},
+        {"source", "user_taught_concept"},
+        {"candidate_count", synthesis_report.concept_candidates.size()},
+        {"candidates", std::move(candidates)},
+        {"graft_direction_ref", synthesis_report.graft_direction_ref},
+        {"graft_direction_refs", synthesis_report.graft_direction_refs},
+        {"frontier_semantics", std::move(frontier_semantics)},
+        {"paired_intervention", paired_intervention},
+        {"paired_proposal_id", paired_intervention
+            ? synthesis_report.paired_intervention.proposal_id : std::string()},
+        {"next_action", common_flydelta_next_action_name(synthesis_report.next_action)},
+        {"promotion", false},
+    }.dump() << '\n';
+
+    if (!common_flydelta_collect_next_action_job(
+            queue_root, {}, synthesis_report.completed_job,
+            common_flydelta_next_action::run_bootstrap,
+            synthesis_report.bootstrap_zoom_state_ref, synthesis_report.search_state_ref,
+            synthesis_report.representation_augmentation_state_ref,
+            synthesis_report.graft_direction_ref, collection_result, error) ||
+            collection_result != common_flydelta_experiment_collection_result::enqueued) {
+        return fail("grafted search queue: " + error);
+    }
+    if ((!paired_intervention && synthesis_report.graft_direction_refs.size() != 2) ||
+            (paired_intervention && synthesis_report.graft_direction_refs.size() != 1)) {
+        return fail("bounded concept frontier did not select the expected direction set");
+    }
+    // The two frontier jobs are deliberately executed one at a time. This
+    // keeps the model comparison serial while still using the production
+    // queue, resident server-context and ordinary search pipeline.
+    std::vector<common_flydelta_experiment_worker_report> graft_reports;
+    graft_reports.reserve(synthesis_report.graft_direction_refs.size());
+    for (size_t index = 0; index < synthesis_report.graft_direction_refs.size(); ++index) {
+        if (index != 0) {
+            if (!common_flydelta_collect_next_action_job(
+                    queue_root, {}, synthesis_report.completed_job,
+                    common_flydelta_next_action::run_bootstrap,
+                    synthesis_report.bootstrap_zoom_state_ref, synthesis_report.search_state_ref,
+                    synthesis_report.representation_augmentation_state_ref,
+                    synthesis_report.graft_direction_refs[index], collection_result, error) ||
+                    collection_result != common_flydelta_experiment_collection_result::enqueued) {
+                return fail("frontier search queue: " + error);
+            }
+        }
+        common_flydelta_experiment_worker_report graft_report;
+        if (!common_flydelta_experiment_worker_run_evaluator_once(
+                queue_root, {}, evaluator_config, callbacks, graft_report, error) ||
+                !report_succeeded(
+                    graft_report, common_flydelta_experiment_job_kind::search_pipeline, error)) {
+            return fail("frontier production search: " + error);
+        }
+        if (graft_report.completed_job.seed.candidate_ref !=
+                synthesis_report.graft_direction_refs[index]) {
+            return fail("frontier search did not consume its persisted concept direction");
+        }
+        print_search_summary(graft_report,
+            paired_intervention ? "concept-graft-paired-prefer-avoid" :
+                (index == 0 ? "concept-graft-control-residualized" :
+                    "concept-graft-positive-prototype"));
+        graft_reports.push_back(std::move(graft_report));
+    }
+
+    std::cout << "flydelta_concept_synthesis_model_smoke=completed"
+              << " model=" << args.model_path
+              << " agent_workers=" << options.worker_count
+              << " flydelta_workers=" << options.adaptation_flydelta_worker_count
+              << " inference_max_active=" << options.inference_max_active
+              << " relations=" << group.relation_refs.size()
+              << " capture_arms=" << group.relation_refs.size() * 3
+              << " trajectories=" << capture_report.concept_trajectory_refs.size()
+              << " candidates=" << synthesis_report.concept_candidates.size()
+              << " frontier_candidates=" << synthesis_report.graft_direction_refs.size()
+              << " frontier_searches=" << graft_reports.size()
+              << " paired_intervention=" << (paired_intervention ? "yes" : "no")
+              << " graft_to_search=yes"
+              << " learning_credit=none"
+              << " promotion=false\n";
+    return 0;
+}
