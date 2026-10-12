@@ -5,6 +5,7 @@ usr/bin/llama-agent-daemon usr/sbin
 usr/bin/llama-agent-adaptation-worker usr/bin
 usr/bin/llama-agent-adaptation-admin usr/bin
 usr/bin/agent-adaptation-qlora-trainer.py usr/bin
+usr/bin/agent-adaptation-dpo-trainer.py usr/bin
 usr/bin/llama-agent-config-bootstrap usr/sbin
 usr/bin/llama-agent-provider-bootstrap usr/bin
 usr/bin/agent-provider-bootstrap.py usr/bin
