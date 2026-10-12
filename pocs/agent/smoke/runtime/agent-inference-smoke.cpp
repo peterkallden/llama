@@ -461,15 +461,15 @@ static void test_runtime_generation_metadata() {
     assert(!proposal.plan.id.empty());
     assert(proposal.generation);
     assert(proposal.generation->status == common_agent_generation_status::completed);
-    assert(inference.seen[0].messages.size() == 2);
+    assert(inference.seen[0].messages.size() == 3);
     // The planner prompt is a model-facing projection, not the persisted
     // proposal schema. Keep the assertion on the stable contract shape while
     // allowing the renderer to describe the step union precisely.
-    assert(inference.seen[0].messages[0].content.find("required: goal:string; steps:") != std::string::npos);
-    assert(inference.seen[0].messages[0].content.find("steps: step[]") != std::string::npos);
-    assert(inference.seen[0].messages[0].content.find(
+    assert(inference.seen[0].messages[1].content.find("required: goal:string; steps:") != std::string::npos);
+    assert(inference.seen[0].messages[1].content.find("steps: step[]") != std::string::npos);
+    assert(inference.seen[0].messages[1].content.find(
         "tool form: tool:string; args:object") != std::string::npos);
-    assert(inference.seen[0].messages[0].content.find(
+    assert(inference.seen[0].messages[1].content.find(
         "reasoning form: mode:reasoning") != std::string::npos);
 
     auto executor = make_llama_cli_action_executor(inference, make_agent_generation_config(options));
@@ -492,10 +492,10 @@ static void test_runtime_generation_metadata() {
     assert(reflection.ready_to_answer);
     assert(reflection.generation);
     assert(reflection.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
-    assert(inference.seen[4].messages.size() == 2);
-    assert(inference.seen[4].messages[0].content.find("For dataset repair, use dataset.list/select") != std::string::npos);
-    assert(inference.seen[4].messages[1].content.find("<reflection_plan>") != std::string::npos);
-    assert(inference.seen[4].messages[1].content.find("[Draft]") != std::string::npos);
+    assert(inference.seen[4].messages.size() == 3);
+    assert(inference.seen[4].messages[1].content.find("For dataset repair, use dataset.list/select") != std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("<reflection_plan>") != std::string::npos);
+    assert(inference.seen[4].messages[2].content.find("[Draft]") != std::string::npos);
 
     auto extractor = make_llama_cli_memory_candidate_extractor(inference, make_agent_generation_config(options));
     common_agent_result agent_result;
@@ -510,8 +510,8 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen.size() == 6);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].messages.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("[Regeneration]") != std::string::npos);
+    assert(inference.seen[1].messages.size() == 3);
+    assert(inference.seen[1].messages[2].content.find("[Regeneration]") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
     assert(inference.seen[3].purpose == common_agent_generation_purpose::reasoning);
     assert(inference.seen[4].purpose == common_agent_generation_purpose::reflection);

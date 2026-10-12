@@ -625,6 +625,13 @@ bool parse_flat_compact(
             error = "flat DSL field path is invalid: " + field;
             return false;
         }
+        const auto root = path.empty() ? nullptr : std::get_if<std::string>(&path.front());
+        const auto declared_properties = schema.value("properties", json::object());
+        if (root == nullptr || !declared_properties.is_object() ||
+                !declared_properties.contains(*root)) {
+            error = "flat DSL field is not declared by the selected tool schema: " + field;
+            return false;
+        }
         if (value.is_null() && path.size() == 1 && std::holds_alternative<std::string>(path.front())) {
             const auto key = std::get<std::string>(path.front());
             const auto required = schema.value("required", json::array());

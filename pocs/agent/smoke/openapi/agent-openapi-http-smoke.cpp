@@ -139,6 +139,7 @@ int main() {
         });
     agent_tool_context context;
     context.allow_network = true;
+    context.max_calls = 64;
     std::string error;
     auto view = provider.resolve_tools(context, error);
     assert(view != nullptr);
