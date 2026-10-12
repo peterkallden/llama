@@ -45,4 +45,8 @@ The resulting package installs the daemon and bootstrap helper under
 /usr/share/doc/llama-agent/examples (including the source and Nginx example
 for the Vue web client), and the systemd unit without enabling or
 starting it automatically. Generate /etc/llama-agent/config.json with
-llama-agent-config-bootstrap before enabling llama-agent.service.
+llama-agent-config-bootstrap before enabling llama-agent.service. The generated
+configuration points to the installed workflow starter package and imports it
+into the host-wide Cozo stores at daemon startup. Import is idempotent and
+preserves existing records. Because the package also seeds searchable
+procedures, configure an embedding model when generating the daemon config.

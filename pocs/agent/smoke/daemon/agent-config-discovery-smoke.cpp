@@ -1,8 +1,10 @@
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/daemon/agent-daemon-adapter.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -313,6 +315,7 @@ int main() {
 
     agent_host_config catalog_config;
     const nlohmann::ordered_json catalog_json = {
+        {"bootstrap", {{"package", "/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json"}}},
         {"model", {{"path", "legacy.gguf"}}},
         {"models", {
             {"schema_version", 1},
@@ -345,6 +348,7 @@ int main() {
             catalog_config.model_catalog.bases.size() != 2 ||
             catalog_config.model_catalog.profiles.size() != 1 ||
             catalog_config.model_catalog.embedding_model_id != "nomic" ||
+            catalog_config.bootstrap_package != "/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json" ||
             !catalog_config.adaptation_domains.configured ||
             catalog_config.adaptation_domains.tool_use ||
             !catalog_config.adaptation_domains.tool_use_families.at("diagnostics")) {
@@ -360,6 +364,7 @@ int main() {
     }
     const auto catalog_serialized = agent_host_config_to_json(catalog_config);
     if (!catalog_serialized.contains("models") ||
+            catalog_serialized["bootstrap"]["package"] != catalog_config.bootstrap_package ||
             catalog_serialized["models"]["profiles"]["agent-default"]["base"] != "small") {
         std::fprintf(stderr, "model catalog configuration was not serialized\n");
         return 1;
@@ -367,6 +372,7 @@ int main() {
     daemon_options catalog_options;
     apply_agent_host_config_to_daemon_options(catalog_config, catalog_options);
     if (catalog_options.model_profile != catalog_config.model_profile ||
+            catalog_options.bootstrap_package != catalog_config.bootstrap_package ||
             catalog_options.model_catalog.bases.size() != 2 ||
             catalog_options.model_catalog.profiles.size() != 1) {
         std::fprintf(stderr, "model catalog was not copied into daemon options\n");
@@ -386,6 +392,40 @@ int main() {
     };
     if (parse_agent_host_config_json(invalid_policy_config, invalid_processor_config, error)) {
         std::fprintf(stderr, "invalid resource processor execution policy was accepted\n");
+        return 1;
+    }
+
+    const auto bootstrap_path = std::filesystem::temp_directory_path() /
+        ("llama-agent-bootstrap-smoke-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+    {
+        std::ofstream bootstrap(bootstrap_path);
+        bootstrap << R"({"schema_version":1,"name":"daemon-startup-smoke","version":"v1","procedures":[],"blueprints":[],"workflows":[{"id":"startup-smoke","workflow_ref":"workflow://startup-smoke","workflow_revision":"v1","family":"test","graph_revision":"test-v1","required_capabilities":["test.run"]}]})";
+        if (!bootstrap) {
+            std::fprintf(stderr, "failed to write daemon startup bootstrap fixture\n");
+            return 1;
+        }
+    }
+    daemon_options bootstrap_options;
+    bootstrap_options.bootstrap_package = bootstrap_path.string();
+    bootstrap_options.backend = "in-memory";
+    bootstrap_options.plan_backend = "in-memory";
+    bootstrap_options.data_backend = "disabled";
+    bootstrap_options.resource_blob_backend = "in-memory";
+    bootstrap_options.resource_metadata_backend = "in-memory";
+    common_agent_daemon_runtime bootstrap_runtime;
+    if (!initialize_agent_daemon_environment(bootstrap_options, bootstrap_runtime, error)) {
+        std::filesystem::remove(bootstrap_path);
+        std::fprintf(stderr, "daemon startup did not import its configured package: %s\n", error.c_str());
+        return 1;
+    }
+    const auto installed_plans = bootstrap_runtime.plan_store->list(error);
+    std::filesystem::remove(bootstrap_path);
+    if (!error.empty() || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
+            return plan.id == "bootstrap:llama-agent-host:global:workflow:startup-smoke" &&
+                plan.workflow_definition.has_value();
+        })) {
+        std::fprintf(stderr, "daemon bootstrap package workflow was not persisted: %s\n", error.c_str());
         return 1;
     }
 

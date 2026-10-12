@@ -3,6 +3,8 @@ param(
     [string]$Output = 'agent-daemon-config.json',
     [string]$Model = 'models/model.gguf',
     [string]$EmbeddingModel = '',
+    [string]$BootstrapPackage = 'docs/examples/agent-bootstrap-workflows-v1.json',
+    [switch]$DisableBootstrapImport,
     [string]$CozoRoot = 'data',
     [string]$RepositoryRoot = '.',
     [ValidateSet('minimal', 'research', 'developer-read', 'all-configured')]
@@ -102,6 +104,16 @@ if ($LxcNetworkMode -eq 'none' -and $LxcNetworkProfileScope -ne 'none') {
 if ($EnableFlyDelta -and $WorkerCount -lt 2) {
     throw 'EnableFlyDelta requires WorkerCount at least 2 so one agent worker remains available'
 }
+if ($DisableBootstrapImport) { $BootstrapPackage = '' }
+if ($BootstrapPackage -and [string]::IsNullOrWhiteSpace($EmbeddingModel)) {
+    throw 'EmbeddingModel is required when importing the starter package; use DisableBootstrapImport to opt out'
+}
+if ($BootstrapPackage) {
+    if (-not (Test-Path -LiteralPath $BootstrapPackage -PathType Leaf)) {
+        throw "BootstrapPackage not found: $BootstrapPackage"
+    }
+    $BootstrapPackage = (Resolve-Path -LiteralPath $BootstrapPackage).Path
+}
 
 $adaptationEnabled = $EnableAdaptation -or $EnableFlyDelta
 $flyDeltaCanaryMode = if ($EnableFlyDelta) { $FlyDeltaCanaryMode } else { 'disabled' }
@@ -160,6 +172,7 @@ foreach ($entry in $FamilyDescription) {
 $config = [ordered]@{
     schema_version = 1
     model = [ordered]@{ backend = 'server-context'; path = $Model; embedding_model = $EmbeddingModel }
+    bootstrap = [ordered]@{ package = $BootstrapPackage }
     runtime = [ordered]@{
         context_size = 3072; n_predict = 256; n_threads = $Threads; n_gpu_layers = $GpuLayers
         default_mode = $DefaultMode; thinking_mode = $ThinkingMode; max_reflection_rounds = 2

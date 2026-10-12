@@ -616,12 +616,12 @@ static void test_planner_rejects_missing_model_tool_arguments() {
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
     assert(inference.seen[1].json_schema.find("\"search\"") != std::string::npos);
-    const auto & planner_system = inference.seen[1].messages[0].content;
-    const auto & repair = inference.seen[1].messages[1].content;
+    const auto & planner_system = inference.seen[1].messages[1].content;
+    const auto & repair = inference.seen[1].messages[2].content;
     assert(planner_system.find("openalex.listWorks") != std::string::npos);
-    assert(planner_system.find("search:string") != std::string::npos);
+    assert(planner_system.find("search (required, string)") != std::string::npos);
     assert(repair.find("planner tool arguments missing required field: openalex.listWorks.search") != std::string::npos);
-    assert(planner_system.find("args matching that tool's registered model-facing schema") != std::string::npos);
+    assert(planner_system.find("Tool contract:") != std::string::npos);
     assert(repair.find("Search OpenAlex for machine learning works.") != std::string::npos);
 }
 
@@ -649,10 +649,10 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
     assert(inference.seen.size() == 3);
-    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"search\"") != std::string::npos);
-    assert(inference.seen[2].messages[0].content.find("already selected tool") != std::string::npos);
+    assert(inference.seen[2].messages[1].content.find("Selected tool: openalex.listWorks") != std::string::npos);
 }
 
 static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
@@ -681,9 +681,9 @@ static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
         R"({"dataset":"dataset://local/sales"})");
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].json_schema.find("\"dataset\"") != std::string::npos);
-    const auto & repair_system = inference.seen[1].messages[0].content;
-    const auto & repair = inference.seen[1].messages[1].content;
-    assert(repair_system.find("remove unknown or invalid fields") != std::string::npos);
+    const auto & repair_system = inference.seen[1].messages[1].content;
+    const auto & repair = inference.seen[1].messages[2].content;
+    assert(repair_system.find("Use only fields from that tool's registered model-facing schema") != std::string::npos);
     assert(repair_system.find("dataset.inspect") != std::string::npos);
     assert(repair.find("unexpected contract field") != std::string::npos);
     assert(repair.find("dataset://local/sales") != std::string::npos);
@@ -812,7 +812,7 @@ static void test_planner_repairs_invalid_resource_binding() {
     const auto arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
     assert(arguments["resource"] == "r1");
     assert(inference.seen.size() == 2);
-    const auto & repair_prompt = inference.seen[1].messages[1].content;
+    const auto & repair_prompt = inference.seen[1].messages[2].content;
     assert(repair_prompt.find("plan.binding.") != std::string::npos);
     assert(repair_prompt.find("current attachment choices are: r1") != std::string::npos);
     assert(repair_prompt.find("resource:'r1'") != std::string::npos);
@@ -956,7 +956,7 @@ static void test_required_planner_failure_preserves_diagnostics() {
     assert(error.find("attempt 1") != std::string::npos);
     assert(error.find("missing.tool") != std::string::npos);
     assert(inference.seen.size() == 2);
-    const auto & repair_prompt = inference.seen[1].messages[1].content;
+    const auto & repair_prompt = inference.seen[1].messages[2].content;
     assert(repair_prompt.find("Repair it using only executable steps") != std::string::npos);
     assert(repair_prompt.find("attachment choices") == std::string::npos);
 }
@@ -981,7 +981,7 @@ static void test_reflection_regenerates_invalid_json() {
     assert(reflection.decision == common_reflection_decision::accept);
     assert(reflection.ready_to_answer);
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
 }
 
 static void test_memory_learning_regenerates_invalid_json() {
@@ -1006,7 +1006,7 @@ static void test_memory_learning_regenerates_invalid_json() {
     assert(candidate.candidate);
     assert(candidate.candidate->kind == common_memory_kind::procedure);
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
 }
 
 static void test_memory_learning_rejects_invalid_reason_and_accepts_null_candidate() {
@@ -1113,7 +1113,7 @@ static void test_selection_generation_metadata() {
     assert(blueprint.logical_id && *blueprint.logical_id == "repo-change");
     assert(blueprint.generation);
     assert(blueprint.generation->decoded_tokens == 0);
-    const auto & blueprint_prompt = inference.seen[1].messages[1].content;
+    const auto & blueprint_prompt = inference.seen[1].messages[2].content;
     assert(blueprint_prompt.find("purpose: Safely modify a repository") != std::string::npos);
     assert(blueprint_prompt.find("goal: Implement and verify") != std::string::npos);
     assert(blueprint_prompt.find("success criteria: The requested change") != std::string::npos);
@@ -1337,11 +1337,11 @@ static void test_agent_runtime_smoke() {
     }
     assert(inference.seen.size() == 4);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[0].messages.size() == 2);
-    assert(inference.seen[0].messages[1].content.find("<runtime_dataset_inventory>") != std::string::npos);
-    assert(inference.seen[0].messages[1].content.find("name=orders") != std::string::npos);
+    assert(inference.seen[0].messages.size() == 3);
+    assert(inference.seen[0].messages[2].content.find("<runtime_dataset_inventory>") != std::string::npos);
+    assert(inference.seen[0].messages[2].content.find("name=orders") != std::string::npos);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
     assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
 }
@@ -1725,6 +1725,7 @@ static void test_tool_family_singleton_fast_path() {
         true,
         tooling,
     };
+    execution.tool_output_format = common_agent_tool_output_format::native;
 
     common_agent_result result;
     assert(run_agent_runtime_driver(execution, result, error));
@@ -2396,6 +2397,7 @@ static void test_runtime_resident_runtime_builder() {
     base_turn_request.memory_scope = common_memory_scope::session;
     base_turn_request.memory_enabled = true;
     base_turn_request.generation_options.n_predict = 24;
+    base_turn_request.request.tool_output_format = common_agent_tool_output_format::native;
 
     common_agent_runtime_resident_runtime runtime(make_agent_runtime_resident_runtime_config(
         memories,
@@ -2491,6 +2493,7 @@ static void test_runtime_resident_agent_host_builder() {
     base_turn_request.orchestration_config = make_test_agent_orchestration_config(options);
     base_turn_request.memory_scope = common_memory_scope::session;
     base_turn_request.memory_enabled = true;
+    base_turn_request.request.tool_output_format = common_agent_tool_output_format::native;
 
     common_agent_runtime_resident_runtime host(
         make_agent_runtime_resident_runtime_config(memories, &plans, base_turn_request));

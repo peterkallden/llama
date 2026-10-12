@@ -456,6 +456,13 @@ bool parse_agent_host_config_json(
         read_optional(model, "embedding_model", config.embedding_model);
         read_optional(model, "profile", config.model_profile);
     }
+    if (parsed.contains("bootstrap")) {
+        if (!parsed["bootstrap"].is_object()) {
+            error = "bootstrap must be an object";
+            return false;
+        }
+        read_optional(parsed["bootstrap"], "package", config.bootstrap_package);
+    }
     if (parsed.contains("models")) {
         if (!parsed["models"].is_object()) {
             error = "models must be an object";
@@ -1254,6 +1261,9 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"embedding_model", config.embedding_model},
             {"profile", config.model_profile},
         }},
+        {"bootstrap", {
+            {"package", config.bootstrap_package},
+        }},
         {"runtime", {
             {"context_size", config.runtime_context_size},
             {"n_predict", config.n_predict},
@@ -2038,6 +2048,7 @@ void apply_agent_host_config_to_daemon_options(
     options.model = config.model_path;
     options.mmproj = config.mmproj_path;
     options.embedding_model = config.embedding_model;
+    options.bootstrap_package = config.bootstrap_package;
     options.model_profile = config.model_profile;
     options.model_catalog = config.model_catalog;
     options.default_mode = config.default_mode;

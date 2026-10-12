@@ -51,6 +51,14 @@ and keep network transports disabled unless they are selected explicitly. The
 two scripts expose the same daemon transport, authentication, sandbox and
 processor-policy controls.
 
+The Bash helper defaults to the Debian-installed starter package at
+`/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json`.
+At daemon startup the package is imported into the host-wide Cozo memory/plan
+stores. Stable package IDs make repeated service starts idempotent: existing
+records are retained, not overwritten. The package includes procedures, so a
+matching `--embedding-model` is required. Use `--bootstrap-package PATH` for a
+different package or `--disable-bootstrap-import` to opt out.
+
 Run it from the repository root in Bash:
 
 ```bash

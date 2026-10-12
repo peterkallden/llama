@@ -9,6 +9,8 @@ Usage: agent-config-bootstrap.sh [options]
   --output PATH              Output JSON (default: agent-daemon-config.json)
   --model PATH               Generation model (default: models/model.gguf)
   --embedding-model PATH     Optional embedding model
+  --bootstrap-package PATH   Package imported idempotently on daemon startup
+  --disable-bootstrap-import Disable starter-package import
   --cozo-root PATH           Cozo/data root (default: data)
   --repository-root PATH     Controlled workspace root (default: .)
   --tool-profile NAME        Tool profile (default: all-configured)
@@ -77,6 +79,10 @@ positive() {
 output=agent-daemon-config.json
 model=models/model.gguf
 embedding_model=
+bootstrap_package=/usr/share/doc/llama-agent/examples/agent-bootstrap-workflows-v1.json
+if [[ ! -f $bootstrap_package ]]; then
+    bootstrap_package=docs/examples/agent-bootstrap-workflows-v1.json
+fi
 cozo_root=data
 repository_root=.
 tool_profile=all-configured
@@ -169,7 +175,8 @@ while (($# > 0)); do
     if [[ $option != --help && $option != -h && $option != --list-tools &&
             $option != --enable-adaptation && $option != --enable-flydelta &&
             $option != --disable-flydelta-scope-expansion &&
-            $option != --disable-flydelta-promotion && $# -lt 2 ]]; then
+            $option != --disable-flydelta-promotion &&
+            $option != --disable-bootstrap-import && $# -lt 2 ]]; then
         echo "Missing value for $option" >&2
         exit 2
     fi
@@ -179,6 +186,8 @@ while (($# > 0)); do
         --output) output=$2 ;;
         --model) model=$2 ;;
         --embedding-model) embedding_model=$2 ;;
+        --bootstrap-package) bootstrap_package=$2 ;;
+        --disable-bootstrap-import) bootstrap_package=; shift; continue ;;
         --cozo-root) cozo_root=$2 ;;
         --repository-root) repository_root=$2 ;;
         --tool-profile) tool_profile=$2 ;;
@@ -300,6 +309,17 @@ if [[ $lxc_network_mode == none && $lxc_network_profile_scope != none ]]; then
 fi
 if [[ $auth_mode == opaque && ( -z $token_env || -z $token_profile ) ]]; then exit 2; fi
 if [[ $auth_mode == jwt && ( -z $jwt_issuer || -z $jwt_audience || -z $jwt_jwks_uri || -z $jwt_tool_profile ) ]]; then exit 2; fi
+if [[ -n $bootstrap_package && -z $embedding_model ]]; then
+    echo "--embedding-model is required when importing the starter package (procedures need embeddings); use --disable-bootstrap-import to opt out" >&2
+    exit 2
+fi
+if [[ -n $bootstrap_package ]]; then
+    if [[ ! -f $bootstrap_package ]]; then
+        echo "bootstrap package not found: $bootstrap_package" >&2
+        exit 2
+    fi
+    bootstrap_package=$(realpath "$bootstrap_package")
+fi
 if [[ $enable_tools_set == true && $auth_mode == none ]]; then
     echo "--enable-tools requires --auth-mode opaque or jwt" >&2
     exit 2
@@ -316,6 +336,7 @@ esac
 
 model=$(escape_json "$model")
 embedding_model=$(escape_json "$embedding_model")
+bootstrap_package=$(escape_json "$bootstrap_package")
 cozo_root=$(escape_json "$cozo_root")
 repository_root=$(escape_json "$repository_root")
 tool_profile=$(escape_json "$tool_profile")
@@ -426,6 +447,7 @@ cat > "$output" <<EOF
 {
   "schema_version": 1,
   "model": {"backend":"server-context","path":"$model","embedding_model":"$embedding_model"},
+  "bootstrap": {"package":"$bootstrap_package"},
   "runtime": {
     "context_size":3072,"n_predict":256,"n_threads":$threads,"n_gpu_layers":$gpu_layers,
     "default_mode":"$default_mode","thinking_mode":"$thinking_mode",

@@ -904,7 +904,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/agent/host
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 set(TARGET llama-agent-runtime-session-host-tooling-smoke)

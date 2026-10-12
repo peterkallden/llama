@@ -9,7 +9,9 @@
 #include "tools/server/server-context.h"
 #include "llama.h"
 #include "agent/agent-scope.h"
+#include "agent/agent-bootstrap.h"
 #include "tools/agent/cli/agent-cli-memory-tools.h"
+#include "../runtime/agent-runtime-package-io.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "../data/agent-data-store-factory.h"
@@ -792,6 +794,62 @@ bool open_daemon_data_store(
     return error.empty();
 }
 
+bool import_daemon_bootstrap_package(
+        const daemon_options & options,
+        common_memory_store & memory_store,
+        common_plan_store & plan_store,
+        std::string & error) {
+    if (options.bootstrap_package.empty()) {
+        error.clear();
+        return true;
+    }
+
+    common_agent_bootstrap_package package;
+    if (!load_bootstrap_file(options.bootstrap_package, package, error)) {
+        error = "daemon bootstrap package load failed: " + error;
+        return false;
+    }
+
+    common_agent_bootstrap_config config;
+    config.namespace_id = "llama-agent-host";
+    config.session_id = "bootstrap";
+    config.now = std::time(nullptr);
+    config.install_procedures = !package.procedures.empty();
+
+    common_agent_bootstrap_embedder embed;
+    std::unique_ptr<daemon_agent_embedding_provider> embedding;
+    if (!package.procedures.empty()) {
+        if (options.embedding_model.empty()) {
+            error = "daemon bootstrap package contains procedures; configure model.embedding_model";
+            return false;
+        }
+        embedding = std::make_unique<daemon_agent_embedding_provider>(
+            options.embedding_model, options.n_gpu_layers);
+        embed = [&embedding](
+                const std::string & text,
+                std::vector<float> & vector,
+                std::string & embed_error) {
+            return embedding->embed("daemon bootstrap procedure", text, vector, embed_error);
+        };
+    }
+
+    common_agent_bootstrap_result result;
+    if (!common_agent_install_bootstrap_package(
+            memory_store, plan_store, config, package, std::move(embed), result, error)) {
+        error = "daemon bootstrap package import failed: " + error;
+        return false;
+    }
+    std::fprintf(stderr,
+        "agent bootstrap: package=%s procedures installed=%zu existing=%zu; "
+        "blueprints installed=%zu existing=%zu; workflows installed=%zu existing=%zu\n",
+        package.name.c_str(),
+        result.installed_memory_ids.size(), result.existing_memory_ids.size(),
+        result.installed_blueprint_ids.size(), result.existing_blueprint_ids.size(),
+        result.installed_workflow_ids.size(), result.existing_workflow_ids.size());
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 bool initialize_agent_daemon_environment(
@@ -806,6 +864,10 @@ bool initialize_agent_daemon_environment(
         return false;
     }
     if (!open_daemon_plan_store(options, runtime.plan_store, error)) {
+        return false;
+    }
+    if (!import_daemon_bootstrap_package(
+            options, *runtime.memory_store, *runtime.plan_store, error)) {
         return false;
     }
     if (!open_daemon_data_store(options, runtime.data_store, error)) {

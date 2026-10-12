@@ -34,6 +34,8 @@ struct agent_host_config {
     std::string model_path;
     std::string mmproj_path;
     std::string embedding_model;
+    // Optional package imported idempotently into the host stores during daemon startup.
+    std::string bootstrap_package;
     // Optional catalog profile override. Empty means models.routing.default_profile.
     std::string model_profile;
     // Optional catalog-based model configuration. The legacy model fields
