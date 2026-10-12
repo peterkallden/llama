@@ -468,6 +468,11 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-execution-envelope.cpp
         test-agent-daemon-scope.cpp
     )
+        # The Cozo plan-store test references the optional implementation,
+        # which is only compiled when the plan Cozo backend is enabled.
+        if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
+            continue()
+        endif()
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
