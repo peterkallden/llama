@@ -1,5 +1,5 @@
 #include "agent/adaptation/semi-oracle-tool.h"
-#include "agent/adaptation/semi-oracle-teaching.h"
+#include "agent/adaptation/semi-oracle-sft-candidate.h"
 
 #include <nlohmann/json.hpp>
 #include <atomic>

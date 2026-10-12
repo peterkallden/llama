@@ -2,7 +2,6 @@
 
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 #include "agent/adaptation/semi-oracle.h"
-#include "agent/adaptation/training-candidate.h"
 
 // Builds the existing FlyDelta teaching relation only from a same-revision,
 // host-proved rejected/accepted contrast. The references identify executions
@@ -35,19 +34,4 @@ bool common_semi_oracle_make_preference_relation(
         const std::string & control_execution_ref,
         const std::string & evidence_ref,
         common_flydelta_teaching_relation & relation,
-        std::string & error);
-
-// Creates an explicit offline SFT demonstration from a proven solver action.
-// It remains ineligible until a curator approves it and supplies a redaction
-// attestation; no model occurrence/recovery counts are synthesized.
-bool common_semi_oracle_make_sft_candidate(
-        const common_semi_oracle_ruleset & ruleset,
-        const common_semi_oracle_placement_action_value & preferred,
-        const std::string & persisted_evaluation_payload_json,
-        const common_agent_scope & scope,
-        const std::string & approved_prompt,
-        const std::string & redaction_policy_id,
-        const std::string & redaction_method,
-        bool curator_approved,
-        common_training_candidate & candidate,
         std::string & error);

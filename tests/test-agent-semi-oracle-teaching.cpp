@@ -1,4 +1,5 @@
 #include "agent/adaptation/semi-oracle-teaching.h"
+#include "agent/adaptation/semi-oracle-sft-candidate.h"
 #include "agent/adaptation/trainer-protocol.h"
 
 #include <algorithm>

@@ -145,6 +145,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
     adaptation/flydelta/oracles/contracts.cpp adaptation/flydelta/oracles/contracts.h
     adaptation/semi-oracle.cpp adaptation/semi-oracle.h adaptation/semi-oracle-store.h
+    adaptation/semi-oracle-sft-candidate.cpp adaptation/semi-oracle-sft-candidate.h
     adaptation/semi-oracle-tool.cpp adaptation/semi-oracle-tool.h
     adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
     adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
