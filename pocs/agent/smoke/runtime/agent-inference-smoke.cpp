@@ -559,8 +559,8 @@ static void test_planner_regenerates_truncated_json() {
     assert(proposal.operations[0].step && proposal.operations[0].step->id == "inspect");
     assert(proposal.operations[1].step && proposal.operations[1].step->id == "answer");
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages.size() == 2);
-    assert(inference.seen[1].messages[1].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages.size() == 3);
+    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
 }
 
 static void test_planner_repairs_final_only_plan_without_binding_noise() {
