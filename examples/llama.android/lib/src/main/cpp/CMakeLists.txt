@@ -63,7 +63,11 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-chat-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-execution.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-host.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-route-compiler.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-plan-orchestration.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-resource-workflow-continuation.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-workflow-transition.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-resident.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-model-residency.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session.cpp
@@ -71,6 +75,9 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-turn-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-package-io.cpp
         ${LLAMA_SRC}/tools/agent/resource/agent-resource-chunker.cpp
+        ${LLAMA_SRC}/tools/agent/resource/agent-resource-evidence-session.cpp
+        ${LLAMA_SRC}/tools/agent/openapi/agent-openapi-catalog.cpp
+        ${LLAMA_SRC}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-provider.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
