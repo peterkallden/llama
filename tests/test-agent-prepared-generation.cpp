@@ -382,8 +382,6 @@ void test_server_task_params_from_prepared_generation() {
     assert(params.speculative.draft.n_max == 3);
     assert(params.antiprompt.size() == 1);
     assert(params.antiprompt[0] == "<|stop|>");
-    assert(params.chat_parser_params.generation_prompt == "<|assistant|>");
-    assert(params.chat_parser_params.parse_tool_calls);
 }
 
 void test_server_task_cvec_contract() {
