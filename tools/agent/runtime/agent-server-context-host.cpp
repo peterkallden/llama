@@ -471,24 +471,51 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;
         arm_result.execution_metrics.sparse_device_binding_used = device_batch;
+        arm_result.execution_metrics.device_resident = device_batch;
+        // These counters describe one physical backend binding, shared by all
+        // logical arms in the batch. Attribute its cost once so aggregating
+        // per-arm results does not multiply the same bind operation.
+        if (index == 0) {
+            arm_result.execution_metrics.basis_bytes_bound =
+                generation_results[index].flydelta_runtime.factorized_basis_bound_bytes;
+            arm_result.execution_metrics.basis_host_copy_bytes =
+                generation_results[index].flydelta_runtime.factorized_basis_host_copy_bytes;
+            arm_result.execution_metrics.coefficient_bytes_bound =
+                generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
+            arm_result.execution_metrics.overlay_bytes_bound =
+                generation_results[index].flydelta_runtime.cvec_bound_bytes;
+            arm_result.execution_metrics.overlay_binding_ms =
+                static_cast<float>(generation_results[index].flydelta_runtime.cvec_binding_us) / 1000.0f;
+        }
+        arm_result.execution_metrics.physical_batch_size =
+            generation_results[index].flydelta_runtime.physical_batch_size;
+        arm_result.execution_metrics.factorized_binding_used =
+            generation_results[index].flydelta_runtime.factorized_binding;
+        if (!generation_results[index].flydelta_runtime.fallback_reason.empty()) {
+            arm_result.execution_metrics.fallback_reason =
+                generation_results[index].flydelta_runtime.fallback_reason;
+        }
         if (generation_requests[index].flydelta_activation) {
             const auto & activation = *generation_requests[index].flydelta_activation;
             if (!activation.factorized_fallback_reason.empty()) {
                 arm_result.execution_metrics.fallback_reason = activation.factorized_fallback_reason;
             }
             if (activation.factorized_overlay.enabled) {
-                const auto & factorized = activation.factorized_overlay;
-                arm_result.execution_metrics.overlay_representation = "factorized";
-                // A compatible native batch owns one shared basis. Attribute
-                // it once to the physical batch rather than pretending every
-                // logical arm uploads the same B independently.
-                arm_result.execution_metrics.basis_bytes_to_device =
-                    index == 0 ? factorized.basis.size() * sizeof(float) : 0;
-                arm_result.execution_metrics.coefficient_bytes_to_device =
-                    factorized.coefficients.size() * sizeof(float);
-                arm_result.execution_metrics.overlay_bytes_to_device =
-                    arm_result.execution_metrics.basis_bytes_to_device +
-                    arm_result.execution_metrics.coefficient_bytes_to_device;
+                arm_result.execution_metrics.overlay_representation =
+                    generation_results[index].flydelta_runtime.factorized_binding
+                        ? "factorized" : "sparse_fallback";
+                if (index == 0) {
+                    arm_result.execution_metrics.basis_bytes_to_device =
+                        generation_results[index].flydelta_runtime.factorized_basis_bound_bytes;
+                    arm_result.execution_metrics.coefficient_bytes_to_device =
+                        generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
+                    arm_result.execution_metrics.overlay_bytes_to_device =
+                        generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                }
+                if (!generation_results[index].flydelta_runtime.factorized_binding) {
+                    arm_result.execution_metrics.materialized_overlay_bytes =
+                        generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                }
             } else if (activation.sparse_overlay.enabled) {
                 const auto & sparse = activation.sparse_overlay;
                 arm_result.execution_metrics.overlay_representation = "sparse";

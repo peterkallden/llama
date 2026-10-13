@@ -235,8 +235,33 @@ void llama_adapter_cvec_batch::clear() {
     factorized_coefficient_tensors.clear();
     factorized = false;
     factorized_rank = 0;
+    callback_applied_flag.store(false);
+    callback_failed_flag.store(false);
+    {
+        std::lock_guard<std::mutex> lock(callback_error_mutex);
+        callback_error.clear();
+    }
     bufs.clear();
     ctxs.clear();
+}
+
+void llama_adapter_cvec_batch::mark_callback_failure(const std::string & reason) {
+    callback_failed_flag.store(true);
+    std::lock_guard<std::mutex> lock(callback_error_mutex);
+    if (callback_error.empty()) callback_error = reason;
+}
+
+void llama_adapter_cvec_batch::begin_graph_observation() {
+    callback_applied_flag.store(false);
+    callback_failed_flag.store(false);
+    std::lock_guard<std::mutex> lock(callback_error_mutex);
+    callback_error.clear();
+}
+
+std::string llama_adapter_cvec_batch::callback_failure_reason() const {
+    if (!callback_failed_flag.load()) return {};
+    std::lock_guard<std::mutex> lock(callback_error_mutex);
+    return callback_error.empty() ? "unspecified graph callback failure" : callback_error;
 }
 
 bool llama_adapter_cvec_batch::apply_factorized_sparse(
@@ -277,8 +302,15 @@ bool llama_adapter_cvec_batch::apply_factorized_sparse(
         const uint32_t layer = layer_indices[i];
         ggml_context * ctx = context_for(model.select_buft(layer));
         if (!ctx) { clear(); return false; }
-        factorized_basis_tensors[layer] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, rank);
+        // ggml_mul_mat requires the shared reduction dimension at ne[0] on
+        // both inputs. The canonical host basis is rank-major [rank][n_embd],
+        // while the graph operand must be [rank, n_embd] with rank contiguous.
+        factorized_basis_tensors[layer] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, rank, n_embd);
         factorized_coefficient_tensors[layer] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, rank, seq_ids.size() + 1);
+        if (!factorized_basis_tensors[layer] || !factorized_coefficient_tensors[layer]) {
+            clear();
+            return false;
+        }
     }
     device_resident_flag = false;
     for (const auto & [buft, ctx] : contexts) {
@@ -293,7 +325,15 @@ bool llama_adapter_cvec_batch::apply_factorized_sparse(
         const uint32_t layer = layer_indices[i];
         ggml_tensor * b = factorized_basis_tensors[layer];
         ggml_tensor * c = factorized_coefficient_tensors[layer];
-        ggml_backend_tensor_set(b, basis + i * static_cast<size_t>(rank) * n_embd, 0,
+        std::vector<float> graph_basis(static_cast<size_t>(n_embd) * rank);
+        const float * source_basis = basis + i * static_cast<size_t>(rank) * n_embd;
+        for (int32_t hidden = 0; hidden < n_embd; ++hidden) {
+            for (int32_t component = 0; component < rank; ++component) {
+                graph_basis[static_cast<size_t>(hidden) * rank + component] =
+                    source_basis[static_cast<size_t>(component) * n_embd + hidden];
+            }
+        }
+        ggml_backend_tensor_set(b, graph_basis.data(), 0,
             static_cast<size_t>(rank) * n_embd * sizeof(float));
         for (size_t row = 0; row < coefficients.size(); ++row) {
             ggml_backend_tensor_set(c, coefficients[row], row * static_cast<size_t>(rank) * sizeof(float),
@@ -424,7 +464,7 @@ int32_t llama_adapter_cvec_batch::row_for_token(
             // A token shared by multiple sequences cannot receive two
             // different overlays.  The server must split such a batch or
             // provide one shared row instead of silently choosing seq_id[0].
-            return static_cast<int32_t>(seq_ids.size());
+            return -1;
         }
         row = candidate;
     }
@@ -451,17 +491,22 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
     if ((table == nullptr && (basis == nullptr || coefficients == nullptr)) || ubatch.n_tokens == 0) {
         return cur;
     }
+    if (batch->callback_failed_flag.load()) {
+        return cur;
+    }
 
     if (cur->ne[2] != 1 || cur->ne[3] != 1 || cur->ne[1] <= 0) {
         LLAMA_LOG_ERROR(
             "%s: unsupported batched cvec graph shape [%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 "]\n",
             __func__, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3]);
+        batch->mark_callback_failure("unsupported cvec graph tensor shape");
         return cur;
     }
 
     const ggml_tensor * storage = table ? table : basis;
     if (storage->buffer == nullptr) {
         LLAMA_LOG_ERROR("%s: batch cvec table has no backend buffer\n", __func__);
+        batch->mark_callback_failure("cvec graph table has no backend buffer");
         return cur;
     }
 
@@ -482,12 +527,14 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         };
         selector.ctx.reset(ggml_init(params));
         if (!selector.ctx) {
+            batch->mark_callback_failure("could not allocate cvec selector context");
             return cur;
         }
         selector.tensor = ggml_new_tensor_1d(
             selector.ctx.get(), GGML_TYPE_I32, index_count);
         if (selector.tensor == nullptr) {
             selector.ctx.reset();
+            batch->mark_callback_failure("could not allocate cvec selector tensor");
             return cur;
         }
         selector.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(
@@ -495,6 +542,7 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         if (!selector.buf) {
             selector.tensor = nullptr;
             selector.ctx.reset();
+            batch->mark_callback_failure("could not allocate cvec selector backend buffer");
             return cur;
         }
         selector.count = index_count;
@@ -518,6 +566,7 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
             LLAMA_LOG_ERROR(
                 "%s: cannot map graph indices to cvec batch (index_count=%u tokens=%u seqs=%u)\n",
                 __func__, index_count, ubatch.n_tokens, ubatch.n_seqs_unq);
+            batch->mark_callback_failure("could not map graph tokens to cvec sequence rows");
             return cur;
         }
         indices[i] = row;
@@ -527,14 +576,36 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
     if (ggml_backend_buffer_get_type(storage->buffer) !=
             ggml_backend_buffer_get_type(selector.buf.get())) {
         LLAMA_LOG_ERROR("%s: selector and cvec table use incompatible backends\n", __func__);
+        batch->mark_callback_failure("selector and cvec table use incompatible backends");
         return cur;
     }
 
     if (batch->factorized) {
-        return ggml_add(ctx, cur, ggml_mul_mat(ctx, basis,
-            ggml_get_rows(ctx, coefficients, selector.tensor)));
+        ggml_tensor * coefficient_rows = ggml_get_rows(ctx, coefficients, selector.tensor);
+        if (coefficient_rows == nullptr) {
+            batch->mark_callback_failure("could not select factorized cvec coefficient rows");
+            return cur;
+        }
+        ggml_tensor * projected = ggml_mul_mat(ctx, basis, coefficient_rows);
+        if (projected == nullptr) {
+            batch->mark_callback_failure("could not build factorized cvec matrix product");
+            return cur;
+        }
+        ggml_tensor * result = ggml_add(ctx, cur, projected);
+        if (result == nullptr) {
+            batch->mark_callback_failure("could not build factorized cvec graph operation");
+            return cur;
+        }
+        batch->callback_applied_flag.store(true);
+        return result;
     }
-    return ggml_add(ctx, cur, ggml_get_rows(ctx, table, selector.tensor));
+    ggml_tensor * result = ggml_add(ctx, cur, ggml_get_rows(ctx, table, selector.tensor));
+    if (result == nullptr) {
+        batch->mark_callback_failure("could not build sparse cvec graph operation");
+        return cur;
+    }
+    batch->callback_applied_flag.store(true);
+    return result;
 }
 
 // lora

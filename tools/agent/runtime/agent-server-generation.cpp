@@ -63,8 +63,9 @@ server_task_cvec_ptr make_server_task_cvec(
         fingerprint.append(reinterpret_cast<const char *>(&basis.rank), sizeof(basis.rank));
         fingerprint.append(reinterpret_cast<const char *>(basis.layer_indices.data()),
             basis.layer_indices.size() * sizeof(uint32_t));
-        fingerprint.append(reinterpret_cast<const char *>(basis.data.data()),
-            basis.data.size() * sizeof(float));
+        if (!basis.data) return {};
+        fingerprint.append(reinterpret_cast<const char *>(basis.data->data()),
+            basis.data->size() * sizeof(float));
         fingerprint.append(reinterpret_cast<const char *>(cvec->factorized_coefficients.data()),
             cvec->factorized_coefficients.size() * sizeof(float));
     }

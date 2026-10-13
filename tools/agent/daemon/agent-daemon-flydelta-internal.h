@@ -67,7 +67,8 @@ namespace agent_daemon_flydelta_internal {
 using json = nlohmann::ordered_json;
 
 struct daemon_flydelta_factorized_direction {
-    common_flydelta_low_rank_basis basis;
+    std::shared_ptr<const common_flydelta_low_rank_basis> basis;
+    std::shared_ptr<const std::vector<float>> flattened_basis;
     std::vector<float> normalized_coefficients;
     std::string source_ref;
     bool batch_eligible = false;

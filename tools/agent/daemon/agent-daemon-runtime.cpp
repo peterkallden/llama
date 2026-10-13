@@ -80,6 +80,10 @@ bool open_daemon_model_residency(
         std::string & error) {
     residency.reset();
     auto catalog = options.model_catalog;
+    if (options.adaptation_flydelta_factorized_cvec_batch && catalog.profiles.empty()) {
+        error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a server-context model profile";
+        return false;
+    }
     bool native_batch = false;
     bool allow_scalar_fallback = true;
     if (!catalog.profiles.empty() &&
@@ -95,15 +99,16 @@ bool open_daemon_model_residency(
         error = "models: " + error;
         return false;
     }
-    const common_agent_runtime_model_loader_config loader_config{
-        options.n_gpu_layers,
-        options.n_threads,
-        true,
-        native_batch,
-        options.agent_trace,
-        allow_scalar_fallback,
-        true,
-    };
+    common_agent_runtime_model_loader_config loader_config;
+    loader_config.n_gpu_layers = options.n_gpu_layers;
+    loader_config.n_threads = options.n_threads;
+    loader_config.fit_params = true;
+    loader_config.per_sequence_cvec_batch = native_batch;
+    loader_config.per_sequence_factorized_cvec_batch =
+        options.adaptation_flydelta_factorized_cvec_batch && native_batch;
+    loader_config.agent_trace = options.agent_trace;
+    loader_config.allow_flydelta_scalar_fallback = allow_scalar_fallback;
+    loader_config.reserve_flydelta_workspace = true;
     std::unordered_map<std::string,
         std::shared_ptr<common_agent_runtime_model_loader>> loaders;
     loaders.emplace("cli", std::make_shared<common_agent_runtime_cli_model_loader>(loader_config));

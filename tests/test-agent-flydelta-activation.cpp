@@ -71,7 +71,7 @@ int main() {
     for (size_t rank = 0; rank < 2; ++rank) {
         for (size_t value = 0; value < reconstructed.size(); ++value) {
             reconstructed[value] += factorized_rank_two.factorized_overlay.coefficients[rank] *
-                factorized_rank_two.factorized_overlay.basis[rank * reconstructed.size() + value];
+                (*factorized_rank_two.factorized_overlay.basis)[rank * reconstructed.size() + value];
         }
     }
     for (size_t value = 0; value < reconstructed.size(); ++value) {

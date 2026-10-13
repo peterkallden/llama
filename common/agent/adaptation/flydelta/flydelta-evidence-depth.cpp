@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 
 namespace {
 
@@ -211,6 +212,7 @@ bool common_flydelta_assess_evidence_depth(
         }
     }
     result.median_alignment = pairwise_alignment.empty() ? 1.0f : median(pairwise_alignment);
+    result.pairwise_cosines = pairwise_alignment;
     result.geometry_stable = result.median_alignment >= config.min_median_alignment;
 
     std::vector<std::vector<float>> gram(
@@ -225,12 +227,14 @@ bool common_flydelta_assess_evidence_depth(
     const float largest = eigenvalues.empty() ? 0.0f : eigenvalues.front();
     const float threshold = largest * config.rank_relative_tolerance;
     float eigenvalue_sum = 0.0f;
+    float retained_eigenvalue_sum = 0.0f;
     float eigenvalue_squared_sum = 0.0f;
     float smallest_retained = std::numeric_limits<float>::max();
     for (const float eigenvalue : eigenvalues) {
         if (eigenvalue <= threshold) continue;
         ++result.effective_rank;
         eigenvalue_sum += eigenvalue;
+        retained_eigenvalue_sum += eigenvalue;
         eigenvalue_squared_sum += eigenvalue * eigenvalue;
         smallest_retained = std::min(smallest_retained, eigenvalue);
     }
@@ -239,6 +243,12 @@ bool common_flydelta_assess_evidence_depth(
     }
     if (result.effective_rank > 0 && smallest_retained > 0.0f) {
         result.condition_number = std::sqrt(largest / smallest_retained);
+        result.smallest_retained_singular_value = std::sqrt(smallest_retained);
+    }
+    const float all_eigenvalue_sum = std::accumulate(
+        eigenvalues.begin(), eigenvalues.end(), 0.0f);
+    if (all_eigenvalue_sum > std::numeric_limits<float>::epsilon()) {
+        result.retained_explained_energy = retained_eigenvalue_sum / all_eigenvalue_sum;
     }
     result.basis_condition_ok = result.effective_rank <= 1 ||
         result.condition_number <= config.max_condition_number;

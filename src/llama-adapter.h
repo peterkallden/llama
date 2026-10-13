@@ -5,6 +5,7 @@
 #include "ggml-cpp.h"
 
 #include <string>
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -155,6 +156,12 @@ struct llama_adapter_cvec_batch {
     // Telemetry: true when at least one per-layer table buffer is owned by a
     // non-CPU backend. The graph callback remains backend-neutral.
     bool device_resident() const { return device_resident_flag; }
+    bool callback_applied() const { return callback_applied_flag.load(); }
+    std::string callback_failure_reason() const;
+    // Start a fresh graph observation without discarding device buffers. The
+    // server calls this before each decode so a callback from an earlier graph
+    // cannot make a later no-op graph look successful.
+    void begin_graph_observation();
 
     const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
 
@@ -181,12 +188,17 @@ private:
             bool dense_layout);
     ggml_tensor * tensor_for(int il) const;
     int32_t row_for_token(const llama_ubatch & ubatch, uint32_t token_index) const;
+    void mark_callback_failure(const std::string & reason);
 
     int32_t layer_start = -1;
     int32_t layer_end   = -1;
     int32_t n_embd      = 0;
     bool active         = false;
     bool device_resident_flag = false;
+    std::atomic<bool> callback_applied_flag{false};
+    std::atomic<bool> callback_failed_flag{false};
+    mutable std::mutex callback_error_mutex;
+    std::string callback_error;
 
     std::vector<llama_seq_id> seq_ids;
     // The row-selector is a small host-resident graph input.  It cannot be

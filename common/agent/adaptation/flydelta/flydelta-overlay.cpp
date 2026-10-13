@@ -22,17 +22,20 @@ bool common_flydelta_factorized_overlay_validate(
         std::string & error) {
     error.clear();
     if (!overlay.enabled) return true;
-    if (overlay.artifact_id.empty() || overlay.n_embd <= 0 || overlay.rank <= 0 ||
+    if (overlay.artifact_id.empty() || overlay.n_embd <= 0 || overlay.rank <= 0 || !overlay.basis ||
+            model_n_embd == 0 ||
             overlay.layer_index < 1 || static_cast<size_t>(overlay.layer_index) >= model_n_layers ||
             static_cast<size_t>(overlay.n_embd) != model_n_embd ||
-            overlay.basis.size() != static_cast<size_t>(overlay.rank) * model_n_embd ||
+            static_cast<size_t>(overlay.rank) > std::numeric_limits<size_t>::max() / model_n_embd ||
+            overlay.basis->size() != static_cast<size_t>(overlay.rank) * model_n_embd ||
             overlay.coefficients.size() != static_cast<size_t>(overlay.rank) ||
-            (max_bytes != 0 && (overlay.basis.size() + overlay.coefficients.size()) >
+            overlay.basis->size() > std::numeric_limits<size_t>::max() - overlay.coefficients.size() ||
+            (max_bytes != 0 && (overlay.basis->size() + overlay.coefficients.size()) >
                 max_bytes / sizeof(float))) {
         error = "FlyDelta factorized overlay identity or dimensions are invalid";
         return false;
     }
-    for (const float value : overlay.basis) if (!std::isfinite(value)) {
+    for (const float value : *overlay.basis) if (!std::isfinite(value)) {
         error = "FlyDelta factorized basis contains a non-finite value"; return false;
     }
     for (const float value : overlay.coefficients) if (!std::isfinite(value)) {

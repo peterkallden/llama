@@ -80,6 +80,9 @@ struct agent_host_config {
     // host reports and uses the scalar fallback.
     std::string adaptation_flydelta_batch_mode = "auto";
     size_t adaptation_flydelta_batch_parallelism = 2;
+    // Experimental factorized cvec waves require the native server-context
+    // sequence batch and are intentionally disabled unless explicitly opted in.
+    bool adaptation_flydelta_factorized_cvec_batch = false;
     // Optional durable FlyDelta capture/lifecycle wiring.  These values are
     // metadata and storage selection only; they do not grant learning credit.
     bool adaptation_flydelta_capture_candidates = false;

@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -41,7 +42,7 @@ struct common_flydelta_factorized_overlay {
     int32_t n_embd = 0;
     int32_t layer_index = -1;
     int32_t rank = 0;
-    std::vector<float> basis;
+    std::shared_ptr<const std::vector<float>> basis;
     std::vector<float> coefficients;
 };
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -73,7 +74,9 @@ bool parse_args(int argc, char ** argv, options & value) {
 
 std::shared_ptr<const common_flydelta_activation_result> make_activation(
         const llama_model * model, float value, const std::string & artifact_id,
-        const bool factorized, const int32_t layer_index, std::string & error) {
+        const bool factorized, const int32_t layer_index,
+        std::shared_ptr<const std::vector<float>> shared_basis,
+        std::string & error) {
     common_flydelta_gate_config gate_config;
     gate_config.enabled = true;
     gate_config.max_scale = 1.0f;
@@ -91,10 +94,15 @@ std::shared_ptr<const common_flydelta_activation_result> make_activation(
     common_flydelta_basis_direction direction;
     direction.layer_index = layer_index;
     direction.values.assign(request.model_n_embd, 0.0f);
-    direction.values.front() = value;
+    direction.values.front() = 1.0f;
     request.directions.push_back(std::move(direction));
-    request.coefficients = {1.0f};
+    request.coefficients = {value};
     request.allow_factorized_overlay = factorized;
+    if (factorized) {
+        request.factorized_basis = std::move(shared_basis);
+        request.factorized_rank = 1;
+        request.factorized_layer_index = layer_index;
+    }
     request.gate_request.explicit_opt_in = true;
     request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
     request.gate_request.basis_available = true;
@@ -169,9 +177,13 @@ int main(int argc, char ** argv) {
     callbacks.primitives.overlay = true;
     callbacks.primitives.host_verification = true;
     const int32_t cvec_layer = llama_model_n_layer(model) - 1;
+    auto shared_basis_values = std::make_shared<std::vector<float>>(
+        static_cast<size_t>(llama_model_n_embd(model)), 0.0f);
+    shared_basis_values->front() = 1.0f;
+    std::shared_ptr<const std::vector<float>> shared_basis = shared_basis_values;
     callbacks.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads,
             factorized = value.factorized, factorized_batch = !value.scalar && !value.single_sparse_device,
-            cvec_layer](
+            cvec_layer, shared_basis](
             const common_flydelta_arm_request & arm,
             common_agent_generation_request & request,
             std::string & prepare_error) {
@@ -187,7 +199,7 @@ int main(int argc, char ** argv) {
             auto activation = make_activation(
                 model, arm.apply_overlay ? arm.alpha : 0.0f,
                 arm.intervention_ref + "/" + arm.arm_id,
-                factorized && factorized_batch, cvec_layer, prepare_error);
+                factorized && factorized_batch, cvec_layer, shared_basis, prepare_error);
             if (!activation) return false;
             request.flydelta_activation = std::move(activation);
         }
@@ -219,6 +231,14 @@ int main(int argc, char ** argv) {
         result.generation_available = true;
         result.quality = static_cast<float>(generation.decoded_tokens);
         result.host_outcome = common_flydelta_counterfactual_outcome::unknown;
+        if (arm.apply_overlay && !generation.flydelta_runtime.applied) {
+            finalize_error = "server did not confirm that the overlay reached a successful decode graph";
+            return false;
+        }
+        if (arm.request_generation) {
+            std::cout << "cvec_smoke_arm_output arm=" << std::quoted(arm.arm_id)
+                      << " content=" << std::quoted(generation.content) << '\n';
+        }
         if (arm.request_device_diagnostics && !arm.diagnostics_baseline_arm_id.empty() &&
                 (!generation.flydelta_device_diagnostics ||
                  !generation.flydelta_device_diagnostics->available)) {
@@ -252,6 +272,65 @@ int main(int argc, char ** argv) {
             result.provenance_ref = generation.error_message;
         }
         return result.executed;
+    };
+    callbacks.score_teacher_forced_margin_batch = [model, n_predict = value.n_predict,
+            n_threads = value.n_threads, factorized = value.factorized,
+            factorized_batch = !value.scalar && !value.single_sparse_device,
+            cvec_layer, shared_basis](
+            const std::vector<common_flydelta_arm_request> & arms,
+            const std::vector<common_agent_generation_request> &,
+            common_agent_inference & scorer,
+            std::vector<common_flydelta_decision_margin> & margins,
+            std::string & score_error) {
+        score_error.clear();
+        margins.assign(arms.size(), {});
+        common_agent_teacher_forced_choice_batch_request score_batch;
+        score_batch.choices.reserve(arms.size());
+        for (const auto & arm : arms) {
+            common_agent_teacher_forced_choice_request choice;
+            choice.sequence_id = arm.arm_id;
+            choice.context = {};
+            choice.context.purpose = common_agent_generation_purpose::conversation;
+            choice.context.options.n_predict = n_predict;
+            choice.context.options.n_threads = n_threads;
+            choice.context.messages = {
+                {"system", "Reply with exactly PASS."},
+                {"user", "Run isolated FlyDelta arm " + arm.arm_id},
+            };
+            if (arm.apply_overlay) {
+                auto activation = make_activation(model, arm.alpha,
+                    arm.intervention_ref + "/" + arm.arm_id,
+                    factorized && factorized_batch, cvec_layer, shared_basis, score_error);
+                if (!activation) return false;
+                choice.context.flydelta_activation = std::move(activation);
+            }
+            choice.context.flydelta_capture.reset();
+            choice.choice_prefix = "{\"name\":\"";
+            choice.positive_choice = "PASS";
+            choice.negative_choice = "FAIL";
+            choice.positive_continuation = "PASS\",\"arguments\":{}}";
+            choice.negative_continuation = "FAIL\",\"arguments\":{}}";
+            score_batch.choices.push_back(std::move(choice));
+        }
+        common_agent_teacher_forced_choice_batch_result scored;
+        if (!scorer.score_teacher_forced_choice_batch(score_batch, scored)) {
+            score_error = scored.error_message.empty()
+                ? "cvec model smoke teacher-forced margin failed" : scored.error_message;
+            return false;
+        }
+        if (scored.choices.size() != margins.size()) {
+            score_error = "cvec model smoke teacher-forced result count mismatch";
+            return false;
+        }
+        for (size_t index = 0; index < margins.size(); ++index) {
+            const auto & choice = scored.choices[index];
+            margins[index].available = choice.available;
+            margins[index].positive_total_logprob = choice.positive_total_logprob;
+            margins[index].negative_total_logprob = choice.negative_total_logprob;
+            margins[index].positive_token_count = choice.positive_token_count;
+            margins[index].negative_token_count = choice.negative_token_count;
+        }
+        return true;
     };
     callbacks.register_evaluator = [](
             common_flydelta_evaluator_config &,
@@ -294,6 +373,7 @@ int main(int argc, char ** argv) {
         arm.apply_overlay = !value.device_diagnostics || index != 0;
         arm.fresh_context = true;
         arm.request_generation = !value.device_diagnostics;
+        arm.request_teacher_forced_margin = !value.device_diagnostics;
         arm.max_generated_tokens = static_cast<size_t>(value.n_predict);
         if (value.device_diagnostics) {
             arm.request_device_diagnostics = true;
@@ -316,12 +396,34 @@ int main(int argc, char ** argv) {
             std::cerr << "cvec batch arm " << index << " did not execute\n";
             return 1;
         }
+        if (!value.device_diagnostics && !result.arms[index].margin_available) {
+            std::cerr << "cvec batch arm " << index << " has no teacher-forced margin\n";
+            return 1;
+        }
+        if (!value.device_diagnostics) {
+            std::cout << "cvec_smoke_teacher_margin arm="
+                      << std::quoted(result.arms[index].arm_id)
+                      << " total=" << std::setprecision(9)
+                      << result.arms[index].margin_total
+                      << " normalized=" << result.arms[index].margin_normalized << '\n';
+        }
     }
     if (value.device_diagnostics &&
             (result.arms.size() != 2 || !result.arms[1].geometry_available ||
              !result.arms[1].execution_metrics.device_reduction_used)) {
         std::cerr << "device diagnostics smoke did not receive a paired non-CPU reduction\n";
         return 1;
+    }
+    if (value.factorized && !value.single_sparse_device && !value.device_diagnostics) {
+        const auto found = std::find_if(result.arms.begin(), result.arms.end(),
+            [](const auto & arm) {
+                return arm.execution_metrics.factorized_binding_used &&
+                    arm.execution_metrics.overlay_representation == "factorized";
+            });
+        if (found == result.arms.end()) {
+            std::cerr << "factorized cvec was requested but no arm used the factorized graph binding\n";
+            return 1;
+        }
     }
 
     const auto & reported_arm = value.device_diagnostics && result.arms.size() > 1
@@ -343,6 +445,25 @@ int main(int argc, char ** argv) {
               << "model_ms=" << result.arms.front().execution_metrics.model_ms << "\n"
               << "overlay_bytes_to_device="
               << result.arms.front().execution_metrics.overlay_bytes_to_device << "\n"
+              << "overlay_bytes_bound="
+              << reported_arm.execution_metrics.overlay_bytes_bound << "\n"
+              << "basis_bytes_bound="
+              << reported_arm.execution_metrics.basis_bytes_bound << "\n"
+              << "basis_host_copy_bytes="
+              << reported_arm.execution_metrics.basis_host_copy_bytes << "\n"
+              << "coefficient_bytes_bound="
+              << reported_arm.execution_metrics.coefficient_bytes_bound << "\n"
+              << "overlay_binding_ms="
+              << reported_arm.execution_metrics.overlay_binding_ms << "\n"
+              << "physical_batch_size="
+              << reported_arm.execution_metrics.physical_batch_size << "\n"
+              << "device_resident="
+              << (reported_arm.execution_metrics.device_resident ? "yes" : "no") << "\n"
+              << "factorized_binding_used="
+              << (reported_arm.execution_metrics.factorized_binding_used ? "yes" : "no") << "\n"
+              << "fallback_reason="
+              << (reported_arm.execution_metrics.fallback_reason.empty()
+                    ? "none" : reported_arm.execution_metrics.fallback_reason) << "\n"
               << "capture_bytes_to_host="
               << result.arms.front().execution_metrics.capture_bytes_to_host << "\n"
               << "mode="

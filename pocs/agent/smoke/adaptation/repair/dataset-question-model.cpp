@@ -908,6 +908,15 @@ int main(int argc, char ** argv) {
                   << " stable_rank=" << evidence_depth.stable_rank
                   << " median_alignment=" << evidence_depth.median_alignment
                   << " condition_number=" << evidence_depth.condition_number
+                  << " retained_explained_energy=" << evidence_depth.retained_explained_energy
+                  << " smallest_retained_singular_value="
+                  << evidence_depth.smallest_retained_singular_value
+                  << " pairwise_cosines=";
+        for (size_t index = 0; index < evidence_depth.pairwise_cosines.size(); ++index) {
+            if (index != 0) std::cout << ',';
+            std::cout << evidence_depth.pairwise_cosines[index];
+        }
+        std::cout
                   << " geometry_stable=" << (evidence_depth.geometry_stable ? "yes" : "no")
                   << " region_budget=" << search_budget.max_region_trials
                   << " coefficient_budget=" << search_budget.max_coefficient_trials
@@ -1178,7 +1187,8 @@ int main(int argc, char ** argv) {
                         return run_deep_arm(basis, coefficients, apply_overlay, trial, margin,
                             geometry, geometry_available, runner_error);
                     };
-            bool deep_native_batch_used = false;
+            bool deep_device_batch_used = false;
+            bool deep_backend_batch_used = false;
             const auto make_deep_batch_runner = [&](const bool full_execution) {
                 return [&, full_execution](
                         const common_flydelta_experiment_fixture & fixture,
@@ -1212,13 +1222,22 @@ int main(int argc, char ** argv) {
                         runner_error = "forced Deep native batch generation returned incomplete results";
                         return false;
                     }
-                    bool wave_native = coefficients.size() > 1;
+                    bool wave_device = false;
+                    bool wave_backend = false;
                     for (const auto & result : generated_results) {
-                        wave_native = wave_native && result.flydelta_device_batch;
+                        // A physical wave can fragment after one sequence
+                        // finishes. Record whether any fragment actually
+                        // contained the multi-sequence batch; requiring every
+                        // final result to report the original size would
+                        // misclassify a valid singleton tail as scalar-only.
+                        wave_device = wave_device || result.flydelta_device_batch;
+                        wave_backend = wave_backend ||
+                            result.flydelta_runtime.physical_batch_size >= 2;
                     }
-                    deep_native_batch_used = deep_native_batch_used || wave_native;
-                    if (coefficients.size() > 1 && !wave_native) {
-                        runner_error = "forced Deep batch did not receive native per-arm cvec execution";
+                    deep_device_batch_used = deep_device_batch_used || wave_device;
+                    deep_backend_batch_used = deep_backend_batch_used || wave_backend;
+                    if (coefficients.size() > 1 && !wave_backend) {
+                        runner_error = "forced Deep batch did not receive per-arm backend batch execution";
                         return false;
                     }
                     common_agent_teacher_forced_choice_batch_request score_batch;
@@ -1301,11 +1320,27 @@ int main(int argc, char ** argv) {
             // deliberately report-only: the host still owns outcomes and a
             // higher rank is never treated as an improvement merely because
             // its diagnostic score changed.
-            const std::vector<size_t> requested_ranks = value.low_rank_rank_sweep
-                ? std::vector<size_t>{1, 2, 4}
-                : std::vector<size_t>{deep_config.max_rank};
+            std::vector<size_t> requested_ranks;
+            if (value.low_rank_rank_sweep) {
+                requested_ranks.push_back(1);
+                for (const size_t requested_rank : {size_t{2}, size_t{4}}) {
+                    if (evidence_depth.effective_rank >= requested_rank &&
+                            directions.size() >= requested_rank) {
+                        requested_ranks.push_back(requested_rank);
+                    } else {
+                        std::cout << "flydelta_low_rank_rank_unavailable group=" << entry.first
+                                  << " requested_rank=" << requested_rank
+                                  << " evidence_effective_rank=" << evidence_depth.effective_rank
+                                  << " direction_candidates=" << directions.size()
+                                  << " reason=insufficient_independent_evidence\n";
+                    }
+                }
+            } else {
+                requested_ranks.push_back(deep_config.max_rank);
+            }
             for (const size_t requested_rank : requested_ranks) {
-                deep_native_batch_used = false;
+                deep_device_batch_used = false;
+                deep_backend_batch_used = false;
                 common_flydelta_deep_search_config rank_config = deep_config;
                 rank_config.max_rank = requested_rank;
                 common_flydelta_deep_search_result deep_result;
@@ -1337,13 +1372,20 @@ int main(int argc, char ** argv) {
                 std::cout << "flydelta_low_rank_rank_sweep group=" << entry.first
                           << " requested_rank=" << requested_rank
                           << " effective_rank=" << effective_rank
+                          << " evidence_effective_rank=" << evidence_depth.effective_rank
+                          << " retained_explained_energy=" << evidence_depth.retained_explained_energy
+                          << " smallest_retained_singular_value="
+                          << evidence_depth.smallest_retained_singular_value
+                          << " condition_number=" << evidence_depth.condition_number
                           << " strategy="
                           << common_flydelta_coefficient_search_strategy_name(
                               rank_config.coefficients.strategy)
                           << " diagnostic_trials=" << deep_group_diagnostic_trials
                           << " full_generation_trials=" << deep_group_full_generation_trials
                           << " max_batch_arms=" << rank_config.coefficients.max_batch_arms
-                          << " execution_batch=" << (deep_native_batch_used ? "native" : "none")
+                          << " execution_batch=" << (deep_device_batch_used
+                                ? "device_batch" : deep_backend_batch_used
+                                ? "backend_batch" : "none")
                           << " flattened_overlay_bytes=" << flattened_bytes
                           << " shared_basis_model_bytes=" << shared_basis_bytes
                           << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")

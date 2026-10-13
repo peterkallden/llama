@@ -35,6 +35,30 @@ bool common_flydelta_prepare_activation(
     // basis. Preserve it so a capable per-sequence backend can avoid
     // materializing one full vector per arm. Other activation shapes retain
     // the canonical sparse/dense bridge only.
+    if (request.allow_factorized_overlay && request.factorized_basis &&
+            request.factorized_rank > 0 &&
+            request.coefficients.size() == static_cast<size_t>(request.factorized_rank)) {
+        const int32_t layer = request.factorized_layer_index >= 0
+            ? request.factorized_layer_index
+            : request.directions.empty() ? request.il_start : request.directions.front().layer_index;
+        result.factorized_overlay.enabled = true;
+        result.factorized_overlay.artifact_id = request.artifact_id;
+        result.factorized_overlay.n_embd = static_cast<int32_t>(request.model_n_embd);
+        result.factorized_overlay.layer_index = layer;
+        result.factorized_overlay.rank = request.factorized_rank;
+        result.factorized_overlay.basis = request.factorized_basis;
+        result.factorized_overlay.coefficients.reserve(request.coefficients.size());
+        for (const float value : request.coefficients) {
+            result.factorized_overlay.coefficients.push_back(value * result.gate.scale);
+        }
+        if (!common_flydelta_factorized_overlay_validate(
+                result.factorized_overlay, request.model_n_embd,
+                request.model_n_layers, max_bytes, error)) {
+            result = {};
+            return false;
+        }
+        return true;
+    }
     if (request.allow_factorized_overlay && !request.directions.empty() &&
             request.directions.size() == request.coefficients.size()) {
         const int32_t layer = request.directions.front().layer_index;
@@ -50,10 +74,11 @@ bool common_flydelta_prepare_activation(
             for (const float value : request.coefficients) {
                 result.factorized_overlay.coefficients.push_back(value * result.gate.scale);
             }
+            auto basis = std::make_shared<std::vector<float>>();
             for (const auto & direction : request.directions) {
-                result.factorized_overlay.basis.insert(result.factorized_overlay.basis.end(),
-                    direction.values.begin(), direction.values.end());
+                basis->insert(basis->end(), direction.values.begin(), direction.values.end());
             }
+            result.factorized_overlay.basis = std::move(basis);
             if (!common_flydelta_factorized_overlay_validate(
                     result.factorized_overlay, request.model_n_embd,
                     request.model_n_layers, max_bytes, error)) {
@@ -171,7 +196,7 @@ bool common_flydelta_activation_result_validate(
                 !result.sparse_overlay.data.empty() ||
                 !result.overlay.artifact_id.empty() || !result.overlay.data.empty() ||
                 !result.factorized_overlay.artifact_id.empty() ||
-                !result.factorized_overlay.basis.empty() ||
+                result.factorized_overlay.basis ||
                 !result.factorized_overlay.coefficients.empty()) {
             error = "FlyDelta no-op activation contains overlay data";
             return false;

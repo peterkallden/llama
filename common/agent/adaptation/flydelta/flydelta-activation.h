@@ -24,6 +24,12 @@ struct common_flydelta_activation_request {
     // is true and the directions have one shared layer layout, activation may
     // retain B and c instead of composing sparse/dense compatibility data.
     bool allow_factorized_overlay = false;
+    // Optional pre-flattened immutable [rank][n_embd] basis shared by every
+    // request in one coefficient wave. When absent, activation can flatten
+    // `directions` for standalone callers and tests.
+    std::shared_ptr<const std::vector<float>> factorized_basis;
+    int32_t factorized_rank = 0;
+    int32_t factorized_layer_index = -1;
     // Diagnostic-only reason supplied by the runtime when a factorized
     // coefficient wave was eligible in principle but cannot use its native
     // binding on this physical request.

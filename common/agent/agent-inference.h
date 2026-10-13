@@ -186,6 +186,14 @@ struct common_agent_generation_result {
         int32_t il_start = 1;
         int32_t il_end = 0;
         size_t data_bytes = 0;
+        uint64_t cvec_binding_us = 0;
+        size_t cvec_bound_bytes = 0;
+        size_t factorized_basis_bound_bytes = 0;
+        size_t factorized_basis_host_copy_bytes = 0;
+        size_t factorized_coefficients_bound_bytes = 0;
+        size_t physical_batch_size = 0;
+        bool factorized_binding = false;
+        std::string fallback_reason;
         std::string artifact_id;
         std::string content_hash;
     } flydelta_runtime;

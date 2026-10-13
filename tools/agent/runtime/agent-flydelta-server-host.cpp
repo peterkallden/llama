@@ -48,8 +48,13 @@ bool daemon_flydelta_prepare_arm(
     if (arm.apply_overlay || zero_diagnostics_overlay) {
         std::vector<common_flydelta_basis_direction> available;
         std::vector<float> factorized_coefficients;
+        std::shared_ptr<const common_flydelta_low_rank_basis> shared_basis;
+        std::shared_ptr<const std::vector<float>> shared_flattened_basis;
         bool factorized = false;
         bool factorized_batch_eligible = false;
+        const bool factorized_enabled =
+            provider->host->server().per_sequence_factorized_cvec_batch_enabled();
+        const bool parallel_sequences = provider->host->context_key().n_parallel > 1;
         {
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             const auto it = provider->factorized_directions.find(arm.intervention_ref);
@@ -57,12 +62,19 @@ bool daemon_flydelta_prepare_arm(
                 factorized = true;
                 factorized_batch_eligible = it->second.batch_eligible;
                 factorized_coefficients = it->second.normalized_coefficients;
-                available.reserve(it->second.basis.vectors.size());
-                for (const auto & values : it->second.basis.vectors) {
-                    common_flydelta_basis_direction direction;
-                    direction.layer_index = it->second.basis.layer_index;
-                    direction.values = values;
-                    available.push_back(std::move(direction));
+                shared_basis = it->second.basis;
+                shared_flattened_basis = it->second.flattened_basis;
+                const bool can_bind_factorized = factorized_batch_eligible &&
+                    factorized_enabled && parallel_sequences && shared_basis &&
+                    shared_flattened_basis;
+                if (!can_bind_factorized && shared_basis) {
+                    available.reserve(shared_basis->vectors.size());
+                    for (const auto & values : shared_basis->vectors) {
+                        common_flydelta_basis_direction direction;
+                        direction.layer_index = shared_basis->layer_index;
+                        direction.values = values;
+                        available.push_back(std::move(direction));
+                    }
                 }
             }
         }
@@ -109,11 +121,19 @@ bool daemon_flydelta_prepare_arm(
         activation_request.directions = std::move(selected);
         activation_request.coefficients = std::move(coefficients);
         if (factorized) {
-            const bool factorized_enabled =
-                provider->host->server().per_sequence_factorized_cvec_batch_enabled();
-            const bool parallel_sequences = provider->host->context_key().n_parallel > 1;
             activation_request.allow_factorized_overlay = factorized_batch_eligible &&
                 factorized_enabled && parallel_sequences;
+            if (activation_request.allow_factorized_overlay && shared_basis &&
+                    shared_flattened_basis) {
+                activation_request.factorized_basis = std::move(shared_flattened_basis);
+                activation_request.factorized_rank = static_cast<int32_t>(shared_basis->vectors.size());
+                activation_request.factorized_layer_index = shared_basis->layer_index;
+            } else {
+                activation_request.allow_factorized_overlay = false;
+                if (activation_request.factorized_fallback_reason.empty()) {
+                    activation_request.factorized_fallback_reason = "factorized_basis_unavailable";
+                }
+            }
             if (!activation_request.allow_factorized_overlay) {
                 activation_request.factorized_fallback_reason = !factorized_batch_eligible
                     ? "factorized_requires_parallel_coefficient_wave"
@@ -156,8 +176,10 @@ bool daemon_flydelta_prepare_arm(
             if (it != provider->factorized_directions.end()) {
                 factorized = true;
                 factorized_coefficients = it->second.normalized_coefficients;
-                for (const auto & values : it->second.basis.vectors) {
-                    available.push_back({it->second.basis.layer_index, values});
+                if (it->second.basis) {
+                    for (const auto & values : it->second.basis->vectors) {
+                        available.push_back({it->second.basis->layer_index, values});
+                    }
                 }
             }
         }
@@ -652,6 +674,15 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             for (const auto & ref : refs) provider->factorized_directions.erase(ref);
         }
     } cleanup{provider, factorized_refs};
+    auto shared_basis = std::make_shared<const common_flydelta_low_rank_basis>(basis);
+    auto flattened_basis_values = std::make_shared<std::vector<float>>();
+    flattened_basis_values->reserve(basis.dimension * basis.vectors.size());
+    for (const auto & vector : basis.vectors) {
+        flattened_basis_values->insert(
+            flattened_basis_values->end(), vector.begin(), vector.end());
+    }
+    std::shared_ptr<const std::vector<float>> shared_flattened_basis =
+        std::move(flattened_basis_values);
     for (size_t index = 0; index < coefficients.size(); ++index) {
         const auto & values = coefficients[index];
         std::string intervention_ref = job.seed.candidate_ref;
@@ -672,7 +703,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             intervention_ref = "flydelta://runtime/factorized/" +
                 hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
             daemon_flydelta_factorized_direction material;
-            material.basis = basis;
+            material.basis = shared_basis;
+            material.flattened_basis = shared_flattened_basis;
             material.normalized_coefficients = std::move(normalized);
             material.source_ref = job.seed.candidate_ref;
             material.batch_eligible = coefficients.size() >= 2;

@@ -2012,6 +2012,20 @@ bounded-arm callback and the explicit `bounded_arm_batch` capability before the 
 FlyDelta adapter can use the batch path; otherwise the common scalar fallback
 is retained.
 
+The optional daemon JSON setting
+`runtime.adaptation.flydelta.factorized_cvec_batch` defaults to `false`. When
+enabled, coefficient waves may send one shared FP32 basis plus one coefficient
+row per sequence to the resident server-context backend. It requires FlyDelta,
+batch mode other than `disabled`, `batch_parallelism >= 2`, and a
+`server-context` model profile. It changes only overlay materialization, not
+Whirlpool, ranking, verification, or promotion. A single-row tail, incompatible
+basis, unsupported backend, or pre-graph allocation failure uses the existing
+sparse path; a graph-callback failure aborts the batch. `applied` is reported
+only after a successful decode graph actually included the overlay. Backend
+batching and device residency are reported separately; backend batching alone
+is not GPU evidence. Byte counts are payload accounting unless telemetry
+explicitly identifies measured backend-bound bytes.
+
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
 
@@ -2634,6 +2648,20 @@ The arm trace records `overlay_representation` (`dense`, `sparse` or
 They are systems diagnostics only and cannot alter Oracle truth, `HELPED`,
 lifecycle, evidence or promotion. Rank-1 equivalence is checked against the
 established composition contract before rank 2 or 4 is considered.
+
+Physical-batch binding bytes and binding time are attributed to the first arm
+only; these are batch totals, not per-arm copies. Logical payload estimates
+remain separate from bytes passed to backend binding calls. A `backend_batch`
+path or binding-call accounting does not prove device residency; only explicit
+`device_batch`/`device_resident` telemetry supports that claim. Each omitted
+requested rank must have its own rank-specific `unavailable` record.
+
+The canonical host basis is rank-major. For ggml's `mul_mat` K-dimension
+layout, the resident binding transposes that shared basis once into a host
+staging buffer before backend binding. `basis_host_copy_bytes` reports that
+measured staging payload; `basis_bytes_bound` reports the bytes passed to the
+backend tensor setter. Neither field measures transfer latency, which is
+reported separately as `overlay_binding_ms`.
 
 The rank result is report-only. A rank above one that does not improve the
 fixture is useful negative evidence, not a smoke failure; insufficient

@@ -60,6 +60,18 @@ int main() {
     CHECK(result.depth == common_flydelta_search_depth::shallow);
     CHECK(result.shallow_ready && !result.deep_ready);
     CHECK(result.effective_rank == 2 && result.condition_number < 2.0f);
+    CHECK(result.retained_explained_energy > 0.99f);
+    CHECK(result.smallest_retained_singular_value > 0.0f);
+    CHECK(result.pairwise_cosines.size() == 1);
+
+    CHECK(common_flydelta_assess_evidence_depth(
+        identity(), config,
+        {sample("flydelta://sample/r4-a", {1.0f, 0.0f, 0.0f, 0.0f}),
+         sample("flydelta://sample/r4-b", {0.0f, 1.0f, 0.0f, 0.0f}),
+         sample("flydelta://sample/r4-c", {0.0f, 0.0f, 1.0f, 0.0f}),
+         sample("flydelta://sample/r4-d", {0.0f, 0.0f, 0.0f, 1.0f})}, result, error));
+    CHECK(result.effective_rank == 4 && result.retained_explained_energy > 0.99f);
+    CHECK(result.pairwise_cosines.size() == 6);
 
     CHECK(common_flydelta_assess_evidence_depth(
         identity(), config,

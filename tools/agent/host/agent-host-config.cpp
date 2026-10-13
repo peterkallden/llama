@@ -540,6 +540,7 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
                 read_optional(flydelta, "batch_mode", config.adaptation_flydelta_batch_mode);
                 read_optional(flydelta, "batch_parallelism", config.adaptation_flydelta_batch_parallelism);
+                read_optional(flydelta, "factorized_cvec_batch", config.adaptation_flydelta_factorized_cvec_batch);
                 read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
                 read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
                 read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
@@ -1320,6 +1321,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"queue_path", config.adaptation_flydelta_queue_path},
                     {"batch_mode", config.adaptation_flydelta_batch_mode},
                     {"batch_parallelism", config.adaptation_flydelta_batch_parallelism},
+                    {"factorized_cvec_batch", config.adaptation_flydelta_factorized_cvec_batch},
                     {"capture_candidates", config.adaptation_flydelta_capture_candidates},
                     {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
                     {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
@@ -1589,6 +1591,14 @@ bool validate_agent_host_config(
     if (config.adaptation_flydelta_batch_parallelism == 0 ||
             config.adaptation_flydelta_batch_parallelism > 8) {
         error = "runtime.adaptation.flydelta.batch_parallelism must be between 1 and 8";
+        return false;
+    }
+    if (config.adaptation_flydelta_factorized_cvec_batch &&
+            (!config.adaptation_flydelta_enabled ||
+             config.model_backend != "server-context" ||
+             config.adaptation_flydelta_batch_mode == "disabled" ||
+             config.adaptation_flydelta_batch_parallelism < 2)) {
+        error = "runtime.adaptation.flydelta.factorized_cvec_batch requires enabled FlyDelta, server-context, enabled batch mode and batch_parallelism of at least 2";
         return false;
     }
     if (config.adaptation_flydelta_enabled && flydelta_budget.agent_workers == 0) {
@@ -2102,6 +2112,8 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
     options.adaptation_flydelta_batch_mode = config.adaptation_flydelta_batch_mode;
     options.adaptation_flydelta_batch_parallelism = config.adaptation_flydelta_batch_parallelism;
+    options.adaptation_flydelta_factorized_cvec_batch =
+        config.adaptation_flydelta_factorized_cvec_batch;
     options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
     options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
     options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;

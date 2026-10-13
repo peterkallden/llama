@@ -1,6 +1,7 @@
 #include "server-task.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -78,7 +79,8 @@ int main() {
     auto basis = std::make_shared<server_task_cvec::factorized_basis_data>();
     basis->rank = 2;
     basis->layer_indices = {4};
-    basis->data = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    basis->data = std::make_shared<const std::vector<float>>(
+        std::vector<float>{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f});
     auto factor_a = make_cvec("factor-a", 0);
     auto factor_b = make_cvec("factor-b", 0);
     factor_a->factorized_basis = basis;
@@ -94,6 +96,65 @@ int main() {
             material_basis != basis || coefficient_rows.size() != 2 || n_embd != 4 ||
             coefficient_rows[0][0] != 0.25f || coefficient_rows[1][1] != -0.5f) {
         std::cerr << "factorized batch materialization failed: " << error << '\n';
+        return 1;
+    }
+    std::vector<std::vector<float>> owned_rows;
+    std::vector<const float *> fallback_rows;
+    if (!factorized.materialize_factorized_sparse(
+                seq_ids, owned_rows, fallback_rows, n_embd, layers, error) ||
+            seq_ids != std::vector<llama_seq_id>{10, 11} ||
+            layers != std::vector<uint32_t>{4} || fallback_rows.size() != 2 ||
+            owned_rows.size() != 2 || owned_rows[0].size() != 4 ||
+            std::fabs(fallback_rows[0][0] - 0.25f) > 1.0e-7f ||
+            std::fabs(fallback_rows[1][1] + 0.5f) > 1.0e-7f) {
+        std::cerr << "factorized sparse fallback materialization failed: " << error << '\n';
+        return 1;
+    }
+
+    // Native binding rejects a non-shared basis, but the fallback still
+    // materializes every row over the union of the layers.
+    auto other_basis = std::make_shared<server_task_cvec::factorized_basis_data>();
+    other_basis->rank = 1;
+    other_basis->layer_indices = {2};
+    other_basis->data = std::make_shared<const std::vector<float>>(
+        std::vector<float>{0.0f, 0.0f, 0.0f, 2.0f});
+    auto heterogeneous = make_cvec("factor-c", 0);
+    heterogeneous->factorized_basis = other_basis;
+    heterogeneous->factorized_coefficients = {0.5f};
+    server_task_cvec_batch mixed_basis;
+    if (!mixed_basis.add(10, factor_a, error) ||
+            !mixed_basis.add(12, heterogeneous, error) ||
+            mixed_basis.materialize_factorized(
+                seq_ids, material_basis, coefficient_rows, n_embd, error) ||
+            !mixed_basis.materialize_factorized_sparse(
+                seq_ids, owned_rows, fallback_rows, n_embd, layers, error) ||
+            layers != std::vector<uint32_t>{2, 4} || owned_rows.size() != 2 ||
+            std::fabs(owned_rows[1][3] - 1.0f) > 1.0e-7f ||
+            std::fabs(owned_rows[0][4] - 0.25f) > 1.0e-7f) {
+        std::cerr << "heterogeneous factorized sparse fallback failed: " << error << '\n';
+        return 1;
+    }
+
+    // Singleton tails and identical coefficient rows remain valid; neither
+    // case is permitted to degrade into an empty scalar vector.
+    server_task_cvec_batch singleton_factorized;
+    if (!singleton_factorized.add(13, factor_a, error) ||
+            !singleton_factorized.materialize_factorized_sparse(
+                seq_ids, owned_rows, fallback_rows, n_embd, layers, error) ||
+            seq_ids != std::vector<llama_seq_id>{13} || owned_rows.size() != 1 ||
+            owned_rows[0].size() != 4 || std::fabs(owned_rows[0][0] - 0.25f) > 1.0e-7f) {
+        std::cerr << "singleton factorized tail materialization failed: " << error << '\n';
+        return 1;
+    }
+    auto factor_identical = make_cvec("factor-identical", 0);
+    factor_identical->factorized_basis = basis;
+    factor_identical->factorized_coefficients = factor_a->factorized_coefficients;
+    server_task_cvec_batch identical;
+    if (!identical.add(14, factor_a, error) || !identical.add(15, factor_identical, error) ||
+            !identical.materialize_factorized_sparse(
+                seq_ids, owned_rows, fallback_rows, n_embd, layers, error) ||
+            owned_rows.size() != 2 || owned_rows[0] != owned_rows[1]) {
+        std::cerr << "identical factorized rows were not preserved: " << error << '\n';
         return 1;
     }
 

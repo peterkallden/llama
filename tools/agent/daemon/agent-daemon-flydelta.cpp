@@ -3164,7 +3164,7 @@ bool flydelta_batch_mode_valid(const std::string & mode) {
 bool flydelta_native_batch_requested(const daemon_options & options) {
     return options.adaptation_flydelta_enabled &&
         options.adaptation_flydelta_batch_mode != "disabled" &&
-        options.n_gpu_layers > 0;
+        (options.n_gpu_layers > 0 || options.adaptation_flydelta_factorized_cvec_batch);
 }
 
 void apply_flydelta_auto_batch_capacity(
@@ -3403,7 +3403,29 @@ bool configure_daemon_flydelta_model_residency(
         error = "runtime.adaptation.flydelta.batch_parallelism must be between 1 and 8";
         return false;
     }
+    if (options.adaptation_flydelta_factorized_cvec_batch) {
+        const std::string profile_id = options.model_profile.empty()
+            ? catalog.default_profile : options.model_profile;
+        const auto profile = catalog.profiles.find(profile_id);
+        const auto base = profile == catalog.profiles.end()
+            ? catalog.bases.end() : catalog.bases.find(profile->second.base_model_id);
+        if (profile == catalog.profiles.end() || base == catalog.bases.end() ||
+                base->second.backend != "server-context") {
+            error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a server-context model profile";
+            return false;
+        }
+    }
     apply_flydelta_auto_batch_capacity(options, catalog);
+    if (options.adaptation_flydelta_factorized_cvec_batch) {
+        const std::string profile_id = options.model_profile.empty()
+            ? catalog.default_profile : options.model_profile;
+        const auto profile = catalog.profiles.find(profile_id);
+        if (profile == catalog.profiles.end() || profile->second.n_parallel < 2 ||
+                profile->second.n_sequences < 2) {
+            error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a model profile with parallel and sequence capacity of at least 2";
+            return false;
+        }
+    }
     native_batch = flydelta_native_batch_requested(options);
     allow_scalar_fallback = options.adaptation_flydelta_batch_mode != "required";
     error.clear();

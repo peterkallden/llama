@@ -40,6 +40,9 @@ struct common_flydelta_evidence_depth_result {
     float stable_rank = 0.0f;
     float median_alignment = 0.0f;
     float condition_number = 0.0f;
+    float retained_explained_energy = 0.0f;
+    float smallest_retained_singular_value = 0.0f;
+    std::vector<float> pairwise_cosines;
     bool basis_condition_ok = false;
     bool geometry_stable = false;
     bool shallow_ready = false;

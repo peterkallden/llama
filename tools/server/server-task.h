@@ -75,7 +75,7 @@ struct server_task_cvec {
         std::vector<uint32_t> layer_indices;
         // Layer-major [layer][rank][n_embd], with each basis vector stored
         // contiguously.  The graph computes basis * coefficients per token.
-        std::vector<float> data;
+        std::shared_ptr<const std::vector<float>> data;
         std::string fingerprint;
     };
     std::shared_ptr<const factorized_basis_data> factorized_basis;
@@ -122,6 +122,14 @@ struct server_task_cvec_batch {
             std::shared_ptr<const server_task_cvec::factorized_basis_data> & basis,
             std::vector<const float *> & coefficients,
             int32_t & n_embd,
+            std::string & error) const;
+
+    bool materialize_factorized_sparse(
+            std::vector<llama_seq_id> & seq_ids,
+            std::vector<std::vector<float>> & owned_rows,
+            std::vector<const float *> & rows,
+            int32_t & n_embd,
+            std::vector<uint32_t> & layer_indices,
             std::string & error) const;
 
     bool has_sparse() const {
@@ -539,6 +547,14 @@ struct server_task_result_teacher_score : server_task_result {
     size_t token_count = 0;
     // Internal execution provenance; not serialized in public JSON.
     bool flydelta_device_batch = false;
+    uint64_t flydelta_cvec_binding_us = 0;
+    size_t flydelta_cvec_bound_bytes = 0;
+    size_t flydelta_cvec_basis_bound_bytes = 0;
+    size_t flydelta_cvec_basis_host_copy_bytes = 0;
+    size_t flydelta_cvec_coefficients_bound_bytes = 0;
+    size_t flydelta_cvec_physical_batch_size = 0;
+    bool flydelta_cvec_factorized_binding = false;
+    std::string flydelta_cvec_fallback_reason;
 
     virtual json to_json() override;
 };
@@ -575,6 +591,16 @@ struct server_task_result_cmpl_final : server_task_result {
     // True when this completion used per-sequence overlay rows in a
     // non-CPU backend graph.
     bool flydelta_device_batch = false;
+    // True only after the server confirmed that the task's cvec was applied.
+    bool flydelta_overlay_applied = false;
+    uint64_t flydelta_cvec_binding_us = 0;
+    size_t flydelta_cvec_bound_bytes = 0;
+    size_t flydelta_cvec_basis_bound_bytes = 0;
+    size_t flydelta_cvec_basis_host_copy_bytes = 0;
+    size_t flydelta_cvec_coefficients_bound_bytes = 0;
+    size_t flydelta_cvec_physical_batch_size = 0;
+    bool flydelta_cvec_factorized_binding = false;
+    std::string flydelta_cvec_fallback_reason;
 
     // response formatting
     bool               verbose  = false;
