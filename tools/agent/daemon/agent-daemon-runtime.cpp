@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <chrono>
 #include <ctime>
@@ -40,6 +41,7 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -48,6 +50,29 @@
 #include "agent-daemon-flydelta.h"
 
 namespace {
+
+// The user-owned turn text is the only automatic source for an initial
+// algebra state. The model never supplies state through oracle.action.verify.
+// This deliberately recognizes only the small exact-linear surface accepted
+// by the V1 evaluator; anything broader remains an explicit host-state need.
+bool initial_linear_algebra_state_from_prompt(
+        const std::string & prompt, std::string & state_json) {
+    static const std::regex equation(
+        R"(([0-9xX+\-*/().[:space:]]+)=([0-9xX+\-*/().[:space:]]+))");
+    std::smatch match;
+    if (!std::regex_search(prompt, match, equation) || match.size() != 3) return false;
+    const auto compact = [](std::string value) {
+        value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), value.end());
+        return value;
+    };
+    auto lhs = compact(match[1].str());
+    auto rhs = compact(match[2].str());
+    if (lhs.empty() || rhs.empty()) return false;
+    state_json = nlohmann::ordered_json{{"lhs", std::move(lhs)}, {"rhs", std::move(rhs)}}.dump();
+    return true;
+}
 
 bool open_daemon_model_residency(
         const daemon_options & options,
@@ -414,7 +439,8 @@ bool resolve_agent_daemon_tooling(
         tool_request.semi_oracle_tool_call = [semi_oracle_store,
                 host_namespace = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
                 session_id = request.session_id,
-                source_turn_id = request.turn_id](const std::string & name, const std::string & input) {
+                source_turn_id = request.turn_id,
+                prompt = request.prompt](const std::string & name, const std::string & input) {
             using json = nlohmann::ordered_json;
             const auto arguments = json::parse(input, nullptr, false);
             if (!arguments.is_object()) return common_tool_execution_result::failure(
@@ -446,8 +472,33 @@ bool resolve_agent_daemon_tooling(
                     !arguments["action_dsl"].is_string())
                 return common_tool_execution_result::failure("tool.oracle.invalid_action", common_tool_failure_class::validation, false,
                     "A supported oracle action and action_dsl are required.", "unsupported tool or missing action_dsl");
-            common_semi_oracle_result result; std::string before, after, error;
-            if (!service.verify_active_placement_action(
+            common_semi_oracle_ruleset active; bool found = false;
+            std::string error;
+            if (!service.active_ruleset(active, found, error) || !found) {
+                return common_tool_execution_result::failure("tool.oracle.action_unavailable",
+                    common_tool_failure_class::validation, false,
+                    "No active RuleSet is available for this action.", std::move(error));
+            }
+            if (active.domain == common_semi_oracle_domain::linear_algebra) {
+                std::string state; bool state_found = false;
+                if (!semi_oracle_store->get_session_state(session_id, active.id,
+                        active.revision, state, state_found, error)) {
+                    return common_tool_execution_result::failure("tool.oracle.state_unavailable",
+                        common_tool_failure_class::execution, false,
+                        "The host could not load algebra state.", std::move(error));
+                }
+                if (!state_found) {
+                    if (!initial_linear_algebra_state_from_prompt(prompt, state) ||
+                            !service.initialize_active_state(state, false, error)) {
+                        return common_tool_execution_result::failure("tool.oracle.state_required",
+                            common_tool_failure_class::validation, false,
+                            "The host needs a supported equation from the user before verifying an algebra rewrite.",
+                            error.empty() ? "no supported equation was found in the user request" : std::move(error));
+                    }
+                }
+            }
+            common_semi_oracle_result result; std::string before, after;
+            if (!service.verify_active_action(
                     arguments["action_dsl"].get<std::string>(), result, before, after, error))
                 return common_tool_execution_result::failure("tool.oracle.action_unavailable", common_tool_failure_class::validation, false,
                     "The host could not evaluate this action in the active session state.", std::move(error));
@@ -460,7 +511,6 @@ bool resolve_agent_daemon_tooling(
                 {"reason", result.reason}};
             auto execution = common_tool_execution_result::success(response.dump());
             if (result.verdict == common_semi_oracle_verdict::satisfied) {
-                common_semi_oracle_ruleset active; bool found = false;
                 if (service.active_ruleset(active, found, error) && found) {
                     std::vector<common_semi_oracle_placement_action_value> ranking;
                     if (service.rank_placements(before, {100000, 16}, ranking, error) &&

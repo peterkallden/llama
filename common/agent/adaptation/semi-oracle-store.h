@@ -16,8 +16,24 @@ public:
             uint64_t revision, std::string & error) = 0;
     virtual bool get_session_binding(const std::string & session_id, std::string & id,
             uint64_t & revision, bool & found, std::string & error) const = 0;
-    // Placement-game state is host-owned and keyed by session and RuleSet
-    // revision. A runtime must not fall back to model-supplied state.
+    // Domain state is host-owned and keyed by session and RuleSet revision. A
+    // runtime must not fall back to model-supplied state. The compatibility
+    // hooks below retain the original placement-game store implementations
+    // while new runtime code uses the domain-neutral names.
+    virtual bool get_session_state(const std::string & session_id,
+            const std::string & ruleset_id, uint64_t revision,
+            std::string & state_json, bool & found, std::string & error) const {
+        return get_session_game_state(session_id, ruleset_id, revision,
+            state_json, found, error);
+    }
+    virtual bool put_session_state(const std::string & session_id,
+            const std::string & ruleset_id, uint64_t revision,
+            const std::string & state_json, std::string & error) {
+        return put_session_game_state(session_id, ruleset_id, revision,
+            state_json, error);
+    }
+    // Legacy storage hook. Implementations may retain this physical relation
+    // name; callers must use get_session_state/put_session_state.
     virtual bool get_session_game_state(const std::string & session_id,
             const std::string & ruleset_id, uint64_t revision,
             std::string & state_json, bool & found, std::string & error) const {

@@ -352,6 +352,32 @@ std::string common_semi_oracle_action_contract(const common_semi_oracle_ruleset 
     return "Rule set: "+r.name+"@r"+std::to_string(r.revision)+"\nReturn changed fields only, one per line:\nlhs: linear expression in x (omit to keep current lhs)\nrhs: linear expression in x (omit to keep current rhs)\nConstraint: resulting equation must be equivalent over exact rational numbers. The host selects the rewrite evaluator and fills omitted fields from current state.";
 }
 
+bool common_semi_oracle_validate_state(const common_semi_oracle_ruleset & r,
+        const std::string & state_json, std::string & error) {
+    error.clear();
+    if (!r.active || !common_semi_oracle_validate_ruleset(r, error)) {
+        if (error.empty()) error = "RuleSet is not active";
+        return false;
+    }
+    if (r.domain == common_semi_oracle_domain::placement_game) {
+        json state; int rows = 0, columns = 0, win_length = 0;
+        return game_state(r, state_json, state, rows, columns, win_length, error);
+    }
+    const auto state = json::parse(state_json, nullptr, false);
+    if (!state.is_object() || !state.contains("lhs") || !state.contains("rhs") ||
+            !state["lhs"].is_string() || !state["rhs"].is_string()) {
+        error = "linear_algebra state requires lhs and rhs strings";
+        return false;
+    }
+    linear normalized;
+    if (!parse_equation(state["lhs"].get<std::string>() + "=" +
+            state["rhs"].get<std::string>(), normalized)) {
+        error = "linear_algebra state is outside the supported exact linear fragment";
+        return false;
+    }
+    return true;
+}
+
 bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const common_semi_oracle_query & q,
         common_semi_oracle_result & out, std::string & error) {
     error.clear(); out={}; out.ruleset_id=r.id; out.ruleset_revision=r.revision; out.level=q.level;
@@ -384,7 +410,10 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
                 compact_expression(old_rhs) == compact_expression(new_rhs);
         const bool valid=proportional_nonzero(before,after); out.verdict=no_change?common_semi_oracle_verdict::violated:(valid?common_semi_oracle_verdict::satisfied:common_semi_oracle_verdict::violated);
         json evidence={{"before",{{"a",before.a.str()},{"b",before.b.str()}}},{"after",{{"a",after.a.str()},{"b",after.b.str()}}}};
-        if(valid&&!no_change) out.proof_json=evidence.dump(); else out.counterexample_json=evidence.dump();
+        if(valid&&!no_change) {
+            evidence["next_state"]={{"lhs",new_lhs},{"rhs",new_rhs}};
+            out.proof_json=evidence.dump();
+        } else out.counterexample_json=evidence.dump();
         out.reason=no_change?"proposed rewrite makes no textual change to the equation":
                 (valid?"equation equivalence proven by exact rational normalization":"normalized equation changed under the proposed rewrite");
         out.expansions=1; return true;

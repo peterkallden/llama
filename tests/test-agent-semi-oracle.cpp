@@ -198,6 +198,10 @@ int main() {
     aq.level=common_semi_oracle_level::bounded;aq.goal="solve:x";aq.action_dsl="open! algebra.rewrite_equation\nlhs: 2x+6\nrhs: 10\n";
     CHECK(common_semi_oracle_evaluate(algebra,aq,result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&result.proof_json.find("solution")!=std::string::npos);
+    CHECK(common_semi_oracle_validate_state(algebra,
+        R"json({"lhs":"2(x+3)","rhs":"10"})json", error));
+    CHECK(!common_semi_oracle_validate_state(algebra,
+        R"json({"lhs":"x*x","rhs":"10"})json", error));
 
     const auto encoded=common_semi_oracle_ruleset_to_json(game);
     common_semi_oracle_ruleset roundtrip;
@@ -213,6 +217,16 @@ int main() {
         "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",common_semi_oracle_level::local,"",
         common_semi_oracle_budget{}, {},result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&store.evaluations.size()==2);
+    common_semi_oracle_tool_service algebra_service(store,"host-test","session-algebra");
+    common_semi_oracle_ruleset managed_algebra;
+    CHECK(algebra_service.define_ruleset("name: Tool algebra\ndescription: session equation\ndomain: linear_algebra\nvariable: x\n",common_semi_oracle_rule_authority::declared,managed_algebra,error));
+    CHECK(algebra_service.initialize_active_state(R"json({"lhs":"2(x+3)","rhs":"10"})json",false,error));
+    std::string state_before,state_after;
+    CHECK(algebra_service.verify_active_action("open! algebra.rewrite_equation\nlhs: 2x+6\n",result,state_before,state_after,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&
+        state_before.find("2(x+3)")!=std::string::npos&&state_after.find("2x+6")!=std::string::npos);
+    CHECK(algebra_service.verify_active_action("lhs: 2x+3\n",result,state_before,state_after,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::violated&&state_after.empty());
     common_semi_oracle_ruleset revised;
     CHECK(service.define_ruleset("name: Tool game corrected\ndescription: session game\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",common_semi_oracle_rule_authority::declared,revised,error));
     CHECK(revised.id==managed.id&&revised.revision==2&&revised.parent_revision==1);

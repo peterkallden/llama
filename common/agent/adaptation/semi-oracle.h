@@ -124,6 +124,13 @@ bool common_semi_oracle_ruleset_from_json(
 // The dynamic action contract is rendered from the active host-validated revision.
 std::string common_semi_oracle_action_contract(const common_semi_oracle_ruleset & ruleset);
 
+// Validates host-owned domain state before it is bound to an active RuleSet.
+// It accepts no model-supplied state on the runtime action path.
+bool common_semi_oracle_validate_state(
+        const common_semi_oracle_ruleset & ruleset,
+        const std::string & state_json,
+        std::string & error);
+
 bool common_semi_oracle_evaluate(
         const common_semi_oracle_ruleset & ruleset,
         const common_semi_oracle_query & query,

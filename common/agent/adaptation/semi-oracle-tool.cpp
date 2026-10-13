@@ -56,7 +56,7 @@ bool common_semi_oracle_tool_service::define_ruleset(const std::string & dsl,
         json cells = json::array();
         for (int i = 0; i < rows * columns; ++i) cells.push_back(nullptr);
         const auto initial_state = json{{"cells", std::move(cells)}, {"turn", players[0]}}.dump();
-        if (!store_.put_session_game_state(session_id_, active.id, active.revision,
+        if (!store_.put_session_state(session_id_, active.id, active.revision,
                 initial_state, error)) return false;
     }
     if(!store_.bind_session(session_id_,active.id,active.revision,error))return false;
@@ -78,6 +78,20 @@ bool common_semi_oracle_tool_service::action_contract(std::string & contract,std
     if(!active_ruleset(ruleset,found,error))return false;
     if(!found){error="no active semi-oracle RuleSet is bound to this session";return false;}
     contract=common_semi_oracle_action_contract(ruleset);return true;
+}
+
+bool common_semi_oracle_tool_service::initialize_active_state(
+        const std::string & state_json, bool replace, std::string & error) {
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (!common_semi_oracle_validate_state(ruleset, state_json, error)) return false;
+    std::string existing;
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
+            existing, found, error)) return false;
+    if (found && !replace) return true;
+    return store_.put_session_state(session_id_, ruleset.id, ruleset.revision,
+        state_json, error);
 }
 
 bool common_semi_oracle_tool_service::verify_action(const std::string & state_json,
@@ -108,19 +122,34 @@ bool common_semi_oracle_tool_service::verify_active_placement_action(
         error = "the active RuleSet is not a placement_game; this runtime action path requires host-owned game state";
         return false;
     }
-    if (!store_.get_session_game_state(session_id_, ruleset.id, ruleset.revision,
+    return verify_active_action(action_dsl, result, state_before, state_after, error);
+}
+
+bool common_semi_oracle_tool_service::verify_active_action(
+        const std::string & action_dsl, common_semi_oracle_result & result,
+        std::string & state_before, std::string & state_after, std::string & error) {
+    state_before.clear(); state_after.clear();
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
             state_before, found, error)) return false;
-    if (!found) { error = "the active placement_game has no host-owned session board"; return false; }
+    if (!found) {
+        error = "the active " + std::string(common_semi_oracle_domain_name(ruleset.domain)) +
+            " RuleSet has no host-owned session state";
+        return false;
+    }
     if (!verify_action(state_before, action_dsl, common_semi_oracle_level::local,
             {}, {1, 1}, {}, result, error)) return false;
     if (result.verdict != common_semi_oracle_verdict::satisfied) return true;
     const auto proof = json::parse(result.proof_json, nullptr, false);
     if (!proof.is_object() || !proof.contains("next_state") || !proof["next_state"].is_object()) {
-        error = "verified placement action did not return a host-verifiable next state";
+        error = "verified active-domain action did not return a host-verifiable next state";
         return false;
     }
     state_after = proof["next_state"].dump();
-    return store_.put_session_game_state(session_id_, ruleset.id, ruleset.revision,
+    if (!common_semi_oracle_validate_state(ruleset, state_after, error)) return false;
+    return store_.put_session_state(session_id_, ruleset.id, ruleset.revision,
         state_after, error);
 }
 

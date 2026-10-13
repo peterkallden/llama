@@ -43,6 +43,18 @@ int main() {
         "open! game.place_mark\nplayer: O\nrow: 0\ncolumn: 0\n",
         turn_result, before, after, error));
     CHECK(turn_result.verdict == common_semi_oracle_verdict::violated && after.empty());
+    common_semi_oracle_tool_service algebra_service(store,"host","session-algebra");
+    common_semi_oracle_ruleset active_algebra;
+    CHECK(algebra_service.define_ruleset(
+        "name: Session algebra\ndescription: persisted equation test\ndomain: linear_algebra\nvariable: x\n",
+        common_semi_oracle_rule_authority::declared, active_algebra, error));
+    CHECK(algebra_service.initialize_active_state(
+        R"json({"lhs":"2(x+3)","rhs":"10"})json", false, error));
+    CHECK(algebra_service.verify_active_action(
+        "open! algebra.rewrite_equation\nlhs: 2x+6\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        after.find("2x+6") != std::string::npos);
     common_semi_oracle_tool_service service(store,"host","session-1");
     std::vector<common_semi_oracle_placement_action_value> ranked;
     CHECK(service.rank_placements(
@@ -97,7 +109,7 @@ int main() {
     store.close();
     CHECK(store.open(db,error));
     std::string persisted_state;
-    CHECK(store.get_session_game_state("session-play", active_game.id,
+    CHECK(store.get_session_state("session-play", active_game.id,
         active_game.revision, persisted_state, found, error) && found);
     CHECK(persisted_state.find("\"turn\":\"O\"") != std::string::npos);
     common_semi_oracle_tool_service resumed(store,"host","session-play");
@@ -105,6 +117,12 @@ int main() {
         "open! game.place_mark\nplayer: O\nrow: 1\ncolumn: 1\n",
         turn_result, before, after, error));
     CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied);
+    common_semi_oracle_tool_service resumed_algebra(store,"host","session-algebra");
+    CHECK(resumed_algebra.verify_active_action(
+        "open! algebra.rewrite_equation\nlhs: 2x\nrhs: 4\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        after.find("\"rhs\":\"4\"") != std::string::npos);
     store.close();
     std::filesystem::remove_all(dir,ec);
     return 0;

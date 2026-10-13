@@ -20,6 +20,11 @@ public:
     bool active_ruleset(common_semi_oracle_ruleset & ruleset,
             bool & found, std::string & error) const;
     bool action_contract(std::string & contract, std::string & error) const;
+    // Host-only state admission for a newly established domain session. State
+    // is validated against the active RuleSet and is never supplied by the
+    // model's action call. Existing state is preserved unless replace is true.
+    bool initialize_active_state(const std::string & state_json, bool replace,
+            std::string & error);
     bool verify_action(const std::string & state_json, const std::string & action_dsl,
             common_semi_oracle_level level, const std::string & goal,
             common_semi_oracle_budget host_budget,
@@ -29,6 +34,12 @@ public:
     // by the host. A successful proof advances the session board atomically
     // from the caller's perspective; rejected/unknown actions do not advance.
     bool verify_active_placement_action(const std::string & action_dsl,
+            common_semi_oracle_result & result, std::string & state_before,
+            std::string & state_after, std::string & error);
+    // Domain-neutral production action entry point. It loads the host-owned
+    // active state, verifies one action, and advances state only on a proven
+    // SATISFIED transition with a host-verifiable next_state proof.
+    bool verify_active_action(const std::string & action_dsl,
             common_semi_oracle_result & result, std::string & state_before,
             std::string & state_after, std::string & error);
     // Host-only strategic ranking. The complete bounded ranking and proofs
