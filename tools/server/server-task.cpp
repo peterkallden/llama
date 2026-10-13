@@ -42,11 +42,22 @@ bool server_task_cvec_equal(
 bool server_task_cvec_batch_compatible(
         const server_task_cvec_ptr & left,
         const server_task_cvec_ptr & right) {
+    const auto factorized_compatible = [&] {
+        if (!left || !right) return false;
+        if (!left->factorized_basis || !right->factorized_basis) {
+            return !left->factorized_basis && !right->factorized_basis;
+        }
+        const auto & a = *left->factorized_basis;
+        const auto & b = *right->factorized_basis;
+        return a.rank == b.rank && a.layer_indices == b.layer_indices && a.data == b.data;
+    };
     return left && right && left->n_embd == right->n_embd &&
         left->il_start == right->il_start && left->il_end == right->il_end &&
         left->data.size() == right->data.size() &&
         left->sparse_layer_indices == right->sparse_layer_indices &&
-        left->sparse_data.size() == right->sparse_data.size();
+        left->sparse_data.size() == right->sparse_data.size() &&
+        factorized_compatible() &&
+        left->factorized_coefficients.size() == right->factorized_coefficients.size();
 }
 
 void server_task_cvec_batch::clear() {
@@ -152,6 +163,43 @@ bool server_task_cvec_batch::materialize_sparse(
     return true;
 }
 
+bool server_task_cvec_batch::materialize_factorized(
+        std::vector<llama_seq_id> & seq_ids,
+        std::shared_ptr<const server_task_cvec::factorized_basis_data> & basis,
+        std::vector<const float *> & coefficients,
+        int32_t & n_embd,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear(); coefficients.clear(); basis.reset(); n_embd = 0;
+    if (entries.empty() || !entries.front().cvec->factorized_basis) {
+        error = "per-sequence factorized control-vector batch is empty";
+        return false;
+    }
+    basis = entries.front().cvec->factorized_basis;
+    n_embd = entries.front().cvec->n_embd;
+    if (basis->rank <= 0 || basis->layer_indices.empty() ||
+            basis->data.size() != basis->layer_indices.size() *
+                static_cast<size_t>(basis->rank) * static_cast<size_t>(n_embd)) {
+        error = "per-sequence factorized control-vector basis is invalid";
+        return false;
+    }
+    seq_ids.reserve(entries.size()); coefficients.reserve(entries.size());
+    for (const auto & value : entries) {
+        if (!value.cvec->factorized_basis ||
+                value.cvec->factorized_basis->rank != basis->rank ||
+                value.cvec->factorized_basis->layer_indices != basis->layer_indices ||
+                value.cvec->factorized_basis->data != basis->data ||
+                value.cvec->factorized_coefficients.size() != static_cast<size_t>(basis->rank)) {
+            error = "per-sequence factorized control vectors have incompatible basis";
+            seq_ids.clear(); coefficients.clear(); basis.reset();
+            return false;
+        }
+        seq_ids.push_back(value.seq_id);
+        coefficients.push_back(value.cvec->factorized_coefficients.data());
+    }
+    return true;
+}
+
 bool server_task_cvec_validate(
         const server_task_cvec & cvec,
         size_t model_n_embd,
@@ -165,6 +213,37 @@ bool server_task_cvec_validate(
             static_cast<size_t>(cvec.il_end) >= model_n_layers) {
         error = "server task cvec identity or dimensions are invalid";
         return false;
+    }
+    if (cvec.factorized_basis) {
+        const auto & basis = *cvec.factorized_basis;
+        if (basis.rank <= 0 || basis.layer_indices.empty() ||
+                basis.data.size() != basis.layer_indices.size() *
+                    static_cast<size_t>(basis.rank) * model_n_embd ||
+                cvec.factorized_coefficients.size() != static_cast<size_t>(basis.rank)) {
+            error = "server task factorized cvec dimensions are invalid";
+            return false;
+        }
+        for (const uint32_t layer : basis.layer_indices) {
+            if (layer < static_cast<uint32_t>(cvec.il_start) ||
+                    layer > static_cast<uint32_t>(cvec.il_end)) {
+                error = "server task factorized cvec layer is invalid";
+                return false;
+            }
+        }
+        for (const float value : basis.data) if (!std::isfinite(value)) {
+            error = "server task factorized basis contains a non-finite value";
+            return false;
+        }
+        for (const float value : cvec.factorized_coefficients) if (!std::isfinite(value)) {
+            error = "server task factorized coefficients contain a non-finite value";
+            return false;
+        }
+        const size_t values = basis.data.size() + cvec.factorized_coefficients.size();
+        if (max_bytes != 0 && values > max_bytes / sizeof(float)) {
+            error = "server task factorized cvec exceeds its byte bound";
+            return false;
+        }
+        return true;
     }
     if (!cvec.sparse_layer_indices.empty()) {
         if (cvec.sparse_data.size() !=

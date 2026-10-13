@@ -66,6 +66,13 @@ namespace agent_daemon_flydelta_internal {
 
 using json = nlohmann::ordered_json;
 
+struct daemon_flydelta_factorized_direction {
+    common_flydelta_low_rank_basis basis;
+    std::vector<float> normalized_coefficients;
+    std::string source_ref;
+    bool batch_eligible = false;
+};
+
 struct daemon_flydelta_resource_provider {
     std::shared_ptr<common_agent_server_context_host> host;
     agent_resource_store * resources = nullptr;
@@ -90,6 +97,8 @@ struct daemon_flydelta_resource_provider {
     std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
     mutable std::mutex composed_direction_mutex;
     std::unordered_map<std::string, std::vector<common_flydelta_basis_direction>> composed_directions;
+    mutable std::mutex factorized_direction_mutex;
+    std::unordered_map<std::string, daemon_flydelta_factorized_direction> factorized_directions;
     // Optional host-owned materialization seams for the decision-margin
     // challenger. They remain empty for hosts that do not expose a verified
     // decision pair or output-head rows; the ordinary synthesis path is then

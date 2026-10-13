@@ -135,6 +135,19 @@ struct llama_adapter_cvec_batch {
             int32_t n_embd,
             const std::vector<uint32_t> & layer_indices);
 
+    // Native factorized counterpart. `basis` is layer-major [layer][rank][d]
+    // and is shared by all sequence rows; each coefficient row has `rank`
+    // FP32 values.  No full d-dimensional row is materialized on the host.
+    LLAMA_API bool apply_factorized_sparse(
+            const llama_model & model,
+            const std::vector<llama_seq_id> & seq_ids,
+            const float * basis,
+            size_t basis_len,
+            const std::vector<const float *> & coefficients,
+            int32_t rank,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices);
+
     LLAMA_API void clear();
 
     bool enabled() const { return active; }
@@ -192,6 +205,10 @@ private:
     std::vector<ggml_context_ptr> ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
     std::vector<ggml_tensor *> tensors;
+    std::vector<ggml_tensor *> factorized_basis_tensors;
+    std::vector<ggml_tensor *> factorized_coefficient_tensors;
+    bool factorized = false;
+    int32_t factorized_rank = 0;
 
     llama_adapter_cvec_batch_ref batch_ref {
         /* .apply = */ apply_callback,

@@ -20,6 +20,14 @@ struct common_flydelta_activation_request {
     int32_t il_end = 0;
     std::vector<common_flydelta_basis_direction> directions;
     std::vector<float> coefficients;
+    // A host capability decision for one transient coefficient wave. When it
+    // is true and the directions have one shared layer layout, activation may
+    // retain B and c instead of composing sparse/dense compatibility data.
+    bool allow_factorized_overlay = false;
+    // Diagnostic-only reason supplied by the runtime when a factorized
+    // coefficient wave was eligible in principle but cannot use its native
+    // binding on this physical request.
+    std::string factorized_fallback_reason;
     common_flydelta_gate_request gate_request;
 };
 
@@ -29,6 +37,8 @@ struct common_flydelta_activation_result {
     // overlay remains alongside it as the current scalar cvec bridge.
     common_flydelta_sparse_overlay sparse_overlay;
     common_flydelta_static_overlay overlay;
+    common_flydelta_factorized_overlay factorized_overlay;
+    std::string factorized_fallback_reason;
 };
 
 // Applies the host-owned order of operations: decide the no-op gate first,

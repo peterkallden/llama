@@ -23,12 +23,45 @@ bool common_flydelta_prepare_activation(
         return false;
     }
     if (!result.gate.apply) return true;
+    result.factorized_fallback_reason = request.factorized_fallback_reason;
     if (!nonempty_bounded(request.candidate_id) ||
             !nonempty_bounded(request.model_profile_fingerprint) ||
             !nonempty_bounded(request.capture_layout_revision)) {
         error = "FlyDelta activation metadata is incomplete";
         result = {};
         return false;
+    }
+    // Coefficient waves have one target layer and an already orthogonalized
+    // basis. Preserve it so a capable per-sequence backend can avoid
+    // materializing one full vector per arm. Other activation shapes retain
+    // the canonical sparse/dense bridge only.
+    if (request.allow_factorized_overlay && !request.directions.empty() &&
+            request.directions.size() == request.coefficients.size()) {
+        const int32_t layer = request.directions.front().layer_index;
+        const bool one_layer = std::all_of(request.directions.begin(), request.directions.end(),
+            [layer](const auto & direction) { return direction.layer_index == layer; });
+        if (one_layer) {
+            result.factorized_overlay.enabled = true;
+            result.factorized_overlay.artifact_id = request.artifact_id;
+            result.factorized_overlay.n_embd = static_cast<int32_t>(request.model_n_embd);
+            result.factorized_overlay.layer_index = layer;
+            result.factorized_overlay.rank = static_cast<int32_t>(request.directions.size());
+            result.factorized_overlay.coefficients.reserve(request.coefficients.size());
+            for (const float value : request.coefficients) {
+                result.factorized_overlay.coefficients.push_back(value * result.gate.scale);
+            }
+            for (const auto & direction : request.directions) {
+                result.factorized_overlay.basis.insert(result.factorized_overlay.basis.end(),
+                    direction.values.begin(), direction.values.end());
+            }
+            if (!common_flydelta_factorized_overlay_validate(
+                    result.factorized_overlay, request.model_n_embd,
+                    request.model_n_layers, max_bytes, error)) {
+                result = {};
+                return false;
+            }
+            return true;
+        }
     }
     common_flydelta_sparse_overlay sparse_overlay;
     if (!common_flydelta_compose_sparse_overlay(
@@ -127,7 +160,8 @@ bool common_flydelta_activation_result_validate(
         size_t max_bytes,
         std::string & error) {
     error.clear();
-    if (result.gate.apply != result.overlay.enabled) {
+    const bool active = result.overlay.enabled || result.factorized_overlay.enabled;
+    if (result.gate.apply != active) {
         error = "FlyDelta activation gate and overlay state differ";
         return false;
     }
@@ -135,11 +169,26 @@ bool common_flydelta_activation_result_validate(
         if (!result.sparse_overlay.artifact_id.empty() ||
                 !result.sparse_overlay.layer_indices.empty() ||
                 !result.sparse_overlay.data.empty() ||
-                !result.overlay.artifact_id.empty() || !result.overlay.data.empty()) {
+                !result.overlay.artifact_id.empty() || !result.overlay.data.empty() ||
+                !result.factorized_overlay.artifact_id.empty() ||
+                !result.factorized_overlay.basis.empty() ||
+                !result.factorized_overlay.coefficients.empty()) {
             error = "FlyDelta no-op activation contains overlay data";
             return false;
         }
         return true;
+    }
+    if (result.factorized_fallback_reason.size() > 128) {
+        error = "FlyDelta factorized fallback reason is too long";
+        return false;
+    }
+    if (result.factorized_overlay.enabled) {
+        if (result.overlay.enabled || result.sparse_overlay.enabled) {
+            error = "FlyDelta factorized activation must not carry fallback overlays";
+            return false;
+        }
+        return common_flydelta_factorized_overlay_validate(
+            result.factorized_overlay, model_n_embd, model_n_layers, max_bytes, error);
     }
     if (!common_flydelta_static_overlay_validate(
             result.overlay, model_n_embd, model_n_layers, max_bytes, error)) {

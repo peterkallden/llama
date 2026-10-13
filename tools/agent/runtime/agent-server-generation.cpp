@@ -14,11 +14,12 @@ namespace {
 server_task_cvec_ptr make_server_task_cvec(
         const common_flydelta_activation_result & activation) {
     const auto & overlay = activation.overlay;
+    const auto & factorized = activation.factorized_overlay;
     auto cvec = std::make_shared<server_task_cvec>();
-    cvec->identity = overlay.artifact_id;
-    cvec->n_embd = overlay.n_embd;
-    cvec->il_start = overlay.il_start;
-    cvec->il_end = overlay.il_end;
+    cvec->identity = factorized.enabled ? factorized.artifact_id : overlay.artifact_id;
+    cvec->n_embd = factorized.enabled ? factorized.n_embd : overlay.n_embd;
+    cvec->il_start = factorized.enabled ? factorized.layer_index : overlay.il_start;
+    cvec->il_end = factorized.enabled ? factorized.layer_index : overlay.il_end;
     cvec->data = overlay.data;
     for (float & value : cvec->data) {
         value *= overlay.scale;
@@ -27,14 +28,23 @@ server_task_cvec_ptr make_server_task_cvec(
         cvec->sparse_layer_indices = activation.sparse_overlay.layer_indices;
         cvec->sparse_data = activation.sparse_overlay.data;
     }
+    if (factorized.enabled) {
+        auto basis = std::make_shared<server_task_cvec::factorized_basis_data>();
+        basis->rank = factorized.rank;
+        basis->layer_indices = {static_cast<uint32_t>(factorized.layer_index)};
+        basis->data = factorized.basis;
+        basis->fingerprint = factorized.artifact_id + ":rank=" +
+            std::to_string(factorized.rank);
+        cvec->factorized_basis = std::move(basis);
+        cvec->factorized_coefficients = factorized.coefficients;
+    }
 
     std::string fingerprint;
-    fingerprint.reserve(sizeof(overlay.n_embd) + sizeof(overlay.il_start) +
-        sizeof(overlay.il_end) + sizeof(overlay.scale) +
-        overlay.data.size() * sizeof(float));
-    fingerprint.append(reinterpret_cast<const char *>(&overlay.n_embd), sizeof(overlay.n_embd));
-    fingerprint.append(reinterpret_cast<const char *>(&overlay.il_start), sizeof(overlay.il_start));
-    fingerprint.append(reinterpret_cast<const char *>(&overlay.il_end), sizeof(overlay.il_end));
+    fingerprint.reserve(sizeof(cvec->n_embd) + sizeof(cvec->il_start) +
+        sizeof(cvec->il_end) + sizeof(overlay.scale) + cvec->data.size() * sizeof(float));
+    fingerprint.append(reinterpret_cast<const char *>(&cvec->n_embd), sizeof(cvec->n_embd));
+    fingerprint.append(reinterpret_cast<const char *>(&cvec->il_start), sizeof(cvec->il_start));
+    fingerprint.append(reinterpret_cast<const char *>(&cvec->il_end), sizeof(cvec->il_end));
     // The server receives the already scaled cvec. Keep the source scale in
     // the fingerprint as an additional audit signal.
     fingerprint.append(reinterpret_cast<const char *>(&overlay.scale), sizeof(overlay.scale));
@@ -48,6 +58,16 @@ server_task_cvec_ptr make_server_task_cvec(
         fingerprint.append(reinterpret_cast<const char *>(cvec->sparse_data.data()),
             cvec->sparse_data.size() * sizeof(float));
     }
+    if (cvec->factorized_basis) {
+        const auto & basis = *cvec->factorized_basis;
+        fingerprint.append(reinterpret_cast<const char *>(&basis.rank), sizeof(basis.rank));
+        fingerprint.append(reinterpret_cast<const char *>(basis.layer_indices.data()),
+            basis.layer_indices.size() * sizeof(uint32_t));
+        fingerprint.append(reinterpret_cast<const char *>(basis.data.data()),
+            basis.data.size() * sizeof(float));
+        fingerprint.append(reinterpret_cast<const char *>(cvec->factorized_coefficients.data()),
+            cvec->factorized_coefficients.size() * sizeof(float));
+    }
     cvec->content_hash = "sha256:" + hash_sha256_hex(fingerprint.data(), fingerprint.size());
     return cvec;
 }
@@ -60,7 +80,8 @@ bool server_context_agent_generation_supports_flydelta(
     error.clear();
     if (request.flydelta_activation) {
         const auto & activation = *request.flydelta_activation;
-        if (activation.gate.apply != activation.overlay.enabled) {
+        const bool active = activation.overlay.enabled || activation.factorized_overlay.enabled;
+        if (activation.gate.apply != active) {
             error = "server-context received an inconsistent FlyDelta activation gate";
             return false;
         }
@@ -68,7 +89,8 @@ bool server_context_agent_generation_supports_flydelta(
             error = "server-context received an empty active FlyDelta overlay";
             return false;
         }
-        if (activation.overlay.enabled && activation.overlay.artifact_id.empty()) {
+        if (active && (activation.overlay.enabled ? activation.overlay.artifact_id.empty() :
+                activation.factorized_overlay.artifact_id.empty())) {
             error = "server-context received an active FlyDelta overlay without identity";
             return false;
         }
@@ -86,7 +108,8 @@ bool server_context_agent_generation_supports_flydelta(
 
 bool server_context_agent_generation_requires_fresh_prompt_kv(
         const common_agent_generation_request & request) {
-    return (request.flydelta_activation && request.flydelta_activation->overlay.enabled) ||
+    return (request.flydelta_activation && (request.flydelta_activation->overlay.enabled ||
+            request.flydelta_activation->factorized_overlay.enabled)) ||
         static_cast<bool>(request.residual_patch) ||
         (request.flydelta_capture && request.flydelta_capture->enabled);
 }
@@ -134,7 +157,8 @@ task_params make_server_task_params_from_prepared_generation(
     params.chat_parser_params.parse_tool_calls = prepared.parse_tool_calls;
 
     if (server_context_agent_generation_requires_fresh_prompt_kv(request)) {
-        if (request.flydelta_activation && request.flydelta_activation->overlay.enabled) {
+        if (request.flydelta_activation && (request.flydelta_activation->overlay.enabled ||
+                request.flydelta_activation->factorized_overlay.enabled)) {
             params.cvec = make_server_task_cvec(*request.flydelta_activation);
         }
         // The current server cvec is context-wide. Until the backend has

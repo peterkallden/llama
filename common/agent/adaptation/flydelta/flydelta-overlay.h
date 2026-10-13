@@ -31,6 +31,27 @@ struct common_flydelta_sparse_overlay_batch {
     std::vector<common_flydelta_sparse_overlay> overlays;
 };
 
+// Request-scoped low-rank material for one physical coefficient wave.  It is
+// intentionally not an artifact format: persistent activation continues to
+// use sparse/dense overlays.  `basis` is [rank][n_embd] for one layer and the
+// coefficients are already gate-scaled.
+struct common_flydelta_factorized_overlay {
+    bool enabled = false;
+    std::string artifact_id;
+    int32_t n_embd = 0;
+    int32_t layer_index = -1;
+    int32_t rank = 0;
+    std::vector<float> basis;
+    std::vector<float> coefficients;
+};
+
+bool common_flydelta_factorized_overlay_validate(
+        const common_flydelta_factorized_overlay & overlay,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error);
+
 bool common_flydelta_sparse_overlay_validate(
         const common_flydelta_sparse_overlay & overlay,
         size_t model_n_embd,

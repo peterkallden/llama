@@ -2611,21 +2611,43 @@ flattened overlay model = arms * n_embd * sizeof(float)
 shared basis model      = (n_embd * rank + arms * rank) * sizeof(float)
 ```
 
-The shared figure is a representation-size model, not a claim that the
-current runtime has avoided the equivalent transfer: the existing coefficient
-path still materializes one normalized direction per arm.  The rank result is
-report-only.  A rank above one that does not improve the fixture is useful
-negative evidence, not a smoke failure; insufficient independent captured
-directions are reported as unavailable rather than silently treated as rank
-four.
+The shared figure is a representation-size model. Experimental coefficient
+waves can additionally opt into a transient native factorized cvec batch:
+
+```text
+B[layer][rank][n_embd]  (one shared FP32 basis)
+c[sequence][rank]      (one FP32 coefficient row per arm)
+        -> graph-local B * c at the ordinary cvec intervention point
+```
+
+The factorized flag is separate from `per_sequence_cvec_batch` and defaults
+to off. It requires at least two compatible parallel sequences, one common
+basis/layer layout and backend support. Otherwise the established sparse/dense
+cvec fallback remains in use and emits a concrete
+`factorized_requires_parallel_coefficient_wave`, `factorized_not_enabled` or
+`factorized_requires_parallel_sequences` diagnostic. Persistent or active
+artifacts never use this form; it is request-scoped and released with the
+physical batch.
+
+The arm trace records `overlay_representation` (`dense`, `sparse` or
+`factorized`) plus basis, coefficient and materialized-overlay byte counts.
+They are systems diagnostics only and cannot alter Oracle truth, `HELPED`,
+lifecycle, evidence or promotion. Rank-1 equivalence is checked against the
+established composition contract before rank 2 or 4 is considered.
+
+The rank result is report-only. A rank above one that does not improve the
+fixture is useful negative evidence, not a smoke failure; insufficient
+independent captured directions are reported as unavailable rather than
+silently treated as rank four.
 
 The script also runs the existing resident native cvec-batch smoke with the
 same model.  This keeps two claims separate: the dataset-repair rank sweep
 measures behavioral utility and current materialization cost, while the cvec
 smoke proves that the selected model/backend can physically execute distinct
-per-sequence overlays in a native batch.  A future runtime-native shared
-`basis + coefficient-row` overlay may be considered only if the rank sweep
-shows behavioral value and the trace shows flattening is materially costly.
+per-sequence overlays in a native batch. The factorized cvec experiment keeps
+`basis + coefficient-row` in the graph but deliberately does not share a
+prefix forward or KV state. A future branch-at-layer seam may be considered
+only if rank has behavioral value and repeated prefill dominates telemetry.
 The rank sweep itself requires native per-arm cvec batch telemetry and fails
 if a multi-arm wave silently falls back to scalar execution. Tool-free DSL
 responses are collected as content so the model's native tool-call parser

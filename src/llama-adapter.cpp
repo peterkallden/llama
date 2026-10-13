@@ -231,8 +231,80 @@ void llama_adapter_cvec_batch::clear() {
         selector_states.clear();
     }
     tensors.clear();
+    factorized_basis_tensors.clear();
+    factorized_coefficient_tensors.clear();
+    factorized = false;
+    factorized_rank = 0;
     bufs.clear();
     ctxs.clear();
+}
+
+bool llama_adapter_cvec_batch::apply_factorized_sparse(
+        const llama_model & model,
+        const std::vector<llama_seq_id> & seq_ids,
+        const float * basis,
+        const size_t basis_len,
+        const std::vector<const float *> & coefficients,
+        const int32_t rank,
+        const int32_t n_embd,
+        const std::vector<uint32_t> & layer_indices) {
+    clear();
+    if (basis == nullptr || rank <= 0 || seq_ids.empty() || seq_ids.size() != coefficients.size() ||
+            n_embd != static_cast<int32_t>(model.hparams.n_embd) || layer_indices.empty() ||
+            basis_len != layer_indices.size() * static_cast<size_t>(rank) * static_cast<size_t>(n_embd) ||
+            std::any_of(coefficients.begin(), coefficients.end(), [](const float * value) { return value == nullptr; })) return false;
+    std::vector<llama_seq_id> sorted = seq_ids;
+    std::sort(sorted.begin(), sorted.end());
+    if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) return false;
+    if (std::adjacent_find(layer_indices.begin(), layer_indices.end(),
+            [](uint32_t a, uint32_t b) { return a >= b; }) != layer_indices.end() ||
+            layer_indices.front() < 1 || layer_indices.back() >= model.hparams.n_layer()) return false;
+
+    const auto & hparams = model.hparams;
+    std::map<ggml_backend_buffer_type_t, ggml_context *> contexts;
+    auto context_for = [&](ggml_backend_buffer_type_t buft) {
+        auto it = contexts.find(buft);
+        if (it != contexts.end()) return it->second;
+        ggml_init_params params = { hparams.n_layer()*3*ggml_tensor_overhead(), nullptr, true };
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) return static_cast<ggml_context *>(nullptr);
+        contexts[buft] = ctx; ctxs.emplace_back(ctx); return ctx;
+    };
+    tensors.assign(hparams.n_layer(), nullptr);
+    factorized_basis_tensors.assign(hparams.n_layer(), nullptr);
+    factorized_coefficient_tensors.assign(hparams.n_layer(), nullptr);
+    for (size_t i = 0; i < layer_indices.size(); ++i) {
+        const uint32_t layer = layer_indices[i];
+        ggml_context * ctx = context_for(model.select_buft(layer));
+        if (!ctx) { clear(); return false; }
+        factorized_basis_tensors[layer] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, rank);
+        factorized_coefficient_tensors[layer] = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, rank, seq_ids.size() + 1);
+    }
+    device_resident_flag = false;
+    for (const auto & [buft, ctx] : contexts) {
+        ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        if (!buffer) { clear(); return false; }
+        ggml_backend_buffer_clear(buffer, 0);
+        const auto dev = ggml_backend_buft_get_device(buft);
+        device_resident_flag = device_resident_flag || (dev && ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU);
+        bufs.emplace_back(buffer);
+    }
+    for (size_t i = 0; i < layer_indices.size(); ++i) {
+        const uint32_t layer = layer_indices[i];
+        ggml_tensor * b = factorized_basis_tensors[layer];
+        ggml_tensor * c = factorized_coefficient_tensors[layer];
+        ggml_backend_tensor_set(b, basis + i * static_cast<size_t>(rank) * n_embd, 0,
+            static_cast<size_t>(rank) * n_embd * sizeof(float));
+        for (size_t row = 0; row < coefficients.size(); ++row) {
+            ggml_backend_tensor_set(c, coefficients[row], row * static_cast<size_t>(rank) * sizeof(float),
+                static_cast<size_t>(rank) * sizeof(float));
+        }
+    }
+    this->seq_ids = seq_ids; this->n_embd = n_embd;
+    this->layer_start = static_cast<int32_t>(layer_indices.front());
+    this->layer_end = static_cast<int32_t>(layer_indices.back());
+    this->factorized = true; this->factorized_rank = rank; this->active = true;
+    return true;
 }
 
 bool llama_adapter_cvec_batch::apply_impl(
@@ -372,7 +444,11 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         void * user_data) {
     auto * batch = static_cast<llama_adapter_cvec_batch *>(user_data);
     ggml_tensor * table = batch->tensor_for(il);
-    if (table == nullptr || ubatch.n_tokens == 0) {
+    ggml_tensor * basis = batch->factorized && static_cast<size_t>(il) < batch->factorized_basis_tensors.size()
+        ? batch->factorized_basis_tensors[il] : nullptr;
+    ggml_tensor * coefficients = batch->factorized && static_cast<size_t>(il) < batch->factorized_coefficient_tensors.size()
+        ? batch->factorized_coefficient_tensors[il] : nullptr;
+    if ((table == nullptr && (basis == nullptr || coefficients == nullptr)) || ubatch.n_tokens == 0) {
         return cur;
     }
 
@@ -383,7 +459,8 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         return cur;
     }
 
-    if (table->buffer == nullptr) {
+    const ggml_tensor * storage = table ? table : basis;
+    if (storage->buffer == nullptr) {
         LLAMA_LOG_ERROR("%s: batch cvec table has no backend buffer\n", __func__);
         return cur;
     }
@@ -414,7 +491,7 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
             return cur;
         }
         selector.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(
-            selector.ctx.get(), ggml_backend_buffer_get_type(table->buffer)));
+            selector.ctx.get(), ggml_backend_buffer_get_type(storage->buffer)));
         if (!selector.buf) {
             selector.tensor = nullptr;
             selector.ctx.reset();
@@ -447,12 +524,16 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
     }
     ggml_backend_tensor_set(
         selector.tensor, indices.data(), 0, indices.size() * sizeof(int32_t));
-    if (ggml_backend_buffer_get_type(table->buffer) !=
+    if (ggml_backend_buffer_get_type(storage->buffer) !=
             ggml_backend_buffer_get_type(selector.buf.get())) {
         LLAMA_LOG_ERROR("%s: selector and cvec table use incompatible backends\n", __func__);
         return cur;
     }
 
+    if (batch->factorized) {
+        return ggml_add(ctx, cur, ggml_mul_mat(ctx, basis,
+            ggml_get_rows(ctx, coefficients, selector.tensor)));
+    }
     return ggml_add(ctx, cur, ggml_get_rows(ctx, table, selector.tensor));
 }
 

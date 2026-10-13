@@ -20,6 +20,7 @@ struct options {
     int n_threads = 3;
     int n_gpu_layers = 0;
     bool scalar = false;
+    bool factorized = false;
     bool single_sparse_device = false;
     bool device_diagnostics = false;
 };
@@ -54,6 +55,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.n_gpu_layers = std::stoi(value_arg);
         } else if (argument == "--scalar") {
             value.scalar = true;
+        } else if (argument == "--factorized") {
+            value.factorized = true;
         } else if (argument == "--single-sparse-device") {
             value.single_sparse_device = true;
         } else if (argument == "--device-diagnostics") {
@@ -69,7 +72,8 @@ bool parse_args(int argc, char ** argv, options & value) {
 }
 
 std::shared_ptr<const common_flydelta_activation_result> make_activation(
-        const llama_model * model, float value, const std::string & artifact_id, std::string & error) {
+        const llama_model * model, float value, const std::string & artifact_id,
+        const bool factorized, const int32_t layer_index, std::string & error) {
     common_flydelta_gate_config gate_config;
     gate_config.enabled = true;
     gate_config.max_scale = 1.0f;
@@ -85,11 +89,12 @@ std::shared_ptr<const common_flydelta_activation_result> make_activation(
     request.il_end = static_cast<int32_t>(request.model_n_layers - 1);
 
     common_flydelta_basis_direction direction;
-    direction.layer_index = 1;
+    direction.layer_index = layer_index;
     direction.values.assign(request.model_n_embd, 0.0f);
     direction.values.front() = value;
     request.directions.push_back(std::move(direction));
     request.coefficients = {1.0f};
+    request.allow_factorized_overlay = factorized;
     request.gate_request.explicit_opt_in = true;
     request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
     request.gate_request.basis_available = true;
@@ -112,7 +117,7 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
-                  << " [--scalar] [--single-sparse-device] [--device-diagnostics]\n";
+                  << " [--scalar] [--factorized] [--single-sparse-device] [--device-diagnostics]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -143,6 +148,7 @@ int main(int argc, char ** argv) {
     config.context_key.n_threads = value.n_threads;
     config.verbosity = LOG_LEVEL_INFO;
     config.per_sequence_cvec_batch = !value.scalar;
+    config.per_sequence_factorized_cvec_batch = !value.scalar && value.factorized;
 
     std::string error;
     if (!host->start(config, error)) {
@@ -162,7 +168,10 @@ int main(int argc, char ** argv) {
     callbacks.primitives.generation = true;
     callbacks.primitives.overlay = true;
     callbacks.primitives.host_verification = true;
-    callbacks.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads](
+    const int32_t cvec_layer = llama_model_n_layer(model) - 1;
+    callbacks.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads,
+            factorized = value.factorized, factorized_batch = !value.scalar && !value.single_sparse_device,
+            cvec_layer](
             const common_flydelta_arm_request & arm,
             common_agent_generation_request & request,
             std::string & prepare_error) {
@@ -177,7 +186,8 @@ int main(int argc, char ** argv) {
         if (arm.apply_overlay || (arm.request_device_diagnostics && !arm.apply_overlay)) {
             auto activation = make_activation(
                 model, arm.apply_overlay ? arm.alpha : 0.0f,
-                arm.intervention_ref + "/" + arm.arm_id, prepare_error);
+                arm.intervention_ref + "/" + arm.arm_id,
+                factorized && factorized_batch, cvec_layer, prepare_error);
             if (!activation) return false;
             request.flydelta_activation = std::move(activation);
         }
@@ -278,7 +288,7 @@ int main(int argc, char ** argv) {
         arm.context_ref = "context://cvec-batch-smoke";
         arm.fixture_ref = "fixture://cvec-batch-smoke";
         arm.intervention_ref = "flydelta://artifact/cvec-batch-smoke/" + std::to_string(index);
-        arm.layer_indices = {1};
+        arm.layer_indices = {static_cast<uint32_t>(cvec_layer)};
         arm.coefficients = {1.0f};
         arm.alpha = index == 0 ? 0.0f : 0.0002f;
         arm.apply_overlay = !value.device_diagnostics || index != 0;
@@ -320,7 +330,8 @@ int main(int argc, char ** argv) {
               << "slots=" << (one_slot ? 1 : 2) << "\n"
               << "distinct_overlays=" << (value.single_sparse_device ? "not_applicable" : "yes") << "\n"
               << "sparse_overlays=yes\n"
-              << "active_layers=1\n"
+              << "overlay_representation=" << reported_arm.execution_metrics.overlay_representation << "\n"
+              << "active_layers=" << cvec_layer << "\n"
               << "results=" << result.arms.size() << "\n"
               << "execution_path="
               << common_flydelta_arm_execution_path_name(

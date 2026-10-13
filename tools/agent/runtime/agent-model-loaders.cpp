@@ -100,6 +100,8 @@ bool common_agent_runtime_server_context_model_loader::load(
     options.n_parallel = selection.n_parallel;
     options.n_sequences = selection.n_sequences;
     options.per_sequence_cvec_batch = config_.per_sequence_cvec_batch;
+    options.per_sequence_factorized_cvec_batch =
+        config_.per_sequence_factorized_cvec_batch;
     options.agent_trace = config_.agent_trace;
     options.reserve_flydelta_workspace = config_.reserve_flydelta_workspace;
     auto host = std::make_shared<common_agent_server_context_host>();
@@ -114,6 +116,7 @@ bool common_agent_runtime_server_context_model_loader::load(
         options.n_parallel = 1;
         options.n_sequences = 1;
         options.per_sequence_cvec_batch = false;
+        options.per_sequence_factorized_cvec_batch = false;
         if (!host->start(make_agent_server_context_host_config(options), error)) {
             return false;
         }

@@ -67,6 +67,19 @@ struct server_task_cvec {
     // The dense data remains authoritative for the scalar compatibility path.
     std::vector<uint32_t> sparse_layer_indices;
     std::vector<float> sparse_data;
+    // Optional transient low-rank material.  All rows in a physical batch
+    // share the same basis; each task owns only its coefficient row.  This is
+    // deliberately request-scoped and is never an artifact serialization.
+    struct factorized_basis_data {
+        int32_t rank = 0;
+        std::vector<uint32_t> layer_indices;
+        // Layer-major [layer][rank][n_embd], with each basis vector stored
+        // contiguously.  The graph computes basis * coefficients per token.
+        std::vector<float> data;
+        std::string fingerprint;
+    };
+    std::shared_ptr<const factorized_basis_data> factorized_basis;
+    std::vector<float> factorized_coefficients;
 };
 
 using server_task_cvec_ptr = std::shared_ptr<const server_task_cvec>;
@@ -104,9 +117,21 @@ struct server_task_cvec_batch {
             std::vector<uint32_t> & layer_indices,
             std::string & error) const;
 
+    bool materialize_factorized(
+            std::vector<llama_seq_id> & seq_ids,
+            std::shared_ptr<const server_task_cvec::factorized_basis_data> & basis,
+            std::vector<const float *> & coefficients,
+            int32_t & n_embd,
+            std::string & error) const;
+
     bool has_sparse() const {
         return !entries.empty() && entries.front().cvec &&
             !entries.front().cvec->sparse_layer_indices.empty();
+    }
+
+    bool has_factorized() const {
+        return !entries.empty() && entries.front().cvec &&
+            static_cast<bool>(entries.front().cvec->factorized_basis);
     }
 
     size_t size() const { return entries.size(); }

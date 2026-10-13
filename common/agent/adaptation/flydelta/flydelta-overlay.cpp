@@ -14,6 +14,33 @@ bool nonempty_bounded(const std::string & value, size_t max_size = 512) {
 
 } // namespace
 
+bool common_flydelta_factorized_overlay_validate(
+        const common_flydelta_factorized_overlay & overlay,
+        const size_t model_n_embd,
+        const size_t model_n_layers,
+        const size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (!overlay.enabled) return true;
+    if (overlay.artifact_id.empty() || overlay.n_embd <= 0 || overlay.rank <= 0 ||
+            overlay.layer_index < 1 || static_cast<size_t>(overlay.layer_index) >= model_n_layers ||
+            static_cast<size_t>(overlay.n_embd) != model_n_embd ||
+            overlay.basis.size() != static_cast<size_t>(overlay.rank) * model_n_embd ||
+            overlay.coefficients.size() != static_cast<size_t>(overlay.rank) ||
+            (max_bytes != 0 && (overlay.basis.size() + overlay.coefficients.size()) >
+                max_bytes / sizeof(float))) {
+        error = "FlyDelta factorized overlay identity or dimensions are invalid";
+        return false;
+    }
+    for (const float value : overlay.basis) if (!std::isfinite(value)) {
+        error = "FlyDelta factorized basis contains a non-finite value"; return false;
+    }
+    for (const float value : overlay.coefficients) if (!std::isfinite(value)) {
+        error = "FlyDelta factorized coefficients contain a non-finite value"; return false;
+    }
+    return true;
+}
+
 bool common_flydelta_sparse_overlay_validate(
         const common_flydelta_sparse_overlay & overlay,
         const size_t model_n_embd,

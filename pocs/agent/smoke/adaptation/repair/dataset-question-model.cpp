@@ -479,6 +479,7 @@ int main(int argc, char ** argv) {
         server_config.context_key.n_ctx = 12288;
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
+        server_config.per_sequence_factorized_cvec_batch = value.low_rank_rank_sweep;
         if (!server_host->start(server_config, error)) {
             host.close();
             std::cerr << "could not start server backend: " << error << '\n';
@@ -988,6 +989,7 @@ int main(int argc, char ** argv) {
             std::string deep_margin_error;
             auto prepare_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay,
+                    bool allow_factorized_overlay,
                     common_agent_generation_request & request, std::string & runner_error) {
                 std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
                 if (apply_overlay) {
@@ -1014,6 +1016,8 @@ int main(int argc, char ** argv) {
                         activation_request.directions.push_back({basis.layer_index, vector});
                     }
                     activation_request.coefficients = coefficients;
+                    activation_request.allow_factorized_overlay =
+                        value.low_rank_rank_sweep && allow_factorized_overlay;
                     activation_request.gate_request = gate_request;
                     common_flydelta_gate_config gate_config;
                     gate_config.enabled = true;
@@ -1038,7 +1042,7 @@ int main(int argc, char ** argv) {
                 geometry = {};
                 geometry_available = false;
                 common_agent_generation_request generation_request;
-                if (!prepare_deep_arm(basis, coefficients, apply_overlay,
+                if (!prepare_deep_arm(basis, coefficients, apply_overlay, false,
                         generation_request, runner_error)) return false;
                 generated_result = {};
                 const bool generated = inference->generate(generation_request, generated_result);
@@ -1197,7 +1201,8 @@ int main(int argc, char ** argv) {
                     generation_requests.reserve(coefficients.size());
                     for (const auto & values : coefficients) {
                         common_agent_generation_request request;
-                        if (!prepare_deep_arm(basis, values, true, request, runner_error)) return false;
+                        if (!prepare_deep_arm(basis, values, true,
+                                coefficients.size() >= 2, request, runner_error)) return false;
                         if (!full_execution) request.options.n_predict = 0;
                         generation_requests.push_back(std::move(request));
                     }

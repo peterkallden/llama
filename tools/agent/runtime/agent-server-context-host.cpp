@@ -85,6 +85,7 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
         make_agent_server_context_context_key(options),
         LOG_LEVEL_WARN,
         options.per_sequence_cvec_batch,
+        options.per_sequence_factorized_cvec_batch,
         options.agent_trace,
     };
 }
@@ -187,6 +188,8 @@ bool common_agent_server_context_host::start(
     instance->server = std::make_unique<server_context>();
     instance->server->set_per_sequence_cvec_batch_enabled(
         config.per_sequence_cvec_batch);
+    instance->server->set_per_sequence_factorized_cvec_batch_enabled(
+        config.per_sequence_factorized_cvec_batch);
     instance->server->set_agent_trace_enabled(config.agent_trace);
     instance->params = make_agent_server_context_params(config);
 
@@ -468,12 +471,39 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;
         arm_result.execution_metrics.sparse_device_binding_used = device_batch;
-        if (generation_requests[index].flydelta_activation &&
-                generation_requests[index].flydelta_activation->sparse_overlay.enabled) {
-            const auto & sparse = generation_requests[index].flydelta_activation->sparse_overlay;
-            arm_result.execution_metrics.overlay_bytes_to_device =
-                sparse.layer_indices.size() * sizeof(uint32_t) +
-                sparse.data.size() * sizeof(float);
+        if (generation_requests[index].flydelta_activation) {
+            const auto & activation = *generation_requests[index].flydelta_activation;
+            if (!activation.factorized_fallback_reason.empty()) {
+                arm_result.execution_metrics.fallback_reason = activation.factorized_fallback_reason;
+            }
+            if (activation.factorized_overlay.enabled) {
+                const auto & factorized = activation.factorized_overlay;
+                arm_result.execution_metrics.overlay_representation = "factorized";
+                // A compatible native batch owns one shared basis. Attribute
+                // it once to the physical batch rather than pretending every
+                // logical arm uploads the same B independently.
+                arm_result.execution_metrics.basis_bytes_to_device =
+                    index == 0 ? factorized.basis.size() * sizeof(float) : 0;
+                arm_result.execution_metrics.coefficient_bytes_to_device =
+                    factorized.coefficients.size() * sizeof(float);
+                arm_result.execution_metrics.overlay_bytes_to_device =
+                    arm_result.execution_metrics.basis_bytes_to_device +
+                    arm_result.execution_metrics.coefficient_bytes_to_device;
+            } else if (activation.sparse_overlay.enabled) {
+                const auto & sparse = activation.sparse_overlay;
+                arm_result.execution_metrics.overlay_representation = "sparse";
+                arm_result.execution_metrics.materialized_overlay_bytes =
+                    sparse.data.size() * sizeof(float);
+                arm_result.execution_metrics.overlay_bytes_to_device =
+                    sparse.layer_indices.size() * sizeof(uint32_t) +
+                    arm_result.execution_metrics.materialized_overlay_bytes;
+            } else if (activation.overlay.enabled) {
+                arm_result.execution_metrics.overlay_representation = "dense";
+                arm_result.execution_metrics.materialized_overlay_bytes =
+                    activation.overlay.data.size() * sizeof(float);
+                arm_result.execution_metrics.overlay_bytes_to_device =
+                    arm_result.execution_metrics.materialized_overlay_bytes;
+            }
         }
         if (generation_results[index].flydelta_capture) {
             arm_result.execution_metrics.capture_bytes_to_host =
@@ -489,7 +519,8 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
                     : request.arms.size() > 1
                         ? common_flydelta_arm_execution_metrics::path::scalar_fallback
                         : common_flydelta_arm_execution_metrics::path::scalar;
-            if (request.arms.size() > 1 && !native_batch) {
+            if (request.arms.size() > 1 && !native_batch &&
+                    arm_result.execution_metrics.fallback_reason.empty()) {
                 arm_result.execution_metrics.fallback_reason =
                     "per_sequence_cvec_batch_not_enabled";
             }

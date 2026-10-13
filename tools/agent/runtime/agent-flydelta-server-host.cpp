@@ -47,14 +47,39 @@ bool daemon_flydelta_prepare_arm(
         arm.request_device_diagnostics && !arm.apply_overlay;
     if (arm.apply_overlay || zero_diagnostics_overlay) {
         std::vector<common_flydelta_basis_direction> available;
-        if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
+        std::vector<float> factorized_coefficients;
+        bool factorized = false;
+        bool factorized_batch_eligible = false;
+        {
+            std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
+            const auto it = provider->factorized_directions.find(arm.intervention_ref);
+            if (it != provider->factorized_directions.end()) {
+                factorized = true;
+                factorized_batch_eligible = it->second.batch_eligible;
+                factorized_coefficients = it->second.normalized_coefficients;
+                available.reserve(it->second.basis.vectors.size());
+                for (const auto & values : it->second.basis.vectors) {
+                    common_flydelta_basis_direction direction;
+                    direction.layer_index = it->second.basis.layer_index;
+                    direction.values = values;
+                    available.push_back(std::move(direction));
+                }
+            }
+        }
+        if (!factorized && !daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
             return false;
         }
         std::vector<common_flydelta_basis_direction> selected;
         std::vector<float> coefficients;
         selected.reserve(arm.layer_indices.size());
         coefficients.reserve(arm.layer_indices.size());
-        for (size_t index = 0; index < arm.layer_indices.size(); ++index) {
+        if (factorized) {
+            selected = std::move(available);
+            coefficients = zero_diagnostics_overlay
+                ? std::vector<float>(factorized_coefficients.size(), 0.0f)
+                : std::move(factorized_coefficients);
+        }
+        for (size_t index = 0; !factorized && index < arm.layer_indices.size(); ++index) {
             bool matched = false;
             for (const auto & direction : available) {
                 if (direction.layer_index != static_cast<int32_t>(arm.layer_indices[index])) {
@@ -83,6 +108,20 @@ bool daemon_flydelta_prepare_arm(
         activation_request.il_end = static_cast<int32_t>(provider->model_n_layers - 1);
         activation_request.directions = std::move(selected);
         activation_request.coefficients = std::move(coefficients);
+        if (factorized) {
+            const bool factorized_enabled =
+                provider->host->server().per_sequence_factorized_cvec_batch_enabled();
+            const bool parallel_sequences = provider->host->context_key().n_parallel > 1;
+            activation_request.allow_factorized_overlay = factorized_batch_eligible &&
+                factorized_enabled && parallel_sequences;
+            if (!activation_request.allow_factorized_overlay) {
+                activation_request.factorized_fallback_reason = !factorized_batch_eligible
+                    ? "factorized_requires_parallel_coefficient_wave"
+                    : !factorized_enabled
+                    ? "factorized_not_enabled"
+                    : "factorized_requires_parallel_sequences";
+            }
+        }
         activation_request.gate_request.explicit_opt_in = true;
         activation_request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
         activation_request.gate_request.basis_available = true;
@@ -109,7 +148,21 @@ bool daemon_flydelta_prepare_arm(
         request.flydelta_device_diagnostics = arm.device_diagnostics;
     } else if (arm.request_device_diagnostics) {
         std::vector<common_flydelta_basis_direction> available;
-        if (!daemon_flydelta_parse_directions(*provider, arm.intervention_ref, available, error)) {
+        std::vector<float> factorized_coefficients;
+        bool factorized = false;
+        {
+            std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
+            const auto it = provider->factorized_directions.find(arm.intervention_ref);
+            if (it != provider->factorized_directions.end()) {
+                factorized = true;
+                factorized_coefficients = it->second.normalized_coefficients;
+                for (const auto & values : it->second.basis.vectors) {
+                    available.push_back({it->second.basis.layer_index, values});
+                }
+            }
+        }
+        if (!factorized && !daemon_flydelta_parse_directions(
+                *provider, arm.intervention_ref, available, error)) {
             return false;
         }
         const auto direction = std::find_if(available.begin(), available.end(), [&](const auto & value) {
@@ -126,7 +179,18 @@ bool daemon_flydelta_prepare_arm(
         reduction->baseline_group_id = arm.diagnostics_baseline_arm_id;
         reduction->layer = direction->layer_index;
         reduction->absolute_position = arm.diagnostics_position;
-        reduction->direction = direction->values;
+        if (factorized) {
+            reduction->direction.assign(direction->values.size(), 0.0f);
+            for (size_t index = 0; index < available.size(); ++index) {
+                const float coefficient = index < factorized_coefficients.size()
+                    ? factorized_coefficients[index] : 0.0f;
+                for (size_t value = 0; value < reduction->direction.size(); ++value) {
+                    reduction->direction[value] += available[index].values[value] * coefficient;
+                }
+            }
+        } else {
+            reduction->direction = direction->values;
+        }
         request.flydelta_device_diagnostics = std::move(reduction);
     }
     if (arm.request_capture) {
@@ -576,16 +640,45 @@ bool daemon_flydelta_run_coefficient_arm_batch(
     request.wave_id = apply_overlay ? "coefficient-controls" : "coefficient-baseline";
     if (!wave_suffix.empty()) request.wave_id += ":" + wave_suffix;
     request.arms.reserve(coefficients.size());
+    // Factorized coefficient materials are request-scoped conveniences for
+    // the native cvec batch binding. They must not accumulate in the daemon
+    // provider or become a second durable direction store.
+    std::vector<std::string> factorized_refs;
+    struct factorized_ref_cleanup {
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider;
+        const std::vector<std::string> & refs;
+        ~factorized_ref_cleanup() {
+            std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
+            for (const auto & ref : refs) provider->factorized_directions.erase(ref);
+        }
+    } cleanup{provider, factorized_refs};
     for (size_t index = 0; index < coefficients.size(); ++index) {
         const auto & values = coefficients[index];
         std::string intervention_ref = job.seed.candidate_ref;
         float strength = 0.0f;
         if (apply_overlay) {
-            if (!daemon_flydelta_register_composed_direction(
-                    provider, job.seed.candidate_ref, basis, values,
-                    intervention_ref, error)) return false;
             for (const float value : values) strength += value * value;
             strength = std::sqrt(strength);
+            if (!std::isfinite(strength) || strength <= 0.0f) {
+                error = "FlyDelta coefficient arm has zero or non-finite norm";
+                return false;
+            }
+            std::string identity = job.seed.candidate_ref + "\n" + std::to_string(basis.layer_index);
+            std::vector<float> normalized = values;
+            for (float & value : normalized) {
+                value /= strength;
+                identity += "\n" + std::to_string(value);
+            }
+            intervention_ref = "flydelta://runtime/factorized/" +
+                hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+            daemon_flydelta_factorized_direction material;
+            material.basis = basis;
+            material.normalized_coefficients = std::move(normalized);
+            material.source_ref = job.seed.candidate_ref;
+            material.batch_eligible = coefficients.size() >= 2;
+            std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
+            provider->factorized_directions[intervention_ref] = std::move(material);
+            factorized_refs.push_back(intervention_ref);
         }
         common_flydelta_arm_request arm;
         arm.job_id = job.id;

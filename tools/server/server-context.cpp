@@ -887,6 +887,14 @@ public:
         cvec_batch_enabled = enabled;
     }
 
+    bool per_sequence_factorized_cvec_batch_enabled() const {
+        return cvec_batch_enabled && factorized_cvec_batch_enabled;
+    }
+
+    void set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+        factorized_cvec_batch_enabled = enabled;
+    }
+
     bool agent_trace_enabled() const {
         return trace_enabled;
     }
@@ -910,6 +918,7 @@ private:
     // Experimental opt-in. The scalar server path remains authoritative
     // unless this is explicitly enabled and the current batch is compatible.
     bool cvec_batch_enabled = false;
+    bool factorized_cvec_batch_enabled = false;
     bool cvec_batch_active = false;
     server_task_cvec_batch cvec_batch_request;
     llama_adapter_cvec_batch cvec_batch_device;
@@ -1062,9 +1071,20 @@ private:
         int32_t il_start = 1;
         int32_t il_end = 0;
         const bool sparse = cvec_batch_request.has_sparse();
+        const bool factorized = factorized_cvec_batch_enabled &&
+            cvec_batch_request.has_factorized();
         std::vector<uint32_t> layer_indices;
         bool applied = false;
-        if (sparse) {
+        if (factorized) {
+            std::shared_ptr<const server_task_cvec::factorized_basis_data> basis;
+            std::vector<const float *> coefficients;
+            applied = cvec_batch_request.materialize_factorized(
+                seq_ids, basis, coefficients, n_embd, error) && basis &&
+                cvec_batch_device.apply_factorized_sparse(*model_tgt, seq_ids,
+                    basis->data.data(), basis->data.size(), coefficients, basis->rank,
+                    n_embd, basis->layer_indices);
+            layer_indices = basis ? basis->layer_indices : std::vector<uint32_t>{};
+        } else if (sparse) {
             applied = cvec_batch_request.materialize_sparse(
                 seq_ids, data, data_len, n_embd, layer_indices, error) &&
                 cvec_batch_device.apply_sparse(
@@ -1086,9 +1106,9 @@ private:
         ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
         cvec_batch_active = true;
         SRV_INF("per-sequence cvec %s bound rows=%zu representation=%s layers=%zu\n",
-            single_sparse ? "sparse binding" : "batch",
-            seq_ids.size(), sparse ? "sparse" : "dense",
-            sparse ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
+            factorized ? "factorized binding" : single_sparse ? "sparse binding" : "batch",
+            seq_ids.size(), factorized ? "factorized" : sparse ? "sparse" : "dense",
+            (factorized || sparse) ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
         return true;
     }
 
@@ -4853,8 +4873,16 @@ bool server_context::per_sequence_cvec_batch_enabled() const {
     return impl->per_sequence_cvec_batch_enabled();
 }
 
+bool server_context::per_sequence_factorized_cvec_batch_enabled() const {
+    return impl->per_sequence_factorized_cvec_batch_enabled();
+}
+
 void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
     impl->set_per_sequence_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+    impl->set_per_sequence_factorized_cvec_batch_enabled(enabled);
 }
 
 void server_context::set_agent_trace_enabled(const bool enabled) {

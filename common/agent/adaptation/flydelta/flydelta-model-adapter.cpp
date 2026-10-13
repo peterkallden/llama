@@ -154,6 +154,10 @@ bool common_flydelta_arm_result_validate(
         error = "FlyDelta arm execution fallback reason is too long";
         return false;
     }
+    if (result.execution_metrics.overlay_representation.size() > 32) {
+        error = "FlyDelta arm overlay representation is too long";
+        return false;
+    }
     if (result.observed_decision_summary.size() > 1024 ||
             result.expected_decision_summary.size() > 1024 ||
             result.verifier_reason.size() > 1024 ||

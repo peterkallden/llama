@@ -35,6 +35,7 @@ struct common_agent_server_context_host_config {
     common_agent_server_context_context_key context_key;
     int verbosity = LOG_LEVEL_WARN;
     bool per_sequence_cvec_batch = false;
+    bool per_sequence_factorized_cvec_batch = false;
     bool agent_trace = false;
 };
 

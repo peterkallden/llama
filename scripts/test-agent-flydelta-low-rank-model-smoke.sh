@@ -62,9 +62,10 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
 agent_smoke_run_logged "$cvec_log" "$cvec_bin" \
     --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
     --threads "${LLAMA_AGENT_THREADS:-3}" \
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" --factorized
 grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$cvec_log"
 grep -Fq 'batched_execution=yes' "$cvec_log"
+grep -Fq 'overlay_representation=factorized' "$cvec_log"
 
 echo "flydelta_low_rank_model_smoke=completed"
 echo "rank_comparison=${rank_status}"

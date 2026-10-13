@@ -607,13 +607,15 @@ private:
                 apply_server_residual_patch_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
                 result.flydelta_runtime.requested = request.flydelta_activation &&
-                    request.flydelta_activation->overlay.enabled;
+                    (request.flydelta_activation->overlay.enabled ||
+                     request.flydelta_activation->factorized_overlay.enabled);
                 if (final_response->generation_params.cvec) {
                     const auto & cvec = *final_response->generation_params.cvec;
                     result.flydelta_runtime.applied = true;
                     result.flydelta_runtime.sparse_device_binding =
                         final_response->flydelta_device_batch &&
-                        !cvec.sparse_layer_indices.empty();
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
                     result.flydelta_runtime.device_batch = final_response->flydelta_device_batch;
                     result.flydelta_runtime.cache_prompt =
                         final_response->generation_params.cache_prompt;
@@ -727,13 +729,15 @@ private:
                 results[index].flydelta_device_batch = final_response->flydelta_device_batch;
                 results[index].flydelta_runtime.requested =
                     requests[index].flydelta_activation &&
-                    requests[index].flydelta_activation->overlay.enabled;
+                    (requests[index].flydelta_activation->overlay.enabled ||
+                     requests[index].flydelta_activation->factorized_overlay.enabled);
                 if (final_response->generation_params.cvec) {
                     const auto & cvec = *final_response->generation_params.cvec;
                     results[index].flydelta_runtime.applied = true;
                     results[index].flydelta_runtime.sparse_device_binding =
                         final_response->flydelta_device_batch &&
-                        !cvec.sparse_layer_indices.empty();
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
                     results[index].flydelta_runtime.device_batch =
                         final_response->flydelta_device_batch;
                     results[index].flydelta_runtime.cache_prompt =

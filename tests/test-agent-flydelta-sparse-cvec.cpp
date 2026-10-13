@@ -74,6 +74,29 @@ int main() {
         return 1;
     }
 
+    // A factorized wave shares B and transports only one c-row per sequence.
+    auto basis = std::make_shared<server_task_cvec::factorized_basis_data>();
+    basis->rank = 2;
+    basis->layer_indices = {4};
+    basis->data = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    auto factor_a = make_cvec("factor-a", 0);
+    auto factor_b = make_cvec("factor-b", 0);
+    factor_a->factorized_basis = basis;
+    factor_b->factorized_basis = basis;
+    factor_a->factorized_coefficients = {0.25f, 0.0f};
+    factor_b->factorized_coefficients = {0.0f, -0.5f};
+    server_task_cvec_batch factorized;
+    std::shared_ptr<const server_task_cvec::factorized_basis_data> material_basis;
+    std::vector<const float *> coefficient_rows;
+    if (!factorized.add(10, factor_a, error) || !factorized.add(11, factor_b, error) ||
+            !factorized.has_factorized() ||
+            !factorized.materialize_factorized(seq_ids, material_basis, coefficient_rows, n_embd, error) ||
+            material_basis != basis || coefficient_rows.size() != 2 || n_embd != 4 ||
+            coefficient_rows[0][0] != 0.25f || coefficient_rows[1][1] != -0.5f) {
+        std::cerr << "factorized batch materialization failed: " << error << '\n';
+        return 1;
+    }
+
     auto incompatible = make_cvec("sparse-c", 200);
     incompatible->sparse_layer_indices = {3, 4};
     server_task_cvec_batch rejected;

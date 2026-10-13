@@ -111,6 +111,11 @@ struct server_context {
     // configured resident contexts cannot affect one another.
     void set_per_sequence_cvec_batch_enabled(bool enabled);
 
+    // A second, narrower opt-in for experimental factorized low-rank cvec
+    // batches.  It has no effect unless per_sequence_cvec_batch is enabled.
+    bool per_sequence_factorized_cvec_batch_enabled() const;
+    void set_per_sequence_factorized_cvec_batch_enabled(bool enabled);
+
     void set_agent_trace_enabled(bool enabled);
     bool agent_trace_enabled() const;
 

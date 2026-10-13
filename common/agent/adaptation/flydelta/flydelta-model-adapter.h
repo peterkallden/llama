@@ -85,10 +85,16 @@ struct common_flydelta_arm_execution_metrics {
     float model_ms = 0.0f;
     float teacher_forced_ms = 0.0f;
     float generation_ms = 0.0f;
+    // Representation and logical-transfer accounting are diagnostic only.
+    // They intentionally never participate in utility or promotion policy.
+    std::string overlay_representation;
+    size_t basis_bytes_to_device = 0;
+    size_t coefficient_bytes_to_device = 0;
+    size_t materialized_overlay_bytes = 0;
     size_t overlay_bytes_to_device = 0;
     size_t capture_bytes_to_host = 0;
     size_t diagnostics_bytes_to_host = 0;
-    // True when a sparse overlay, including a single-arm overlay, was bound
+    // True when a sparse or factorized overlay, including a single-arm overlay, was bound
     // through a non-CPU per-sequence device table. This is execution
     // provenance only: a one-arm request still has execution_path=scalar.
     bool sparse_device_binding_used = false;
