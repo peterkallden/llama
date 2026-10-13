@@ -2588,6 +2588,64 @@ direction candidates
         -> experimental lifecycle / HELPED review
 ```
 
+### Low-rank rank-sweep model smoke
+
+`scripts/test-agent-flydelta-low-rank-model-smoke.sh` is an opt-in Qwen
+Instruct experiment over the existing host-constructed dataset-repair replay
+material. The default four records include two `data.query` examples so the
+same behavior group can supply multiple captured directions. Replay repairs
+are experimental and cannot receive learning credit. The smoke runs the
+existing bounded Deep/coefficient contract at requested ranks 1, 2 and 4,
+retaining only the rank that compatible captured directions actually span.
+In rank-sweep mode it skips the ordinary Whirlpool region pipeline so its
+model-call budget is spent on the rank comparison; the Deep sweep uses at most
+eight coefficient proposals and one full-generation finalist per rank. Its
+default generation limit is 32 tokens (override with
+`LLAMA_AGENT_N_PREDICT`). Groups without two compatible captured directions
+are logged as skipped, not reported as rank results.
+Its trace records each arm's coefficients, teacher-forced margin, geometry,
+host verdict, elapsed time, and two storage figures:
+
+```text
+flattened overlay model = arms * n_embd * sizeof(float)
+shared basis model      = (n_embd * rank + arms * rank) * sizeof(float)
+```
+
+The shared figure is a representation-size model, not a claim that the
+current runtime has avoided the equivalent transfer: the existing coefficient
+path still materializes one normalized direction per arm.  The rank result is
+report-only.  A rank above one that does not improve the fixture is useful
+negative evidence, not a smoke failure; insufficient independent captured
+directions are reported as unavailable rather than silently treated as rank
+four.
+
+The script also runs the existing resident native cvec-batch smoke with the
+same model.  This keeps two claims separate: the dataset-repair rank sweep
+measures behavioral utility and current materialization cost, while the cvec
+smoke proves that the selected model/backend can physically execute distinct
+per-sequence overlays in a native batch.  A future runtime-native shared
+`basis + coefficient-row` overlay may be considered only if the rank sweep
+shows behavioral value and the trace shows flattening is materially costly.
+The rank sweep itself requires native per-arm cvec batch telemetry and fails
+if a multi-arm wave silently falls back to scalar execution. Tool-free DSL
+responses are collected as content so the model's native tool-call parser
+cannot reject them before the smoke's compact-DSL verifier runs.
+The wrapper runs the independent cvec check even if the rank phase times out,
+then preserves the rank timeout as a non-zero final status. In the 2026-10-13
+Qwen2.5-1.5B Instruct Q4 run, all four replay generations failed host
+verification and earned no learning credit. The `data.query` group did yield
+three compatible direction candidates, but rank 1 produced `effective_rank=1`,
+`selected=no`, and `outcome=unknown`; its Deep pass took 1,160,070 ms. The
+30-minute process limit expired before ranks 2 and 4 reported, so this run is
+not evidence for a rank comparison or a behavioral improvement.
+
+Run it explicitly with a local model:
+
+```sh
+LLAMA_AGENT_MODEL=/path/to/Qwen-Instruct.gguf \
+  bash scripts/test-agent-flydelta-low-rank-model-smoke.sh
+```
+
 For small rank and a narrow grid, coordinate search remains the preferred
 cheap baseline. TFO-lite is useful when mixed coefficients would otherwise
 make the grid grow rapidly. Comparisons must use the same seed, bounds and

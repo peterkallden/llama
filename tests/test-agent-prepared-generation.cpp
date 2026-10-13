@@ -196,6 +196,8 @@ void test_prepare_bounded_custom_grammar_generation() {
     assert(prepared.grammar_triggers.empty());
     assert(!prepared.ignore_eos && !prepared.suppress_eog && !prepared.stream);
     assert(!prepared.parse_tool_calls);
+    assert(prepared.chat_format == COMMON_CHAT_FORMAT_CONTENT_ONLY);
+    assert(prepared.parser.empty());
 }
 
 void test_flydelta_activation_is_per_request_and_server_accepts_active() {
@@ -244,12 +246,18 @@ void test_prepare_plain_chat_has_no_tool_grammar() {
     const auto request = make_base_request();
 
     common_agent_prepared_generation prepared;
-    assert(common_agent_prepare_chat_generation(templates.get(), request, prepared));
+    common_chat_params chat_params;
+    assert(common_agent_prepare_chat_generation(templates.get(), request, prepared, &chat_params));
     assert(prepared.grammar.empty());
     assert(!prepared.grammar_lazy);
     assert(prepared.grammar_triggers.empty());
     assert(!prepared.parse_tool_calls);
     assert(!prepared.stream);
+    assert(prepared.chat_format == COMMON_CHAT_FORMAT_CONTENT_ONLY);
+    assert(prepared.parser.empty());
+    assert(prepared.parser_generation_prompt.empty());
+    assert(chat_params.format == COMMON_CHAT_FORMAT_CONTENT_ONLY);
+    assert(chat_params.parser.empty());
 }
 
 void test_server_task_params_from_prepared_generation() {
