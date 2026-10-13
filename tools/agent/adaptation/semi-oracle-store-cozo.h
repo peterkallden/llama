@@ -20,6 +20,8 @@ public:
             const std::string &, std::string &) override;
     bool append_evaluation(const std::string &, const common_semi_oracle_result &, std::string &) override;
     bool get_evaluation_payload(const std::string &, std::string &, bool &, std::string &) const override;
+    bool put_interaction(const common_semi_oracle_interaction &, std::string &) override;
+    bool get_interaction(const std::string &, common_semi_oracle_interaction &, bool &, std::string &) const override;
     std::vector<std::string> list_host_rulesets(std::string &) const override;
 private:
     bool run(const std::string &, const std::string &, std::string &, std::string &) const;

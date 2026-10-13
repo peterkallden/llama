@@ -418,6 +418,225 @@ agent_host_tool_selection_request make_daemon_tool_request(
     return tool_request;
 }
 
+bool daemon_semi_oracle_parse_placement_coordinates(
+        const std::string & action_dsl, int & row, int & column) {
+    row = -1;
+    column = -1;
+    std::istringstream lines(action_dsl);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        const auto key = line.substr(0, colon);
+        try {
+            if (key == "row") row = std::stoi(line.substr(colon + 1));
+            if (key == "column") column = std::stoi(line.substr(colon + 1));
+        } catch (...) {
+            return false;
+        }
+    }
+    return row >= 0 && column >= 0;
+}
+
+nlohmann::ordered_json daemon_semi_oracle_result_json(
+        const common_semi_oracle_result & result) {
+    return {{"verdict", common_semi_oracle_verdict_name(result.verdict)},
+        {"ruleset_id", result.ruleset_id}, {"revision", result.ruleset_revision},
+        {"evaluator", result.evaluator_ref}, {"evaluator_revision", result.evaluator_revision},
+        {"level", common_semi_oracle_level_name(result.level)},
+        {"proof", nlohmann::ordered_json::parse(result.proof_json.empty() ? "null" : result.proof_json, nullptr, false)},
+        {"counterexample", nlohmann::ordered_json::parse(result.counterexample_json.empty() ? "null" : result.counterexample_json, nullptr, false)}};
+}
+
+bool daemon_semi_oracle_result_from_json(const std::string & text,
+        common_semi_oracle_result & result) {
+    using json = nlohmann::ordered_json;
+    const auto value = json::parse(text, nullptr, false);
+    if (!value.is_object()) return false;
+    result = {};
+    result.ruleset_id = value.value("ruleset_id", "");
+    result.ruleset_revision = value.value("revision", uint64_t(0));
+    result.evaluator_ref = value.value("evaluator", "");
+    result.evaluator_revision = value.value("evaluator_revision", "");
+    const auto verdict = value.value("verdict", "");
+    if (verdict == "SATISFIED") result.verdict = common_semi_oracle_verdict::satisfied;
+    else if (verdict == "VIOLATED") result.verdict = common_semi_oracle_verdict::violated;
+    else return false;
+    const auto proof = value.value("proof", json(nullptr));
+    const auto counterexample = value.value("counterexample", json(nullptr));
+    result.proof_json = proof.is_object() ? proof.dump() : std::string{};
+    result.counterexample_json = counterexample.is_object() ? counterexample.dump() : std::string{};
+    return true;
+}
+
+bool daemon_semi_oracle_render_algebra_rewrite(const std::string & before,
+        const std::string & next, std::string & action_dsl) {
+    using json = nlohmann::ordered_json;
+    const auto old_state = json::parse(before, nullptr, false);
+    const auto new_state = json::parse(next, nullptr, false);
+    if (!old_state.is_object() || !new_state.is_object() ||
+            !old_state.contains("lhs") || !old_state.contains("rhs") ||
+            !new_state.contains("lhs") || !new_state.contains("rhs") ||
+            !old_state["lhs"].is_string() || !old_state["rhs"].is_string() ||
+            !new_state["lhs"].is_string() || !new_state["rhs"].is_string()) return false;
+    action_dsl = "open! algebra.rewrite_equation";
+    if (old_state["lhs"] != new_state["lhs"]) action_dsl += "\nlhs: " + new_state["lhs"].get<std::string>();
+    if (old_state["rhs"] != new_state["rhs"]) action_dsl += "\nrhs: " + new_state["rhs"].get<std::string>();
+    return action_dsl != "open! algebra.rewrite_equation";
+}
+
+bool daemon_semi_oracle_make_algebra_repair(common_semi_oracle_tool_service & service,
+        const std::string & before, std::string & preferred_dsl,
+        common_semi_oracle_result & preferred, std::string & error) {
+    common_semi_oracle_result search;
+    if (!service.search_active_algebra_goal(search, error) ||
+            search.verdict != common_semi_oracle_verdict::satisfied) return false;
+    const auto proof = nlohmann::ordered_json::parse(search.proof_json, nullptr, false);
+    if (!proof.is_object() || !proof.contains("path") || !proof["path"].is_array() ||
+            proof["path"].size() < 2 || !proof["path"][1].is_object() ||
+            !proof["path"][1].contains("state")) { error = "algebra A* proof has no first transition"; return false; }
+    if (!daemon_semi_oracle_render_algebra_rewrite(before, proof["path"][1]["state"].dump(), preferred_dsl)) {
+        error = "algebra A* first transition cannot be rendered as rewrite DSL"; return false;
+    }
+    return service.verify_action(before, preferred_dsl, common_semi_oracle_level::local,
+        {}, {1, 1}, {}, preferred, error) && preferred.verdict == common_semi_oracle_verdict::satisfied;
+}
+
+bool daemon_semi_oracle_put_forced_context(
+        agent_resource_store & resources,
+        const common_agent_request & request,
+        const common_semi_oracle_interaction & interaction,
+        const std::string & state_json,
+        const std::string & action_dsl,
+        const char * arm,
+        std::string & reference,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    const json document{{"messages", json::array({
+        {{"role", "system"}, {"content", "Use the active RuleSet action contract."}},
+        {{"role", "user"}, {"content", "RuleSet: " + interaction.ruleset_id +
+            " revision " + std::to_string(interaction.ruleset_revision) +
+            "\nState:\n" + state_json + "\nReturn one action."}},
+        {{"role", "assistant"}, {"content", action_dsl}},
+    })}, {"capture_mode", "host.forced_context.v1"},
+        {"semi_oracle_interaction", interaction.id}, {"arm", arm}};
+    const std::string identity = interaction.id + "\n" + arm + "\n" + state_json + "\n" + action_dsl;
+    agent_resource_put_request put;
+    put.name = "semi-oracle-forced-context-" +
+        hash_sha256_hex(identity.data(), identity.size()).substr(0, 24) + ".json";
+    put.description = "Host-owned forced-context capture material for a verified SemiOracle contrast";
+    put.mime_type = "application/json";
+    put.text = document.dump();
+    put.scope = common_runtime_resource_scope::session;
+    put.namespace_id = request.namespace_id;
+    put.project_id = request.project_id;
+    put.session_id = request.session_id;
+    put.turn_id = request.turn_id;
+    put.source_provider = "semi-oracle";
+    put.source_tool = "forced-context";
+    put.created_at = std::time(nullptr);
+    put.metadata.purpose = "semi_oracle_forced_context";
+    put.metadata.content_summary = "Teacher-forced SemiOracle action continuation.";
+    put.metadata.processing_cache_key = identity;
+    put.lineage.parent_uri = interaction.evidence_ref;
+    put.lineage.derivation = "host-forced-context";
+    agent_resource_descriptor descriptor;
+    if (!resources.put_text(put, descriptor, error) || descriptor.uri.empty()) {
+        if (error.empty()) error = "SemiOracle forced context has no resource URI";
+        return false;
+    }
+    reference = descriptor.uri;
+    return true;
+}
+
+common_agent_semi_oracle_teaching_relation_provider
+make_daemon_semi_oracle_relation_provider(
+        common_semi_oracle_store & store, agent_resource_store & resources) {
+    return [&store, &resources](const common_agent_request & request,
+            const common_plan_state &, const common_agent_result & result,
+            const common_learning_transaction &, std::vector<common_flydelta_teaching_relation> & relations,
+            std::string & error) {
+        error.clear();
+        for (const auto & signal : result.learning_signals) {
+            if (signal.type != common_learning_signal_type::semi_oracle_preference ||
+                    signal.repair_context_json.empty()) continue;
+            const auto context = nlohmann::ordered_json::parse(signal.repair_context_json, nullptr, false);
+            const std::string ref = context.is_object()
+                ? context.value("semi_oracle_interaction_ref", std::string{}) : std::string{};
+            if (ref.empty()) continue; // A verified move without a matched control is diagnostic only.
+            common_semi_oracle_interaction interaction;
+            bool found = false;
+            if (!store.get_interaction(ref, interaction, found, error)) return false;
+            if (!found || interaction.session_id != request.session_id) continue;
+            common_semi_oracle_ruleset ruleset;
+            if (!store.get_revision(interaction.ruleset_id, interaction.ruleset_revision,
+                    ruleset, found, error)) return false;
+            if (!found || ruleset.scope != common_semi_oracle_scope::session ||
+                    ruleset.scope_id != request.session_id) continue;
+            common_semi_oracle_tool_service service(store, request.namespace_id, request.session_id);
+            if (interaction.domain == "linear_algebra" &&
+                    interaction.contrast_kind == "correctness_repair") {
+                common_semi_oracle_result rejected, accepted;
+                if (!daemon_semi_oracle_result_from_json(interaction.baseline_result_json, rejected) ||
+                        !daemon_semi_oracle_result_from_json(interaction.preferred_result_json, accepted)) continue;
+                std::string baseline_ref, preferred_ref, control_ref;
+                if (!daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                        interaction.state_json, interaction.baseline_action_dsl, "baseline", baseline_ref, error) ||
+                        !daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                        interaction.state_json, interaction.preferred_action_dsl, "preferred", preferred_ref, error) ||
+                        !daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                        interaction.control_state_json, interaction.control_action_dsl, "control", control_ref, error)) return false;
+                common_agent_scope scope;
+                scope.namespace_id = request.namespace_id;
+                scope.project_id = request.project_id;
+                scope.session_id = request.session_id;
+                scope.turn_id = request.turn_id;
+                common_flydelta_teaching_relation relation;
+                if (!common_semi_oracle_make_controlled_teaching_relation(ruleset,
+                        rejected, accepted, scope, interaction.id, interaction.task_fingerprint,
+                        baseline_ref, preferred_ref, control_ref, interaction.evidence_ref,
+                        relation, error)) return false;
+                relation.model_profile_fingerprint = "daemon-resident-model-v1";
+                relation.tokenizer_fingerprint = "daemon-tokenizer-v1";
+                relation.template_fingerprint = "semi-oracle-forced-context-v1";
+                relation.capture_layout_revision = "forced-context-boundary-v1";
+                relations.push_back(std::move(relation));
+                continue;
+            }
+            if (interaction.domain != "placement_game") continue;
+            std::vector<common_semi_oracle_placement_action_value> ranking;
+            if (!service.rank_placements(interaction.state_json, {100000, 16}, ranking, error)) return false;
+            int baseline_row, baseline_column, preferred_row, preferred_column;
+            if (!daemon_semi_oracle_parse_placement_coordinates(interaction.baseline_action_dsl, baseline_row, baseline_column) ||
+                    !daemon_semi_oracle_parse_placement_coordinates(interaction.preferred_action_dsl, preferred_row, preferred_column)) continue;
+            const auto locate = [&](int row, int column) {
+                return std::find_if(ranking.begin(), ranking.end(), [&](const auto & value) {
+                    return value.row == row && value.column == column;
+                });
+            };
+            const auto baseline = locate(baseline_row, baseline_column);
+            const auto preferred = locate(preferred_row, preferred_column);
+            if (baseline == ranking.end() || preferred == ranking.end()) continue;
+            std::string baseline_ref, preferred_ref, control_ref;
+            if (!daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                    interaction.state_json, interaction.baseline_action_dsl, "baseline", baseline_ref, error) ||
+                    !daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                    interaction.state_json, interaction.preferred_action_dsl, "preferred", preferred_ref, error) ||
+                    !daemon_semi_oracle_put_forced_context(resources, request, interaction,
+                    interaction.control_state_json, interaction.control_action_dsl, "control", control_ref, error)) return false;
+            common_flydelta_teaching_relation relation;
+            if (!service.make_preference_relation(*baseline, *preferred, interaction.id,
+                    baseline_ref, preferred_ref, control_ref, interaction.evidence_ref, relation, error)) return false;
+            relation.model_profile_fingerprint = "daemon-resident-model-v1";
+            relation.tokenizer_fingerprint = "daemon-tokenizer-v1";
+            relation.template_fingerprint = "semi-oracle-forced-context-v1";
+            relation.capture_layout_revision = "forced-context-boundary-v1";
+            relations.push_back(std::move(relation));
+        }
+        return true;
+    };
+}
+
 } // namespace
 
 bool resolve_agent_daemon_tooling(
@@ -552,6 +771,57 @@ bool resolve_agent_daemon_tooling(
                         });
                         if (chosen != ranking.end() && best != ranking.end() &&
                                 static_cast<int>(chosen->value) < static_cast<int>(best->value)) {
+                            // Keep the model's observed move and the host's
+                            // counterfactuals together before the generic
+                            // runtime replaces the signal evidence id with
+                            // its tool-observation id.  This record contains
+                            // no activations and grants no credit on its own.
+                            const auto control = std::find_if(ranking.begin(), ranking.end(),
+                                [&](const auto & value) {
+                                    return value.row != chosen->row || value.column != chosen->column
+                                        ? value.value == chosen->value : false;
+                                });
+                            std::string interaction_ref;
+                            if (control != ranking.end()) {
+                                const auto render_action = [](const auto & value) {
+                                    return std::string("open! game.place_mark\nplayer: ") + value.player +
+                                        "\nrow: " + std::to_string(value.row) +
+                                        "\ncolumn: " + std::to_string(value.column);
+                                };
+                                const std::string identity = session_id + "\n" + active.id + "\n" +
+                                    std::to_string(active.revision) + "\n" + before + "\n" +
+                                    arguments["action_dsl"].get<std::string>() + "\n" +
+                                    best->persisted_evaluation_ref;
+                                common_semi_oracle_interaction interaction;
+                                interaction.id = "semi-oracle://interaction/" +
+                                    hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+                                interaction.session_id = session_id;
+                                interaction.ruleset_id = active.id;
+                                interaction.ruleset_revision = active.revision;
+                                interaction.action_contract_fingerprint = active.action_contract_fingerprint;
+                                interaction.domain = "placement_game";
+                                interaction.contrast_kind = "strategic_preference";
+                                interaction.evidence_ref = best->persisted_evaluation_ref;
+                                interaction.verifier_ref = "semi-oracle://evaluator/placement_game";
+                                interaction.verifier_revision = "minimax-v1";
+                                interaction.task_fingerprint = chosen->state_fingerprint;
+                                interaction.state_json = before;
+                                interaction.control_state_json = before;
+                                interaction.baseline_action_dsl = arguments["action_dsl"].get<std::string>();
+                                interaction.preferred_action_dsl = render_action(*best);
+                                interaction.control_action_dsl = render_action(*control);
+                                interaction.baseline_result_json = response.dump();
+                                interaction.preferred_result_json = json{{"verdict", "SATISFIED"},
+                                    {"ruleset_id", active.id}, {"revision", active.revision},
+                                    {"ranking_evaluation_ref", best->persisted_evaluation_ref}}.dump();
+                                interaction.contrast_ref = best->persisted_evaluation_ref + ":" +
+                                    std::to_string(chosen->row) + "," + std::to_string(chosen->column) + "<" +
+                                    std::to_string(best->row) + "," + std::to_string(best->column);
+                                std::string interaction_error;
+                                if (semi_oracle_store->put_interaction(interaction, interaction_error)) {
+                                    interaction_ref = interaction.id;
+                                }
+                            }
                             response["strategy"] = {{"chosen_value", static_cast<int>(chosen->value)},
                                 {"best_value", static_cast<int>(best->value)},
                                 {"ranking_evaluation_ref", best->persisted_evaluation_ref},
@@ -561,7 +831,63 @@ bool resolve_agent_daemon_tooling(
                                 common_learning_signal_type::semi_oracle_preference, std::string{}, std::string{},
                                 "oracle.action.verify", best->persisted_evaluation_ref,
                                 "host minimax proved the observed legal move strictly worse than an available move",
-                                "semi-oracle", "host");
+                                "semi-oracle", "host",
+                                interaction_ref.empty() ? std::string{} :
+                                    json{{"semi_oracle_interaction_ref", interaction_ref}}.dump());
+                        }
+                    }
+                }
+            }
+            if (active.domain == common_semi_oracle_domain::linear_algebra &&
+                    result.verdict == common_semi_oracle_verdict::violated &&
+                    common_semi_oracle_learning_authorized(active, result)) {
+                std::string preferred_dsl, repair_error;
+                common_semi_oracle_result preferred;
+                if (daemon_semi_oracle_make_algebra_repair(service, before, preferred_dsl,
+                        preferred, repair_error)) {
+                    // Fixed host fixtures are controls, never demonstrations:
+                    // they remove generic rewrite surface form from the
+                    // correctness contrast and must themselves verify.
+                    const std::string control_state = R"json({"lhs":"3(x+2)","rhs":"9"})json";
+                    const std::string control_dsl = "open! algebra.rewrite_equation\nlhs: 3x+6";
+                    common_semi_oracle_result control;
+                    if (service.verify_action(control_state, control_dsl,
+                            common_semi_oracle_level::local, {}, {1, 1}, {}, control, repair_error) &&
+                            control.verdict == common_semi_oracle_verdict::satisfied &&
+                            control_state != before) {
+                        const std::string identity = session_id + "\n" + active.id + "\n" +
+                            std::to_string(active.revision) + "\n" + before + "\n" +
+                            arguments["action_dsl"].get<std::string>() + "\n" + preferred_dsl;
+                        common_semi_oracle_interaction interaction;
+                        interaction.id = "semi-oracle://interaction/" +
+                            hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+                        interaction.session_id = session_id;
+                        interaction.ruleset_id = active.id;
+                        interaction.ruleset_revision = active.revision;
+                        interaction.action_contract_fingerprint = active.action_contract_fingerprint;
+                        interaction.domain = "linear_algebra";
+                        interaction.contrast_kind = "correctness_repair";
+                        interaction.evidence_ref = "semi-oracle://evaluation/" +
+                            hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
+                        interaction.verifier_ref = preferred.evaluator_ref;
+                        interaction.verifier_revision = preferred.evaluator_revision;
+                        interaction.task_fingerprint = hash_sha256_hex(before.data(), before.size()).substr(0, 32);
+                        interaction.state_json = before;
+                        interaction.control_state_json = control_state;
+                        interaction.baseline_action_dsl = arguments["action_dsl"].get<std::string>();
+                        interaction.preferred_action_dsl = preferred_dsl;
+                        interaction.control_action_dsl = control_dsl;
+                        interaction.baseline_result_json = daemon_semi_oracle_result_json(result).dump();
+                        interaction.preferred_result_json = daemon_semi_oracle_result_json(preferred).dump();
+                        interaction.contrast_ref = "correctness-repair:" + interaction.task_fingerprint;
+                        std::string interaction_error;
+                        if (semi_oracle_store->put_interaction(interaction, interaction_error)) {
+                            execution.learning_signals.emplace_back(
+                                common_learning_signal_type::semi_oracle_preference, std::string{}, std::string{},
+                                "oracle.action.verify", interaction.evidence_ref,
+                                "host verified an algebra correction for the observed invalid rewrite",
+                                "semi-oracle", "host",
+                                json{{"semi_oracle_interaction_ref", interaction.id}}.dump());
                         }
                     }
                 }
@@ -1052,6 +1378,12 @@ bool initialize_agent_daemon_environment(
         error = "SemiOracle adaptation store initialization failed: " + error;
         return false;
     }
+    // SemiOracle uses the ordinary host-relation ingress.  The provider only
+    // materializes already verified interactions; it does not evaluate moves,
+    // create activations or activate an overlay.
+    runtime.semi_oracle_teaching_relation_provider =
+        make_daemon_semi_oracle_relation_provider(
+            *runtime.semi_oracle_store, *runtime.resource_store);
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
     }

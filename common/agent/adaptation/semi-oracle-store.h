@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/semi-oracle.h"
+#include "agent/adaptation/semi-oracle-teaching.h"
 
 #include <string>
 #include <vector>
@@ -57,6 +58,20 @@ public:
         payload_json.clear();
         found = false;
         error = "semi-oracle evaluation reads are unsupported by this store";
+        return false;
+    }
+    virtual bool put_interaction(const common_semi_oracle_interaction & interaction,
+            std::string & error) {
+        (void) interaction;
+        error = "semi-oracle interaction storage is unsupported by this store";
+        return false;
+    }
+    virtual bool get_interaction(const std::string & interaction_id,
+            common_semi_oracle_interaction & interaction, bool & found,
+            std::string & error) const {
+        (void) interaction_id;
+        interaction = {}; found = false;
+        error = "semi-oracle interaction reads are unsupported by this store";
         return false;
     }
     virtual std::vector<std::string> list_host_rulesets(std::string & error) const = 0;

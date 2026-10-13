@@ -97,6 +97,16 @@ int main() {
         "evidence://algebra-pair", relation, error));
     CHECK(relation.source == common_adaptation_evidence_source::semi_oracle_preference);
     CHECK(relation.verifier_ref == algebra_accepted.evaluator_ref);
+    CHECK(common_semi_oracle_make_controlled_teaching_relation(algebra_ruleset,
+        algebra_rejected, algebra_accepted, algebra_scope, "relation-algebra-controlled",
+        "ignored-caller-task-fingerprint", "run://bad-rewrite", "run://valid-rewrite",
+        "run://control-rewrite", "evidence://algebra-pair", relation, error));
+    CHECK(relation.control_ref == "run://control-rewrite" &&
+        relation.control_origin == common_flydelta_teaching_origin::host_counterfactual);
+    CHECK(!common_semi_oracle_make_controlled_teaching_relation(algebra_ruleset,
+        algebra_rejected, algebra_accepted, algebra_scope, "relation-algebra-no-control",
+        "ignored-caller-task-fingerprint", "run://bad-rewrite", "run://valid-rewrite",
+        "", "evidence://algebra-pair", relation, error));
     common_learning_transaction transaction;
     transaction.id = "learning://semi-oracle/algebra";
     transaction.observation.id = transaction.id;

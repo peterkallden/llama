@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <chrono>
+#include <cstdio>
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
 
@@ -101,6 +102,36 @@ int main() {
     std::string stored_payload;
     CHECK(store.get_evaluation_payload(ranked.front().persisted_evaluation_ref,stored_payload,found,error)&&found);
     CHECK(stored_payload.find("memoized_minimax_v1")!=std::string::npos);
+    common_semi_oracle_interaction interaction;
+    interaction.id = "semi-oracle://interaction/test-1";
+    interaction.session_id = "session-1";
+    interaction.ruleset_id = r.id;
+    interaction.ruleset_revision = r.revision;
+    interaction.action_contract_fingerprint = r.action_contract_fingerprint;
+    interaction.domain = "placement_game";
+    interaction.contrast_kind = "strategic_preference";
+    interaction.evidence_ref = ranked.front().persisted_evaluation_ref;
+    interaction.verifier_ref = "semi-oracle://evaluator/placement_game";
+    interaction.verifier_revision = "minimax-v1";
+    interaction.task_fingerprint = ranked.front().state_fingerprint;
+    interaction.state_json = R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json";
+    interaction.control_state_json = interaction.state_json;
+    interaction.baseline_action_dsl = "open! game.place_mark\nplayer: X\nrow: 2\ncolumn: 0";
+    interaction.preferred_action_dsl = "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 2";
+    interaction.control_action_dsl = "open! game.place_mark\nplayer: X\nrow: 2\ncolumn: 1";
+    interaction.baseline_result_json = R"json({"verdict":"SATISFIED"})json";
+    interaction.preferred_result_json = R"json({"verdict":"SATISFIED"})json";
+    interaction.contrast_ref = "minimax:test";
+    if (!store.put_interaction(interaction, error)) {
+        std::fprintf(stderr, "interaction persistence failed: %s\n", error.c_str());
+        return __LINE__;
+    }
+    common_semi_oracle_interaction loaded_interaction;
+    CHECK(store.get_interaction(interaction.id, loaded_interaction, found, error) && found);
+    CHECK(loaded_interaction.preferred_action_dsl == interaction.preferred_action_dsl);
+    auto mutated_interaction = interaction;
+    mutated_interaction.control_action_dsl += "\n# changed";
+    CHECK(!store.put_interaction(mutated_interaction, error));
     CHECK(store.promote_to_host(r.id,1,error));
     auto hosts=store.list_host_rulesets(error);CHECK(hosts.size()==1&&hosts.front()==r.id);
     CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.scope==common_semi_oracle_scope::host&&loaded.semantic_fingerprint==r.semantic_fingerprint);
@@ -108,6 +139,7 @@ int main() {
     CHECK(store.append_evaluation("eval-1",verdict,error));
     store.close();
     CHECK(store.open(db,error));
+    CHECK(store.get_interaction(interaction.id, loaded_interaction, found, error) && found);
     std::string persisted_state;
     CHECK(store.get_session_state("session-play", active_game.id,
         active_game.revision, persisted_state, found, error) && found);

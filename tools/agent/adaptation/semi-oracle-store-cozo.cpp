@@ -42,6 +42,25 @@ const char * schema = R"COZO(
  ?[evaluation_id] <- [['__probe__']]
  :delete agent_semi_oracle_evaluations { evaluation_id }
 }
+{
+ ?[interaction_id, session_id, ruleset_id, revision, payload] <- [['__probe__', '__probe__', '__probe__', 1, '{}']]
+ :create agent_semi_oracle_interactions { interaction_id: String => session_id: String, ruleset_id: String, revision: Int, payload: String }
+}
+{
+ ?[interaction_id] <- [['__probe__']]
+ :delete agent_semi_oracle_interactions { interaction_id }
+}
+)COZO";
+
+const char * interaction_schema = R"COZO(
+{
+ ?[interaction_id, session_id, ruleset_id, revision, payload] <- [['__probe__', '__probe__', '__probe__', 1, '{}']]
+ :create agent_semi_oracle_interactions { interaction_id: String => session_id: String, ruleset_id: String, revision: Int, payload: String }
+}
+{
+ ?[interaction_id] <- [['__probe__']]
+ :delete agent_semi_oracle_interactions { interaction_id }
+}
 )COZO";
 
 bool relations_ready(const json & value) {
@@ -51,7 +70,8 @@ bool relations_ready(const json & value) {
     return std::find(found.begin(),found.end(),"agent_semi_oracle_rulesets")!=found.end() &&
         std::find(found.begin(),found.end(),"agent_semi_oracle_session_bindings")!=found.end() &&
         std::find(found.begin(),found.end(),"agent_semi_oracle_host_catalog")!=found.end() &&
-        std::find(found.begin(),found.end(),"agent_semi_oracle_evaluations")!=found.end();
+        std::find(found.begin(),found.end(),"agent_semi_oracle_evaluations")!=found.end() &&
+        std::find(found.begin(),found.end(),"agent_semi_oracle_interactions")!=found.end();
 }
 
 bool relation_exists(const json & value, const char * name) {
@@ -77,7 +97,16 @@ bool agent_semi_oracle_cozo_store::open(const std::string & path,std::string & e
     close();if(path.empty()){error="semi-oracle Cozo store requires a path";return false;}
     char * e=cozo_open_db("sqlite",path.c_str(),"{}",&db_id_);if(e){error=e;cozo_free_str(e);db_id_=-1;return false;}
     std::string raw;if(!run("::relations","{}",raw,error)){close();return false;}
-    auto rel=json::parse(raw,nullptr,false);if(!relations_ready(rel)){if(!run(schema,"{}",raw,error)){close();return false;}}
+    auto rel=json::parse(raw,nullptr,false);
+    // Existing databases may predate the immutable interaction relation.  Do
+    // not replay the full :create script against them: Cozo rejects duplicate
+    // relation creation.  The original four relations are all-or-nothing;
+    // later additions are independently migrated.
+    if (!relation_exists(rel, "agent_semi_oracle_rulesets")) {
+        if(!run(schema,"{}",raw,error)){close();return false;}
+    } else if (!relation_exists(rel, "agent_semi_oracle_interactions")) {
+        if(!run(interaction_schema,"{}",raw,error)){close();return false;}
+    }
     if (!run("::relations", "{}", raw, error)) { close(); return false; }
     rel = json::parse(raw, nullptr, false);
     if (!relation_exists(rel, "agent_semi_oracle_game_states")) {
@@ -182,6 +211,33 @@ bool agent_semi_oracle_cozo_store::get_evaluation_payload(const std::string & ei
     if(value["rows"].empty())return true;
     if(!value["rows"][0].is_array()||value["rows"][0].empty()||!value["rows"][0][0].is_string()){error="semi-oracle evaluation payload row is invalid";return false;}
     payload=value["rows"][0][0].get<std::string>();found=true;return true;
+}
+bool agent_semi_oracle_cozo_store::put_interaction(
+        const common_semi_oracle_interaction & value, std::string & error) {
+    if (!common_semi_oracle_interaction_validate(value, error)) return false;
+    common_semi_oracle_interaction existing; bool found = false;
+    if (!get_interaction(value.id, existing, found, error)) return false;
+    if (found) {
+        if (common_semi_oracle_interaction_to_json(existing) ==
+                common_semi_oracle_interaction_to_json(value)) { error.clear(); return true; }
+        error = "SemiOracle interactions are immutable"; return false;
+    }
+    std::string raw;
+    return run("?[interaction_id, session_id, ruleset_id, revision, payload] <- [[$id, $session, $ruleset, $rev, $payload]] :put agent_semi_oracle_interactions { interaction_id => session_id, ruleset_id, revision, payload }",
+        json{{"id", value.id}, {"session", value.session_id}, {"ruleset", value.ruleset_id},
+            {"rev", value.ruleset_revision}, {"payload", common_semi_oracle_interaction_to_json(value)}}.dump(), raw, error);
+}
+bool agent_semi_oracle_cozo_store::get_interaction(
+        const std::string & id, common_semi_oracle_interaction & value,
+        bool & found, std::string & error) const {
+    found = false; value = {}; std::string raw;
+    if (!run("?[payload] := *agent_semi_oracle_interactions[$id, session_id, ruleset_id, revision, payload]", json{{"id", id}}.dump(), raw, error)) return false;
+    const auto parsed = json::parse(raw, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || !parsed["rows"].is_array()) { error = "semi-oracle interaction query returned invalid rows"; return false; }
+    if (parsed["rows"].empty()) return true;
+    if (!parsed["rows"][0].is_array() || parsed["rows"][0].empty() || !parsed["rows"][0][0].is_string()) { error = "semi-oracle interaction row is invalid"; return false; }
+    if (!common_semi_oracle_interaction_from_json(parsed["rows"][0][0].get<std::string>(), value, error)) return false;
+    found = true; return true;
 }
 std::vector<std::string> agent_semi_oracle_cozo_store::list_host_rulesets(std::string & error) const {
     error.clear();std::vector<std::string> ids;std::string raw;if(!run("?[ruleset_id] := *agent_semi_oracle_host_catalog[ruleset_id, revision]","{}",raw,error))return ids;

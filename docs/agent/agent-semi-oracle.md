@@ -93,11 +93,10 @@ compatibility check. `UNKNOWN`, exhausted budgets and inferred-only rule sets
 remain diagnostic; they are not FlyDelta or training admission.
 
 The bridge API creates the existing teaching-relation type; it does not
-introduce a second capture/training store. The daemon does not yet configure a
-SemiOracle relation producer, so the relation is not currently constructed
-from live turns or sent to FlyDelta capture. The normal capture, contrast and
-admission components remain the intended downstream path once the host can
-resolve real execution/capture references.
+introduce a second capture/training store. The daemon persists an immutable
+interaction record for a complete placement-game contrast, then its dedicated
+provider materializes three session-scoped forced-context resources and sends
+the ordinary relation through the existing evidence and capture ingress.
 
 For strategic placement behavior, a legal-but-worse action is not an Oracle
 violation. The host-only `rank_placements` service runs memoized minimax for
@@ -110,8 +109,9 @@ better (`loss < draw < win`). This is a preference comparison, not a false
 the RuleSet or create a FlyDelta overlay by itself. A host producer still has
 to resolve the observed, preferred and matched-control captures and present a
 verified relation through the dedicated runtime seam; production capture and
-admission gates then apply. The semi-oracle smoke does not claim to exercise
-those activation steps.
+admission gates then apply. Forced-context capture uses `n_predict=0` with a
+host-owned terminal assistant continuation, so capture is deterministic while
+free generation remains evaluation-only.
 
 The daemon now attaches a `semi_oracle_preference` learning signal only when a
 declared placement-game RuleSet has a complete minimax ranking and proves the
@@ -196,9 +196,9 @@ signal is a host-verifier result, not a statement that the user taught a
 general concept. The runtime assembly now has a dedicated SemiOracle relation
 provider seam and routes its accepted relations through the existing evidence,
 teaching-material, capture, synthesis and FlyDelta search path. The daemon
-does not yet configure a producer for that seam. The producer must resolve
-real, compatible execution and control captures; the runtime rejects missing
-or unresolved references instead of inventing them.
+configures the producer only after it has stored a same-session, same-revision
+interaction with a verified contrast and matched control. It rejects incomplete
+interaction records rather than inventing references.
 
 The placement-game preference builder reloads its persisted minimax ranking
 and verifies that both actions belong to the same state and RuleSet revision,
@@ -209,11 +209,14 @@ the same initial state. Algebra relations establish equivalence only and do
 not claim that one valid rewrite is strategically better.
 
 The direct SemiOracle model smoke still tests rule/action inference and
-offline DPO projection. It is not, by itself, evidence of a full
-SemiOracle-to-FlyDelta capture, overlay, or model-improvement E2E. The
-remaining runtime work is to produce the provider relation from live
-placement/algebra turns with real captures, then run the candidate through
-capture, synthesis, direction/scale search, and held-out overlay evaluation.
+offline DPO projection. It is not, by itself, evidence that a candidate has
+survived capture, synthesis, direction/scale search, or held-out overlay
+evaluation. For `linear_algebra`, bounded A* may suggest a path, but the host
+uses only its first successor, renders it as a normal rewrite DSL action, and
+requires the local evaluator to prove that action before materializing the
+relation. The search's final solution is never treated as model output. A
+separately verified, syntactically similar host control is mandatory; missing
+repair or control material remains diagnostic only.
 
 ## Search levels
 

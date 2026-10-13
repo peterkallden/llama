@@ -71,6 +71,25 @@ public:
         const auto it = evaluations_.find(id); found = it != evaluations_.end();
         if (found) payload = it->second.proof_json; return true;
     }
+    bool put_interaction(const common_semi_oracle_interaction & value,
+            std::string & error) override {
+        if (!common_semi_oracle_interaction_validate(value, error)) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = interactions_.find(value.id);
+        if (found != interactions_.end()) {
+            if (common_semi_oracle_interaction_to_json(found->second) ==
+                    common_semi_oracle_interaction_to_json(value)) { error.clear(); return true; }
+            error = "SemiOracle interactions are immutable"; return false;
+        }
+        interactions_[value.id] = value; error.clear(); return true;
+    }
+    bool get_interaction(const std::string & id, common_semi_oracle_interaction & value,
+            bool & found, std::string & error) const override {
+        std::lock_guard<std::mutex> lock(mutex_); error.clear();
+        const auto it = interactions_.find(id); found = it != interactions_.end();
+        if (found) value = it->second; else value = {};
+        return true;
+    }
     std::vector<std::string> list_host_rulesets(std::string & error) const override {
         std::lock_guard<std::mutex> lock(mutex_); error.clear();
         return {host_rulesets_.begin(), host_rulesets_.end()};
@@ -81,6 +100,7 @@ private:
     std::map<std::string, std::pair<std::string, uint64_t>> bindings_;
     std::map<std::tuple<std::string, std::string, uint64_t>, std::string> states_;
     std::map<std::string, common_semi_oracle_result> evaluations_;
+    std::map<std::string, common_semi_oracle_interaction> interactions_;
     std::set<std::string> host_rulesets_;
 };
 }

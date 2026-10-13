@@ -9,6 +9,10 @@
 namespace {
 using json = nlohmann::ordered_json;
 
+bool bounded(const std::string & value, size_t max_size = 8192) {
+    return !value.empty() && value.size() <= max_size;
+}
+
 std::string state_fingerprint(const std::string & text) {
     uint64_t hash = 1469598103934665603ULL;
     for (const unsigned char byte : text) { hash ^= byte; hash *= 1099511628211ULL; }
@@ -16,6 +20,92 @@ std::string state_fingerprint(const std::string & text) {
     out << "fnv1a64:" << std::hex << hash;
     return out.str();
 }
+} // namespace
+
+bool common_semi_oracle_interaction_validate(
+        const common_semi_oracle_interaction & value,
+        std::string & error) {
+    error.clear();
+    if (value.schema_version != 1 || !bounded(value.id, 512) ||
+            !bounded(value.session_id, 512) || !bounded(value.ruleset_id, 512) ||
+            value.ruleset_revision == 0 || !bounded(value.action_contract_fingerprint, 512) ||
+            !bounded(value.domain, 128) || !bounded(value.contrast_kind, 128) || !bounded(value.evidence_ref, 512) ||
+            !bounded(value.verifier_ref, 512) || !bounded(value.verifier_revision, 512) ||
+            !bounded(value.task_fingerprint, 512) || !bounded(value.baseline_action_dsl) ||
+            !bounded(value.preferred_action_dsl) || !bounded(value.control_action_dsl) ||
+            !bounded(value.state_json) || !bounded(value.control_state_json) ||
+            value.baseline_action_dsl == value.preferred_action_dsl ||
+            !bounded(value.baseline_result_json) || !bounded(value.preferred_result_json) ||
+            !bounded(value.contrast_ref, 512)) {
+        error = "semi-oracle interaction identity or material is invalid";
+        return false;
+    }
+    const auto baseline = json::parse(value.baseline_result_json, nullptr, false);
+    const auto preferred = json::parse(value.preferred_result_json, nullptr, false);
+    const auto state = json::parse(value.state_json, nullptr, false);
+    const auto control_state = json::parse(value.control_state_json, nullptr, false);
+    if (!baseline.is_object() || !preferred.is_object() || !state.is_object() ||
+            !control_state.is_object()) {
+        error = "semi-oracle interaction result payload is invalid";
+        return false;
+    }
+    return true;
+}
+
+std::string common_semi_oracle_interaction_to_json(
+        const common_semi_oracle_interaction & value) {
+    return json{{"schema_version", value.schema_version}, {"id", value.id},
+        {"session_id", value.session_id}, {"ruleset_id", value.ruleset_id},
+        {"ruleset_revision", value.ruleset_revision},
+        {"action_contract_fingerprint", value.action_contract_fingerprint},
+        {"domain", value.domain}, {"contrast_kind", value.contrast_kind}, {"evidence_ref", value.evidence_ref},
+        {"verifier_ref", value.verifier_ref}, {"verifier_revision", value.verifier_revision},
+        {"task_fingerprint", value.task_fingerprint},
+        {"state", json::parse(value.state_json)},
+        {"control_state", json::parse(value.control_state_json)},
+        {"baseline_action_dsl", value.baseline_action_dsl},
+        {"preferred_action_dsl", value.preferred_action_dsl},
+        {"control_action_dsl", value.control_action_dsl},
+        {"baseline_result", json::parse(value.baseline_result_json)},
+        {"preferred_result", json::parse(value.preferred_result_json)},
+        {"contrast_ref", value.contrast_ref}}.dump();
+}
+
+bool common_semi_oracle_interaction_from_json(
+        const std::string & text, common_semi_oracle_interaction & value,
+        std::string & error) {
+    error.clear();
+    const auto json_value = json::parse(text, nullptr, false);
+    if (!json_value.is_object()) { error = "semi-oracle interaction JSON is invalid"; return false; }
+    value = {};
+    value.schema_version = json_value.value("schema_version", 0);
+    value.id = json_value.value("id", "");
+    value.session_id = json_value.value("session_id", "");
+    value.ruleset_id = json_value.value("ruleset_id", "");
+    value.ruleset_revision = json_value.value("ruleset_revision", uint64_t(0));
+    value.action_contract_fingerprint = json_value.value("action_contract_fingerprint", "");
+    value.domain = json_value.value("domain", "");
+    value.contrast_kind = json_value.value("contrast_kind", "");
+    value.evidence_ref = json_value.value("evidence_ref", "");
+    value.verifier_ref = json_value.value("verifier_ref", "");
+    value.verifier_revision = json_value.value("verifier_revision", "");
+    value.task_fingerprint = json_value.value("task_fingerprint", "");
+    const auto state = json_value.value("state", json(nullptr));
+    const auto control_state = json_value.value("control_state", json(nullptr));
+    value.state_json = state.is_object() ? state.dump() : "";
+    value.control_state_json = control_state.is_object() ? control_state.dump() : "";
+    value.baseline_action_dsl = json_value.value("baseline_action_dsl", "");
+    value.preferred_action_dsl = json_value.value("preferred_action_dsl", "");
+    value.control_action_dsl = json_value.value("control_action_dsl", "");
+    const auto baseline = json_value.value("baseline_result", json(nullptr));
+    const auto preferred = json_value.value("preferred_result", json(nullptr));
+    value.baseline_result_json = baseline.is_object() ? baseline.dump() : "";
+    value.preferred_result_json = preferred.is_object() ? preferred.dump() : "";
+    value.contrast_ref = json_value.value("contrast_ref", "");
+    return common_semi_oracle_interaction_validate(value, error);
+}
+
+namespace {
 
 bool action_proof_matches(
         const common_semi_oracle_ruleset & ruleset,
@@ -130,6 +220,31 @@ bool common_semi_oracle_make_teaching_relation(
     relation.conditioned_origin = common_flydelta_teaching_origin::host_derived;
     relation.confidence = 1.0f;
     relation.host_approved = true;
+    return common_flydelta_teaching_relation_validate(relation, error);
+}
+
+bool common_semi_oracle_make_controlled_teaching_relation(
+        const common_semi_oracle_ruleset & ruleset,
+        const common_semi_oracle_result & rejected,
+        const common_semi_oracle_result & accepted,
+        const common_agent_scope & scope,
+        const std::string & relation_id,
+        const std::string & task_fingerprint,
+        const std::string & rejected_execution_ref,
+        const std::string & accepted_execution_ref,
+        const std::string & control_execution_ref,
+        const std::string & evidence_ref,
+        common_flydelta_teaching_relation & relation,
+        std::string & error) {
+    if (control_execution_ref.empty()) {
+        error = "semi-oracle correctness teaching requires a matched control execution";
+        return false;
+    }
+    if (!common_semi_oracle_make_teaching_relation(ruleset, rejected, accepted,
+            scope, relation_id, task_fingerprint, rejected_execution_ref,
+            accepted_execution_ref, evidence_ref, relation, error)) return false;
+    relation.control_ref = control_execution_ref;
+    relation.control_origin = common_flydelta_teaching_origin::host_counterfactual;
     return common_flydelta_teaching_relation_validate(relation, error);
 }
 
