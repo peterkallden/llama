@@ -20,6 +20,13 @@ struct common_model_tool_contract {
     std::vector<common_model_tool_field> outputs;
 };
 
+// Render a concrete call with the same flat fields/directives as tool examples.
+std::string common_render_flat_tool_call(
+    const std::string & name,
+    const std::string & input_schema_json,
+    const std::string & arguments_json,
+    std::string & error);
+
 common_model_tool_contract common_project_model_tool_contract(
     const std::string & name,
     const std::string & description,

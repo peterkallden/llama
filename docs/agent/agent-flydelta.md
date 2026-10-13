@@ -2613,10 +2613,62 @@ existing bounded Deep/coefficient contract at requested ranks 1, 2 and 4,
 retaining only the rank that compatible captured directions actually span.
 In rank-sweep mode it skips the ordinary Whirlpool region pipeline so its
 model-call budget is spent on the rank comparison; the Deep sweep uses at most
-eight coefficient proposals and one full-generation finalist per rank. Its
-default generation limit is 32 tokens (override with
+four coefficient proposals and one full-generation finalist per rank. Its
+default generation limit is 512 tokens (override with
 `LLAMA_AGENT_N_PREDICT`). Groups without two compatible captured directions
 are logged as skipped, not reported as rank results.
+Teacher scoring uses the same compact DSL as generation: `open!` is the
+common prefix and the targets begin with the following space and remaining
+call text. Keeping whitespace in the target avoids a BPE merge across the
+forced prefix boundary. Diagnostic
+arms generate no answer and receive no tool verdict. Their captures are
+compared with a separate zero-generation baseline; full-generation captures
+use the full-generation baseline. Response traces include the complete output,
+decoded token count, stop reason and verifier diagnostic so exhausted token
+budgets can be distinguished from complete invalid calls. Earlier 32-token
+runs with a JSON scoring prefix do not establish behavioral equivalence or
+absence of regression.
+The smoke parses generation with the same schema-aware DSL overload used by
+runtime, scoped to the exact tools described in the prompt. The schema-less
+overload cannot admit flat calls. Canonical repairs and teacher targets reuse
+the tool-example field/directive renderer. Scalar lists inside predicate values
+accept both indexed fields and bracketed lists; their full field path is
+resolved against the selected tool schema. Fixture outputs and parse/verifier diagnostics are
+logged alongside the complete model exchanges.
+Coefficient waves share one immutable flattened basis per rank; separate
+copies per arm are not compatible with the native factorized batch binding.
+For a focused sweep over the two query records, set
+`LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY=tool_use/dataset/data_query` and
+`LLAMA_AGENT_LOW_RANK_MAX_SCENARIOS=2`. This scopes both
+the fixture selection and the described/parsed tool catalog to that group;
+keep the same scope when comparing configurations.
+Deep smoke arms require runtime confirmation that the requested overlay reached
+the decode graph. An absent confirmation fails the probe; the trace records
+requested/applied flags, factorized binding and any fallback reason.
+Layer-input captures resolve the sequence and absolute token position in the
+latest decode's microbatch row map. A prompt-relative token ordinal is not a
+physical capture-buffer row, particularly with multiple sequences or cached
+prefill. Requested positions absent from the latest decode fail closed rather
+than returning another sequence's activation or a stale buffer row.
+The prompt includes the fixture host's registered dataset references and column
+types. Tool examples alone are not dataset bindings; inventing a placeholder
+reference must not be necessary to answer a fixture question.
+The cvec equivalence smoke uses identical model-facing text for the zero and
+nonzero arms. Arm identities stay in host telemetry; they cannot introduce
+prompt differences into the overlay control comparison.
+Its device-diagnostics mode compares the active arm with the zero arm at the
+first downstream layer and requires a nonzero shift. Diagnostic scalar reads
+wait for the asynchronous graph to finish; they cannot report uninitialized
+GPU buffer contents as an available measurement.
+It also captures both sequence-specific downstream rows and checks their host
+reference shift against the requested 0.0002 perturbation (tolerance 1e-6).
+This independently checks the capture row mapping against the device reduction;
+a successful factorized binding alone is not sufficient evidence.
+The replay fixtures use membership predicates such as `region in [north, east]`.
+The model schemas expose `in`, and Cozo/SQLite row filtering implements typed
+list membership. Contract tests check actual nonempty fixture results, so a
+successful tool call returning an incorrectly empty dataset cannot serve as
+the repair oracle's expected result.
 Its trace records each arm's coefficients, teacher-forced margin, geometry,
 host verdict, elapsed time, and two storage figures:
 
@@ -2624,6 +2676,22 @@ host verdict, elapsed time, and two storage figures:
 flattened overlay model = arms * n_embd * sizeof(float)
 shared basis model      = (n_embd * rank + arms * rank) * sizeof(float)
 ```
+
+Correction validation (2026-10-14, Qwen2.5-1.5B-Instruct Q4_K_M,
+Vulkan/NVIDIA, full trace, two query fixtures): 55 FlyDelta CTests and five
+tool/data/configuration contract CTests passed. The independent two-sequence
+capture/device check measured 0.000199974 for a requested 0.0002 shift.
+Sparse/factorized Q1 produced the same `PASS` output and teacher margin
+(difference zero). Rank-1 diagnostic coefficients +0.05/-0.05 both measured
+shift norm 0.05, with progress +0.004088/-0.004088 and normalized margins
+0.911141/0.909922. The full-generation finalist retained the baseline's invalid
+call: no verified behavioral improvement, no selected candidate, no learning
+credit. Evidence effective rank was zero; ranks 2/4 were unavailable, and the
+rank-1 host-repair replay remains experimental rather than admitted evidence.
+Single-run binding times were 0.616 ms sparse versus 0.541 ms factorized;
+model times were 888.44/882.10 ms. These are observations, not a speedup claim.
+Earlier mismatched-row geometry (approximately 28) is invalid diagnostic data,
+not an observed adverse intervention of that size.
 
 The shared figure is a representation-size model. Experimental coefficient
 waves can additionally opt into a transient native factorized cvec batch:

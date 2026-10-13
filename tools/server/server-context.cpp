@@ -2416,7 +2416,7 @@ private:
         send_error(slot.task->id, error, type, slot.task->n_tokens(), slot.n_ctx);
     }
 
-    void capture_prompt_boundary(server_slot & slot) {
+    void capture_prompt_boundary(server_slot & slot, const llama_batch & batch_view, int32_t batch_row) {
         if (!slot.capture_request || !slot.capture_request->enabled || slot.capture_result.attempted) {
             return;
         }
@@ -2448,15 +2448,17 @@ private:
         result.n_embd = static_cast<uint32_t>(n_embd);
         result.token_id = slot.task->tokens[result.token_index];
         result.values.reserve(result.layer_indices.size() * n_embd);
+        const llama_pos capture_pos = request.token_index < 0
+            ? batch_view.pos[batch_row]
+            : static_cast<llama_pos>(request.token_index);
         for (const uint32_t layer : result.layer_indices) {
-            const float * values = llama_get_embeddings_layer_inp(slot.ctx_tgt, layer);
-            if (values == nullptr) {
+            const float * row = llama_get_embeddings_layer_inp_row(slot.ctx_tgt, layer, slot.id, capture_pos);
+            if (row == nullptr) {
                 result.values.clear();
                 result.n_embd = 0;
-                result.failure_reason = "llama.cpp did not return the requested layer input";
+                result.failure_reason = "requested sequence/position is not present in the latest layer-input capture";
                 return;
             }
-            const float * row = values + static_cast<size_t>(result.token_index) * n_embd;
             result.values.insert(result.values.end(), row, row + n_embd);
         }
         result.captured = true;
@@ -4638,7 +4640,7 @@ private:
             }
 
             if (slot.state == SLOT_STATE_DONE_PROMPT) {
-                capture_prompt_boundary(slot);
+                capture_prompt_boundary(slot, batch_view, slot.i_batch - off);
                 if (slot.task->type == SERVER_TASK_TYPE_EMBEDDING) {
                     // prompt evaluated for embedding
                     send_embedding(slot, batch_view);

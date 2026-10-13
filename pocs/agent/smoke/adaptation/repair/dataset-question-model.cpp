@@ -19,6 +19,7 @@
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
+#include "common.h"
 
 #include <nlohmann/json.hpp>
 
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <map>
@@ -48,11 +50,12 @@ struct options {
     bool force_tfo_lite = false;
     bool low_rank_rank_sweep = false;
     bool adaptive_alpha_search = false;
-    int n_predict = 128;
+    int n_predict = 512;
     int n_threads = 3;
     int n_gpu_layers = 0;
     std::string backend = "server";
     std::string scenario_id;
+    std::string behavior_key;
     size_t max_scenarios = 0;
 };
 
@@ -112,6 +115,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
         else if (argument == "--backend") { const auto v = next("--backend"); if (!v) return false; value.backend = v; }
         else if (argument == "--scenario-id") { const auto v = next("--scenario-id"); if (!v) return false; value.scenario_id = v; }
+        else if (argument == "--behavior-key") { const auto v = next("--behavior-key"); if (!v) return false; value.behavior_key = v; }
         else if (argument == "--max-scenarios") { const auto v = next("--max-scenarios"); if (!v) return false; value.max_scenarios = std::stoul(v); }
         else if (argument == "--help" || argument == "-h") return false;
         else { std::cerr << "unknown argument: " << argument << '\n'; return false; }
@@ -216,61 +220,53 @@ std::string preview(const common_agent_generation_result & result) {
     return output;
 }
 
-bool parse_model_tool_call(const common_agent_generation_result & result, json & parsed) {
-    if (!common_agent_generation_succeeded(result)) return false;
-    common_agent_tool_call call;
-    std::string error;
-    if (!common_parse_model_tool_call(
-            common_agent_tool_output_format::compact_dsl, result.content, call, error)) {
+void trace_model_exchange(const std::string & phase, const std::string & id,
+        const common_agent_generation_request & request,
+        const common_agent_generation_result & result) {
+    json messages = json::array();
+    for (const auto & message : request.messages) {
+        messages.push_back({{"role", message.role}, {"content", message.content}});
+    }
+    std::cout << "flydelta_model_exchange " << json({{"phase", phase}, {"id", id},
+        {"messages", messages}, {"n_predict", request.options.n_predict},
+        {"content", result.content}, {"decoded_tokens", result.decoded_tokens},
+        {"stop_reason", common_agent_generation_stop_reason_name(result.stop_reason)},
+        {"overlay_requested", result.flydelta_runtime.requested},
+        {"overlay_applied", result.flydelta_runtime.applied},
+        {"factorized_binding", result.flydelta_runtime.factorized_binding},
+        {"fallback_reason", result.flydelta_runtime.fallback_reason},
+        {"error", result.error_message}}).dump() << std::endl;
+}
+
+bool parse_model_tool_call(const common_agent_generation_result & result,
+        const agent_flydelta_dataset_repair_host & host, json & parsed, std::string & error) {
+    if (!common_agent_generation_succeeded(result)) {
+        error = result.error_message;
         return false;
     }
+    common_agent_tool_call call;
+    if (!host.parse_model_call(result.content, call, error)) return false;
     const json arguments = json::parse(call.arguments_json, nullptr, false);
-    if (!arguments.is_object()) return false;
+    if (!arguments.is_object()) {
+        error = "parsed tool arguments are not an object";
+        return false;
+    }
     parsed = {{"name", call.name}, {"arguments", arguments}};
     return true;
 }
 
-std::string compact_dsl_value(const json & value) {
-    if (value.is_string()) return value.dump();
-    if (value.is_primitive()) return value.dump();
-    if (value.is_array()) {
-        std::string rendered = "[";
-        for (size_t index = 0; index < value.size(); ++index) {
-            if (index != 0) rendered += ",";
-            rendered += compact_dsl_value(value[index]);
-        }
-        return rendered + "]";
-    }
-    if (value.is_object()) {
-        std::string rendered = "{";
-        bool first = true;
-        for (const auto & entry : value.items()) {
-            if (!first) rendered += ";";
-            first = false;
-            rendered += entry.key() + "=" + compact_dsl_value(entry.value());
-        }
-        return rendered + "}";
-    }
-    return "null";
+std::string tool_call_continuation(const std::string & tool, const json & arguments,
+        const agent_flydelta_dataset_repair_host & host) {
+    std::string error;
+    return host.render_model_call(tool, arguments, error);
 }
 
-std::string compact_dsl_tool_call(const std::string & tool, const json & arguments) {
-    if (tool.empty() || !arguments.is_object()) return {};
-    std::string rendered = "open! " + tool;
-    for (const auto & argument : arguments.items()) {
-        rendered += " " + argument.key() + "=" + compact_dsl_value(argument.value());
-    }
-    return rendered;
-}
-
-std::string tool_call_continuation(const std::string & tool, const json & arguments) {
-    return compact_dsl_tool_call(tool, arguments);
-}
-
-std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
+std::string parsed_tool_call_continuation(const common_agent_generation_result & result,
+        const agent_flydelta_dataset_repair_host & host) {
     json parsed;
-    if (!parse_model_tool_call(result, parsed)) return {};
-    return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"]);
+    std::string error;
+    if (!parse_model_tool_call(result, host, parsed, error)) return {};
+    return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"], host);
 }
 
 bool result_oracle_matches(
@@ -295,9 +291,15 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         verdict.diagnostic = "model generation failed";
         return verdict;
     }
+    if (result.stop_reason == common_agent_generation_stop_reason::limit) {
+        verdict.value = host_verdict::kind::unresolved_alternative;
+        verdict.diagnostic = "generation budget exhausted; tool-call verification is inconclusive";
+        return verdict;
+    }
     json parsed;
-    if (!parse_model_tool_call(result, parsed)) {
-        verdict.diagnostic = "host rejected a non-canonical tool-call object";
+    std::string parse_error;
+    if (!parse_model_tool_call(result, host, parsed, parse_error)) {
+        verdict.diagnostic = "host rejected tool-call syntax: " + parse_error;
         return verdict;
     }
     verdict.selected_tool = parsed["name"].get<std::string>();
@@ -381,8 +383,9 @@ common_agent_generation_request make_request(const options & value, const std::s
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
     request.messages = {{"system",
-        "You are a host-controlled dataset tool selector. Return exactly one compact DSL call in the form "
-        "open! TOOL_NAME argument=value. Do not return JSON, native tool-call wrappers, markdown, or explanation.\n" +
+        "Choose the best tool for the request. Return one compact DSL action:\n"
+        "open! TOOL_NAME\nfield: value\n"
+        "Use one field per line. Omit unset or host-resolved fields.\n" +
         contract}, {"user", user}};
     request.flydelta_capture = capture;
     request.flydelta_activation = std::move(activation);
@@ -397,6 +400,7 @@ int main(int argc, char ** argv) {
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
                   << " [--backend server]"
                   << " [--scenario-id ID]"
+                  << " [--behavior-key KEY]"
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
                   << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep] [--adaptive-alpha-search]"
@@ -433,11 +437,13 @@ int main(int argc, char ** argv) {
     common_tool_bootstrap_result bootstrap;
     if (!catalog.bootstrap("analysis", bootstrap, error)) { host.close(); std::cerr << error << '\n'; return 1; }
     std::string contract = "Available read-only tools:\n";
+    std::vector<std::string> described_tools;
     size_t selected_scenarios = 0;
     size_t considered_scenarios = 0;
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         if (!value.scenario_id.empty() && id != value.scenario_id) continue;
+        if (!value.behavior_key.empty() && scenario.value("behavior_key", "") != value.behavior_key) continue;
         if (value.max_scenarios != 0 && considered_scenarios >= value.max_scenarios) break;
         ++considered_scenarios;
         const auto expected = scenario.value("expected_tool", "");
@@ -445,16 +451,29 @@ int main(int argc, char ** argv) {
         ++selected_scenarios;
         const auto * definition = catalog.find_definition(expected);
         if (!definition) { host.close(); std::cerr << "unknown expected tool: " << expected << '\n'; return 1; }
+        if (std::find(described_tools.begin(), described_tools.end(), expected) != described_tools.end()) continue;
+        described_tools.push_back(expected);
         std::string compact_error;
         const auto description = common_render_compact_tool_description(definition->name, definition->description,
             common_tool_model_input_schema(*definition), common_tool_model_result_schema(*definition), compact_error);
         if (!compact_error.empty()) { host.close(); std::cerr << compact_error << '\n'; return 1; }
-        if (contract.find("\n- " + expected + "\n") == std::string::npos) contract += "- " + description + "\n";
+        contract += "- " + description + "\n";
     }
     if (selected_scenarios == 0) {
         host.close();
         std::cerr << "no scenarios enabled by agent learning policy\n";
         return 2;
+    }
+    contract += "\nAvailable datasets (host-registered):\n";
+    if (!host.select_model_tools(described_tools, error)) {
+        host.close(); std::cerr << error << '\n'; return 1;
+    }
+    for (const auto & dataset : host.available_datasets()) {
+        contract += dataset.ref.uri + "\n";
+        for (const auto & column : dataset.columns) {
+            contract += "  " + column.name + " (" +
+                common_agent_dataset_column_type_name(column.type) + ")\n";
+        }
     }
 
     std::shared_ptr<common_agent_server_context_host> server_host;
@@ -502,6 +521,19 @@ int main(int argc, char ** argv) {
         n_layers = static_cast<size_t>(llama_model_n_layer(llama_get_model(context)));
     }
     if (n_embd == 0 || n_layers <= 2) { host.close(); return 1; }
+    // Reject an unstable forced-token prefix before buying any model probes.
+    const auto * context = server_host->server().get_llama_context();
+    const std::string forced_prefix = agent_flydelta_dataset_dsl_prefix;
+    const auto prefix_tokens = common_tokenize(context, forced_prefix, false, true);
+    for (const auto & name : described_tools) {
+        const auto complete_tokens = common_tokenize(context, forced_prefix + " " + name, false, true);
+        if (prefix_tokens.empty() || complete_tokens.size() < prefix_tokens.size() ||
+                !std::equal(prefix_tokens.begin(), prefix_tokens.end(), complete_tokens.begin())) {
+            host.close(); std::cerr << "DSL teacher prefix crosses a token boundary for " << name << '\n'; return 1;
+        }
+    }
+    std::cout << "flydelta_teacher_prefix prefix=" << std::quoted(forced_prefix)
+              << " stable=yes tokens=" << prefix_tokens.size() << std::endl;
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
@@ -543,6 +575,7 @@ int main(int argc, char ** argv) {
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         if (!value.scenario_id.empty() && id != value.scenario_id) continue;
+        if (!value.behavior_key.empty() && scenario.value("behavior_key", "") != value.behavior_key) continue;
         if (value.max_scenarios != 0 && processed_scenarios >= value.max_scenarios) break;
         ++processed_scenarios;
         const auto expected = scenario.value("expected_tool", "");
@@ -564,14 +597,22 @@ int main(int argc, char ** argv) {
             std::cerr << "scenario has invalid verification_mode: " << id << '\n';
             return 1;
         }
+        std::cout << "flydelta_fixture " << json({{"id", id}, {"expected", canonical_repair},
+            {"canonical_output", canonical_execution.output}, {"verification_mode", verification_mode}}).dump()
+                  << std::endl;
 
         common_agent_generation_result failed_result;
-        const bool generated = inference->generate(make_request(value, contract, scenario.value("question", ""), capture), failed_result);
+        const auto failed_request = make_request(value, contract, scenario.value("question", ""), capture);
+        const bool generated = inference->generate(failed_request, failed_result);
+        trace_model_exchange("baseline", id, failed_request, failed_result);
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
+        std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "baseline"},
+            {"selected_tool", failed_verdict.selected_tool}, {"diagnostic", failed_verdict.diagnostic},
+            {"passed", failed_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         std::string decision_failed_tool = failed_verdict.selected_tool;
-        std::string decision_failed_continuation = parsed_tool_call_continuation(failed_result);
+        std::string decision_failed_continuation = parsed_tool_call_continuation(failed_result, host);
         // Replay fixtures deliberately carry a host-constructed negative call.
         // Use it only when Qwen's failed output cannot be parsed into a
         // model-facing choice pair; this keeps experimental margin scoring
@@ -586,7 +627,7 @@ int main(int argc, char ** argv) {
             else if (failed_fixture.contains("args")) fixture_arguments = &failed_fixture["args"];
             if (!fixture_tool.empty() && fixture_arguments != nullptr && fixture_arguments->is_object()) {
                 decision_failed_tool = fixture_tool;
-                decision_failed_continuation = tool_call_continuation(fixture_tool, *fixture_arguments);
+                decision_failed_continuation = tool_call_continuation(fixture_tool, *fixture_arguments, host);
             }
         }
         if (generated && failed_verdict.value == host_verdict::kind::passed) {
@@ -602,15 +643,12 @@ int main(int argc, char ** argv) {
             continue;
         }
         ++failures;
-        const std::string canonical_dsl_call = compact_dsl_tool_call(
-            expected, canonical_repair["arguments"]);
+        const std::string canonical_dsl_call = tool_call_continuation(
+            expected, canonical_repair["arguments"], host);
         common_agent_tool_call parsed_canonical_dsl_call;
         std::string canonical_dsl_error;
-        const bool canonical_dsl_parsed = common_parse_model_tool_call(
-            common_agent_tool_output_format::compact_dsl,
-            canonical_dsl_call,
-            parsed_canonical_dsl_call,
-            canonical_dsl_error);
+        const bool canonical_dsl_parsed = host.parse_model_call(
+            canonical_dsl_call, parsed_canonical_dsl_call, canonical_dsl_error);
         json parsed_canonical_arguments = json::value_t::discarded;
         if (canonical_dsl_parsed) {
             parsed_canonical_arguments = json::parse(
@@ -630,10 +668,15 @@ int main(int argc, char ** argv) {
             "Return this single compact DSL call unchanged. Do not return JSON, markdown, or explanation: " +
             canonical_dsl_call;
         common_agent_generation_result repaired_result;
-        const bool repair_generated = inference->generate(make_request(value, contract, repair_request, capture), repaired_result);
+        const auto repaired_request = make_request(value, contract, repair_request, capture);
+        const bool repair_generated = inference->generate(repaired_request, repaired_result);
+        trace_model_exchange("repair", id, repaired_request, repaired_result);
         const auto repaired_verdict = verify_model_call(
             repaired_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
+        std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "repair"},
+            {"selected_tool", repaired_verdict.selected_tool}, {"diagnostic", repaired_verdict.diagnostic},
+            {"passed", repaired_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         const bool capture_pair = failed_result.flydelta_capture && repaired_result.flydelta_capture &&
             failed_result.flydelta_capture->captured && repaired_result.flydelta_capture->captured;
         // Replay fixtures are deliberately allowed to contribute experimental
@@ -980,7 +1023,7 @@ int main(int argc, char ** argv) {
                 ? common_flydelta_coefficient_search_strategy::tfo_lite
                 : common_flydelta_coefficient_search_strategy::coordinate;
             deep_config.coefficients.step = 0.05f;
-            deep_config.coefficients.max_candidates = 8;
+            deep_config.coefficients.max_candidates = value.low_rank_rank_sweep ? 4 : 8;
             // Exercise the same bounded wave semantics used by a production
             // coefficient host. The smoke still permits scalar fallback, but
             // TFO must not bypass the batch runner or exceed this wave size.
@@ -993,9 +1036,11 @@ int main(int argc, char ** argv) {
             for (const auto & direction : directions) {
                 deep_directions.push_back({direction, false, 0.0f});
             }
-            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_diagnostic_baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_full_baseline_capture;
             std::optional<common_flydelta_decision_margin> deep_baseline_choice_margin;
             std::string deep_margin_error;
+            std::shared_ptr<const std::vector<float>> deep_factorized_basis;
             auto prepare_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay,
                     bool allow_factorized_overlay,
@@ -1021,12 +1066,24 @@ int main(int argc, char ** argv) {
                     activation_request.model_n_layers = n_layers;
                     activation_request.il_start = 1;
                     activation_request.il_end = static_cast<int32_t>(n_layers - 1);
-                    for (const auto & vector : basis.vectors) {
-                        activation_request.directions.push_back({basis.layer_index, vector});
-                    }
                     activation_request.coefficients = coefficients;
                     activation_request.allow_factorized_overlay =
                         value.low_rank_rank_sweep && allow_factorized_overlay;
+                    if (activation_request.allow_factorized_overlay) {
+                        if (!deep_factorized_basis) {
+                            auto shared = std::make_shared<std::vector<float>>();
+                            shared->reserve(n_embd * basis.vectors.size());
+                            for (const auto & vector : basis.vectors) shared->insert(shared->end(), vector.begin(), vector.end());
+                            deep_factorized_basis = std::move(shared);
+                        }
+                        activation_request.factorized_basis = deep_factorized_basis;
+                        activation_request.factorized_rank = static_cast<int32_t>(basis.vectors.size());
+                        activation_request.factorized_layer_index = basis.layer_index;
+                    } else {
+                        for (const auto & vector : basis.vectors) {
+                            activation_request.directions.push_back({basis.layer_index, vector});
+                        }
+                    }
                     activation_request.gate_request = gate_request;
                     common_flydelta_gate_config gate_config;
                     gate_config.enabled = true;
@@ -1042,7 +1099,7 @@ int main(int argc, char ** argv) {
                 return true;
             };
             auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
-                    const std::vector<float> & coefficients, bool apply_overlay,
+                    const std::vector<float> & coefficients, bool apply_overlay, bool full_execution,
                     common_flydelta_counterfactual_trial & trial,
                     common_flydelta_decision_margin & margin,
                     common_flydelta_representation_diagnostics & geometry,
@@ -1053,18 +1110,25 @@ int main(int argc, char ** argv) {
                 common_agent_generation_request generation_request;
                 if (!prepare_deep_arm(basis, coefficients, apply_overlay, false,
                         generation_request, runner_error)) return false;
+                if (!full_execution) generation_request.options.n_predict = 0;
                 generated_result = {};
                 const bool generated = inference->generate(generation_request, generated_result);
-                const auto verdict = verify_model_call(
+                trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                    deep_case.id, generation_request, generated_result);
+                if (generated && apply_overlay && !generated_result.flydelta_runtime.applied) {
+                    runner_error = "Deep overlay was requested but runtime did not confirm graph application";
+                    return false;
+                }
+                const auto verdict = full_execution ? verify_model_call(
                     generated_result, deep_case.expected_tool, deep_case.canonical_arguments,
-                    deep_case.verification_mode, &deep_case.canonical_execution, host);
+                    deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                 trial = {};
                 trial.executed = generated;
-                trial.verifier_known = generated &&
+                trial.verifier_known = full_execution && generated &&
                     verdict.value != host_verdict::kind::unresolved_alternative;
-                trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                trial.passed = full_execution && generated && verdict.value == host_verdict::kind::passed;
                 trial.quality = trial.passed ? 1.0f : 0.0f;
-                trial.overlay_applied = apply_overlay;
+                trial.overlay_applied = generated_result.flydelta_runtime.applied;
                 trial.intervention_count = apply_overlay ? basis.vectors.size() : 0;
                 trial.evidence_ref = apply_overlay
                     ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
@@ -1074,14 +1138,13 @@ int main(int argc, char ** argv) {
                     common_agent_teacher_forced_choice_request score_request;
                     score_request.context = generation_request;
                     score_request.context.flydelta_capture.reset();
-                    score_request.choice_prefix = "{\"name\":\"";
                     score_request.positive_choice = deep_case.expected_tool;
                     score_request.negative_choice = deep_case.failed_tool;
-                    score_request.positive_continuation = tool_call_continuation(
-                        deep_case.expected_tool, deep_case.canonical_arguments);
-                    score_request.negative_continuation = deep_case.failed_continuation;
+                    const bool contrast_valid = agent_flydelta_dataset_dsl_contrast(score_request,
+                        tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                        deep_case.failed_continuation, deep_margin_error);
                     common_agent_teacher_forced_choice_result score_result;
-                    if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                    if (contrast_valid && inference->score_teacher_forced_choice(score_request, score_result) &&
                             score_result.available) {
                         margin.available = true;
                         margin.positive_total_logprob = score_result.positive_total_logprob;
@@ -1089,7 +1152,7 @@ int main(int argc, char ** argv) {
                         margin.positive_token_count = score_result.positive_token_count;
                         margin.negative_token_count = score_result.negative_token_count;
                     } else {
-                        deep_margin_error = score_result.error_message.empty()
+                        if (deep_margin_error.empty()) deep_margin_error = score_result.error_message.empty()
                             ? "teacher-forced choice margin unavailable"
                             : score_result.error_message;
                     }
@@ -1097,6 +1160,8 @@ int main(int argc, char ** argv) {
                     deep_margin_error = "fixture has no distinct failed tool for decision pair";
                 }
                 if (!apply_overlay && margin.available) deep_baseline_choice_margin = margin;
+                auto & deep_baseline_capture = full_execution
+                    ? deep_full_baseline_capture : deep_diagnostic_baseline_capture;
                 if (!apply_overlay && generated_result.flydelta_capture &&
                         generated_result.flydelta_capture->captured) {
                     deep_baseline_capture = generated_result.flydelta_capture;
@@ -1126,8 +1191,14 @@ int main(int argc, char ** argv) {
                     geometry_available = true;
                 }
                 std::cout << "flydelta_deep_model_output group=" << entry.first
+                          << " phase=" << (full_execution ? "full" : "diagnostic")
                           << " overlay=" << (apply_overlay ? "yes" : "no")
-                          << " output=" << preview(generated_result) << '\n';
+                          << " response=" << json({{"content", generated_result.content},
+                              {"decoded_tokens", generated_result.decoded_tokens},
+                              {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
+                              {"verifier_known", trial.verifier_known},
+                              {"verifier_diagnostic", full_execution ? verdict.diagnostic : "not_evaluated"}}).dump()
+                          << '\n';
                 if (!generated && !generated_result.error_message.empty()) {
                     runner_error = generated_result.error_message;
                 }
@@ -1142,7 +1213,7 @@ int main(int argc, char ** argv) {
                             common_flydelta_decision_margin & margin,
                             common_flydelta_representation_diagnostics & geometry,
                             bool & geometry_available, std::string & runner_error) {
-                        const bool executed = run_deep_arm(basis, coefficients, apply_overlay,
+                        const bool executed = run_deep_arm(basis, coefficients, apply_overlay, false,
                             trial, margin, geometry, geometry_available, runner_error);
                         if (apply_overlay) {
                             std::cout << "flydelta_deep_diagnostic group=" << entry.first
@@ -1184,7 +1255,7 @@ int main(int argc, char ** argv) {
                             common_flydelta_decision_margin & margin,
                             common_flydelta_representation_diagnostics & geometry,
                             bool & geometry_available, std::string & runner_error) {
-                        return run_deep_arm(basis, coefficients, apply_overlay, trial, margin,
+                        return run_deep_arm(basis, coefficients, apply_overlay, true, trial, margin,
                             geometry, geometry_available, runner_error);
                     };
             bool deep_device_batch_used = false;
@@ -1222,6 +1293,12 @@ int main(int argc, char ** argv) {
                         runner_error = "forced Deep native batch generation returned incomplete results";
                         return false;
                     }
+                    for (const auto & result : generated_results) {
+                        if (!result.flydelta_runtime.applied) {
+                            runner_error = "Deep batch overlay was not confirmed by the decode graph";
+                            return false;
+                        }
+                    }
                     bool wave_device = false;
                     bool wave_backend = false;
                     for (const auto & result : generated_results) {
@@ -1247,12 +1324,11 @@ int main(int argc, char ** argv) {
                         score_request.sequence_id = "deep-" + std::to_string(index);
                         score_request.context = generation_requests[index];
                         score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
                         score_request.positive_choice = deep_case.expected_tool;
                         score_request.negative_choice = deep_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            deep_case.expected_tool, deep_case.canonical_arguments);
-                        score_request.negative_continuation = deep_case.failed_continuation;
+                        if (!agent_flydelta_dataset_dsl_contrast(score_request,
+                                tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                                deep_case.failed_continuation, runner_error)) return false;
                         score_batch.choices.push_back(std::move(score_request));
                     }
                     common_agent_teacher_forced_choice_batch_result score_results;
@@ -1269,16 +1345,19 @@ int main(int argc, char ** argv) {
                     geometry_available.reserve(coefficients.size());
                     for (size_t index = 0; index < coefficients.size(); ++index) {
                         const auto & generated_result = generated_results[index];
-                        const auto verdict = verify_model_call(generated_result,
+                        trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                            deep_case.id + "/" + std::to_string(index),
+                            generation_requests[index], generated_result);
+                        const auto verdict = full_execution ? verify_model_call(generated_result,
                             deep_case.expected_tool, deep_case.canonical_arguments,
-                            deep_case.verification_mode, &deep_case.canonical_execution, host);
+                            deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                         common_flydelta_counterfactual_trial trial;
                         trial.executed = common_agent_generation_succeeded(generated_result);
-                        trial.verifier_known = trial.executed &&
+                        trial.verifier_known = full_execution && trial.executed &&
                             verdict.value != host_verdict::kind::unresolved_alternative;
-                        trial.passed = trial.executed && verdict.value == host_verdict::kind::passed;
+                        trial.passed = full_execution && trial.executed && verdict.value == host_verdict::kind::passed;
                         trial.quality = trial.passed ? 1.0f : 0.0f;
-                        trial.overlay_applied = true;
+                        trial.overlay_applied = generated_result.flydelta_runtime.applied;
                         trial.intervention_count = basis.vectors.size();
                         trial.evidence_ref = "evidence:flydelta-deep-overlay";
                         common_flydelta_decision_margin margin;
@@ -1290,6 +1369,8 @@ int main(int argc, char ** argv) {
                         margin.negative_token_count = scored.negative_token_count;
                         common_flydelta_representation_diagnostics geometry;
                         bool has_geometry = false;
+                        const auto & deep_baseline_capture = full_execution
+                            ? deep_full_baseline_capture : deep_diagnostic_baseline_capture;
                         if (generated_result.flydelta_capture && generated_result.flydelta_capture->captured &&
                                 deep_baseline_capture) {
                             const auto measurement_it = std::find_if(deep_case_deltas.begin(),
@@ -1306,6 +1387,15 @@ int main(int argc, char ** argv) {
                             }
                             has_geometry = true;
                         }
+                        std::cout << "flydelta_deep_batch_response group=" << entry.first
+                                  << " phase=" << (full_execution ? "full" : "diagnostic")
+                                  << " arm=" << index << " response="
+                                  << json({{"content", generated_result.content},
+                                      {"decoded_tokens", generated_result.decoded_tokens},
+                                      {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
+                                      {"verifier_known", trial.verifier_known},
+                                      {"verifier_diagnostic", full_execution ? verdict.diagnostic : "not_evaluated"}}).dump()
+                                  << '\n';
                         trials.push_back(std::move(trial));
                         margins.push_back(std::move(margin));
                         geometries.push_back(std::move(geometry));
@@ -1339,6 +1429,7 @@ int main(int argc, char ** argv) {
                 requested_ranks.push_back(deep_config.max_rank);
             }
             for (const size_t requested_rank : requested_ranks) {
+                deep_factorized_basis.reset();
                 deep_device_batch_used = false;
                 deep_backend_batch_used = false;
                 common_flydelta_deep_search_config rank_config = deep_config;
@@ -1747,12 +1838,11 @@ int main(int argc, char ** argv) {
                         // keeps the semantic arm->context mapping here.
                         if (!prepare_arm(arms[index], score_request.context, score_error)) return false;
                         score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
                         score_request.positive_choice = bootstrap_case.expected_tool;
                         score_request.negative_choice = bootstrap_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        if (!agent_flydelta_dataset_dsl_contrast(score_request,
+                                tool_call_continuation(bootstrap_case.expected_tool, bootstrap_case.canonical_arguments, host),
+                                bootstrap_case.failed_continuation, score_error)) return false;
                         score_batch.choices.push_back(std::move(score_request));
                         score_indices.push_back(index);
                     }
@@ -2032,14 +2122,13 @@ int main(int argc, char ** argv) {
                         score_request.context = make_request(
                             value, contract, bootstrap_case.question, capture, activation_ptr);
                         score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
                         score_request.positive_choice = bootstrap_case.expected_tool;
                         score_request.negative_choice = bootstrap_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        const bool contrast_valid = agent_flydelta_dataset_dsl_contrast(score_request,
+                            tool_call_continuation(bootstrap_case.expected_tool, bootstrap_case.canonical_arguments, host),
+                            bootstrap_case.failed_continuation, margin_error);
                         common_agent_teacher_forced_choice_result score_result;
-                        if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                        if (contrast_valid && inference->score_teacher_forced_choice(score_request, score_result) &&
                                 score_result.available) {
                             margin.available = true;
                             margin.positive_total_logprob = score_result.positive_total_logprob;
@@ -2047,7 +2136,7 @@ int main(int argc, char ** argv) {
                             margin.positive_token_count = score_result.positive_token_count;
                             margin.negative_token_count = score_result.negative_token_count;
                         } else {
-                            margin_error = score_result.error_message.empty()
+                            if (margin_error.empty()) margin_error = score_result.error_message.empty()
                                 ? "teacher-forced choice margin unavailable"
                                 : score_result.error_message;
                         }

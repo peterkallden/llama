@@ -89,6 +89,7 @@ struct llama_context {
     float * get_embeddings_nextn_ith(int32_t i);
 
     float * get_embeddings_layer_inp(uint32_t lid);
+    float * get_embeddings_layer_inp_row(uint32_t lid, llama_seq_id seq_id, llama_pos pos);
 
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
@@ -239,7 +240,7 @@ private:
 
     // async-copy enabled layer-input tensors (per cparams.output_layer_inp)
     // from backend into host-side embd_layer_inp buffers
-    void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+    void extract_layer_inputs(const llm_graph_result * res, size_t token_offset, const llama_ubatch & ubatch);
     void extract_layer_reductions(const llm_graph_result * res);
 
     //
@@ -314,6 +315,11 @@ private:
     // host buffers for output layer input embeddings, per layer
     // populated when cparams.output_layer_inp[il] is true
     std::vector<buffer_view<float>> embd_layer_inp;
+    struct layer_input_row {
+        llama_pos pos;
+        std::vector<llama_seq_id> seq_ids;
+    };
+    std::vector<layer_input_row> embd_layer_inp_rows;
 
     struct sampling_info {
         // !samplers.empty() to check if any samplers are active

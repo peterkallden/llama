@@ -58,6 +58,18 @@ int main() {
     TEST_ASSERT(parsed.is_object());
     TEST_ASSERT(parsed["rows"].size() == 1);
     TEST_ASSERT(parsed["rows"][0]["amount"] == 20);
+    for (const auto * operation : {"data.query", "data.filter"}) {
+        const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
+        json membership = {{"dataset", descriptor.ref.uri},
+            {key, json::array({{{"field", "amount"}, {"operator", "in"},
+                {"value", json::array({20, 30})}}})}};
+        TEST_ASSERT(store.execute(operation, membership.dump(), result, error));
+        TEST_ASSERT(json::parse(result)["rows"].size() == 1);
+        TEST_ASSERT(json::parse(result)["rows"][0]["amount"] == 20);
+        membership[key][0]["value"] = json::array({"20"});
+        TEST_ASSERT(store.execute(operation, membership.dump(), result, error));
+        TEST_ASSERT(json::parse(result)["rows"].empty());
+    }
 
     store.close();
     std::filesystem::remove(path, ignored);

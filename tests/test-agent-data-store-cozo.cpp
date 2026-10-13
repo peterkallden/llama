@@ -82,6 +82,21 @@ int main() {
     TEST_ASSERT(store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[{"field":"region","operator":"=","value":"north"}],"max_scan_rows":10})", output, error));
     auto filtered = json::parse(output);
     TEST_ASSERT(filtered["row_count"] == 2 && filtered["rows"][0]["region"] == "north");
+    for (const auto * operation : {"data.query", "data.filter"}) {
+        const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
+        const json membership = {{"dataset", "dataset://local/orders"},
+            {key, json::array({{{"field", "region"}, {"operator", "in"},
+                {"value", json::array({"north", "east"})}}})}};
+        TEST_ASSERT(store.execute(operation, membership.dump(), output, error));
+        const auto matching = json::parse(output);
+        TEST_ASSERT(matching["rows"].size() == 2);
+        TEST_ASSERT(matching["rows"][0]["region"] == "north");
+        json typed_membership = membership;
+        typed_membership[key][0] = {{"field", "value"}, {"operator", "in"},
+            {"value", json::array({12, "4"})}};
+        TEST_ASSERT(store.execute(operation, typed_membership.dump(), output, error));
+        TEST_ASSERT(json::parse(output)["rows"].size() == 1);
+    }
 
     TEST_ASSERT(store.execute("data.aggregate", R"({"dataset":"dataset://local/orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"},{"function":"sum","column":"value","as":"total"}]})", output, error));
     auto aggregate = json::parse(output);

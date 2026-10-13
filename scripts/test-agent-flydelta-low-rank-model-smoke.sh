@@ -23,13 +23,17 @@ agent_smoke_build_if_requested
 
 rank_log="$work_dir/low-rank-rank-sweep.log"
 rank_exit=0
+rank_args=()
+if [[ -n "${LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY:-}" ]]; then
+    rank_args+=(--behavior-key "$LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY")
+fi
 if LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
         LLAMA_AGENT_LEARNING_LEDGER="$work_dir/learning-ledger.jsonl" \
         LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
         agent_smoke_run_logged "$rank_log" "$repair_bin" \
             --model "$model" --suite "$suite" \
             --max-scenarios "$max_scenarios" \
-            --low-rank-rank-sweep --n-predict "${LLAMA_AGENT_N_PREDICT:-32}" \
+            --low-rank-rank-sweep "${rank_args[@]}" --n-predict "${LLAMA_AGENT_N_PREDICT:-512}" \
             --threads "${LLAMA_AGENT_THREADS:-3}" \
             --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"; then
     rank_exit=0

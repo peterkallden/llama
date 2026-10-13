@@ -58,11 +58,11 @@ int main() {
             ++calls;
             trial = {};
             trial.executed = true;
-            trial.verifier_known = true;
+            // Diagnostic execution has no generated answer to verify.
+            trial.verifier_known = false;
             trial.overlay_applied = apply_overlay;
             trial.evidence_ref = "evidence:deep-search";
-            trial.passed = apply_overlay && coefficients.size() == 2 &&
-                coefficients[0] > 0.0f;
+            trial.passed = false;
             trial.quality = trial.passed ? 1.0f : 0.0f;
             margin = {};
             margin.available = apply_overlay;
@@ -80,7 +80,7 @@ int main() {
             return true;
         },
         [&](const common_flydelta_experiment_fixture &,
-                const common_flydelta_low_rank_basis & basis,
+                const common_flydelta_low_rank_basis &,
                 const std::vector<float> & coefficients, bool apply_overlay,
                 common_flydelta_counterfactual_trial & trial,
                 common_flydelta_decision_margin & margin,
@@ -101,6 +101,11 @@ int main() {
     CHECK(result.layer_index == 2);
     CHECK(result.basis.vectors.size() == 2);
     CHECK(result.coefficient_trials.size() == 6); // four diagnostic + two full top arms
+    for (size_t index = 0; index < 4; ++index) {
+        CHECK(!result.coefficient_trials[index].verifier_known);
+        CHECK(result.coefficient_trials[index].outcome ==
+            common_flydelta_counterfactual_outcome::unknown);
+    }
     CHECK(result.coefficient_selection.selected);
     CHECK(calls == 5); // diagnostic baseline plus four bounded coefficient arms
     CHECK(result.coefficient_trials[result.coefficient_selection.trial_index].outcome ==

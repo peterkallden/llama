@@ -5,11 +5,13 @@
 #include "tools/server/server-context.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -176,7 +178,10 @@ int main(int argc, char ** argv) {
     callbacks.primitives.generation = true;
     callbacks.primitives.overlay = true;
     callbacks.primitives.host_verification = true;
-    const int32_t cvec_layer = llama_model_n_layer(model) - 1;
+    auto captured_rows = std::make_shared<std::map<std::string, std::vector<float>>>();
+    // Layer inputs precede the overlay at that layer. Leave a downstream
+    // layer available when measuring the intervention against a zero arm.
+    const int32_t cvec_layer = llama_model_n_layer(model) - (value.device_diagnostics ? 2 : 1);
     auto shared_basis_values = std::make_shared<std::vector<float>>(
         static_cast<size_t>(llama_model_n_embd(model)), 0.0f);
     shared_basis_values->front() = 1.0f;
@@ -193,7 +198,7 @@ int main(int argc, char ** argv) {
         request.options.n_threads = n_threads;
         request.messages = {
             {"system", "Reply with exactly PASS."},
-            {"user", "Run isolated FlyDelta arm " + arm.arm_id},
+            {"user", "Run the isolated FlyDelta arm."},
         };
         if (arm.apply_overlay || (arm.request_device_diagnostics && !arm.apply_overlay)) {
             auto activation = make_activation(
@@ -210,16 +215,25 @@ int main(int argc, char ** argv) {
             reduction->enabled = true;
             reduction->group_id = arm.arm_id;
             reduction->baseline_group_id = arm.diagnostics_baseline_arm_id;
-            reduction->layer = arm.layer_indices.front();
+            reduction->layer = arm.layer_indices.front() + 1;
             reduction->absolute_position = arm.diagnostics_position;
             reduction->direction.assign(llama_model_n_embd(model), 0.0f);
             reduction->direction.front() = 1.0f;
             request.flydelta_device_diagnostics = std::move(reduction);
         }
+        if (arm.request_device_diagnostics) {
+            auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
+            capture->enabled = true;
+            capture->layer_indices = {static_cast<uint32_t>(cvec_layer + 1)};
+            capture->position = common_flydelta_capture_position::generation_boundary;
+            capture->model_profile_fingerprint = "sha256:flydelta-cvec-batch-smoke-model";
+            capture->capture_layout_revision = "layer-input:v1";
+            request.flydelta_capture = std::move(capture);
+        }
         if (!arm.request_generation) request.options.n_predict = 0;
         return true;
     };
-    callbacks.finalize_arm = [](
+    callbacks.finalize_arm = [captured_rows](
             const common_flydelta_arm_request & arm,
             const common_agent_generation_result & generation,
             common_flydelta_arm_result & result,
@@ -231,6 +245,13 @@ int main(int argc, char ** argv) {
         result.generation_available = true;
         result.quality = static_cast<float>(generation.decoded_tokens);
         result.host_outcome = common_flydelta_counterfactual_outcome::unknown;
+        if (arm.request_device_diagnostics) {
+            if (!generation.flydelta_capture || !generation.flydelta_capture->captured) {
+                finalize_error = "sequence-specific downstream capture was not available";
+                return false;
+            }
+            (*captured_rows)[arm.arm_id] = generation.flydelta_capture->values;
+        }
         if (arm.apply_overlay && !generation.flydelta_runtime.applied) {
             finalize_error = "server did not confirm that the overlay reached a successful decode graph";
             return false;
@@ -250,6 +271,13 @@ int main(int argc, char ** argv) {
         }
         if (generation.flydelta_device_diagnostics &&
                 generation.flydelta_device_diagnostics->available) {
+            const auto & reduction = *generation.flydelta_device_diagnostics;
+            std::cout << "cvec_smoke_device_reduction arm=" << std::quoted(arm.arm_id)
+                      << " layer=" << reduction.layer
+                      << " dot=" << reduction.dot_shift_delta
+                      << " shift_squared=" << reduction.shift_squared
+                      << " delta_squared=" << reduction.delta_squared
+                      << " residual_squared=" << reduction.residual_squared << '\n';
             common_flydelta_representation_diagnostics diagnostics;
             if (!common_flydelta_representation_diagnostics_from_reductions(
                     generation.flydelta_device_diagnostics->layer,
@@ -295,7 +323,7 @@ int main(int argc, char ** argv) {
             choice.context.options.n_threads = n_threads;
             choice.context.messages = {
                 {"system", "Reply with exactly PASS."},
-                {"user", "Run isolated FlyDelta arm " + arm.arm_id},
+                {"user", "Run the isolated FlyDelta arm."},
             };
             if (arm.apply_overlay) {
                 auto activation = make_activation(model, arm.alpha,
@@ -305,11 +333,11 @@ int main(int argc, char ** argv) {
                 choice.context.flydelta_activation = std::move(activation);
             }
             choice.context.flydelta_capture.reset();
-            choice.choice_prefix = "{\"name\":\"";
+            choice.choice_prefix = "\n";
             choice.positive_choice = "PASS";
             choice.negative_choice = "FAIL";
-            choice.positive_continuation = "PASS\",\"arguments\":{}}";
-            choice.negative_continuation = "FAIL\",\"arguments\":{}}";
+            choice.positive_continuation = "PASS";
+            choice.negative_continuation = "FAIL";
             score_batch.choices.push_back(std::move(choice));
         }
         common_agent_teacher_forced_choice_batch_result scored;
@@ -390,6 +418,25 @@ int main(int argc, char ** argv) {
         std::cerr << "production FlyDelta batch execution failed: " << error << '\n';
         return 1;
     }
+    if (value.device_diagnostics) {
+        const auto & baseline = captured_rows->at(request.arms[0].arm_id);
+        const auto & overlay = captured_rows->at(request.arms[1].arm_id);
+        if (baseline.size() != overlay.size() || baseline.empty()) {
+            std::cerr << "paired sequence captures have incompatible shapes\n";
+            return 1;
+        }
+        double squared = 0;
+        for (size_t i = 0; i < baseline.size(); ++i) {
+            const double shift = overlay[i] - baseline[i];
+            squared += shift * shift;
+        }
+        const double norm = std::sqrt(squared);
+        std::cout << "cvec_smoke_host_capture_shift norm=" << norm << '\n';
+        if (std::abs(norm - 0.0002) > 1e-6) {
+            std::cerr << "sequence-specific host captures disagree with the applied overlay\n";
+            return 1;
+        }
+    }
 
     for (size_t index = 0; index < result.arms.size(); ++index) {
         if (!result.arms[index].executed) {
@@ -428,6 +475,17 @@ int main(int argc, char ** argv) {
 
     const auto & reported_arm = value.device_diagnostics && result.arms.size() > 1
         ? result.arms[1] : result.arms.front();
+    if (value.device_diagnostics &&
+            (!reported_arm.geometry_available || reported_arm.shift_norm <= 0.0f)) {
+        std::cerr << "nonzero overlay did not produce a downstream shift against the matched zero arm\n";
+        return 1;
+    }
+    if (value.device_diagnostics) {
+        std::cout << "cvec_smoke_device_geometry shift_norm=" << reported_arm.shift_norm
+                  << " cosine=" << reported_arm.cosine
+                  << " progress=" << reported_arm.progress
+                  << " leakage=" << reported_arm.leakage << '\n';
+    }
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
               << "slots=" << (one_slot ? 1 : 2) << "\n"
               << "distinct_overlays=" << (value.single_sparse_device ? "not_applicable" : "yes") << "\n"
