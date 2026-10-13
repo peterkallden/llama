@@ -1,4 +1,6 @@
 #include "agent-daemon-adapter.h"
+#include "../adaptation/semi-oracle-store-factory.h"
+#include "agent/adaptation/semi-oracle-tool.h"
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
@@ -39,6 +41,7 @@
 #include <nlohmann/json.hpp>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 #include <utility>
 
@@ -400,12 +403,105 @@ bool resolve_agent_daemon_tooling(
         common_agent_runtime_tooling & tooling,
         std::string & error,
         common_agent_data_store * data_store,
-        std::optional<bool> allow_policy_gated_writes) {
+        std::optional<bool> allow_policy_gated_writes,
+        common_semi_oracle_store * semi_oracle_store) {
     tooling = {};
     common_memory_query query = make_daemon_memory_query(request);
     auto tool_request = make_daemon_tool_request(
         options, request, allow_policy_gated_writes);
     tool_request.data_store = data_store;
+    if (semi_oracle_store != nullptr && !request.session_id.empty()) {
+        tool_request.semi_oracle_tool_call = [semi_oracle_store,
+                host_namespace = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
+                session_id = request.session_id,
+                source_turn_id = request.turn_id](const std::string & name, const std::string & input) {
+            using json = nlohmann::ordered_json;
+            const auto arguments = json::parse(input, nullptr, false);
+            if (!arguments.is_object()) return common_tool_execution_result::failure(
+                "tool.oracle.invalid_arguments", common_tool_failure_class::validation, false,
+                "SemiOracle arguments must be an object.", "invalid JSON object");
+            common_semi_oracle_tool_service service(*semi_oracle_store, host_namespace, session_id);
+            if (name == "oracle.ruleset.define") {
+                if (!arguments.contains("ruleset_dsl") || !arguments["ruleset_dsl"].is_string())
+                    return common_tool_execution_result::failure("tool.oracle.invalid_ruleset", common_tool_failure_class::validation, false,
+                        "A RuleSpec DSL is required.", "ruleset_dsl must be a string");
+                common_semi_oracle_ruleset ruleset; std::string error;
+                if (!service.define_ruleset(arguments["ruleset_dsl"].get<std::string>(),
+                        common_semi_oracle_rule_authority::declared, ruleset, error))
+                    return common_tool_execution_result::failure("tool.oracle.ruleset_rejected", common_tool_failure_class::validation, false,
+                        "The RuleSet did not pass host validation.", std::move(error));
+                std::string contract;
+                if (!service.action_contract(contract, error))
+                    return common_tool_execution_result::failure("tool.oracle.contract_unavailable", common_tool_failure_class::execution, false,
+                        "The active RuleSet contract could not be rendered.", std::move(error));
+                return common_tool_execution_result::success(json({
+                    {"ruleset_id", ruleset.id}, {"revision", ruleset.revision},
+                    {"domain", common_semi_oracle_domain_name(ruleset.domain)},
+                    {"scope", common_semi_oracle_scope_name(ruleset.scope)},
+                    {"action_contract", contract}, {"active", ruleset.active},
+                    {"source_turn_id", source_turn_id},
+                }).dump());
+            }
+            if (name != "oracle.action.verify" || !arguments.contains("action_dsl") ||
+                    !arguments["action_dsl"].is_string())
+                return common_tool_execution_result::failure("tool.oracle.invalid_action", common_tool_failure_class::validation, false,
+                    "A supported oracle action and action_dsl are required.", "unsupported tool or missing action_dsl");
+            common_semi_oracle_result result; std::string before, after, error;
+            if (!service.verify_active_placement_action(
+                    arguments["action_dsl"].get<std::string>(), result, before, after, error))
+                return common_tool_execution_result::failure("tool.oracle.action_unavailable", common_tool_failure_class::validation, false,
+                    "The host could not evaluate this action in the active session state.", std::move(error));
+            json response{{"verdict", common_semi_oracle_verdict_name(result.verdict)},
+                {"ruleset_id", result.ruleset_id}, {"revision", result.ruleset_revision},
+                {"evaluator", result.evaluator_ref}, {"evaluator_revision", result.evaluator_revision},
+                {"level", common_semi_oracle_level_name(result.level)},
+                {"proof", json::parse(result.proof_json.empty() ? "null" : result.proof_json, nullptr, false)},
+                {"counterexample", json::parse(result.counterexample_json.empty() ? "null" : result.counterexample_json, nullptr, false)},
+                {"reason", result.reason}};
+            auto execution = common_tool_execution_result::success(response.dump());
+            if (result.verdict == common_semi_oracle_verdict::satisfied) {
+                common_semi_oracle_ruleset active; bool found = false;
+                if (service.active_ruleset(active, found, error) && found) {
+                    std::vector<common_semi_oracle_placement_action_value> ranking;
+                    if (service.rank_placements(before, {100000, 16}, ranking, error) &&
+                            !ranking.empty() && ranking.front().ranking_complete &&
+                            common_semi_oracle_learning_authorized(active, result)) {
+                        int row = -1, column = -1;
+                        std::istringstream lines(arguments["action_dsl"].get<std::string>());
+                        std::string line;
+                        while (std::getline(lines, line)) {
+                            const auto colon = line.find(':'); if (colon == std::string::npos) continue;
+                            const auto key = line.substr(0, colon);
+                            try { if (key == "row") row = std::stoi(line.substr(colon + 1));
+                                  if (key == "column") column = std::stoi(line.substr(colon + 1)); } catch (...) {}
+                        }
+                        const auto chosen = std::find_if(ranking.begin(), ranking.end(), [&](const auto & value) {
+                            return value.row == row && value.column == column;
+                        });
+                        const auto best = std::max_element(ranking.begin(), ranking.end(), [](const auto & a, const auto & b) {
+                            return static_cast<int>(a.value) < static_cast<int>(b.value);
+                        });
+                        if (chosen != ranking.end() && best != ranking.end() &&
+                                static_cast<int>(chosen->value) < static_cast<int>(best->value)) {
+                            response["strategy"] = {{"chosen_value", static_cast<int>(chosen->value)},
+                                {"best_value", static_cast<int>(best->value)},
+                                {"ranking_evaluation_ref", best->persisted_evaluation_ref},
+                                {"verified_suboptimal", true}};
+                            execution.output = response.dump();
+                            execution.learning_signals.emplace_back(
+                                common_learning_signal_type::semi_oracle_preference, std::string{}, std::string{},
+                                "oracle.action.verify", best->persisted_evaluation_ref,
+                                "host minimax proved the observed legal move strictly worse than an available move",
+                                "semi-oracle", "host");
+                        }
+                    }
+                }
+            }
+            return execution;
+        };
+    } else {
+        tool_request.semi_oracle_tool_call = {};
+    }
         std::string * current_plan_id = runtime != nullptr
         ? const_cast<std::string *>(&runtime->current_plan_id())
         : nullptr;
@@ -679,7 +775,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         true,
         {},
         {},
-        [config_store, &memory_store, &plan_store, &resource_store, data_store](
+        [config_store, &memory_store, &plan_store, &resource_store, data_store,
+            semi_oracle_store = runtime.semi_oracle_store.get()](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
@@ -694,7 +791,9 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 &resource_store,
                 tooling,
                 error,
-                data_store);
+                data_store,
+                std::nullopt,
+                semi_oracle_store);
         },
         runtime.model_residency,
         make_daemon_flydelta_deployment_resolver(options, config_store, runtime),
@@ -876,6 +975,14 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
         return false;
     }
+    runtime.semi_oracle_store = make_agent_semi_oracle_store(
+        options.adaptation_transaction_backend,
+        options.adaptation_transaction_path,
+        error);
+    if (!runtime.semi_oracle_store) {
+        error = "SemiOracle adaptation store initialization failed: " + error;
+        return false;
+    }
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
     }
@@ -957,7 +1064,8 @@ bool initialize_agent_daemon_environment(
     common_plan_store * plan_store = runtime.plan_store.get();
     agent_resource_store * resource_store = runtime.resource_store.get();
     common_agent_data_store * data_store = runtime.data_store.get();
-    runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store, resource_store, data_store](
+    runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store,
+            resource_store, data_store, semi_oracle_store = runtime.semi_oracle_store.get()](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {
@@ -989,7 +1097,8 @@ bool initialize_agent_daemon_environment(
                 tooling,
                 callback_error,
                 data_store,
-                payload.allow_policy_gated_writes)) {
+                payload.allow_policy_gated_writes,
+                semi_oracle_store)) {
             return false;
         }
         if (tooling.tool_view == nullptr) {

@@ -25,6 +25,12 @@ public:
             common_semi_oracle_budget host_budget,
             const std::vector<std::string> & host_guidance,
             common_semi_oracle_result & result, std::string & error);
+    // Production placement-game entry point: state and transition are owned
+    // by the host. A successful proof advances the session board atomically
+    // from the caller's perspective; rejected/unknown actions do not advance.
+    bool verify_active_placement_action(const std::string & action_dsl,
+            common_semi_oracle_result & result, std::string & state_before,
+            std::string & state_after, std::string & error);
     // Host-only strategic ranking. The complete bounded ranking and proofs
     // are appended through the configured semi-oracle evaluation store.
     bool rank_placements(const std::string & state_json,

@@ -42,7 +42,24 @@ bool common_semi_oracle_tool_service::define_ruleset(const std::string & dsl,
         if(!found){error="active session RuleSet binding points to a missing revision";return false;}
         if(!common_semi_oracle_revise_ruleset(current,dsl,authority,session_id_,active,error))return false;
     }
-    if(!store_.put_revision(active,error)||!store_.bind_session(session_id_,active.id,active.revision,error))return false;
+    if(!store_.put_revision(active,error))return false;
+    if (active.domain == common_semi_oracle_domain::placement_game) {
+        const auto spec = json::parse(active.spec_json, nullptr, false);
+        const auto players = spec.is_object()
+            ? spec.value("players", std::vector<std::string>{}) : std::vector<std::string>{};
+        const int rows = spec.is_object() ? spec.value("rows", 0) : 0;
+        const int columns = spec.is_object() ? spec.value("columns", 0) : 0;
+        if (players.size() != 2 || rows < 1 || columns < 1 || rows > 8 || columns > 8) {
+            error = "validated placement_game RuleSet has invalid initial-state dimensions";
+            return false;
+        }
+        json cells = json::array();
+        for (int i = 0; i < rows * columns; ++i) cells.push_back(nullptr);
+        const auto initial_state = json{{"cells", std::move(cells)}, {"turn", players[0]}}.dump();
+        if (!store_.put_session_game_state(session_id_, active.id, active.revision,
+                initial_state, error)) return false;
+    }
+    if(!store_.bind_session(session_id_,active.id,active.revision,error))return false;
     return true;
 }
 
@@ -78,6 +95,33 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     if(!common_semi_oracle_evaluate(ruleset,query,result,error))return false;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
     return store_.append_evaluation(evaluation_id,result,error);
+}
+
+bool common_semi_oracle_tool_service::verify_active_placement_action(
+        const std::string & action_dsl, common_semi_oracle_result & result,
+        std::string & state_before, std::string & state_after, std::string & error) {
+    state_before.clear(); state_after.clear();
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (ruleset.domain != common_semi_oracle_domain::placement_game) {
+        error = "the active RuleSet is not a placement_game; this runtime action path requires host-owned game state";
+        return false;
+    }
+    if (!store_.get_session_game_state(session_id_, ruleset.id, ruleset.revision,
+            state_before, found, error)) return false;
+    if (!found) { error = "the active placement_game has no host-owned session board"; return false; }
+    if (!verify_action(state_before, action_dsl, common_semi_oracle_level::local,
+            {}, {1, 1}, {}, result, error)) return false;
+    if (result.verdict != common_semi_oracle_verdict::satisfied) return true;
+    const auto proof = json::parse(result.proof_json, nullptr, false);
+    if (!proof.is_object() || !proof.contains("next_state") || !proof["next_state"].is_object()) {
+        error = "verified placement action did not return a host-verifiable next state";
+        return false;
+    }
+    state_after = proof["next_state"].dump();
+    return store_.put_session_game_state(session_id_, ruleset.id, ruleset.revision,
+        state_after, error);
 }
 
 bool common_semi_oracle_tool_service::rank_placements(const std::string & state_json,

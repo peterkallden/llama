@@ -1514,6 +1514,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             std::string tool_result = bounded_tool_observation_payload(
                 tool_observation_payload(execution), context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
+            for (auto signal : execution.learning_signals) {
+                signal.plan_id = plan.id;
+                signal.step_id = tool_step_id;
+                signal.tool_name = tool_call->name;
+                signal.evidence_id = tool_observation_id;
+                if (signal.tool_family.empty()) add_tool_learning_metadata(signal, tools, tool_call->name);
+                result.learning_signals.push_back(std::move(signal));
+            }
             common_plan_operation observed;
             observed.kind = common_plan_operation_kind::record_observation;
             observed.plan_id = plan.id;

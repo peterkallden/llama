@@ -53,6 +53,15 @@ bool relations_ready(const json & value) {
         std::find(found.begin(),found.end(),"agent_semi_oracle_host_catalog")!=found.end() &&
         std::find(found.begin(),found.end(),"agent_semi_oracle_evaluations")!=found.end();
 }
+
+bool relation_exists(const json & value, const char * name) {
+    if (!value.is_object() || !value.contains("rows") || !value["rows"].is_array()) return false;
+    for (const auto & row : value["rows"]) {
+        if (row.is_array() && !row.empty() && row[0].is_string() &&
+                row[0].get<std::string>() == name) return true;
+    }
+    return false;
+}
 }
 
 agent_semi_oracle_cozo_store::~agent_semi_oracle_cozo_store(){close();}
@@ -68,7 +77,22 @@ bool agent_semi_oracle_cozo_store::open(const std::string & path,std::string & e
     close();if(path.empty()){error="semi-oracle Cozo store requires a path";return false;}
     char * e=cozo_open_db("sqlite",path.c_str(),"{}",&db_id_);if(e){error=e;cozo_free_str(e);db_id_=-1;return false;}
     std::string raw;if(!run("::relations","{}",raw,error)){close();return false;}
-    const auto rel=json::parse(raw,nullptr,false);if(!relations_ready(rel)){if(!run(schema,"{}",raw,error)){close();return false;}}
+    auto rel=json::parse(raw,nullptr,false);if(!relations_ready(rel)){if(!run(schema,"{}",raw,error)){close();return false;}}
+    if (!run("::relations", "{}", raw, error)) { close(); return false; }
+    rel = json::parse(raw, nullptr, false);
+    if (!relation_exists(rel, "agent_semi_oracle_game_states")) {
+        const char * game_state_schema = R"COZO(
+{
+ ?[session_id, ruleset_id, revision, payload] <- [['__probe__', '__probe__', 1, '{}']]
+ :create agent_semi_oracle_game_states { session_id: String, ruleset_id: String, revision: Int => payload: String }
+}
+{
+ ?[session_id, ruleset_id, revision] <- [['__probe__', '__probe__', 1]]
+ :delete agent_semi_oracle_game_states { session_id, ruleset_id, revision }
+}
+)COZO";
+        if (!run(game_state_schema, "{}", raw, error)) { close(); return false; }
+    }
     return true;
 }
 void agent_semi_oracle_cozo_store::close(){if(db_id_>=0){cozo_close_db(db_id_);db_id_=-1;}}
@@ -112,6 +136,38 @@ bool agent_semi_oracle_cozo_store::get_session_binding(const std::string & sessi
     const auto j=json::parse(raw,nullptr,false);if(!j.is_object()||!j.contains("rows")||!j["rows"].is_array()){error="semi-oracle binding query returned invalid rows";return false;}if(j["rows"].empty())return true;
     const auto & row=j["rows"][0];if(!row.is_array()||row.size()<2||!row[0].is_string()||!row[1].is_number_unsigned()&&!row[1].is_number_integer()){error="semi-oracle binding row is invalid";return false;}
     id=row[0].get<std::string>();rev=row[1].get<uint64_t>();found=true;return true;
+}
+bool agent_semi_oracle_cozo_store::get_session_game_state(
+        const std::string & session, const std::string & id, uint64_t rev,
+        std::string & state, bool & found, std::string & error) const {
+    found = false; state.clear(); error.clear(); std::string raw;
+    if (session.empty() || id.empty() || rev > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        error = "semi-oracle game-state lookup identity is invalid"; return false;
+    }
+    const auto params = json{{"session", session}, {"id", id}, {"rev", rev}}.dump();
+    if (!run("?[payload] := *agent_semi_oracle_game_states[$session, $id, $rev, payload]", params, raw, error)) return false;
+    const auto value = json::parse(raw, nullptr, false);
+    if (!value.is_object() || !value.contains("rows") || !value["rows"].is_array()) {
+        error = "semi-oracle game-state query returned invalid rows"; return false;
+    }
+    if (value["rows"].empty()) return true;
+    const auto & row = value["rows"][0];
+    if (!row.is_array() || row.empty() || !row[0].is_string()) {
+        error = "semi-oracle game-state row is invalid"; return false;
+    }
+    state = row[0].get<std::string>(); found = true; return true;
+}
+bool agent_semi_oracle_cozo_store::put_session_game_state(
+        const std::string & session, const std::string & id, uint64_t rev,
+        const std::string & state, std::string & error) {
+    error.clear();
+    if (session.empty() || id.empty() || state.empty() ||
+            rev > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        error = "semi-oracle game-state write identity or payload is invalid"; return false;
+    }
+    std::string raw;
+    return run("?[session_id, ruleset_id, revision, payload] <- [[$session, $id, $rev, $payload]] :put agent_semi_oracle_game_states { session_id, ruleset_id, revision => payload }",
+        json{{"session", session}, {"id", id}, {"rev", rev}, {"payload", state}}.dump(), raw, error);
 }
 bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,const common_semi_oracle_result & result,std::string & error){
     if(eid.empty()||result.ruleset_id.empty()){error="semi-oracle evaluation requires ids";return false;}

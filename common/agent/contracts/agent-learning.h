@@ -14,6 +14,7 @@ enum class common_learning_signal_type {
     research_verification,
     procedure_verification,
     blueprint_verification,
+    semi_oracle_preference,
 };
 
 inline const char * common_learning_signal_type_name(common_learning_signal_type type) {
@@ -28,6 +29,7 @@ inline const char * common_learning_signal_type_name(common_learning_signal_type
         case common_learning_signal_type::research_verification: return "research_verification";
         case common_learning_signal_type::procedure_verification: return "procedure_verification";
         case common_learning_signal_type::blueprint_verification: return "blueprint_verification";
+        case common_learning_signal_type::semi_oracle_preference: return "semi_oracle_preference";
     }
     return "unknown";
 }

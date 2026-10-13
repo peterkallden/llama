@@ -20,6 +20,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -48,6 +49,15 @@ public:
     bool bind_session(const std::string & session,const std::string & id,uint64_t revision,std::string &) override {bindings[session]={id,revision};return true;}
     bool get_session_binding(const std::string & session,std::string & id,uint64_t & revision,bool & found,std::string &) const override {
         auto it=bindings.find(session);found=it!=bindings.end();if(found){id=it->second.first;revision=it->second.second;}return true;
+    }
+    bool get_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            std::string & state,bool & found,std::string &) const override {
+        const auto it=game_states.find({session,ruleset,revision});found=it!=game_states.end();
+        if(found)state=it->second;else state.clear();return true;
+    }
+    bool put_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            const std::string & state,std::string &) override {
+        game_states[{session,ruleset,revision}]=state;return true;
     }
     bool append_evaluation(const std::string & id,const common_semi_oracle_result & value,std::string & error) override {
         if (id.empty()) { error = "evaluation id is empty"; return false; }
@@ -78,6 +88,7 @@ public:
 private:
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
+    std::map<std::tuple<std::string,std::string,uint64_t>,std::string> game_states;
     std::vector<std::string> hosts;
     std::map<std::string,std::string> evaluation_payloads;
 };
@@ -194,7 +205,22 @@ bool run_case(common_agent_inference & inference, const options & config,
             if(!args.contains("action_dsl")||!args["action_dsl"].is_string())return common_tool_execution_result::failure("oracle.action.invalid",common_tool_failure_class::validation,false,"Action DSL is required.","missing action_dsl");
             common_semi_oracle_budget host_budget;host_budget.max_depth=8;host_budget.max_expansions=2000;
             std::string tool_error;
-            if(!oracle_tools.verify_action(current_state,args["action_dsl"].get<std::string>(),level,goal,host_budget,{},last_result,tool_error))return common_tool_execution_result::failure("oracle.action.failed",common_tool_failure_class::validation,false,"Action could not be verified.",tool_error);
+            const auto action_dsl = args["action_dsl"].get<std::string>();
+            if (domain == "placement_game") {
+                std::string state_before, state_after;
+                if (!oracle_tools.verify_active_placement_action(action_dsl, last_result,
+                        state_before, state_after, tool_error)) {
+                    return common_tool_execution_result::failure("oracle.action.failed",
+                        common_tool_failure_class::validation, false,
+                        "Action could not be verified.", tool_error);
+                }
+                current_state = state_before;
+            } else if (!oracle_tools.verify_action(current_state, action_dsl, level,
+                    goal, host_budget, {}, last_result, tool_error)) {
+                return common_tool_execution_result::failure("oracle.action.failed",
+                    common_tool_failure_class::validation, false,
+                    "Action could not be verified.", tool_error);
+            }
             const auto proof=json::parse(last_result.proof_json,nullptr,false);const auto counterexample=json::parse(last_result.counterexample_json,nullptr,false);
             return common_tool_execution_result::success(json{{"verdict",common_semi_oracle_verdict_name(last_result.verdict)},{"ruleset_id",last_result.ruleset_id},{"revision",last_result.ruleset_revision},{"evaluator",last_result.evaluator_ref+"@"+last_result.evaluator_revision},{"level",common_semi_oracle_level_name(last_result.level)},{"proof",proof.is_object()?proof:json::object()},{"counterexample",counterexample.is_object()?counterexample:json::object()},{"reason",last_result.reason}}.dump());
         }
@@ -211,6 +237,14 @@ bool run_case(common_agent_inference & inference, const options & config,
         return false;
     }
     bool found=false;if(!oracle_tools.active_ruleset(ruleset,found,error)||!found){std::cout<<"RULESET HOST WRAPPER: "<<error<<"\n";return false;}
+    if (domain == "placement_game") {
+        // The fixture position is host-seeded; the model never supplies runtime state.
+        if (!store.put_session_game_state("session-" + case_id, ruleset.id,
+                ruleset.revision, state_json, error)) {
+            std::cout << "HOST GAME-STATE FIXTURE: " << error << "\n";
+            return false;
+        }
+    }
     std::cout<<"ORACLE RULESET NATIVE TOOL RESULT="<<define_result.output<<"\n";
     std::cout << "RULESET HOST VALIDATION: active id=" << ruleset.id
               << " revision=" << ruleset.revision

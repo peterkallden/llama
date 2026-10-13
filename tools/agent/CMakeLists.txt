@@ -333,6 +333,8 @@ endif()
 # to the other host-side stores. This prevents the common contract library
 # from acquiring backend-specific dependencies.
 add_library(llama-agent-adaptation-storage
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-factory.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-factory.h
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-lifecycle-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta-teaching-material-store.cpp

@@ -14,6 +14,7 @@
 #include "../runtime/agent-runtime-execution.h"
 #include "../runtime/agent-runtime-resident.h"
 #include "agent-daemon-service.h"
+#include "agent/adaptation/semi-oracle-store.h"
 #include "../host/agent-diagnostics-config.h"
 #include "../../../common/agent/protocol/agent-jsonl.h"
 
@@ -183,7 +184,8 @@ bool resolve_agent_daemon_tooling(
     common_agent_runtime_tooling & tooling,
     std::string & error,
     common_agent_data_store * data_store = nullptr,
-    std::optional<bool> allow_policy_gated_writes = std::nullopt);
+    std::optional<bool> allow_policy_gated_writes = std::nullopt,
+    common_semi_oracle_store * semi_oracle_store = nullptr);
 
 bool parse_agent_daemon_command(
     const nlohmann::ordered_json & parsed,

@@ -14,6 +14,10 @@ public:
     bool promote_to_host(const std::string &, uint64_t, std::string &) override;
     bool bind_session(const std::string &, const std::string &, uint64_t, std::string &) override;
     bool get_session_binding(const std::string &, std::string &, uint64_t &, bool &, std::string &) const override;
+    bool get_session_game_state(const std::string &, const std::string &, uint64_t,
+            std::string &, bool &, std::string &) const override;
+    bool put_session_game_state(const std::string &, const std::string &, uint64_t,
+            const std::string &, std::string &) override;
     bool append_evaluation(const std::string &, const common_semi_oracle_result &, std::string &) override;
     bool get_evaluation_payload(const std::string &, std::string &, bool &, std::string &) const override;
     std::vector<std::string> list_host_rulesets(std::string &) const override;

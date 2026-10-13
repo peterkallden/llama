@@ -2,8 +2,9 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 
 #include <array>
+#include <cstdio>
 
-#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+#define CHECK(condition) do { if (!(condition)) { std::fprintf(stderr, "check failed at line %d: %s\\n", __LINE__, #condition); return __LINE__; } } while (false)
 
 static common_learning_transaction transaction(
         const std::string & id,
@@ -98,6 +99,24 @@ int main() {
         source, "tool_use/diagnostics/missing-argument", "sha256:model",
         "sha256:tokenizer", "sha256:template", "sha256:tool-resource-context",
         common_flydelta_training_split::holdout, seed, error));
+
+    auto semi_oracle_source = source;
+    semi_oracle_source.id = "evidence://semi-oracle/1";
+    semi_oracle_source.source = common_adaptation_evidence_source::semi_oracle_preference;
+    semi_oracle_source.teaching_key = "semi-oracle://ruleset/ttt@1/action/contract";
+    semi_oracle_source.behavior_key = semi_oracle_source.teaching_key;
+    semi_oracle_source.baseline_ref = "run://model/suboptimal";
+    semi_oracle_source.candidate_ref = "run://solver/preferred";
+    semi_oracle_source.verifier_ref = "semi-oracle://evaluator/placement_game";
+    common_flydelta_experiment_seed semi_oracle_seed;
+    CHECK(common_flydelta_experiment_seed_from_evidence(
+        semi_oracle_source, semi_oracle_source.behavior_key, "sha256:model",
+        "sha256:tokenizer", "sha256:template", "sha256:game-context",
+        common_flydelta_training_split::train, semi_oracle_seed, error));
+    CHECK(semi_oracle_seed.source == common_adaptation_evidence_source::semi_oracle_preference &&
+        semi_oracle_seed.teaching_key == semi_oracle_source.teaching_key &&
+        semi_oracle_seed.baseline_ref == semi_oracle_source.baseline_ref &&
+        semi_oracle_seed.candidate_ref == semi_oracle_source.candidate_ref);
 
     common_flydelta_behavior_transition generic_transition;
     CHECK(common_flydelta_behavior_transition_from_evidence(

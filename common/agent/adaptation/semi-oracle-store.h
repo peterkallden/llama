@@ -16,6 +16,23 @@ public:
             uint64_t revision, std::string & error) = 0;
     virtual bool get_session_binding(const std::string & session_id, std::string & id,
             uint64_t & revision, bool & found, std::string & error) const = 0;
+    // Placement-game state is host-owned and keyed by session and RuleSet
+    // revision. A runtime must not fall back to model-supplied state.
+    virtual bool get_session_game_state(const std::string & session_id,
+            const std::string & ruleset_id, uint64_t revision,
+            std::string & state_json, bool & found, std::string & error) const {
+        (void) session_id; (void) ruleset_id; (void) revision;
+        state_json.clear(); found = false;
+        error = "semi-oracle game-state storage is unsupported by this store";
+        return false;
+    }
+    virtual bool put_session_game_state(const std::string & session_id,
+            const std::string & ruleset_id, uint64_t revision,
+            const std::string & state_json, std::string & error) {
+        (void) session_id; (void) ruleset_id; (void) revision; (void) state_json;
+        error = "semi-oracle game-state storage is unsupported by this store";
+        return false;
+    }
     virtual bool append_evaluation(const std::string & evaluation_id,
             const common_semi_oracle_result & result, std::string & error) = 0;
     virtual bool get_evaluation_payload(const std::string & evaluation_id,

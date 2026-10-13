@@ -26,6 +26,23 @@ int main() {
     CHECK(store.bind_session("session-1",r.id,1,error));
     std::string id;uint64_t revision=0;
     CHECK(store.get_session_binding("session-1",id,revision,found,error)&&found&&id==r.id&&revision==1);
+    common_semi_oracle_tool_service play_service(store,"host","session-play");
+    common_semi_oracle_ruleset active_game;
+    CHECK(play_service.define_ruleset(
+        "name: Session game\ndescription: persisted board test\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",
+        common_semi_oracle_rule_authority::declared, active_game, error));
+    common_semi_oracle_result turn_result;
+    std::string before, after;
+    CHECK(play_service.verify_active_placement_action(
+        "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        before.find("\"turn\":\"X\"") != std::string::npos &&
+        after.find("\"turn\":\"O\"") != std::string::npos);
+    CHECK(play_service.verify_active_placement_action(
+        "open! game.place_mark\nplayer: O\nrow: 0\ncolumn: 0\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::violated && after.empty());
     common_semi_oracle_tool_service service(store,"host","session-1");
     std::vector<common_semi_oracle_placement_action_value> ranked;
     CHECK(service.rank_placements(
@@ -77,6 +94,17 @@ int main() {
     CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.scope==common_semi_oracle_scope::host&&loaded.semantic_fingerprint==r.semantic_fingerprint);
     common_semi_oracle_result verdict;verdict.ruleset_id=r.id;verdict.ruleset_revision=1;verdict.verdict=common_semi_oracle_verdict::satisfied;verdict.proof_json="{}";
     CHECK(store.append_evaluation("eval-1",verdict,error));
+    store.close();
+    CHECK(store.open(db,error));
+    std::string persisted_state;
+    CHECK(store.get_session_game_state("session-play", active_game.id,
+        active_game.revision, persisted_state, found, error) && found);
+    CHECK(persisted_state.find("\"turn\":\"O\"") != std::string::npos);
+    common_semi_oracle_tool_service resumed(store,"host","session-play");
+    CHECK(resumed.verify_active_placement_action(
+        "open! game.place_mark\nplayer: O\nrow: 1\ncolumn: 1\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied);
     store.close();
     std::filesystem::remove_all(dir,ec);
     return 0;

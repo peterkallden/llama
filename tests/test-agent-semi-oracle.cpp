@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <map>
 #include <string>
+#include <tuple>
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
 
@@ -24,10 +25,20 @@ public:
     bool get_session_binding(const std::string & session,std::string & id,uint64_t & rev,bool & found,std::string &) const override {
         const auto it=bindings.find(session);found=it!=bindings.end();if(found){id=it->second.first;rev=it->second.second;}return true;
     }
+    bool get_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            std::string & state,bool & found,std::string &) const override {
+        const auto it=game_states.find({session,ruleset,revision});found=it!=game_states.end();
+        if(found)state=it->second;else state.clear();return true;
+    }
+    bool put_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            const std::string & state,std::string &) override {
+        game_states[{session,ruleset,revision}]=state;return true;
+    }
     bool append_evaluation(const std::string &,const common_semi_oracle_result & r,std::string &) override {evaluations.push_back(r);return true;}
     std::vector<std::string> list_host_rulesets(std::string &) const override {return host;}
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
+    std::map<std::tuple<std::string,std::string,uint64_t>,std::string> game_states;
     std::vector<std::string> host;
     std::vector<common_semi_oracle_result> evaluations;
 };
