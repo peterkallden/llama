@@ -217,10 +217,24 @@ bool run_case(common_agent_inference & inference, const options & config,
             const auto proof=json::parse(last_result.proof_json,nullptr,false);const auto counterexample=json::parse(last_result.counterexample_json,nullptr,false);
             return common_tool_execution_result::success(json{{"verdict",common_semi_oracle_verdict_name(last_result.verdict)},{"ruleset_id",last_result.ruleset_id},{"revision",last_result.ruleset_revision},{"evaluator",last_result.evaluator_ref+"@"+last_result.evaluator_revision},{"level",common_semi_oracle_level_name(last_result.level)},{"proof",proof.is_object()?proof:json::object()},{"counterexample",counterexample.is_object()?counterexample:json::object()},{"reason",last_result.reason}}.dump());
         }
+        if(tool_name=="oracle.goal.search") {
+            std::string tool_error;
+            if(!args.empty()||!oracle_tools.search_active_algebra_goal(last_result,tool_error))
+                return common_tool_execution_result::failure("oracle.goal.search_failed",
+                    common_tool_failure_class::validation,false,
+                    "Host-owned algebra goal search failed.",tool_error.empty()?"arguments must be empty":tool_error);
+            const auto proof=json::parse(last_result.proof_json,nullptr,false);
+            return common_tool_execution_result::success(json{{"verdict",common_semi_oracle_verdict_name(last_result.verdict)},
+                {"ruleset_id",last_result.ruleset_id},{"revision",last_result.ruleset_revision},
+                {"evaluator",last_result.evaluator_ref},{"evaluator_revision",last_result.evaluator_revision},
+                {"level",common_semi_oracle_level_name(last_result.level)},
+                {"expansions",last_result.expansions},{"depth_reached",last_result.depth_reached},
+                {"proof",proof.is_object()?proof:json::object()},{"reason",last_result.reason}}.dump());
+        }
         return common_tool_execution_result::failure("oracle.unknown_operation",common_tool_failure_class::validation,false,"Unknown semi-oracle operation.",tool_name);
     };
     common_tool_registry registry;common_tool_adapter_result adapter_result;
-    if(!common_register_native_tool_adapters(catalog,"semi-oracle",bindings,registry,adapter_result,error)||adapter_result.registered.size()!=2){std::cout<<"TOOL REGISTRATION: "<<error<<"\n";return false;}
+    if(!common_register_native_tool_adapters(catalog,"semi-oracle",bindings,registry,adapter_result,error)||adapter_result.registered.size()!=3){std::cout<<"TOOL REGISTRATION: "<<error<<"\n";return false;}
     common_semi_oracle_ruleset ruleset;
     common_agent_tool_call define_call{"oracle.ruleset.define",json{{"ruleset_dsl",rules.content}}.dump()};
     const auto define_result=registry.execute(define_call);
@@ -372,6 +386,23 @@ bool run_case(common_agent_inference & inference, const options & config,
         } else {
             std::cout << "SEMI-ORACLE DPO PROJECTION=not-created: observed action is not strictly worse than minimax best\n";
             std::cout.flush();
+        }
+    }
+    if(domain=="linear_algebra") {
+        const auto search_result=registry.execute({"oracle.goal.search","{}"});
+        if(!search_result.ok) {
+            error=search_result.raw_diagnostic.empty()?search_result.safe_summary:search_result.raw_diagnostic;
+            std::cout<<"ALGEBRA A* GOAL SEARCH: failed: "<<error<<"\n";
+            return false;
+        }
+        const auto search_output=json::parse(search_result.output,nullptr,false);
+        std::cout<<"ALGEBRA A* GOAL SEARCH RESULT="
+                 <<(search_output.is_object()?search_output.dump(2):search_result.output)<<"\n";
+        if(!search_output.is_object()||search_output.value("verdict",std::string())!="SATISFIED"||
+                !search_output.contains("proof")||!search_output["proof"].is_object()||
+                search_output["proof"].value("algorithm",std::string())!="bounded_astar_v1") {
+            std::cout<<"ALGEBRA A* GOAL SEARCH: missing verified path proof\n";
+            return false;
         }
     }
     // A legal suboptimal game move is a useful baseline observation, not a

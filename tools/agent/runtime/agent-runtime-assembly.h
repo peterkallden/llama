@@ -111,6 +111,7 @@ struct common_agent_runtime_config {
     // text is never passed to FlyDelta as training material.
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_semi_oracle_teaching_relation_provider semi_oracle_teaching_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
     common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
     common_agent_concept_contrast_provider semantic_concept_contrast_provider;
@@ -150,6 +151,7 @@ struct common_agent_runtime_build_config {
     common_agent_procedure_teaching_request_provider procedure_teaching_request_provider;
     common_agent_user_correction_teaching_request_provider user_correction_teaching_request_provider;
     common_agent_user_taught_concept_relation_provider user_taught_concept_relation_provider;
+    common_agent_semi_oracle_teaching_relation_provider semi_oracle_teaching_relation_provider;
     common_agent_concept_hypothesis_provider semantic_concept_hypothesis_provider;
     common_agent_concept_hypothesis_batch_provider semantic_concept_hypothesis_batch_provider;
     common_agent_concept_contrast_provider semantic_concept_contrast_provider;

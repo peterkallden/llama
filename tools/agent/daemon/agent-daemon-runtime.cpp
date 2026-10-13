@@ -277,6 +277,8 @@ common_agent_runtime_config make_daemon_runtime_config(
         runtime.user_correction_teaching_request_provider;
     config.user_taught_concept_relation_provider =
         runtime.user_taught_concept_relation_provider;
+    config.semi_oracle_teaching_relation_provider =
+        runtime.semi_oracle_teaching_relation_provider;
     config.semantic_concept_hypothesis_provider =
         runtime.semantic_concept_hypothesis_provider;
     config.semantic_concept_hypothesis_batch_provider =
@@ -467,6 +469,23 @@ bool resolve_agent_daemon_tooling(
                     {"action_contract", contract}, {"active", ruleset.active},
                     {"source_turn_id", source_turn_id},
                 }).dump());
+            }
+            if (name == "oracle.goal.search") {
+                common_semi_oracle_result result;
+                std::string search_error;
+                if (!service.search_active_algebra_goal(result, search_error))
+                    return common_tool_execution_result::failure("tool.oracle.search_unavailable",
+                        common_tool_failure_class::validation, false,
+                        "The host could not search the active algebra goal.", std::move(search_error));
+                return common_tool_execution_result::success(json{
+                    {"verdict", common_semi_oracle_verdict_name(result.verdict)},
+                    {"ruleset_id", result.ruleset_id}, {"revision", result.ruleset_revision},
+                    {"evaluator", result.evaluator_ref}, {"evaluator_revision", result.evaluator_revision},
+                    {"level", common_semi_oracle_level_name(result.level)},
+                    {"expansions", result.expansions}, {"depth_reached", result.depth_reached},
+                    {"proof", json::parse(result.proof_json.empty() ? "null" : result.proof_json, nullptr, false)},
+                    {"counterexample", json::parse(result.counterexample_json.empty() ? "null" : result.counterexample_json, nullptr, false)},
+                    {"reason", result.reason}}.dump());
             }
             if (name != "oracle.action.verify" || !arguments.contains("action_dsl") ||
                     !arguments["action_dsl"].is_string())

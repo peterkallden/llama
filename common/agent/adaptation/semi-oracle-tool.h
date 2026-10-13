@@ -42,6 +42,11 @@ public:
     bool verify_active_action(const std::string & action_dsl,
             common_semi_oracle_result & result, std::string & state_before,
             std::string & state_after, std::string & error);
+    // Host-owned goal search for the active linear-algebra state. The model
+    // supplies neither the target expression nor search policy; V1 solves
+    // for x using the bounded exact-rewrite A* problem.
+    bool search_active_algebra_goal(
+            common_semi_oracle_result & result, std::string & error);
     // Host-only strategic ranking. The complete bounded ranking and proofs
     // are appended through the configured semi-oracle evaluation store.
     bool rank_placements(const std::string & state_json,

@@ -1,5 +1,6 @@
 #include "agent/adaptation/semi-oracle-teaching.h"
 #include "agent/adaptation/semi-oracle-sft-candidate.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/trainer-protocol.h"
 
 #include <algorithm>
@@ -21,9 +22,17 @@ int main() {
         result->evaluator_revision = "v1";
     }
     rejected.verdict = common_semi_oracle_verdict::violated;
-    rejected.counterexample_json = "{}";
+    const auto game_state = nlohmann::json::parse(
+        R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json");
+    rejected.counterexample_json = nlohmann::json{
+        {"state", game_state}, {"action", {{"row", 2}, {"column", 2}}},
+        {"violation", "chosen move misses immediate win"},
+    }.dump();
     accepted.verdict = common_semi_oracle_verdict::satisfied;
-    accepted.proof_json = "{}";
+    accepted.proof_json = nlohmann::json{
+        {"state", game_state}, {"action", {{"row", 0}, {"column", 2}}},
+        {"next_state", nlohmann::json::object()},
+    }.dump();
 
     common_flydelta_teaching_relation relation;
     common_agent_scope scope;
@@ -32,12 +41,108 @@ int main() {
     CHECK(common_semi_oracle_make_teaching_relation(ruleset, rejected, accepted,
         scope, "relation-1", "task://position-1", "run://bad", "run://good", "evidence://pair",
         relation, error));
-    CHECK(relation.source == common_adaptation_evidence_source::user_taught_concept);
+    CHECK(relation.source == common_adaptation_evidence_source::semi_oracle_preference);
     CHECK(relation.host_approved && relation.oracle_revision.find(ruleset.semantic_fingerprint) != std::string::npos);
+    CHECK(relation.task_fingerprint.rfind("fnv1a64:", 0) == 0);
+    auto mismatched_state = accepted;
+    mismatched_state.proof_json = nlohmann::json{
+        {"state", {{"cells", {"X", "X", nullptr, "O", "O", nullptr, nullptr, nullptr, nullptr}},
+            {"turn", "O"}}},
+        {"action", {{"row", 0}, {"column", 2}}},
+    }.dump();
+    CHECK(!common_semi_oracle_make_teaching_relation(ruleset, rejected, mismatched_state,
+        scope, "relation-mismatched-state", "task://position-1", "run://bad", "run://good",
+        "evidence://pair", relation, error));
+    CHECK(!common_semi_oracle_make_teaching_relation(ruleset, rejected, accepted,
+        scope, "relation-missing-capture", "task://position-1", "", "run://good",
+        "evidence://pair", relation, error));
+    auto other_session_scope = scope;
+    other_session_scope.session_id = "session-other";
+    CHECK(!common_semi_oracle_make_teaching_relation(ruleset, rejected, accepted,
+        other_session_scope, "relation-wrong-session", "task://position-1", "run://bad",
+        "run://good", "evidence://pair", relation, error));
     accepted.ruleset_revision++;
     CHECK(!common_semi_oracle_make_teaching_relation(ruleset, rejected, accepted,
         scope, "relation-2", "task://position-1", "run://bad", "run://good", "evidence://pair",
         relation, error));
+
+    common_semi_oracle_ruleset algebra_ruleset;
+    CHECK(common_semi_oracle_parse_ruleset_dsl(
+        "name: Linear equations\ndescription: exact linear equality\ndomain: linear_algebra\nvariable: x\n",
+        "ruleset://host/algebra", "session-algebra", algebra_ruleset, error,
+        common_semi_oracle_rule_authority::declared));
+    common_agent_scope algebra_scope = scope;
+    algebra_scope.session_id = "session-algebra";
+    common_semi_oracle_result algebra_rejected, algebra_accepted;
+    for (auto * result : {&algebra_rejected, &algebra_accepted}) {
+        result->ruleset_id = algebra_ruleset.id;
+        result->ruleset_revision = algebra_ruleset.revision;
+        result->evaluator_ref = "semi-oracle://evaluator/linear_algebra";
+        result->evaluator_revision = "v1";
+    }
+    algebra_rejected.verdict = common_semi_oracle_verdict::violated;
+    algebra_rejected.counterexample_json = nlohmann::json{
+        {"before", {{"a", "2"}, {"b", "6"}}},
+        {"after", {{"a", "2"}, {"b", "3"}}},
+    }.dump();
+    algebra_accepted.verdict = common_semi_oracle_verdict::satisfied;
+    algebra_accepted.proof_json = nlohmann::json{
+        {"before", {{"a", "2"}, {"b", "6"}}},
+        {"after", {{"a", "2"}, {"b", "6"}}},
+        {"next_state", {{"lhs", "2x+6"}, {"rhs", "10"}}},
+    }.dump();
+    CHECK(common_semi_oracle_make_teaching_relation(algebra_ruleset,
+        algebra_rejected, algebra_accepted, algebra_scope, "relation-algebra",
+        "ignored-caller-task-fingerprint", "run://bad-rewrite", "run://valid-rewrite",
+        "evidence://algebra-pair", relation, error));
+    CHECK(relation.source == common_adaptation_evidence_source::semi_oracle_preference);
+    CHECK(relation.verifier_ref == algebra_accepted.evaluator_ref);
+    common_learning_transaction transaction;
+    transaction.id = "learning://semi-oracle/algebra";
+    transaction.observation.id = transaction.id;
+    transaction.observation.source_turn_id = "turn://algebra";
+    transaction.observation.source_plan_id = "plan://algebra";
+    transaction.observation.signals.push_back({common_learning_signal_type::semi_oracle_preference,
+        "plan://algebra", "rewrite", "oracle.action.verify", "evidence://algebra-pair",
+        "verified algebra rewrite contrast", "semi-oracle", "host"});
+    common_adaptation_evidence_relation evidence_relation;
+    CHECK(common_agent_teaching_relation_to_evidence_relation(
+        relation, transaction, evidence_relation, error));
+    common_agent_request request;
+    request.namespace_id = algebra_scope.namespace_id;
+    request.session_id = algebra_scope.session_id;
+    request.turn_id = "turn://algebra";
+    common_agent_result observed_result;
+    observed_result.learning_signals = transaction.observation.signals;
+    common_adaptation_evidence evidence;
+    CHECK(common_adaptation_evidence_from_turn(request, {}, observed_result,
+        evidence_relation, evidence, error));
+    common_flydelta_capture_candidate_collector collector(
+        "model-profile:test", "capture-layout:test", 4);
+    CHECK(collector.observe_verified_relation(evidence_relation, evidence, transaction, error));
+    CHECK(collector.candidates().size() == 1);
+    CHECK(collector.candidates().front().source == common_adaptation_evidence_source::semi_oracle_preference);
+    algebra_accepted.proof_json = nlohmann::json{
+        {"before", {{"a", "7"}, {"b", "6"}}},
+        {"after", {{"a", "7"}, {"b", "6"}}},
+    }.dump();
+    CHECK(!common_semi_oracle_make_teaching_relation(algebra_ruleset,
+        algebra_rejected, algebra_accepted, algebra_scope, "relation-algebra-mismatch",
+        "task://other", "run://bad-rewrite", "run://valid-rewrite",
+        "evidence://algebra-pair", relation, error));
+    auto unknown_rewrite = algebra_rejected;
+    unknown_rewrite.verdict = common_semi_oracle_verdict::unknown;
+    unknown_rewrite.counterexample_json.clear();
+    CHECK(!common_semi_oracle_make_teaching_relation(algebra_ruleset,
+        unknown_rewrite, algebra_accepted, algebra_scope, "relation-algebra-unknown",
+        "task://unknown", "run://unknown", "run://valid-rewrite",
+        "evidence://algebra-pair", relation, error));
+    auto inferred_algebra = algebra_ruleset;
+    inferred_algebra.assertions.front().authority = common_semi_oracle_rule_authority::inferred;
+    CHECK(!common_semi_oracle_make_teaching_relation(inferred_algebra,
+        algebra_rejected, algebra_accepted, algebra_scope, "relation-algebra-inferred",
+        "task://inferred", "run://bad-rewrite", "run://valid-rewrite",
+        "evidence://algebra-pair", relation, error));
 
     std::vector<common_semi_oracle_placement_action_value> values;
     const std::string state = R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json";
@@ -59,6 +164,13 @@ int main() {
     CHECK(relation.task_fingerprint == preferred->state_fingerprint);
     CHECK(relation.control_ref == "run://matched-control");
     CHECK(relation.contrast_ref.find("<") != std::string::npos);
+    CHECK(relation.source == common_adaptation_evidence_source::semi_oracle_preference);
+    CHECK(relation.oracle_revision.find(ruleset.action_contract_fingerprint) != std::string::npos);
+    CHECK(relation.teaching_key.find(ruleset.action_contract_fingerprint) != std::string::npos);
+    common_flydelta_teaching_relation relation_without_control;
+    CHECK(!common_semi_oracle_make_preference_relation(ruleset, persisted_rejected, persisted_preferred,
+        scope, "relation-preference-no-control", "run://suboptimal", "run://optimal",
+        "", "semi-oracle://evaluation/preference", relation_without_control, error));
     nlohmann::json ranking_payload = {
         {"algorithm", "memoized_minimax_v1"},
         {"state_fingerprint", persisted_preferred.state_fingerprint},

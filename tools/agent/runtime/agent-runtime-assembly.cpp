@@ -37,6 +37,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     config.procedure_teaching_request_provider = std::move(build_config.procedure_teaching_request_provider);
     config.user_correction_teaching_request_provider = std::move(build_config.user_correction_teaching_request_provider);
     config.user_taught_concept_relation_provider = std::move(build_config.user_taught_concept_relation_provider);
+    config.semi_oracle_teaching_relation_provider = std::move(build_config.semi_oracle_teaching_relation_provider);
     config.semantic_concept_hypothesis_provider = std::move(build_config.semantic_concept_hypothesis_provider);
     config.semantic_concept_hypothesis_batch_provider = std::move(build_config.semantic_concept_hypothesis_batch_provider);
     config.semantic_concept_contrast_provider = std::move(build_config.semantic_concept_contrast_provider);
@@ -106,6 +107,7 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                 static_cast<bool>(runtime_config.procedure_teaching_request_provider) ||
                 static_cast<bool>(runtime_config.user_correction_teaching_request_provider) ||
                 static_cast<bool>(runtime_config.user_taught_concept_relation_provider) ||
+                static_cast<bool>(runtime_config.semi_oracle_teaching_relation_provider) ||
                 static_cast<bool>(runtime_config.semantic_concept_hypothesis_provider) ||
                 static_cast<bool>(runtime_config.semantic_concept_hypothesis_batch_provider) ||
                 static_cast<bool>(runtime_config.semantic_concept_grounding_provider) ||
@@ -301,6 +303,61 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                                         teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
                                         !teaching_relation.host_approved || teaching_relation.contrast_ref.empty()) {
                                     error = "user-taught concept provider returned an unresolved or ungrounded relation";
+                                    return false;
+                                }
+                                if (concept_candidate_index &&
+                                        !concept_candidate_index->observe_resolved_relation(
+                                            teaching_relation, transaction, error)) return false;
+                                if (reuse_first_observer) {
+                                    bool reused = false;
+                                    if (!reuse_first_observer(teaching_relation, transaction, reused, error)) return false;
+                                    if (reused) continue;
+                                }
+                                if (teaching_material_observer &&
+                                        !teaching_material_observer(teaching_relation, error)) return false;
+                                common_adaptation_evidence_relation relation;
+                                if (!common_agent_teaching_relation_to_evidence_relation(
+                                        teaching_relation, transaction, relation, error)) return false;
+                                common_adaptation_evidence evidence;
+                                if (!common_adaptation_evidence_from_turn(
+                                        request, plan, result, relation, evidence, error)) return false;
+                                if (runtime_candidate_observer) {
+                                    if (!runtime_candidate_observer->observe_verified_relation(
+                                            relation, evidence, transaction, error)) return false;
+                                } else if (capture_collector) {
+                                    if (!capture_collector->observe_verified_relation(
+                                            relation, evidence, transaction, error)) return false;
+                                }
+                            }
+                            return true;
+                        };
+                }
+                if (runtime_config.semi_oracle_teaching_relation_provider) {
+                    const auto provider = runtime_config.semi_oracle_teaching_relation_provider;
+                    auto configured_relation_observer = adaptation_config.host_relation_observer;
+                    auto * runtime_candidate_observer = assembly.flydelta_runtime_candidate_observer.get();
+                    auto * capture_collector = assembly.flydelta_capture_collector.get();
+                    auto concept_candidate_index = runtime_config.concept_candidate_index;
+                    auto reuse_first_observer = runtime_config.flydelta_reuse_first_observer;
+                    adaptation_config.host_relation_observer =
+                        [provider, configured_relation_observer, teaching_material_observer,
+                            runtime_candidate_observer, capture_collector, concept_candidate_index,
+                            reuse_first_observer](
+                                const common_agent_request & request,
+                                const common_plan_state & plan,
+                                const common_agent_result & result,
+                                const common_learning_transaction & transaction,
+                                std::string & error) {
+                            if (configured_relation_observer &&
+                                    !configured_relation_observer(request, plan, result, transaction, error)) return false;
+                            std::vector<common_flydelta_teaching_relation> relations;
+                            if (!provider(request, plan, result, transaction, relations, error)) return false;
+                            for (const auto & teaching_relation : relations) {
+                                if (teaching_relation.source != common_adaptation_evidence_source::semi_oracle_preference ||
+                                        teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
+                                        !teaching_relation.host_approved || teaching_relation.contrast_ref.empty() ||
+                                        teaching_relation.oracle_revision.empty()) {
+                                    error = "SemiOracle provider returned an unresolved or ungrounded relation";
                                     return false;
                                 }
                                 if (concept_candidate_index &&

@@ -1,4 +1,5 @@
 #include "agent/adaptation/semi-oracle.h"
+#include "agent/adaptation/semi-oracle-search.h"
 
 #include <nlohmann/json.hpp>
 
@@ -184,6 +185,139 @@ bool proportional_nonzero(const linear & a, const linear & b) {
     if (b.a.zero() && b.b.zero()) return false;
     rational x, y;
     if (!a.a.mul(b.b, x) || !a.b.mul(b.a, y) || x.n != y.n || x.d != y.d) return false;
+    return true;
+}
+
+std::string format_linear(const linear & value) {
+    std::string result;
+    if (!value.a.zero()) {
+        if (value.a.n == -1 && value.a.d == 1) result = "-x";
+        else if (value.a.n == 1 && value.a.d == 1) result = "x";
+        else result = value.a.str() + "x";
+    }
+    if (!value.b.zero()) {
+        if (result.empty()) result = value.b.str();
+        else if (value.b.n < 0) result += value.b.str();
+        else result += "+" + value.b.str();
+    }
+    return result.empty() ? "0" : result;
+}
+
+std::string canonical_equation_state(const linear & lhs, const linear & rhs) {
+    return json{{"lhs", format_linear(lhs)}, {"rhs", format_linear(rhs)}}.dump();
+}
+
+bool equation_state(const std::string & raw, linear & lhs, linear & rhs) {
+    const auto state = json::parse(raw, nullptr, false);
+    return state.is_object() && state.contains("lhs") && state.contains("rhs") &&
+        state["lhs"].is_string() && state["rhs"].is_string() &&
+        expression_parser(state["lhs"].get<std::string>()).parse(lhs) &&
+        expression_parser(state["rhs"].get<std::string>()).parse(rhs);
+}
+
+bool append_equation_transition(
+        const std::string & old_state,
+        const linear & old_lhs,
+        const linear & old_rhs,
+        const linear & new_lhs,
+        const linear & new_rhs,
+        const std::string & action,
+        std::vector<common_semi_oracle_search_transition> & transitions) {
+    // Every generated edge is checked using the same exact rational
+    // equivalence rule as model-proposed rewrites.
+    linear old_diff, new_diff;
+    if (!old_lhs.a.sub(old_rhs.a, old_diff.a) || !old_lhs.b.sub(old_rhs.b, old_diff.b) ||
+            !new_lhs.a.sub(new_rhs.a, new_diff.a) || !new_lhs.b.sub(new_rhs.b, new_diff.b) ||
+            !proportional_nonzero(old_diff, new_diff)) return false;
+    const auto next = canonical_equation_state(new_lhs, new_rhs);
+    if (next == old_state) return true;
+    if (std::none_of(transitions.begin(), transitions.end(), [&](const auto & item) {
+            return item.state == next;
+        })) transitions.push_back({next, action, 1});
+    return true;
+}
+
+bool build_algebra_search_problem(
+        const std::string & initial,
+        const std::vector<std::string> & guidance,
+        common_semi_oracle_search_problem & problem) {
+    problem = {};
+    linear initial_lhs, initial_rhs;
+    if (!equation_state(initial, initial_lhs, initial_rhs)) return false;
+    const auto initial_json = json::parse(initial, nullptr, false);
+    problem.initial_state = json{{"lhs", initial_json["lhs"]}, {"rhs", initial_json["rhs"]}}.dump();
+    problem.heuristic = [](const std::string &) { return size_t(0); };
+    problem.heuristic_admissible = true;
+    problem.is_goal = [](const std::string & raw, bool & goal, std::string & error) {
+        error.clear(); goal = false;
+        linear lhs, rhs;
+        if (!equation_state(raw, lhs, rhs)) {
+            error = "A* encountered an invalid equation state";
+            return false;
+        }
+        goal = lhs.a.n == 1 && lhs.a.d == 1 && lhs.b.zero() &&
+            rhs.a.zero();
+        return true;
+    };
+    problem.expand = [](const std::string & raw,
+            std::vector<common_semi_oracle_search_transition> & transitions,
+            std::string & error) {
+        error.clear(); transitions.clear();
+        linear lhs, rhs;
+        if (!equation_state(raw, lhs, rhs)) {
+            error = "A* encountered an invalid equation state";
+            return false;
+        }
+
+        linear simplified;
+        if (expression_parser(format_linear(lhs)).parse(simplified)) {
+            append_equation_transition(raw, lhs, rhs, simplified, rhs,
+                "simplify lhs", transitions);
+        }
+        if (expression_parser(format_linear(rhs)).parse(simplified)) {
+            append_equation_transition(raw, lhs, rhs, lhs, simplified,
+                "simplify rhs", transitions);
+        }
+
+        const auto state = json::parse(raw, nullptr, false);
+        const bool lhs_simplified = state.is_object() && state.contains("lhs") &&
+            state["lhs"].is_string() && compact_expression(state["lhs"].get<std::string>()) == format_linear(lhs);
+        const bool rhs_simplified = state.is_object() && state.contains("rhs") &&
+            state["rhs"].is_string() && compact_expression(state["rhs"].get<std::string>()) == format_linear(rhs);
+
+        // Subtract the variable term on the right from both sides.
+        rational coefficient;
+        if (lhs_simplified && rhs_simplified && lhs.a.sub(rhs.a, coefficient)) {
+            const linear moved_variable{coefficient, lhs.b};
+            append_equation_transition(raw, lhs, rhs, moved_variable, {{0, 1}, rhs.b},
+                "move variable terms to the left", transitions);
+        }
+
+        // Subtract the left constant from both sides.
+        rational constant;
+        if (lhs_simplified && rhs_simplified && lhs.a.sub(rhs.a, coefficient) && rhs.b.sub(lhs.b, constant)) {
+            const linear moved_constant{coefficient, {0, 1}};
+            append_equation_transition(raw, lhs, rhs, moved_constant, {{0, 1}, constant},
+                "move constants to the right", transitions);
+        }
+
+        // Divide both sides by the non-zero coefficient.
+        if (lhs_simplified && rhs_simplified && !lhs.a.zero() && lhs.b.zero() && rhs.a.zero()) {
+            rational solution;
+            if (rhs.b.div(lhs.a, solution)) {
+                append_equation_transition(raw, lhs, rhs, {{1, 1}, {0, 1}}, {{0, 1}, solution},
+                    "divide both sides by the non-zero coefficient", transitions);
+            }
+        }
+        return true;
+    };
+    if (!guidance.empty()) {
+        problem.guidance_rank = [guidance](const common_semi_oracle_search_transition & transition) {
+            const auto found = std::find(guidance.begin(), guidance.end(), transition.action);
+            return found == guidance.end()
+                ? guidance.size() : static_cast<size_t>(std::distance(guidance.begin(), found));
+        };
+    }
     return true;
 }
 
@@ -381,7 +515,10 @@ bool common_semi_oracle_validate_state(const common_semi_oracle_ruleset & r,
 bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const common_semi_oracle_query & q,
         common_semi_oracle_result & out, std::string & error) {
     error.clear(); out={}; out.ruleset_id=r.id; out.ruleset_revision=r.revision; out.level=q.level;
-    out.evaluator_ref=std::string("semi-oracle://evaluator/")+common_semi_oracle_domain_name(r.domain); out.evaluator_revision="v1";
+    out.evaluator_ref=std::string("semi-oracle://evaluator/")+common_semi_oracle_domain_name(r.domain);
+    out.evaluator_revision=r.domain==common_semi_oracle_domain::linear_algebra &&
+            q.level!=common_semi_oracle_level::local && q.goal=="solve:x"
+        ? "linear_astar_v1" : "v1";
     if(!r.active || !common_semi_oracle_validate_ruleset(r,error)) { if(error.empty()) error="RuleSet is not active"; return false; }
     if(q.ruleset_id!=r.id||q.ruleset_revision!=r.revision) {error="query RuleSet identity or revision does not match active RuleSet";return false;}
     if(q.budget.max_expansions==0||q.budget.max_expansions>100000||q.budget.max_depth==0||q.budget.max_depth>64) {error="semi-oracle search budget is outside the supported bound";return false;}
@@ -401,10 +538,59 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
         if(!parse_equation(old_eq,before)||!parse_equation(new_eq,after)) {out.reason="expression is outside the supported exact linear fragment";out.verdict=common_semi_oracle_verdict::unknown;return true;}
         if(q.level!=common_semi_oracle_level::local && q.goal=="solve:x") {
             if(before.a.zero()) {out.verdict=before.b.zero()?common_semi_oracle_verdict::satisfied:common_semi_oracle_verdict::violated;out.reason=before.b.zero()?"every value of x satisfies the equation":"equation has no solution";if(out.verdict==common_semi_oracle_verdict::satisfied)out.proof_json=json{{"solution","all_real_x"},{"normalized_a",before.a.str()},{"normalized_b",before.b.str()}}.dump();else out.counterexample_json=json{{"normalized_a",before.a.str()},{"normalized_b",before.b.str()}}.dump();out.expansions=1;return true;}
-            rational neg, solution;
-            if(!rational::negate(before.b,neg)||!neg.div(before.a,solution)){out.verdict=common_semi_oracle_verdict::unknown;out.reason="exact solution exceeds supported rational bounds";return true;}
-            if(q.budget.max_expansions<1||q.budget.max_depth<1){out.verdict=common_semi_oracle_verdict::unknown;out.reason="bounded algebra search budget is insufficient";return true;}
-            out.verdict=common_semi_oracle_verdict::satisfied;out.expansions=1;out.depth_reached=1;out.proof_json=json{{"goal",q.goal},{"normalized_a",before.a.str()},{"normalized_b",before.b.str()},{"solution",solution.str()},{"identity","a*x+b=0; a!=0 => x=-b/a"}}.dump();out.reason="bounded exact linear solver proved the unique rational solution";return true;
+            common_semi_oracle_search_problem problem;
+            const std::string initial=json{{"lhs",old_lhs},{"rhs",old_rhs}}.dump();
+            if(!build_algebra_search_problem(initial,
+                    q.level==common_semi_oracle_level::guided?q.guidance:std::vector<std::string>{},
+                    problem)) {
+                out.verdict=common_semi_oracle_verdict::unknown;
+                out.reason="could not construct a supported algebra rewrite search problem";
+                return true;
+            }
+            common_semi_oracle_search_result searched;
+            if(!common_semi_oracle_search_astar(problem,q.budget,searched)) {
+                out.verdict=common_semi_oracle_verdict::unknown;
+                out.reason=searched.error.empty()?"bounded algebra A* failed":searched.error;
+                return true;
+            }
+            out.expansions=searched.expansions;out.depth_reached=searched.depth_reached;
+            if(searched.found) {
+                json path=json::array();
+                for(const auto & step:searched.path) {
+                    path.push_back({{"state",json::parse(step.state,nullptr,false)},
+                        {"action",step.action},{"cost",step.cost}});
+                }
+                const auto final_state=json::parse(searched.path.back().state,nullptr,false);
+                linear final_lhs,final_rhs;
+                if(!final_state.is_object()||!equation_state(searched.path.back().state,final_lhs,final_rhs)||
+                        final_lhs.a.n!=1||final_lhs.a.d!=1||!final_lhs.b.zero()||
+                        !final_rhs.a.zero()) {
+                    out.verdict=common_semi_oracle_verdict::unknown;
+                    out.reason="A* returned a path whose final equation could not be validated";
+                    return true;
+                }
+                out.verdict=common_semi_oracle_verdict::satisfied;
+                out.proof_json=json{{"algorithm","bounded_astar_v1"},{"heuristic","zero_admissible"},
+                    {"optimality_proven",searched.optimality_proven},{"goal",q.goal},
+                    {"before",{{"lhs",old_lhs},{"rhs",old_rhs}}},
+                    {"ruleset_id",r.id},{"ruleset_revision",r.revision},
+                    {"rule_fingerprint",r.semantic_fingerprint},
+                    {"action_contract_fingerprint",r.action_contract_fingerprint},
+                    {"solution",final_rhs.b.str()},{"total_cost",searched.total_cost},
+                    {"expansions",searched.expansions},{"depth_reached",searched.depth_reached},
+                    {"path",path}}.dump();
+                out.reason="bounded A* found a path of exact-equivalence-preserving rewrites to x = rational";
+            } else if(searched.exhausted) {
+                out.verdict=common_semi_oracle_verdict::violated;
+                out.counterexample_json=json{{"algorithm","bounded_astar_v1"},{"goal",q.goal},
+                    {"ruleset_id",r.id},{"ruleset_revision",r.revision},
+                    {"expansions",searched.expansions},{"result","goal_unreachable_in_complete_transition_graph"}}.dump();
+                out.reason="A* exhausted the complete supported rewrite graph without reaching a unique rational solution";
+            } else {
+                out.verdict=common_semi_oracle_verdict::unknown;
+                out.reason="algebra A* reached its expansion or depth bound before proving a path";
+            }
+            return true;
         }
         const bool no_change = compact_expression(old_lhs) == compact_expression(new_lhs) &&
                 compact_expression(old_rhs) == compact_expression(new_rhs);
@@ -436,7 +622,7 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
         auto next=state; next["cells"][static_cast<size_t>(y*cols+x)]=f["player"];
         next["turn"]=(f["player"]==players[0]?players[1]:players[0]);
         const bool won=game_won(next["cells"],rows,cols,win,f["player"]);
-        out.verdict=common_semi_oracle_verdict::satisfied; out.proof_json=json{{"action",f},{"next_state",next},{"terminal_win",won}}.dump(); out.reason="legal placement transition verified";out.expansions=1;return true;
+        out.verdict=common_semi_oracle_verdict::satisfied; out.proof_json=json{{"state",state},{"action",f},{"next_state",next},{"terminal_win",won}}.dump(); out.reason="legal placement transition verified";out.expansions=1;return true;
     }
     if(q.goal.rfind("win:",0)!=0) {out.verdict=common_semi_oracle_verdict::unknown;out.reason="bounded placement_game query requires goal `win:PLAYER`";return true;}
     const auto target=q.goal.substr(4); if(target!=players[0]&&target!=players[1]) {out.verdict=common_semi_oracle_verdict::unknown;out.reason="goal names an undeclared player";return true;}
@@ -476,7 +662,8 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
 
 bool common_semi_oracle_learning_authorized(const common_semi_oracle_ruleset & r, const common_semi_oracle_result & result) {
     if(!r.active||result.ruleset_id!=r.id||result.ruleset_revision!=r.revision||result.verdict==common_semi_oracle_verdict::unknown||
-            result.evaluator_ref!=std::string("semi-oracle://evaluator/")+common_semi_oracle_domain_name(r.domain)||result.evaluator_revision!="v1") return false;
+            result.evaluator_ref!=std::string("semi-oracle://evaluator/")+common_semi_oracle_domain_name(r.domain)||
+            (result.evaluator_revision!="v1"&&result.evaluator_revision!="linear_astar_v1")) return false;
     const auto proof=json::parse(result.proof_json,nullptr,false);
     const auto counterexample=json::parse(result.counterexample_json,nullptr,false);
     if(result.verdict==common_semi_oracle_verdict::satisfied&&!proof.is_object()) return false;

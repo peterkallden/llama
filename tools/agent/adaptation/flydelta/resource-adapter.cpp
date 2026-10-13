@@ -338,6 +338,7 @@ bool daemon_flydelta_parse_behavior_delta(
         else if (source == "procedure_blueprint") delta.source = common_adaptation_evidence_source::procedure_blueprint;
         else if (source == "user_correction") delta.source = common_adaptation_evidence_source::user_correction;
         else if (source == "user_taught_concept") delta.source = common_adaptation_evidence_source::user_taught_concept;
+        else if (source == "semi_oracle_preference") delta.source = common_adaptation_evidence_source::semi_oracle_preference;
         else {
             error = "FlyDelta behavior-delta source is unsupported";
             return false;

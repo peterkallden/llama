@@ -1,6 +1,8 @@
 #include "agent/adaptation/semi-oracle.h"
+#include "agent/adaptation/semi-oracle-search.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <map>
 #include <string>
@@ -198,6 +200,22 @@ int main() {
     aq.level=common_semi_oracle_level::bounded;aq.goal="solve:x";aq.action_dsl="open! algebra.rewrite_equation\nlhs: 2x+6\nrhs: 10\n";
     CHECK(common_semi_oracle_evaluate(algebra,aq,result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&result.proof_json.find("solution")!=std::string::npos);
+    const auto algebra_proof=nlohmann::ordered_json::parse(result.proof_json);
+    CHECK(algebra_proof.value("algorithm",std::string())=="bounded_astar_v1");
+    CHECK(algebra_proof.value("optimality_proven",false));
+    CHECK(algebra_proof.contains("path")&&algebra_proof["path"].size()==4);
+    CHECK(algebra_proof["path"][1].value("action",std::string())=="simplify lhs");
+    CHECK(algebra_proof["path"][2].value("action",std::string())=="move constants to the right");
+    CHECK(algebra_proof["path"][3].value("action",std::string())=="divide both sides by the non-zero coefficient");
+    CHECK(result.evaluator_revision=="linear_astar_v1");
+    auto bounded_algebra=aq;bounded_algebra.budget.max_depth=1;
+    CHECK(common_semi_oracle_evaluate(algebra,bounded_algebra,result,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::unknown);
+    auto guided_algebra=aq;guided_algebra.level=common_semi_oracle_level::guided;
+    guided_algebra.guidance={"move constants to the right","simplify lhs"};
+    CHECK(common_semi_oracle_evaluate(algebra,guided_algebra,result,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied);
+    CHECK(common_semi_oracle_learning_authorized(algebra,result));
     CHECK(common_semi_oracle_validate_state(algebra,
         R"json({"lhs":"2(x+3)","rhs":"10"})json", error));
     CHECK(!common_semi_oracle_validate_state(algebra,
@@ -221,6 +239,11 @@ int main() {
     common_semi_oracle_ruleset managed_algebra;
     CHECK(algebra_service.define_ruleset("name: Tool algebra\ndescription: session equation\ndomain: linear_algebra\nvariable: x\n",common_semi_oracle_rule_authority::declared,managed_algebra,error));
     CHECK(algebra_service.initialize_active_state(R"json({"lhs":"2(x+3)","rhs":"10"})json",false,error));
+    common_semi_oracle_result searched_algebra;
+    CHECK(algebra_service.search_active_algebra_goal(searched_algebra,error));
+    CHECK(searched_algebra.verdict==common_semi_oracle_verdict::satisfied&&
+        searched_algebra.evaluator_revision=="linear_astar_v1"&&
+        searched_algebra.proof_json.find("bounded_astar_v1")!=std::string::npos);
     std::string state_before,state_after;
     CHECK(algebra_service.verify_active_action("open! algebra.rewrite_equation\nlhs: 2x+6\n",result,state_before,state_after,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&

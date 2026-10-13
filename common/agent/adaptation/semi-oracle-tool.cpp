@@ -153,6 +153,35 @@ bool common_semi_oracle_tool_service::verify_active_action(
         state_after, error);
 }
 
+bool common_semi_oracle_tool_service::search_active_algebra_goal(
+        common_semi_oracle_result & result, std::string & error) {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found || ruleset.domain != common_semi_oracle_domain::linear_algebra) {
+        error = "goal search requires an active linear_algebra RuleSet";
+        return false;
+    }
+    std::string state;
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
+            state, found, error)) return false;
+    if (!found) {
+        error = "goal search requires host-owned active equation state";
+        return false;
+    }
+    const auto parsed = json::parse(state, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("lhs") || !parsed["lhs"].is_string()) {
+        error = "active algebra state is not a supported equation";
+        return false;
+    }
+    common_semi_oracle_budget budget;
+    budget.max_expansions = 2048;
+    budget.max_depth = 16;
+    return verify_action(state,
+        "open! algebra.rewrite_equation\nlhs: " + parsed["lhs"].get<std::string>() + "\n",
+        common_semi_oracle_level::bounded, "solve:x", budget, {}, result, error);
+}
+
 bool common_semi_oracle_tool_service::rank_placements(const std::string & state_json,
         common_semi_oracle_budget budget,
         std::vector<common_semi_oracle_placement_action_value> & values,

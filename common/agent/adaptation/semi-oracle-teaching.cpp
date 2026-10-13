@@ -48,6 +48,24 @@ bool action_proof_matches(
     });
     return match != verified.end() && match->value == value.value;
 }
+
+std::string verified_initial_state_fingerprint(
+        const common_semi_oracle_result & result) {
+    const auto evidence = json::parse(
+        result.verdict == common_semi_oracle_verdict::satisfied
+            ? result.proof_json : result.counterexample_json,
+        nullptr, false);
+    if (!evidence.is_object()) return {};
+    if (result.evaluator_ref == "semi-oracle://evaluator/placement_game" &&
+            evidence.contains("state") && evidence["state"].is_object()) {
+        return state_fingerprint(evidence["state"].dump());
+    }
+    if (result.evaluator_ref == "semi-oracle://evaluator/linear_algebra" &&
+            evidence.contains("before") && evidence["before"].is_object()) {
+        return state_fingerprint(evidence["before"].dump());
+    }
+    return {};
+}
 }
 
 bool common_semi_oracle_make_teaching_relation(
@@ -72,10 +90,18 @@ bool common_semi_oracle_make_teaching_relation(
         error = "semi-oracle teaching requires a verified rejected/accepted contrast from one evaluator and RuleSet revision";
         return false;
     }
+    const std::string rejected_state = verified_initial_state_fingerprint(rejected);
+    const std::string accepted_state = verified_initial_state_fingerprint(accepted);
+    if (rejected_state.empty() || rejected_state != accepted_state) {
+        error = "semi-oracle teaching requires proof and counterexample for the same initial state";
+        return false;
+    }
     if (relation_id.empty() || task_fingerprint.empty() || rejected_execution_ref.empty() ||
             accepted_execution_ref.empty() || evidence_ref.empty() ||
             rejected_execution_ref == accepted_execution_ref ||
-            scope.namespace_id.empty() || scope.session_id.empty()) {
+            scope.namespace_id.empty() || scope.session_id.empty() ||
+            ruleset.scope != common_semi_oracle_scope::session ||
+            ruleset.scope_id != scope.session_id) {
         error = "semi-oracle teaching relation is missing host execution or scope references";
         return false;
     }
@@ -88,10 +114,10 @@ bool common_semi_oracle_make_teaching_relation(
     relation = {};
     relation.id = relation_id;
     relation.teaching_key = key;
-    relation.source = common_adaptation_evidence_source::user_taught_concept;
+    relation.source = common_adaptation_evidence_source::semi_oracle_preference;
     relation.behavior_key = key;
     relation.scope = scope;
-    relation.task_fingerprint = task_fingerprint;
+    relation.task_fingerprint = rejected_state;
     relation.baseline_ref = rejected_execution_ref;
     relation.conditioned_ref = accepted_execution_ref;
     relation.verifier_ref = accepted.evaluator_ref;
@@ -176,7 +202,7 @@ bool common_semi_oracle_make_preference_relation(
     relation = {};
     relation.id = relation_id;
     relation.teaching_key = identity.str();
-    relation.source = common_adaptation_evidence_source::user_taught_concept;
+    relation.source = common_adaptation_evidence_source::semi_oracle_preference;
     relation.behavior_key = identity.str();
     relation.scope = scope;
     relation.task_fingerprint = rejected.state_fingerprint;
