@@ -6,6 +6,7 @@
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "agent/context/context-management.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
@@ -54,6 +55,7 @@ struct daemon_options {
     int n_threads = 2;
     int context_size = 3072;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string memory_learn = "off";

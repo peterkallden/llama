@@ -17,6 +17,15 @@
     "max_research_iterations": 4,
     "memory_learn": "post-turn",
     "agent_trace": true,
+    "context_management": {
+      "enabled": true,
+      "persist_session": true,
+      "semantic_compaction": true,
+      "recent_turns": 2,
+      "summary_max_tokens": 512,
+      "max_summary_calls_per_turn": 1,
+      "max_history_chars": 32768
+    },
     "context_budgets": {
       "plan_chars": 12000,
       "step_chars": 12000,

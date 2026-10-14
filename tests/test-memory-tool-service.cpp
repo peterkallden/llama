@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "memory/memory-in-memory.h"
 #include "memory/memory-tool-service.h"
 
@@ -11,11 +15,15 @@ int main() {
         nlohmann::ordered_json::object({
             {"query", "resident runtime"},
             {"limit", 3},
+            {"as_of", 1710000000},
+            {"history", true},
         }),
         search_contract,
         error));
     assert(search_contract.query == "resident runtime");
     assert(search_contract.limit.has_value() && *search_contract.limit == 3);
+    assert(search_contract.as_of.has_value() && *search_contract.as_of == 1710000000);
+    assert(search_contract.history);
 
     assert(!common_memory_parse_tool_search_arguments_value(
         nlohmann::ordered_json::object({
@@ -79,6 +87,9 @@ int main() {
     assert(search_result.query == "loaded model session");
     assert(!search_result.hits.empty());
     assert(search_result.hits[0].memory.id == "memory-1");
+    assert(service.search(context,
+        R"({"query":"loaded model session","as_of":1710000000,"history":true})",
+        search_result, error));
 
     common_memory_tool_remember_result remember_result;
     assert(service.remember_proposal(

@@ -47,6 +47,14 @@ This tool availability is separate from memory hits already attached to the
 request, which research treats as materialized context rather than work that
 must be reacquired.
 
+Conversation compaction does not replace the workflow plan or research
+workspace. The session host persists turn/checkpoint revisions via scoped
+resource records; plans continue to own workflow state, and research continues
+to own claims, sources, and chunk coverage. Context assembly carries stable
+references and bounded summaries across turns. A summary never promotes model
+text into a user instruction or makes an incomplete evidence set appear fully
+reviewed.
+
 `allowed_tools` remains accepted for v1 package compatibility. When semantic
 capabilities are also present, `allowed_tools` can only narrow the resolved
 tool set. New workflow packages should prefer capabilities.

@@ -16,6 +16,7 @@ common_agent_runtime_config make_agent_runtime_config(common_agent_runtime_build
     common_agent_runtime_config config;
     config.generation_config = std::move(build_config.generation_config);
     config.context_budgets = build_config.context_budgets;
+    config.context_management = build_config.context_management;
     config.generation_config.context_budgets = config.context_budgets;
     config.max_continuations = build_config.max_continuations;
     config.context_token_estimator = std::move(build_config.context_token_estimator);

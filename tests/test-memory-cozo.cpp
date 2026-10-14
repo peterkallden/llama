@@ -131,6 +131,15 @@ int main() {
         CHECK(got->content == fact.content);
         CHECK(got->metadata["source"] == "cozo-test");
 
+        auto temporal = make_record("temporal-fact", "observed temporal fact", {1.0f, 0.0f});
+        temporal.metadata["agent.temporal.v1.observed_at"] = "1710000000";
+        temporal.metadata["agent.temporal.v1.valid_from"] = "1710000000";
+        temporal.metadata["agent.temporal.v1.valid_to"] = "1810000000";
+        auto replacement = make_record("temporal-replacement", "current temporal fact", {1.0f, 0.0f});
+        CHECK(store.put(temporal, error));
+        CHECK(store.put(replacement, error));
+        CHECK(store.relate(replacement.id, "supersedes", temporal.id, 1.0f, error));
+
         common_memory_query text_query;
         text_query.text = "zero budget";
         text_query.limit = 4;
@@ -162,6 +171,14 @@ int main() {
         CHECK(got);
         CHECK(got->content == "the earlier pass produced the fact");
         CHECK(got->kind == common_memory_kind::episode);
+        auto temporal = reopened.get("temporal-fact", error);
+        CHECK(temporal && temporal->metadata["agent.temporal.v1.observed_at"] == "1710000000");
+        common_memory_query relation_scope;
+        relation_scope.scope = common_memory_scope::session;
+        relation_scope.namespace_id = "local";
+        relation_scope.session_id = "default";
+        const auto supersedes = reopened.list_relations("temporal-fact", "supersedes", false, relation_scope, error);
+        CHECK(error.empty() && supersedes.size() == 1 && supersedes[0].from == "temporal-replacement");
 
         auto scoped = reopened.get("session-b", error);
         CHECK(scoped);

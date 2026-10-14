@@ -1892,6 +1892,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-continuation
     test-agent-research-contract
     test-agent-runtime-json
+    test-agent-context-management
     test-agent-loop
     test-agent-tool-failure
     test-agent-tool-rounds

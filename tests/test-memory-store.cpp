@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "memory/memory-in-memory.h"
 
 #include <cassert>
@@ -32,10 +36,31 @@ int main() {
     assert(store.put(make_record("episode-1", "the earlier pass produced the fact", {0.0f, 1.0f}), error));
     assert(store.relate("episode-1", "produced", "fact-1", 1.0f, error));
 
+    auto superseded = make_record("superseded", "old memory");
+    auto replacement = make_record("replacement", "new memory");
+    auto other_scope = make_record("other-scope", "other session memory");
+    other_scope.session_id = "other-session";
+    assert(store.put(superseded, error));
+    assert(store.put(replacement, error));
+    assert(store.put(other_scope, error));
+    assert(store.relate("replacement", "supersedes", "superseded", 1.0f, error));
+    assert(!store.relate("replacement", "supersedes", "other-scope", 1.0f, error));
+    assert(!store.relate("superseded", "supersedes", "replacement", 1.0f, error));
+
+    common_memory_query relation_scope;
+    relation_scope.scope = common_memory_scope::session;
+    relation_scope.namespace_id = "local";
+    relation_scope.session_id = "default";
+    const auto outgoing = store.list_relations("replacement", "supersedes", true, relation_scope, error);
+    assert(error.empty() && outgoing.size() == 1 && outgoing[0].to == "superseded");
+    relation_scope.session_id = "other-session";
+    assert(store.list_relations("replacement", "supersedes", true, relation_scope, error).empty());
+
     common_memory_query graph_query;
     graph_query.text = "earlier pass";
     graph_query.limit = 4;
     graph_query.graph_depth = 1;
+    graph_query.minimum_score = 0.01f;
     auto graph_hits = store.search(graph_query, error);
     assert(graph_hits.size() == 2);
 

@@ -3,6 +3,7 @@
 #include "../tooling/agent-tool-provider.h"
 #include "agent/agent-inference.h"
 #include "agent/agent-context-budgets.h"
+#include "agent/context/context-management.h"
 #include "agent/agent-runtime.h"
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/learning-transaction.h"
@@ -65,6 +66,7 @@ struct common_agent_generation_config {
     bool agent_trace = false;
     size_t context_size_tokens = 0;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     // Optional host-side preflight that narrows the model-facing tool view by
     // generated family before the planner sees individual tool contracts.
     bool enable_tool_family_routing = false;
@@ -77,6 +79,7 @@ struct common_agent_generation_config {
 struct common_agent_runtime_config {
     common_agent_generation_config generation_config;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     bool enable_memory_learning = false;
     common_memory_learning_config memory_learning_config;
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_memory;
@@ -160,6 +163,9 @@ struct common_agent_runtime_build_config {
     common_agent_flydelta_teaching_material_observer flydelta_teaching_material_observer;
     common_agent_flydelta_reuse_first_observer flydelta_reuse_first_observer;
     std::shared_ptr<common_flydelta_teaching_material_runtime> flydelta_teaching_material_runtime;
+    // Keep this trailing so existing aggregate build-config initializers keep
+    // their field mapping while the context-management policy can be injected.
+    common_agent_context_management_config context_management;
 };
 
 common_agent_inference_options make_agent_inference_options(

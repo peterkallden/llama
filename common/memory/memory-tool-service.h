@@ -30,6 +30,8 @@ struct common_memory_tool_search_result {
 struct common_memory_tool_search_arguments_contract {
     std::string query;
     std::optional<size_t> limit;
+    std::optional<int64_t> as_of;
+    bool history = false;
 };
 
 struct common_memory_tool_remember_arguments_contract {

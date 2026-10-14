@@ -14,6 +14,7 @@
 #include "agent/adaptation/flydelta/flydelta-worker-budget.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "agent/runtime/model-catalog.h"
+#include "agent/context/context-management.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -46,6 +47,7 @@ struct agent_host_config {
     int n_predict = 256;
     int n_threads = 2;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string default_mode = "chat";

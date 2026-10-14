@@ -478,6 +478,17 @@ bool parse_agent_host_config_json(
         read_optional(runtime, "context_size", config.runtime_context_size);
         read_optional(runtime, "n_predict", config.n_predict);
         read_optional(runtime, "n_threads", config.n_threads);
+        if (runtime.contains("context_management")) {
+            const auto & managed = runtime["context_management"];
+            if (!managed.is_object()) { error = "runtime.context_management must be an object"; return false; }
+            read_optional(managed, "enabled", config.context_management.enabled);
+            read_optional(managed, "persist_session", config.context_management.persist_session);
+            read_optional(managed, "semantic_compaction", config.context_management.semantic_compaction);
+            read_optional(managed, "recent_turns", config.context_management.recent_turns);
+            read_optional(managed, "summary_max_tokens", config.context_management.summary_max_tokens);
+            read_optional(managed, "max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn);
+            read_optional(managed, "max_history_chars", config.context_management.max_history_chars);
+        }
         if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
             const auto & budgets = runtime["context_budgets"];
             read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
@@ -1281,6 +1292,15 @@ nlohmann::ordered_json agent_host_config_to_json(
         }},
         {"runtime", {
             {"context_size", config.runtime_context_size},
+            {"context_management", {
+                {"enabled", config.context_management.enabled},
+                {"persist_session", config.context_management.persist_session},
+                {"semantic_compaction", config.context_management.semantic_compaction},
+                {"recent_turns", config.context_management.recent_turns},
+                {"summary_max_tokens", config.context_management.summary_max_tokens},
+                {"max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn},
+                {"max_history_chars", config.context_management.max_history_chars},
+            }},
             {"n_predict", config.n_predict},
             {"context_budgets", {
                 {"plan_chars", config.context_budgets.plan_chars},
@@ -1630,6 +1650,13 @@ bool validate_agent_host_config(
     }
     if (config.n_threads < 1) {
         error = "runtime.n_threads must be greater than zero";
+        return false;
+    }
+    if (config.context_management.recent_turns == 0 || config.context_management.recent_turns > 32 ||
+            config.context_management.summary_max_tokens < 16 || config.context_management.summary_max_tokens > 4096 ||
+            config.context_management.max_summary_calls_per_turn > 1 ||
+            config.context_management.max_history_chars < 256 || config.context_management.max_history_chars > 1024 * 1024) {
+        error = "runtime.context_management limits are outside supported bounds";
         return false;
     }
     const auto & budgets = config.context_budgets;
@@ -2076,6 +2103,7 @@ void apply_agent_host_config_to_daemon_options(
     options.context_size = config.runtime_context_size;
     options.n_threads = config.n_threads;
     options.context_budgets = config.context_budgets;
+    options.context_management = config.context_management;
     options.max_continuations = config.max_continuations;
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;

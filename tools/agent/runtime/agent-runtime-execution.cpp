@@ -438,6 +438,7 @@ bool prepare_available_resources(common_agent_runtime_driver_execution & executi
     execution.available_resources.clear();
     for (const auto & descriptor : listed) {
         if (descriptor.uri.empty()) continue;
+        if (descriptor.metadata.purpose.rfind("agent.context.", 0) == 0) continue;
         bool current = false;
         for (auto & input : execution.input_resources) {
             if (input.resource.uri != descriptor.uri) continue;

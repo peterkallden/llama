@@ -367,6 +367,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
+        test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
         test-agent-loop.cpp
         test-agent-tool-failure.cpp
@@ -448,6 +449,10 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-representation-augmentation.cpp
         test-agent-model-facing-tool-chain.cpp
         test-memory-policy.cpp
+        test-memory-store.cpp
+        test-memory-retrieval.cpp
+        test-memory-tool-service.cpp
+        test-memory-cozo.cpp
         test-plan-context.cpp
         test-plan-json.cpp
         test-plan-store.cpp
@@ -476,6 +481,9 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
             continue()
         endif()
+        if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp" AND NOT LLAMA_MEMORY_COZO)
+            continue()
+        endif()
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
@@ -494,6 +502,13 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-factorized-cvec-config")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-context-management")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME MATCHES "^test-memory-(store|retrieval|tool-service|cozo)$")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-memory)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-daemon-seams")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})

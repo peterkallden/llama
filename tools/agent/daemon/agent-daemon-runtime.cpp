@@ -264,6 +264,7 @@ common_agent_runtime_config make_daemon_runtime_config(
     config.generation_config.enable_tool_family_routing = options.agent_plan == "auto";
     config.generation_config.context_budgets = options.context_budgets;
     config.context_budgets = options.context_budgets;
+    config.context_management = options.context_management;
     config.max_continuations = options.max_continuations;
     config.enable_memory_learning = options.memory_learn == "post-turn";
     config.memory_learning_config.min_confidence = options.memory_learn_min_confidence;
@@ -1197,6 +1198,10 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         },
         runtime.model_residency,
         make_daemon_flydelta_deployment_resolver(options, config_store, runtime),
+        &resource_store,
+        (options.resource_blob_backend == "auto" || options.resource_blob_backend == "fs") &&
+            (options.resource_metadata_backend == "cozo" ||
+                (options.resource_metadata_backend == "auto" && !options.resource_metadata_db.empty())),
     };
 }
 
@@ -1464,6 +1469,7 @@ bool initialize_agent_daemon_environment(
             {},
             runtime.model_residency,
             session_manager_build_config.flydelta_deployment_resolver,
+            session_manager_build_config.context_resource_store,
         }));
 
     common_memory_store * memory_store = runtime.memory_store.get();

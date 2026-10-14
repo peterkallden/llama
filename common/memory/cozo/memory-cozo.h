@@ -15,6 +15,7 @@ public:
     std::vector<common_memory_record> list(const common_memory_query & query, std::string & error) override;
     std::vector<common_memory_hit> search(const common_memory_query & query, std::string & error) override;
     bool relate(const std::string & from, const std::string & relation, const std::string & to, float weight, std::string & error) override;
+    std::vector<common_memory_relation> list_relations(const std::string & id, const std::string & relation, bool outgoing, const common_memory_query & scope, std::string & error) override;
     bool erase(const std::string & id, std::string & error) override;
 
 private:

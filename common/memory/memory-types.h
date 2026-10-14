@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -51,6 +52,69 @@ struct common_memory_record {
     std::unordered_map<std::string, std::string> metadata;
 };
 
+struct common_memory_temporal_fields {
+    std::optional<int64_t> observed_at;
+    std::optional<int64_t> valid_from;
+    std::optional<int64_t> valid_to;
+};
+
+inline bool common_memory_temporal_fields_read(
+        const common_memory_record & record,
+        common_memory_temporal_fields & fields,
+        std::string & error) {
+    fields = {};
+    auto read = [&](const char * key, std::optional<int64_t> & output) {
+        const auto found = record.metadata.find(key);
+        if (found == record.metadata.end()) return true;
+        try {
+            size_t used = 0;
+            const auto value = std::stoll(found->second, &used);
+            if (used != found->second.size()) return false;
+            output = value;
+            return true;
+        } catch (...) { return false; }
+    };
+    if (!read("agent.temporal.v1.observed_at", fields.observed_at) ||
+        !read("agent.temporal.v1.valid_from", fields.valid_from) ||
+        !read("agent.temporal.v1.valid_to", fields.valid_to)) {
+        error = "memory temporal metadata must contain integer Unix timestamps";
+        return false;
+    }
+    if (fields.valid_from && fields.valid_to && *fields.valid_from >= *fields.valid_to) {
+        error = "memory validity interval must satisfy valid_from < valid_to";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+inline bool common_memory_temporal_fields_write(
+        common_memory_record & record,
+        const common_memory_temporal_fields & fields,
+        std::string & error) {
+    if (fields.valid_from && fields.valid_to && *fields.valid_from >= *fields.valid_to) {
+        error = "memory validity interval must satisfy valid_from < valid_to";
+        return false;
+    }
+    auto write = [&](const char * key, const std::optional<int64_t> & value) {
+        if (value) record.metadata[key] = std::to_string(*value);
+        else record.metadata.erase(key);
+    };
+    write("agent.temporal.v1.observed_at", fields.observed_at);
+    write("agent.temporal.v1.valid_from", fields.valid_from);
+    write("agent.temporal.v1.valid_to", fields.valid_to);
+    error.clear();
+    return true;
+}
+
+struct common_memory_relation {
+    std::string from;
+    std::string relation;
+    std::string to;
+    float weight = 0.0f;
+    int64_t created_at = 0;
+};
+
 struct common_memory_query {
     std::string text;
     std::vector<float> embedding;
@@ -68,6 +132,8 @@ struct common_memory_query {
     float minimum_score = 0.0f;
     size_t graph_depth = 1;
     size_t token_budget = 1024;
+    std::optional<int64_t> as_of;
+    bool include_history = false;
 };
 
 struct common_memory_hit {

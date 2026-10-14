@@ -111,6 +111,8 @@ bool common_memory_sqlite_store::ensure_schema(std::string & error) {
 bool common_memory_sqlite_store::put(const common_memory_record & record, std::string & error) {
     if (!database_.is_open()) { error = "memory store is not open"; return false; }
     if (record.id.empty()) { error = "memory id must not be empty"; return false; }
+    common_memory_temporal_fields temporal;
+    if (!common_memory_temporal_fields_read(record, temporal, error)) return false;
 
     common_sqlite_statement statement;
     if (!database_.prepare(R"SQL(
@@ -243,6 +245,7 @@ std::vector<common_memory_hit> common_memory_sqlite_store::search(const common_m
 bool common_memory_sqlite_store::relate(const std::string & from, const std::string & relation, const std::string & to, float weight, std::string & error) {
     if (!database_.is_open()) { error = "memory store is not open"; return false; }
     if (relation.empty()) { error = "relation must not be empty"; return false; }
+    if (!common_memory_validate_relation(*this, from, relation, to, error)) return false;
     common_sqlite_transaction transaction(database_);
     if (!transaction.begin(error)) return false;
     common_sqlite_statement statement;
@@ -250,6 +253,32 @@ bool common_memory_sqlite_store::relate(const std::string & from, const std::str
     bool row = false;
     if (!statement.step(row, error) || !transaction.commit(error)) return false;
     return true;
+}
+
+std::vector<common_memory_relation> common_memory_sqlite_store::list_relations(
+        const std::string & id, const std::string & relation, bool outgoing,
+        const common_memory_query & scope, std::string & error) {
+    std::vector<common_memory_relation> result;
+    if (!database_.is_open()) { error = "memory store is not open"; return result; }
+    common_sqlite_statement statement;
+    std::string sql = "SELECT from_id,relation,to_id,weight,created_at FROM agent_memory_edge WHERE ";
+    sql += outgoing ? "from_id = ?" : "to_id = ?";
+    if (!relation.empty()) sql += " AND relation = ?";
+    sql += " ORDER BY created_at,from_id,to_id;";
+    if (!database_.prepare(sql, statement, error) || !statement.bind_text(1, id, error) ||
+        (!relation.empty() && !statement.bind_text(2, relation, error))) return {};
+    bool row = false;
+    while (statement.step(row, error) && row) {
+        common_memory_relation edge{text_column(statement, 0), text_column(statement, 1), text_column(statement, 2),
+            static_cast<float>(statement.column_double(3)), statement.column_int64(4)};
+        auto from = get(edge.from, error);
+        if (!error.empty()) return {};
+        auto to = get(edge.to, error);
+        if (!error.empty()) return {};
+        if (!from || !to || !common_memory_scope_matches(*from, scope) || !common_memory_scope_matches(*to, scope)) continue;
+        result.push_back(std::move(edge));
+    }
+    return error.empty() ? result : std::vector<common_memory_relation>{};
 }
 
 bool common_memory_sqlite_store::erase(const std::string & id, std::string & error) {

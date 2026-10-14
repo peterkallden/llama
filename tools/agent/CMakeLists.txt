@@ -76,6 +76,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-session-context-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-event-projector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-turn-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-inference-executor.cpp
@@ -127,6 +128,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-session-context-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-turn-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-inference-executor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-manager.cpp

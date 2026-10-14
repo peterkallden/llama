@@ -474,7 +474,7 @@ bool common_agent_runtime_session_manager::reset_session(
         wait_error.clear();
     }
 
-    it->second.host->reset();
+    it->second.host->reset(true);
     {
         std::lock_guard<std::mutex> lock(it->second.mutex);
         it->second.mailbox.clear();
@@ -522,7 +522,7 @@ bool common_agent_runtime_session_manager::close_session(
         wait_error.clear();
     }
 
-    it->second.host->reset();
+    it->second.host->reset(false);
     lanes.erase(it);
     error.clear();
     make_lane_emitter(key, {}, {}, {})

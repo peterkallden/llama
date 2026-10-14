@@ -38,6 +38,7 @@ enum class common_agent_generation_purpose {
     reflection,
     memory_learning,
     resource_chunk_extraction,
+    context_compaction,
 };
 
 inline const char * common_agent_generation_purpose_name(common_agent_generation_purpose purpose) {
@@ -56,6 +57,7 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
         case common_agent_generation_purpose::reflection:          return "reflection";
         case common_agent_generation_purpose::memory_learning:     return "memory_learning";
         case common_agent_generation_purpose::resource_chunk_extraction: return "resource_chunk_extraction";
+        case common_agent_generation_purpose::context_compaction: return "context_compaction";
     }
     return "draft";
 }
