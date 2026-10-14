@@ -1225,7 +1225,8 @@ int main(int argc, char ** argv) {
                     if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
                             production_provider, production_job, deep_fixture, basis, {coefficients}, apply_overlay,
                             trials, margins, geometries, flags, runner_error, full_execution,
-                            full_execution ? "smoke-full" : "smoke-diagnostic")) return false;
+                            full_execution ? "smoke-full" : "smoke-diagnostic",
+                            common_flydelta_experiment_phase::deep_controls)) return false;
                     trial = trials.front(); margin = margins.front(); geometry = geometries.front();
                     geometry_available = flags.front();
                     return true;
@@ -1409,7 +1410,8 @@ int main(int argc, char ** argv) {
                         if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
                                 production_provider, production_job, deep_fixture, basis, coefficients, true,
                                 trials, margins, geometries, geometry_available, runner_error, full_execution,
-                                full_execution ? "smoke-full" : "smoke-diagnostic")) return false;
+                                full_execution ? "smoke-full" : "smoke-diagnostic",
+                                common_flydelta_experiment_phase::deep_controls)) return false;
                         deep_device_batch_used = deep_device_batch_used || std::any_of(trials.begin(), trials.end(),
                             [](const auto & trial) { return trial.device_batch; });
                         deep_backend_batch_used = deep_backend_batch_used || std::any_of(trials.begin(), trials.end(),

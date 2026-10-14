@@ -1422,7 +1422,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.strategy = plan.run_tfo_lite
         ? common_flydelta_coefficient_search_strategy::tfo_lite
         : common_flydelta_coefficient_search_strategy::coordinate;
-    const auto run_mode = [provider, &job, &fixture](
+    const auto run_mode = [provider, &job, &fixture, phase = plan.phase](
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<float> & coefficients,
@@ -1439,7 +1439,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         if (!daemon_flydelta_run_coefficient_arm_batch(
                 provider, job, fixture, current_basis, {coefficients}, apply_overlay,
                 trials, margins, geometries, geometry_flags, runner_error,
-                full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single")) {
+                full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single", phase)) {
             return false;
         }
         trial = std::move(trials.front());
@@ -1448,7 +1448,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         has_geometry = geometry_flags.front();
         return true;
     };
-    const auto run_batch_mode = [provider, &job, &fixture] (
+    const auto run_batch_mode = [provider, &job, &fixture, phase = plan.phase] (
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<std::vector<float>> & coefficients,
@@ -1460,7 +1460,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         return daemon_flydelta_run_coefficient_arm_batch(
             provider, job, fixture, current_basis, coefficients, true,
             trials, margins, geometries, geometry_flags, runner_error,
-            full_execution, full_execution ? "deep-full-batch" : "deep-diagnostic-batch");
+            full_execution, full_execution ? "deep-full-batch" : "deep-diagnostic-batch", phase);
     };
     const auto run_diagnostic = [run_mode](
             const common_flydelta_experiment_fixture & current_fixture,

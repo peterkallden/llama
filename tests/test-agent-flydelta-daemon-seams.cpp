@@ -15,6 +15,10 @@ int main() {
     agent_catalogued_resource_store resources(std::make_shared<agent_in_memory_blob_store>(),
         std::make_unique<agent_in_memory_resource_catalog>());
     auto provider = std::make_shared<daemon_flydelta_resource_provider>();
+    CHECK(!daemon_flydelta_factorized_wave_eligible(common_flydelta_experiment_phase::bootstrap, 4));
+    CHECK(!daemon_flydelta_factorized_wave_eligible(common_flydelta_experiment_phase::shallow_controls, 4));
+    CHECK(!daemon_flydelta_factorized_wave_eligible(common_flydelta_experiment_phase::deep_controls, 1));
+    CHECK(daemon_flydelta_factorized_wave_eligible(common_flydelta_experiment_phase::deep_controls, 2));
     provider->resources = &resources;
     provider->host = std::make_shared<common_agent_server_context_host>();
     provider->n_predict = 512;

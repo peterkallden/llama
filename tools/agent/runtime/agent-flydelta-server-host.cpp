@@ -73,6 +73,7 @@ bool daemon_flydelta_prepare_arm(
         std::shared_ptr<const std::vector<float>> shared_flattened_basis;
         bool factorized = false;
         bool factorized_batch_eligible = false;
+        std::string factorized_ineligible_reason;
         const bool factorized_enabled = provider->host &&
             provider->host->config().per_sequence_factorized_cvec_batch &&
             provider->host->server().per_sequence_factorized_cvec_batch_enabled();
@@ -83,6 +84,7 @@ bool daemon_flydelta_prepare_arm(
             if (it != provider->factorized_directions.end()) {
                 factorized = true;
                 factorized_batch_eligible = it->second.batch_eligible;
+                factorized_ineligible_reason = it->second.batch_ineligible_reason;
                 factorized_coefficients = it->second.normalized_coefficients;
                 shared_basis = it->second.basis;
                 shared_flattened_basis = it->second.flattened_basis;
@@ -158,7 +160,8 @@ bool daemon_flydelta_prepare_arm(
             }
             if (!activation_request.allow_factorized_overlay) {
                 activation_request.factorized_fallback_reason = !factorized_batch_eligible
-                    ? "factorized_requires_parallel_coefficient_wave"
+                    ? (factorized_ineligible_reason.empty()
+                        ? "factorized_requires_parallel_coefficient_wave" : factorized_ineligible_reason)
                     : !factorized_enabled
                     ? "factorized_not_enabled"
                     : "factorized_requires_parallel_sequences";
@@ -762,7 +765,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         std::vector<bool> & geometry_available,
         std::string & error,
         const bool full_execution,
-        const std::string & wave_suffix) {
+        const std::string & wave_suffix,
+        const common_flydelta_experiment_phase phase) {
     error.clear();
     if (coefficients.empty()) {
         error = "FlyDelta coefficient batch is empty";
@@ -821,7 +825,11 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             material.normalized_coefficients = std::move(normalized);
             material.source_ref = job.seed.candidate_ref;
             material.basis_fingerprint = basis_fingerprint;
-            material.batch_eligible = coefficients.size() >= 2;
+            // Native B+c is experimental for Deep/TFO coefficient waves only.
+            // Shallow, Bootstrap and augmentation retain sparse/dense overlays.
+            material.batch_eligible = daemon_flydelta_factorized_wave_eligible(phase, coefficients.size());
+            material.batch_ineligible_reason = phase != common_flydelta_experiment_phase::deep_controls
+                ? "factorized_requires_deep_or_tfo_phase" : "factorized_requires_parallel_coefficient_wave";
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             provider->factorized_directions[intervention_ref] = std::move(material);
             factorized_refs.push_back(intervention_ref);

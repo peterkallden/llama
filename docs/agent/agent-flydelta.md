@@ -2014,8 +2014,13 @@ is retained.
 
 The optional daemon JSON setting
 `runtime.adaptation.flydelta.factorized_cvec_batch` defaults to `false`. When
-enabled, coefficient waves may send one shared FP32 basis plus one coefficient
-row per sequence to the resident server-context backend. It requires FlyDelta,
+enabled, only Deep coefficient waves (including TFO-lite in `deep_controls`)
+may send one shared FP32 basis plus one coefficient
+row per sequence to the resident server-context backend. Shallow, Bootstrap,
+AdaptiveAlpha, orthogonal search, WHERE and augmentation continue to use the
+existing sparse/dense path. The coefficient binding defaults to Bootstrap;
+callers must explicitly supply the Deep phase to permit factorization.
+It requires FlyDelta,
 batch mode other than `disabled`, `batch_parallelism >= 2`, and a
 `server-context` model profile. It changes only overlay materialization, not
 Whirlpool, ranking, verification, or promotion. A single-row tail, incompatible

@@ -73,6 +73,7 @@ struct daemon_flydelta_factorized_direction {
     std::string source_ref;
     std::string basis_fingerprint;
     bool batch_eligible = false;
+    std::string batch_ineligible_reason;
 };
 
 struct daemon_flydelta_resource_provider {
@@ -471,6 +472,11 @@ bool daemon_flydelta_register_composed_direction(
         std::string & reference,
         std::string & error);
 
+inline bool daemon_flydelta_factorized_wave_eligible(
+        const common_flydelta_experiment_phase phase, const size_t arm_count) {
+    return phase == common_flydelta_experiment_phase::deep_controls && arm_count >= 2;
+}
+
 bool daemon_flydelta_run_coefficient_arm_batch(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_experiment_job & job,
@@ -484,7 +490,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         std::vector<bool> & geometry_available,
         std::string & error,
         const bool full_execution = true,
-        const std::string & wave_suffix = {});
+        const std::string & wave_suffix = {},
+        const common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap);
 
 bool daemon_flydelta_resolve_evidence_direction_candidates(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
