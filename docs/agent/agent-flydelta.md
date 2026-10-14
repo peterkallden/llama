@@ -2679,8 +2679,8 @@ The separate Qwen2.5-1.5B-Instruct Q4_K_M rank-one cvec comparison used NVIDIA
 Vulkan with two physical sequences and confirmed `device_batch` and device
 residency. Sparse and factorized runs both generated `PASS`; their teacher
 margins matched exactly (8.0214386; delta 0). Reported batch model time was
-887.803406 ms sparse versus 887.510620 ms factorized, with binding time
-0.669000 ms versus 0.604000 ms. These single-run timings are wiring/cost
+890.142578 ms sparse versus 892.346863 ms factorized, with binding time
+0.554000 ms versus 0.564000 ms. These single-run timings are wiring/cost
 observations, not a speedup or behavioral-capacity claim. The factorized run
 bound one 6144-byte basis and 8 coefficient bytes. The accompanying WHERE run
 initially stopped on missing source-evidence metadata in the smoke job;
@@ -2694,6 +2694,49 @@ beta pack passed 18 suites but retained one unrelated MCP HTTP vertical-smoke
 failure: its fake runtime only admits legacy `resource_read`/`memory_get`, while
 research requests an unsupported tool. This is recorded separately, not hidden
 as a FlyDelta success or repaired by weakening research/tool validation.
+
+The corrected full-trace production-binding smoke completed successfully on
+the same Qwen model/backend (`production-arm-seams-where-v4`). Whirlpool probed
+layers 12, 13, 14 and 16 at scale 0.02, then ran a fresh baseline and three
+full-generation frontier arms. All four full answers ended at EOS after 189
+tokens; verification was known but failed on the same invalid DSL. Layer 12
+continued reference-only, without learning credit.
+
+The rank-one coefficient wave then ran two diagnostics and one full-generation
+finalist through the daemon binding. Measured post-overlay shift was 0.05 for
+both signed arms; normalized teacher margins differed:
+
+| Arm | Teacher margin | Measured shift norm | Full generation |
+| --- | ---: | ---: | --- |
+| +0.05 | 0.910755 | 0.05 | Known failed verdict; same invalid answer as baseline |
+| -0.05 | 0.909809 | 0.05 | Not requested by the one-finalist budget |
+
+Native factorized execution included a two-sequence batch and its one-sequence
+physical remainder. Compact-geometry availability required the existing CPU
+capture fallback; this remained Vulkan model execution, not a claim that all
+geometry was device-reduced. The full finalist used the ordinary sparse
+fallback, preserving the same signed coefficient and actual application.
+The coefficient stage took 783206 ms, including repeated model/teacher work
+and capture fallback; it is not an algebra-only timing.
+
+No `HELPED` or candidate selection was established. The diagnostic arms remain
+unverified observations; the full baseline/finalist pair is `UNKNOWN` because
+both failed, not because host evaluation was missing. Requested ranks 2 and 4
+were `unavailable`: the evidence gate admitted no verified independent repair
+material, and the WHERE smoke supplied one experimental raw direction. The
+replay repair generations themselves failed verification, so these results
+prove application, state transfer and measurable logit effects, not successful
+learning or a negative rank-capacity result. In the concise arm log,
+`host_verified=yes` means the verifier was known; the full daemon trace's
+`verifier_passed` is the actual pass/fail field.
+
+Raw prompts (including the rendered template), replies, arm identities and
+verdicts are retained under
+`/home/prbm/llama-agent-smokes/factorized-20261013/production-arm-seams-where-v4/`:
+`low-rank-rank-sweep.log`, `native-cvec-batch.log`, `sparse-cvec-batch.log` and
+`learning-ledger.jsonl`. The driver reported `rank_comparison=completed` and
+Q1 output equality with teacher-margin delta zero. Factorized execution stays
+experimental and opt-in; neither behavioral gain nor speedup was established.
 
 ### Low-rank rank-sweep model smoke
 
