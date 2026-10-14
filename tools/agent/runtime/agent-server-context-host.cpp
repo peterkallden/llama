@@ -352,6 +352,7 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         const common_flydelta_arm_batch_request & request,
         common_flydelta_arm_batch_result & result,
         std::string & error) {
+    const auto wall_start = std::chrono::steady_clock::now();
     error.clear();
     result = {};
     if (!host || !binding.prepare_arm || !binding.finalize_arm) {
@@ -370,6 +371,7 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
 
     std::vector<common_agent_generation_request> generation_requests;
     generation_requests.reserve(request.arms.size());
+    const auto prepare_start = std::chrono::steady_clock::now();
     for (const auto & arm : request.arms) {
         common_agent_generation_request generation_request;
         if (!binding.prepare_arm(arm, generation_request, error)) {
@@ -386,6 +388,8 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             arm, generation_request);
         generation_requests.push_back(std::move(generation_request));
     }
+    const float prepare_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - prepare_start).count());
 
     const auto generation_start = std::chrono::steady_clock::now();
     std::vector<common_agent_generation_result> generation_results;
@@ -436,11 +440,23 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
 
     result.schema_version = request.schema_version;
     result.execution_stats.logical_arm_count = request.arms.size();
-    result.execution_stats.physical_batch_count = 1;
-    result.execution_stats.largest_physical_batch = request.arms.size();
+    const size_t resident_parallelism = static_cast<size_t>(std::max(
+        1, host->context_key().n_parallel));
     result.execution_stats.native_batch_used = native_batch && request.arms.size() > 1;
+    if (result.execution_stats.native_batch_used) {
+        result.execution_stats.physical_batch_count =
+            (request.arms.size() + resident_parallelism - 1) / resident_parallelism;
+        result.execution_stats.largest_physical_batch = std::min(
+            request.arms.size(), resident_parallelism);
+    } else {
+        result.execution_stats.physical_batch_count = request.arms.size();
+        result.execution_stats.largest_physical_batch = request.arms.empty() ? 0 : 1;
+    }
     result.execution_stats.model_ms = generation_ms;
+    result.execution_stats.host_prepare_ms = prepare_ms;
+    result.execution_stats.teacher_forced_ms = teacher_forced_ms;
     result.arms.reserve(request.arms.size());
+    const auto finalize_start = std::chrono::steady_clock::now();
     for (size_t index = 0; index < request.arms.size(); ++index) {
         common_flydelta_arm_result arm_result;
         if (!binding.finalize_arm(
@@ -465,11 +481,13 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         arm_result.execution_metrics.request_generation = request.arms[index].request_generation;
         arm_result.execution_metrics.request_host_verification =
             request.arms[index].request_host_verification;
-        arm_result.execution_metrics.model_ms = request.arms[index].request_generation
-            ? generation_ms : 0.0f;
-        arm_result.execution_metrics.generation_ms = request.arms[index].request_generation
-            ? generation_ms : 0.0f;
-        arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
+        // These are measured wall-times for shared physical work. Attribute
+        // each batch total once; summing per-arm records must not multiply it.
+        if (index == 0) {
+            arm_result.execution_metrics.model_ms = generation_ms;
+            arm_result.execution_metrics.generation_ms = generation_ms;
+            arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
+        }
         arm_result.execution_metrics.execution_class =
             request.arms[index].request_generation ? "full" : "diagnostic";
         arm_result.execution_metrics.batched_execution_used =
@@ -495,6 +513,8 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
                 generation_results[index].flydelta_runtime.factorized_basis_upload_count;
             arm_result.execution_metrics.basis_cache_hit =
                 generation_results[index].flydelta_runtime.factorized_basis_cache_hit;
+            arm_result.execution_metrics.overlay_cache_hit =
+                generation_results[index].flydelta_runtime.factorized_overlay_cache_hit;
             arm_result.execution_metrics.overlay_bytes_bound =
                 generation_results[index].flydelta_runtime.factorized_binding
                     ? generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes
@@ -574,6 +594,10 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         }
         result.arms.push_back(std::move(arm_result));
     }
+    result.execution_stats.finalize_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - finalize_start).count());
+    result.execution_stats.wall_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - wall_start).count());
     return common_flydelta_arm_batch_result_validate(result, request, error);
 }
 

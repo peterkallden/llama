@@ -562,6 +562,7 @@ struct server_task_result_teacher_score : server_task_result {
     size_t flydelta_cvec_physical_batch_size = 0;
     bool flydelta_cvec_factorized_binding = false;
     bool flydelta_cvec_basis_cache_hit = false;
+    bool flydelta_cvec_overlay_cache_hit = false;
     size_t flydelta_cvec_basis_upload_count = 0;
     size_t flydelta_cvec_overlay_resident_bytes = 0;
     uint64_t flydelta_cvec_composition_us = 0;
@@ -612,6 +613,7 @@ struct server_task_result_cmpl_final : server_task_result {
     size_t flydelta_cvec_physical_batch_size = 0;
     bool flydelta_cvec_factorized_binding = false;
     bool flydelta_cvec_basis_cache_hit = false;
+    bool flydelta_cvec_overlay_cache_hit = false;
     size_t flydelta_cvec_basis_upload_count = 0;
     size_t flydelta_cvec_overlay_resident_bytes = 0;
     uint64_t flydelta_cvec_composition_us = 0;

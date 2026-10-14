@@ -8,6 +8,11 @@ build_dir=$(agent_smoke_build_dir)
 model="${LLAMA_AGENT_MODEL:-$(agent_smoke_model)}"
 suite="${LLAMA_AGENT_DATASET_QUESTION_SUITE:-${repo_root}/docs/examples/agent-flydelta-dataset-repair-echo-replay.jsonl}"
 max_scenarios="${LLAMA_AGENT_LOW_RANK_MAX_SCENARIOS:-4}"
+n_parallel="${LLAMA_AGENT_N_PARALLEL:-2}"
+n_ctx_per_sequence="${LLAMA_AGENT_N_CTX_PER_SEQUENCE:-6144}"
+cvec_arm_count="${LLAMA_AGENT_CVEC_ARM_COUNT:-4}"
+cvec_warmup_count="${LLAMA_AGENT_CVEC_WARMUP_COUNT:-1}"
+cvec_repeat_count="${LLAMA_AGENT_CVEC_REPEAT_COUNT:-4}"
 if [[ "$model" != /* ]]; then model="${repo_root}/${model}"; fi
 if [[ "$suite" != /* ]]; then suite="${repo_root}/${suite}"; fi
 work_dir=$(agent_smoke_prepare_workdir flydelta-low-rank-model)
@@ -42,6 +47,8 @@ fi
 if LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
         LLAMA_AGENT_LEARNING_LEDGER="$work_dir/learning-ledger.jsonl" \
         LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
+        LLAMA_AGENT_N_PARALLEL="$n_parallel" \
+        LLAMA_AGENT_N_CTX_PER_SEQUENCE="$n_ctx_per_sequence" \
         agent_smoke_run_logged "$rank_log" "$repair_bin" \
             --model "$model" --suite "$suite" \
             --max-scenarios "$max_scenarios" \
@@ -84,7 +91,10 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
 agent_smoke_run_logged "$cvec_log" "$cvec_bin" \
     --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
     --threads "${LLAMA_AGENT_THREADS:-3}" \
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" --factorized
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" \
+    --n-parallel "$n_parallel" --n-ctx-per-sequence "$n_ctx_per_sequence" \
+    --arm-count "$cvec_arm_count" --warmup-count "$cvec_warmup_count" \
+    --repeat-count "$cvec_repeat_count" --factorized
 grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$cvec_log"
 grep -Fq 'batched_execution=yes' "$cvec_log"
 grep -Fq 'overlay_representation=factorized' "$cvec_log"
@@ -97,7 +107,10 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
 agent_smoke_run_logged "$sparse_log" "$cvec_bin" \
     --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
     --threads "${LLAMA_AGENT_THREADS:-3}" \
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" \
+    --n-parallel "$n_parallel" --n-ctx-per-sequence "$n_ctx_per_sequence" \
+    --arm-count "$cvec_arm_count" --warmup-count "$cvec_warmup_count" \
+    --repeat-count "$cvec_repeat_count"
 grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$sparse_log"
 factorized_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$cvec_log" | tail -n 1)
 sparse_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$sparse_log" | tail -n 1)
@@ -127,45 +140,7 @@ else
     echo "q1_execution_device=backend_batch_non_device"
 fi
 
-repeat_count="${LLAMA_AGENT_CVEC_REPEAT_COUNT:-4}"
-if [[ ! "$repeat_count" =~ ^[1-9][0-9]*$ ]]; then
-    echo "LLAMA_AGENT_CVEC_REPEAT_COUNT must be a positive integer" >&2
-    exit 2
-fi
-for repeat in $(seq 2 "$repeat_count"); do
-    cvec_repeat_log="$work_dir/native-cvec-batch-${repeat}.log"
-    sparse_repeat_log="$work_dir/sparse-cvec-batch-${repeat}.log"
-    LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
-    agent_smoke_run_logged "$cvec_repeat_log" "$cvec_bin" \
-        --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
-        --threads "${LLAMA_AGENT_THREADS:-3}" \
-        --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" --factorized
-    LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
-    agent_smoke_run_logged "$sparse_repeat_log" "$cvec_bin" \
-        --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
-        --threads "${LLAMA_AGENT_THREADS:-3}" \
-        --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"
-    grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$cvec_repeat_log"
-    grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$sparse_repeat_log"
-    grep -Fq 'factorized_binding_used=yes' "$cvec_repeat_log"
-    repeat_factorized_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$cvec_repeat_log" | tail -n 1)
-    repeat_sparse_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$sparse_repeat_log" | tail -n 1)
-    if [[ -z "$repeat_factorized_output" || "$repeat_factorized_output" != "$repeat_sparse_output" ]]; then
-        echo "Q1 generated output mismatch at repeat=${repeat}" >&2
-        exit 1
-    fi
-    repeat_factorized_margin=$(grep '^cvec_smoke_teacher_margin arm="flydelta://arm/cvec-batch-smoke/1"' "$cvec_repeat_log" | tail -n 1 | sed -E 's/.* total=([^ ]+).*/\1/')
-    repeat_sparse_margin=$(grep '^cvec_smoke_teacher_margin arm="flydelta://arm/cvec-batch-smoke/1"' "$sparse_repeat_log" | tail -n 1 | sed -E 's/.* total=([^ ]+).*/\1/')
-    repeat_margin_delta=$(awk -v factorized="$repeat_factorized_margin" -v sparse="$repeat_sparse_margin" \
-        'BEGIN { delta = factorized - sparse; if (delta < 0) delta = -delta; printf "%.9g", delta }')
-    if [[ -z "$repeat_factorized_margin" || -z "$repeat_sparse_margin" ]] ||
-            ! awk -v delta="$repeat_margin_delta" 'BEGIN { exit !(delta <= 1e-4) }'; then
-        echo "Q1 teacher margin mismatch at repeat=${repeat}: sparse=${repeat_sparse_margin} factorized=${repeat_factorized_margin} delta=${repeat_margin_delta}" >&2
-        exit 1
-    fi
-    echo "q1_repeat=${repeat} generated_output_match=yes teacher_margin_delta=${repeat_margin_delta}"
-done
-echo "q1_repeats=${repeat_count}"
+echo "q1_repeats=${cvec_repeat_count}"
 echo "flydelta_low_rank_model_smoke=completed"
 echo "rank_comparison=${rank_status}"
 echo "rank_log=${rank_log}"

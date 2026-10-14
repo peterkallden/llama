@@ -223,6 +223,15 @@ bool llama_adapter_cvec_batch::init(
 
 void llama_adapter_cvec_batch::clear() {
     clear_binding();
+    composed_bufs.clear();
+    composed_ctxs.clear();
+    composed_tensors.clear();
+    composed_row_by_coefficients.clear();
+    composed_overlay_key.clear();
+    composed_basis_key.clear();
+    composed_zero_overlay_row = -1;
+    seq_overlay_rows.clear();
+    zero_overlay_row = -1;
     resident_basis.clear();
     resident_basis_key.clear();
     resident_basis_bytes_value = 0;
@@ -231,6 +240,7 @@ void llama_adapter_cvec_batch::clear() {
     last_basis_cache_hit = false;
     last_composition_us_value = 0;
     composed_overlay_bytes_value = 0;
+    last_composed_overlay_cache_hit = false;
 }
 
 void llama_adapter_cvec_batch::clear_binding() {
@@ -240,6 +250,8 @@ void llama_adapter_cvec_batch::clear_binding() {
     layer_end = -1;
     n_embd = 0;
     seq_ids.clear();
+    seq_overlay_rows.clear();
+    zero_overlay_row = -1;
     {
         std::lock_guard<std::mutex> lock(selector_mutex);
         selector_states.clear();
@@ -375,9 +387,9 @@ bool llama_adapter_cvec_batch::apply_factorized_composed(
     const auto compose_started = std::chrono::steady_clock::now();
     clear_binding();
     last_basis_cache_hit = false;
+    last_composed_overlay_cache_hit = false;
     last_basis_upload_count_value = 0;
     last_composition_us_value = 0;
-    composed_overlay_bytes_value = 0;
     if (scheduler == nullptr || basis == nullptr || basis_fingerprint.empty() || rank <= 0 || seq_ids.empty() ||
             seq_ids.size() != coefficients.size() ||
             n_embd != static_cast<int32_t>(model.hparams.n_embd) || layer_indices.empty() ||
@@ -396,6 +408,12 @@ bool llama_adapter_cvec_batch::apply_factorized_composed(
                 [](uint32_t a, uint32_t b) { return a >= b; }) != layer_indices.end() ||
             layer_indices.front() < 1 || layer_indices.back() >= model.hparams.n_layer()) {
         return false;
+    }
+
+    for (const float * row : coefficients) {
+        for (int32_t component = 0; component < rank; ++component) {
+            if (!std::isfinite(row[component])) return false;
+        }
     }
 
     std::ostringstream key_builder;
@@ -469,74 +487,133 @@ bool llama_adapter_cvec_batch::apply_factorized_composed(
         resident_basis_key = requested_key;
     }
 
-    const auto & hparams = model.hparams;
-    tensors.assign(hparams.n_layer(), nullptr);
-    for (size_t i = 0; i < layer_indices.size(); ++i) {
-        const uint32_t layer = layer_indices[i];
-        const auto buft = model.select_buft(layer);
-        ggml_init_params params = {
-            4 * ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
-        ggml_context * ctx = ggml_init(params);
-        if (ctx) ctxs.emplace_back(ctx);
-        if (!ctx || buft == nullptr || ggml_backend_buft_get_device(buft) == nullptr) {
-            clear_binding();
-            return false;
-        }
-        ggml_tensor * coeff_tensor = ggml_new_tensor_2d(
-            ctx, GGML_TYPE_F32, rank, static_cast<int64_t>(seq_ids.size() + 1));
-        if (!coeff_tensor) {
-            clear_binding();
-            return false;
-        }
-        ggml_tensor * projected = ggml_mul_mat(ctx, resident_basis[i].tensor, coeff_tensor);
-        if (!projected) {
-            clear_binding();
-            return false;
-        }
-        ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
-        if (!buffer) {
-            clear_binding();
-            return false;
-        }
-        ggml_backend_buffer_clear(buffer, 0);
-        for (size_t row = 0; row < coefficients.size(); ++row) {
-            ggml_backend_tensor_set(coeff_tensor, coefficients[row],
-                row * static_cast<size_t>(rank) * sizeof(float),
-                static_cast<size_t>(rank) * sizeof(float));
-        }
-        ggml_cgraph * graph = ggml_new_graph(ctx);
-        ggml_build_forward_expand(graph, projected);
-        // Use the model context's scheduler so temporary composition follows
-        // the same backend placement and copy rules as inference. Each output
-        // table has its own backend buffer and remains alive after scheduler
-        // reset; only graph scratch belongs to the scheduler.
+    // Coefficient rows are canonicalized independently of sequence ordering.
+    // The composed table can therefore survive fragments that contain a
+    // different subset/order of the same logical wave's sequence rows.
+    std::map<std::string, const float *> unique_coefficients;
+    for (const float * row : coefficients) {
+        unique_coefficients.emplace(
+            std::string(reinterpret_cast<const char *>(row),
+                static_cast<size_t>(rank) * sizeof(float)), row);
+    }
+    std::ostringstream overlay_key_builder;
+    overlay_key_builder << requested_key << ":unique_rows=" << unique_coefficients.size();
+    for (const auto & row : unique_coefficients) {
+        overlay_key_builder.write(row.first.data(), static_cast<std::streamsize>(row.first.size()));
+    }
+    const std::string requested_overlay_key = overlay_key_builder.str();
+    const bool overlay_cache_hit = composed_basis_key == requested_key &&
+        composed_tensors.size() == model.hparams.n_layer() && !composed_bufs.empty() &&
+        std::all_of(unique_coefficients.begin(), unique_coefficients.end(), [&](const auto & row) {
+            return composed_row_by_coefficients.find(row.first) !=
+                composed_row_by_coefficients.end();
+        });
+    last_composed_overlay_cache_hit = overlay_cache_hit;
+
+    if (!overlay_cache_hit) {
+        // The previous table may still be referenced by an asynchronously
+        // submitted graph. Drain it before replacing any backend allocation.
         ggml_backend_sched_synchronize(scheduler);
-        ggml_backend_sched_reset(scheduler);
-        const ggml_status status = ggml_backend_sched_graph_compute(scheduler, graph);
-        if (status != GGML_STATUS_SUCCESS) {
-            ggml_backend_sched_synchronize(scheduler);
-            ggml_backend_buffer_free(buffer);
-            clear_binding();
-            return false;
+        composed_bufs.clear();
+        composed_ctxs.clear();
+        composed_tensors.clear();
+        composed_row_by_coefficients.clear();
+        composed_overlay_key.clear();
+        composed_basis_key.clear();
+        composed_zero_overlay_row = -1;
+        composed_overlay_bytes_value = 0;
+
+        const auto & hparams = model.hparams;
+        std::vector<ggml_context_ptr> next_contexts;
+        std::vector<ggml_backend_buffer_ptr> next_buffers;
+        std::vector<ggml_tensor *> next_tensors(hparams.n_layer(), nullptr);
+        size_t next_overlay_bytes = 0;
+        std::unordered_map<std::string, int32_t> next_row_by_coefficients;
+        next_row_by_coefficients.reserve(unique_coefficients.size());
+        int32_t next_row = 0;
+        for (const auto & row : unique_coefficients) {
+            next_row_by_coefficients.emplace(row.first, next_row++);
         }
-        // Keep the computed tensor as the normal per-sequence row table. The
-        // final row is zero-initialized for inactive/unbound graph sequences.
-        tensors[layer] = projected;
-        bufs.emplace_back(buffer);
-        composed_overlay_bytes_value += static_cast<size_t>(n_embd) *
-            (seq_ids.size() + 1) * sizeof(float);
+        for (size_t i = 0; i < layer_indices.size(); ++i) {
+            const uint32_t layer = layer_indices[i];
+            const auto buft = model.select_buft(layer);
+            ggml_init_params params = { 4 * ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
+            ggml_context * ctx = ggml_init(params);
+            if (ctx) next_contexts.emplace_back(ctx);
+            if (!ctx || buft == nullptr || ggml_backend_buft_get_device(buft) == nullptr) return false;
+            const size_t row_count = unique_coefficients.size() + 1;
+            ggml_tensor * coeff_tensor = ggml_new_tensor_2d(
+                ctx, GGML_TYPE_F32, rank, static_cast<int64_t>(row_count));
+            if (!coeff_tensor) return false;
+            ggml_tensor * projected = ggml_mul_mat(ctx, resident_basis[i].tensor, coeff_tensor);
+            if (!projected) return false;
+            ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            if (!buffer) return false;
+            ggml_backend_buffer_clear(buffer, 0);
+            size_t row_index = 0;
+            for (const auto & row : unique_coefficients) {
+                ggml_backend_tensor_set(coeff_tensor, row.second,
+                    row_index++ * static_cast<size_t>(rank) * sizeof(float),
+                    static_cast<size_t>(rank) * sizeof(float));
+            }
+            ggml_cgraph * graph = ggml_new_graph(ctx);
+            if (!graph) {
+                ggml_backend_buffer_free(buffer);
+                return false;
+            }
+            ggml_build_forward_expand(graph, projected);
+            ggml_backend_sched_synchronize(scheduler);
+            ggml_backend_sched_reset(scheduler);
+            const ggml_status status = ggml_backend_sched_graph_compute(scheduler, graph);
+            if (status != GGML_STATUS_SUCCESS) {
+                ggml_backend_sched_synchronize(scheduler);
+                ggml_backend_buffer_free(buffer);
+                return false;
+            }
+            next_tensors[layer] = projected;
+            next_buffers.emplace_back(buffer);
+            next_overlay_bytes += static_cast<size_t>(n_embd) * row_count * sizeof(float);
+        }
+        composed_ctxs = std::move(next_contexts);
+        composed_bufs = std::move(next_buffers);
+        composed_tensors = std::move(next_tensors);
+        composed_row_by_coefficients = std::move(next_row_by_coefficients);
+        composed_overlay_key = requested_overlay_key;
+        composed_basis_key = requested_key;
+        composed_zero_overlay_row = static_cast<int32_t>(unique_coefficients.size());
+        composed_overlay_bytes_value = next_overlay_bytes;
+    }
+
+    std::vector<int32_t> next_sequence_rows;
+    next_sequence_rows.reserve(coefficients.size());
+    for (const float * row : coefficients) {
+        const std::string row_key(reinterpret_cast<const char *>(row),
+            static_cast<size_t>(rank) * sizeof(float));
+        const bool zero = std::all_of(row, row + rank, [](float value) { return value == 0.0f; });
+        next_sequence_rows.push_back(zero ? composed_zero_overlay_row :
+            composed_row_by_coefficients.at(row_key));
+    }
+
+    tensors = composed_tensors;
+    device_resident_flag = false;
+    for (const uint32_t layer : layer_indices) {
+        const auto buft = model.select_buft(layer);
         device_resident_flag = device_resident_flag ||
             ggml_backend_dev_type(ggml_backend_buft_get_device(buft)) != GGML_BACKEND_DEVICE_TYPE_CPU;
     }
     this->seq_ids = seq_ids;
+    this->seq_overlay_rows = std::move(next_sequence_rows);
+    this->zero_overlay_row = composed_zero_overlay_row;
     this->n_embd = n_embd;
     this->layer_start = static_cast<int32_t>(layer_indices.front());
     this->layer_end = static_cast<int32_t>(layer_indices.back());
     this->factorized = false;
     this->factorized_rank = rank;
     this->active = true;
-    last_composition_us_value = static_cast<uint64_t>(std::chrono::duration_cast<
-        std::chrono::microseconds>(std::chrono::steady_clock::now() - compose_started).count());
+    if (!overlay_cache_hit) {
+        last_composition_us_value = static_cast<uint64_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - compose_started).count());
+    }
     return true;
 }
 
@@ -639,6 +716,15 @@ bool llama_adapter_cvec_batch::apply_sparse(
     return apply_impl(model, seq_ids, data, data_len, n_embd, layer_indices, false);
 }
 
+int32_t llama_adapter_cvec_batch::row_for_sequence(const llama_seq_id sequence_id) const {
+    const auto it = std::find(seq_ids.begin(), seq_ids.end(), sequence_id);
+    if (it == seq_ids.end()) return -1;
+    const size_t index = static_cast<size_t>(it - seq_ids.begin());
+    return seq_overlay_rows.size() == seq_ids.size()
+        ? seq_overlay_rows[index]
+        : static_cast<int32_t>(index);
+}
+
 int32_t llama_adapter_cvec_batch::row_for_token(
         const llama_ubatch & ubatch,
         const uint32_t token_index) const {
@@ -646,13 +732,12 @@ int32_t llama_adapter_cvec_batch::row_for_token(
     bool contains_unbound_sequence = false;
     for (int32_t s = 0; s < ubatch.n_seq_id[token_index]; ++s) {
         const llama_seq_id sequence_id = ubatch.seq_id[token_index][s];
-        const auto it = std::find(seq_ids.begin(), seq_ids.end(), sequence_id);
-        if (it == seq_ids.end()) {
+        const int32_t candidate = row_for_sequence(sequence_id);
+        if (candidate < 0) {
             contains_unbound_sequence = true;
             continue;
         }
 
-        const int32_t candidate = static_cast<int32_t>(it - seq_ids.begin());
         if (row != -1 && row != candidate) {
             // A token shared by multiple sequences cannot receive two
             // different overlays.  The server must split such a batch or
@@ -665,7 +750,7 @@ int32_t llama_adapter_cvec_batch::row_for_token(
     // extra zero row. A wholly unbound token uses that same row. The server
     // never silently selects another request's cvec.
     return contains_unbound_sequence || row < 0
-        ? static_cast<int32_t>(seq_ids.size())
+        ? (zero_overlay_row >= 0 ? zero_overlay_row : static_cast<int32_t>(seq_ids.size()))
         : row;
 }
 
@@ -747,13 +832,9 @@ ggml_tensor * llama_adapter_cvec_batch::apply_callback(
         if (index_count == ubatch.n_tokens) {
             row = batch->row_for_token(ubatch, i);
         } else if (index_count == ubatch.n_seqs_unq && ubatch.seq_id_unq != nullptr) {
-            const auto it = std::find(
-                batch->seq_ids.begin(), batch->seq_ids.end(), ubatch.seq_id_unq[i]);
-            if (it != batch->seq_ids.end()) {
-                row = static_cast<int32_t>(it - batch->seq_ids.begin());
-            } else {
-                row = static_cast<int32_t>(batch->seq_ids.size());
-            }
+            row = batch->row_for_sequence(ubatch.seq_id_unq[i]);
+            if (row < 0) row = batch->zero_overlay_row >= 0
+                ? batch->zero_overlay_row : static_cast<int32_t>(batch->seq_ids.size());
         }
         if (row < 0) {
             LLAMA_LOG_ERROR(

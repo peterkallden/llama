@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <string>
@@ -23,6 +24,11 @@ struct options {
     int n_predict = 8;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    int n_parallel = 2;
+    int n_ctx_per_sequence = 6144;
+    int arm_count = 2;
+    int warmup_count = 0;
+    int repeat_count = 1;
     int layer_index = -1;
     int factorized_rank = 1;
     bool scalar = false;
@@ -34,6 +40,10 @@ struct options {
 bool parse_args(int argc, char ** argv, options & value) {
     if (const char * model = std::getenv("LLAMA_AGENT_MODEL")) value.model = model;
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
+    if (const char * parallel = std::getenv("LLAMA_AGENT_N_PARALLEL")) value.n_parallel = std::stoi(parallel);
+    if (const char * per_sequence_ctx = std::getenv("LLAMA_AGENT_N_CTX_PER_SEQUENCE")) {
+        value.n_ctx_per_sequence = std::stoi(per_sequence_ctx);
+    }
     for (int index = 1; index < argc; ++index) {
         const std::string argument = argv[index];
         const auto next = [&](const char * name) -> const char * {
@@ -55,6 +65,26 @@ bool parse_args(int argc, char ** argv, options & value) {
             const char * value_arg = next("--threads");
             if (!value_arg) return false;
             value.n_threads = std::stoi(value_arg);
+        } else if (argument == "--n-parallel") {
+            const char * value_arg = next("--n-parallel");
+            if (!value_arg) return false;
+            value.n_parallel = std::stoi(value_arg);
+        } else if (argument == "--n-ctx-per-sequence") {
+            const char * value_arg = next("--n-ctx-per-sequence");
+            if (!value_arg) return false;
+            value.n_ctx_per_sequence = std::stoi(value_arg);
+        } else if (argument == "--arm-count") {
+            const char * value_arg = next("--arm-count");
+            if (!value_arg) return false;
+            value.arm_count = std::stoi(value_arg);
+        } else if (argument == "--warmup-count") {
+            const char * value_arg = next("--warmup-count");
+            if (!value_arg) return false;
+            value.warmup_count = std::stoi(value_arg);
+        } else if (argument == "--repeat-count") {
+            const char * value_arg = next("--repeat-count");
+            if (!value_arg) return false;
+            value.repeat_count = std::stoi(value_arg);
         } else if (argument == "--n-gpu-layers") {
             const char * value_arg = next("--n-gpu-layers");
             if (!value_arg) return false;
@@ -154,6 +184,8 @@ int main(int argc, char ** argv) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
                   << " [--scalar] [--factorized] [--rank 1|2|4] [--layer-index N]"
+                  << " [--n-parallel N] [--n-ctx-per-sequence N] [--arm-count N]"
+                  << " [--warmup-count N] [--repeat-count N]"
                   << " [--single-sparse-device] [--device-diagnostics]\n";
         return 2;
     }
@@ -161,7 +193,12 @@ int main(int argc, char ** argv) {
         std::cerr << "FlyDelta cvec batch model smoke skipped: provide --model or LLAMA_AGENT_MODEL\n";
         return 77;
     }
-    if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
+    if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0 ||
+            value.n_parallel <= 0 || value.n_parallel > 16 ||
+            value.n_ctx_per_sequence <= 0 || value.arm_count <= 0 || value.arm_count > 64 ||
+            value.warmup_count < 0 || value.repeat_count <= 0 ||
+            static_cast<int64_t>(value.n_parallel) * value.n_ctx_per_sequence >
+                std::numeric_limits<int32_t>::max()) return 2;
     if (value.factorized_rank != 1 && value.factorized_rank != 2 && value.factorized_rank != 4) return 2;
 
     auto host = std::make_shared<common_agent_server_context_host>();
@@ -177,12 +214,13 @@ int main(int argc, char ** argv) {
         return 2;
     }
     const bool one_slot = value.scalar;
-    config.context_key.n_parallel = one_slot ? 1 : 2;
-    config.context_key.n_sequences = one_slot ? 1 : 2;
+    config.context_key.n_parallel = one_slot ? 1 : value.n_parallel;
+    config.context_key.n_sequences = one_slot ? 1 : value.n_parallel;
     // Keep the direct model smoke on the same bounded resident context as the
     // production runtime smoke.  The batch contract is what this fixture
     // exercises; a larger standalone context is not part of that contract.
-    config.context_key.n_ctx = 2048;
+    config.context_key.n_ctx = one_slot ? value.n_ctx_per_sequence
+        : value.n_parallel * value.n_ctx_per_sequence;
     config.context_key.n_threads = value.n_threads;
     config.verbosity = LOG_LEVEL_INFO;
     config.per_sequence_cvec_batch = !value.scalar;
@@ -200,6 +238,12 @@ int main(int argc, char ** argv) {
         return 1;
     }
     const auto * model = llama_get_model(context);
+    std::cout << "cvec_smoke_context requested_parallel=" << config.context_key.n_parallel
+              << " requested_ctx_per_sequence=" << value.n_ctx_per_sequence
+              << " requested_total_ctx=" << config.context_key.n_ctx
+              << " actual_total_ctx=" << llama_n_ctx(context)
+              << " actual_ctx_per_sequence=" << llama_n_ctx(context) / config.context_key.n_parallel
+              << " actual_parallel=" << config.context_key.n_parallel << '\n';
     if (llama_model_n_embd(model) <= 0 || llama_model_n_layer(model) <= 2) return 1;
 
     common_agent_server_flydelta_binding_callbacks callbacks;
@@ -416,11 +460,8 @@ int main(int argc, char ** argv) {
     }
 
     common_flydelta_arm_batch_request request;
-    if (value.device_diagnostics) {
-        request.arms.resize(2);
-    } else {
-        request.arms.resize(value.single_sparse_device ? 1 : 2);
-    }
+    request.arms.resize(value.device_diagnostics ? 2 :
+        value.single_sparse_device ? 1 : static_cast<size_t>(value.arm_count));
     for (size_t index = 0; index < request.arms.size(); ++index) {
         auto & arm = request.arms[index];
         arm.job_id = "flydelta://job/cvec-batch-smoke";
@@ -434,7 +475,8 @@ int main(int argc, char ** argv) {
         arm.intervention_ref = "flydelta://artifact/cvec-batch-smoke/" + std::to_string(index);
         arm.layer_indices = {static_cast<uint32_t>(cvec_layer)};
         arm.coefficients = {1.0f};
-        arm.alpha = index == 0 ? 0.0f : 0.0002f;
+        arm.alpha = value.device_diagnostics && index == 0
+            ? 0.0f : static_cast<float>(index) * 0.0002f;
         arm.apply_overlay = !value.device_diagnostics || index != 0;
         arm.fresh_context = true;
         arm.request_generation = !value.device_diagnostics;
@@ -451,9 +493,34 @@ int main(int argc, char ** argv) {
     }
 
     common_flydelta_arm_batch_result result;
-    if (!common_flydelta_run_bounded_arm_batch(*model_host, request, result, error)) {
-        std::cerr << "production FlyDelta batch execution failed: " << error << '\n';
-        return 1;
+    for (int warmup = 0; warmup < value.warmup_count; ++warmup) {
+        common_flydelta_arm_batch_result warm_result;
+        if (!common_flydelta_run_bounded_arm_batch(*model_host, request, warm_result, error)) {
+            std::cerr << "production FlyDelta warmup failed: " << error << '\n';
+            return 1;
+        }
+    }
+    double measured_wall_ms = 0.0;
+    double measured_generation_ms = 0.0;
+    double measured_teacher_forced_ms = 0.0;
+    double measured_finalize_ms = 0.0;
+    for (int repeat = 0; repeat < value.repeat_count; ++repeat) {
+        if (!common_flydelta_run_bounded_arm_batch(*model_host, request, result, error)) {
+            std::cerr << "production FlyDelta batch execution failed: " << error << '\n';
+            return 1;
+        }
+        measured_wall_ms += result.execution_stats.wall_ms;
+        measured_generation_ms += result.execution_stats.model_ms;
+        measured_teacher_forced_ms += result.execution_stats.teacher_forced_ms;
+        measured_finalize_ms += result.execution_stats.finalize_ms;
+        std::cout << "cvec_smoke_repeat index=" << repeat
+                  << " wall_ms=" << result.execution_stats.wall_ms
+                  << " generation_ms=" << result.execution_stats.model_ms
+                  << " teacher_forced_ms=" << result.execution_stats.teacher_forced_ms
+                  << " finalize_ms=" << result.execution_stats.finalize_ms
+                  << " physical_batches=" << result.execution_stats.physical_batch_count
+                  << " largest_physical_batch=" << result.execution_stats.largest_physical_batch
+                  << '\n';
     }
     if (value.device_diagnostics) {
         const auto & baseline = captured_rows->at(request.arms[0].arm_id);
@@ -524,7 +591,16 @@ int main(int argc, char ** argv) {
                   << " leakage=" << reported_arm.leakage << '\n';
     }
     std::cout << "flydelta_cvec_batch_model_smoke=passed\n"
-              << "slots=" << (one_slot ? 1 : 2) << "\n"
+              << "slots=" << config.context_key.n_parallel << "\n"
+              << "requested_arms=" << request.arms.size() << "\n"
+              << "warmups=" << value.warmup_count << "\n"
+              << "repetitions=" << value.repeat_count << "\n"
+              << "average_wall_ms=" << measured_wall_ms / value.repeat_count << "\n"
+              << "average_generation_ms=" << measured_generation_ms / value.repeat_count << "\n"
+              << "average_teacher_forced_ms=" << measured_teacher_forced_ms / value.repeat_count << "\n"
+              << "average_finalize_ms=" << measured_finalize_ms / value.repeat_count << "\n"
+              << "physical_batches=" << result.execution_stats.physical_batch_count << "\n"
+              << "largest_physical_batch=" << result.execution_stats.largest_physical_batch << "\n"
               << "distinct_overlays=" << (value.single_sparse_device ? "not_applicable" : "yes") << "\n"
               << "sparse_overlays=yes\n"
               << "overlay_representation=" << reported_arm.execution_metrics.overlay_representation << "\n"
@@ -556,6 +632,8 @@ int main(int argc, char ** argv) {
               << reported_arm.execution_metrics.basis_upload_count << "\n"
               << "basis_cache_hit="
               << (reported_arm.execution_metrics.basis_cache_hit ? "yes" : "no") << "\n"
+              << "overlay_cache_hit="
+              << (reported_arm.execution_metrics.overlay_cache_hit ? "yes" : "no") << "\n"
               << "overlay_binding_ms="
               << reported_arm.execution_metrics.overlay_binding_ms << "\n"
               << "physical_batch_size="

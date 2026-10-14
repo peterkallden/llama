@@ -2033,24 +2033,33 @@ batching and device residency are reported separately; backend batching alone
 is not GPU evidence. Byte counts are payload accounting unless telemetry
 explicitly identifies measured backend-bound bytes.
 
-The current Deep/TFO coefficient-wave binding keeps one compatible basis
-resident per model context (fingerprint, rank, embedding width, layer layout,
-FP32 format and backend buffer/device identity). Each physical coefficient
-wave uploads only its coefficient rows when the basis key is unchanged. Before
-the model graph runs, the model context's backend scheduler composes `B × Cᵀ`
-once into a separately retained row table with one row per sequence plus a
-zero row. The model callback then does
-only sequence-row selection and addition; it does not multiply `B × c` for
-each token. The resident basis uses `O(d r)` storage and the wave table uses
-`O(A d)` for `A` physical rows; the coefficients use `O(A r)`. Basis
-replacement synchronizes the backend first, and context teardown releases the
-cache. A failed pre-graph composition falls back to sparse materialization;
-an error after the table enters model execution remains fail-closed.
+The current Deep/TFO coefficient-wave binding keeps one compatible basis and
+one composed overlay table resident per model context. Their identities include
+the basis fingerprint, rank, embedding width, layer layout, FP32 format and
+backend buffer/device identity; the overlay key also includes the exact
+coefficient rows. Before the first model graph for a new coefficient set, the
+model context's backend scheduler composes `B × Cᵀ` into a retained row table
+with one row per distinct coefficient row plus a zero row. `clear_binding()`
+detaches the graph callback and clears per-graph sequence mapping, but does not
+release that table. Later decode graphs, scoring calls, or physical subsets
+whose coefficient rows are already present update only the sequence-to-row
+mapping and reuse the same table (`composition count=0`, `overlay_cache=hit`).
+A genuinely different coefficient set replaces the single cached table after
+backend synchronization; it is composed once for that set. Thus separate
+bounded coefficient waves may still require separate compositions. The model
+callback does only sequence-row selection and addition; it does not multiply
+`B × c` for each token. The resident basis uses `O(d r)` storage and the wave
+table uses `O(A d)` for `A` distinct rows; coefficients use `O(A r)`. Context
+teardown releases both caches. A failed pre-graph composition falls back to
+sparse materialization; an error after the table enters model execution
+remains fail-closed.
 
 Wave and physical-binding traces include job/phase/strategy/batch/wave IDs,
 requested and returned arms, physical rows, cache hit/miss, basis uploads,
 coefficient payload, composed-overlay bytes, composition/binding/model time,
-and fallback reason. Byte counts are logical payload/accounting, not measured
+and fallback reason. Cache hits report zero new composition, coefficient
+transfer and table-allocation work; basis-upload counters are likewise zero
+after a basis hit. Byte counts are logical payload/accounting, not measured
 PCIe transfer rates. `device_batch` is reported only when the composed table
 is on a non-CPU backend; otherwise the trace says `backend_batch`. The smoke
 driver can force each control-plane strategy with
@@ -2811,14 +2820,70 @@ outcomes. Reported rank-sweep elapsed times were 941,259 ms (factorized) and
 These are runtime and equivalence checks,
 not evidence of a behavioral improvement or end-to-end latency win.
 
+#### Cache-lifetime and NVIDIA parallelism check (2026-10-14)
+
+After the cache-lifetime correction, Qwen2.5-1.5B-Instruct Q4_K_M was measured
+on the GeForce 920MX (2 GiB) through Vulkan device 1. Every run requested 99 GPU
+layers with host auto-fit, retained 6,144 tokens per sequence, used four
+logical candidate arms, one warmup and four measured repetitions (`n_predict=8`)
+for both sparse and factorized overlays. All six variants reported
+`device_batch`; total context was 12,288 / 24,576 / 36,864 for parallelism 2 /
+4 / 6. The p=2 wave used two physical batches of two arms, p=4 one batch of
+four, and p=6 had only four logical candidate arms (so its candidate wave also
+bound four rows; teacher-scoring traces separately reached six physical rows).
+The device showed roughly 1.16–1.28 GiB used during these runs. Backend logs
+reported the same auto-fit request/resolution for each variant; exact per-layer
+CPU/GPU placement was not separately enumerated, so no stronger placement
+claim is made.
+
+| Parallelism | Representation | Median wave wall | Median generation | Median teacher scoring | Candidate throughput | Physical candidate batches |
+|---:|---|---:|---:|---:|---:|---:|
+| 2 | sparse | 5.192 s | 1.925 s | 3.268 s | 0.770 arms/s | 2 × 2 |
+| 2 | factorized | 5.169 s | 1.905 s | 3.245 s | 0.774 arms/s | 2 × 2 |
+| 4 | sparse | 15.344 s | 5.289 s | 10.047 s | 0.261 arms/s | 1 × 4 |
+| 4 | factorized | 15.303 s | 5.275 s | 10.030 s | 0.261 arms/s | 1 × 4 |
+| 6 | sparse | 16.249 s | 5.395 s | 10.854 s | 0.246 arms/s | 1 × 4 |
+| 6 | factorized | 16.201 s | 5.380 s | 10.825 s | 0.247 arms/s | 1 × 4 |
+
+Medians are from the four per-run measurements; throughput is four logical
+candidate arms divided by median wave wall time. Factorized versus sparse
+median wall differences were about 0.44%, 0.27% and 0.30% at p=2/4/6,
+respectively—too small to claim a speedup. Increasing concurrency from 2 to 4
+or 6 reduced candidate throughput substantially on this GPU. This is evidence
+that larger physical batches do not scale for this small model/device pair,
+not that Deep/TFO universally benefit from p=2. The model-forward and
+teacher-scoring work dominates the overlay bookkeeping.
+
+The table-lifetime trace behaved as intended: at p=4 and p=6 the warmup
+created one coefficient table and later same-wave/repeated requests were cache
+hits with zero recomposition; p=2 used two distinct two-arm coefficient
+subwaves, so the single-entry cache alternated between those different row
+sets. Across all variants the per-sequence context stayed at 6,144 and
+auto-fit did not reduce it. Full traces are under
+`/home/prbm/llama-agent-smokes/factorized-20261014/deep-tfo-batch-matrix/`.
+
+The subsequent full-trace two-fixture Deep and TFO-lite runs each completed for
+factorized opt-in on and off at p=2. All four runs had the same two groups,
+each with only one compatible direction (`observations=1`,
+`direction_candidates=1`), so both rank-2/4 comparison and actual Deep
+coefficient search were `unavailable` (`deep_search_executed=no`); these are
+not negative rank results. The paired cvec Q1 checks passed in every wrapper:
+identical generated output, teacher-margin delta `0`, and `device_batch`.
+Consequently these model smokes verify ordinary-path non-regression and the
+runtime overlay seam, but do not establish behavioral utility or exercise a
+rank>1 Deep/TFO candidate. Logs are under
+`/home/prbm/llama-agent-smokes/factorized-20261014/{deep-on,deep-off,tfo-on,tfo-off}/`.
+
 In the completed factorized TFO waves, a rank-1 basis for `d=1536` occupied
 6,144 resident bytes and was uploaded once; compatible later waves were cache
 hits with zero basis host-copy bytes. A two-row physical batch sent 8
 coefficient bytes and retained an 18,432-byte overlay table including its
-inactive zero row. Observed composition and binding were roughly 0.5–1.5 ms
-per wave. Sparse and factorized variants both used the Vulkan device batch, so
-these numbers isolate the cvec representation work; they do not show an
-inference speedup, since model scoring/generation dominates the smoke.
+inactive zero row. The earlier trace reported composition and binding around
+0.5–1.5 ms per decode because it recomposed during each binding; that timing is
+historical and superseded by the cache-hit traces above. Sparse and factorized
+variants both used the Vulkan device batch, so these measurements isolate the
+cvec representation work; they do not show an inference speedup, since model
+scoring/generation dominates the smoke.
 
 Teacher scoring uses the same compact DSL as generation: `open!` is the
 common prefix and the targets begin with the following space and remaining

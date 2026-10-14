@@ -324,8 +324,16 @@ bool common_flydelta_arm_batch_result_validate(
         return false;
     }
     if (!std::isfinite(result.execution_stats.model_ms) ||
-            result.execution_stats.model_ms < 0.0f) {
-        error = "FlyDelta arm batch execution statistics have an invalid model time";
+            result.execution_stats.model_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.teacher_forced_ms) ||
+            result.execution_stats.teacher_forced_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.finalize_ms) ||
+            result.execution_stats.finalize_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.host_prepare_ms) ||
+            result.execution_stats.host_prepare_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.wall_ms) ||
+            result.execution_stats.wall_ms < 0.0f) {
+        error = "FlyDelta arm batch execution statistics have an invalid timing value";
         return false;
     }
     for (size_t index = 0; index < result.arms.size(); ++index) {
@@ -423,6 +431,10 @@ bool common_flydelta_run_bounded_arm_batch(
                 result.execution_stats.largest_physical_batch, wave.arms.size());
             result.execution_stats.native_batch_used = true;
             result.execution_stats.model_ms += wave_result.execution_stats.model_ms;
+            result.execution_stats.teacher_forced_ms += wave_result.execution_stats.teacher_forced_ms;
+            result.execution_stats.finalize_ms += wave_result.execution_stats.finalize_ms;
+            result.execution_stats.host_prepare_ms += wave_result.execution_stats.host_prepare_ms;
+            result.execution_stats.wall_ms += wave_result.execution_stats.wall_ms;
             for (size_t position = 0; position < wave_result.arms.size(); ++position) {
                 auto arm = std::move(wave_result.arms[position]);
                 if (arm.execution_metrics.execution_path ==

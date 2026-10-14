@@ -103,6 +103,7 @@ struct common_flydelta_arm_execution_metrics {
     uint64_t overlay_composition_us = 0;
     size_t basis_upload_count = 0;
     bool basis_cache_hit = false;
+    bool overlay_cache_hit = false;
     float overlay_binding_ms = 0.0f;
     size_t physical_batch_size = 0;
     bool factorized_binding_used = false;
@@ -225,6 +226,10 @@ struct common_flydelta_arm_batch_execution_stats {
     size_t scalar_fallback_arm_count = 0;
     bool native_batch_used = false;
     float model_ms = 0.0f;
+    float teacher_forced_ms = 0.0f;
+    float finalize_ms = 0.0f;
+    float host_prepare_ms = 0.0f;
+    float wall_ms = 0.0f;
 };
 
 struct common_flydelta_arm_batch_result {

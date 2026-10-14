@@ -622,6 +622,8 @@ private:
                     final_response->flydelta_cvec_basis_upload_count;
                 result.flydelta_runtime.factorized_basis_cache_hit =
                     final_response->flydelta_cvec_basis_cache_hit;
+                result.flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
                 result.flydelta_runtime.physical_batch_size =
                     final_response->flydelta_cvec_physical_batch_size;
                 result.flydelta_runtime.factorized_binding =
@@ -765,6 +767,8 @@ private:
                     final_response->flydelta_cvec_basis_upload_count;
                 results[index].flydelta_runtime.factorized_basis_cache_hit =
                     final_response->flydelta_cvec_basis_cache_hit;
+                results[index].flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
                 results[index].flydelta_runtime.physical_batch_size =
                     final_response->flydelta_cvec_physical_batch_size;
                 results[index].flydelta_runtime.factorized_binding =

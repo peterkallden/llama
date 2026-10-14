@@ -993,6 +993,7 @@ private:
     uint64_t cvec_batch_composition_us = 0;
     size_t cvec_batch_overlay_resident_bytes = 0;
     bool cvec_batch_basis_cache_hit = false;
+    bool cvec_batch_overlay_cache_hit = false;
     size_t cvec_batch_basis_upload_count = 0;
 
     int64_t t_last_load_progress_ms = 0;
@@ -1009,6 +1010,7 @@ private:
         cvec_batch_composition_us = 0;
         cvec_batch_overlay_resident_bytes = 0;
         cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
         cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_active) {
             cvec_batch_request.clear();
@@ -1039,6 +1041,7 @@ private:
         cvec_batch_composition_us = 0;
         cvec_batch_overlay_resident_bytes = 0;
         cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
         cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_enabled || ctx_dft || !batch.slot_batched || batch.tokens.empty()) {
             return false;
@@ -1140,6 +1143,7 @@ private:
                     factorized_coefficients_bytes = coefficients.size() *
                         static_cast<size_t>(basis->rank) * sizeof(float);
                     cvec_batch_basis_cache_hit = cvec_batch_device.resident_basis_cache_hit();
+                    cvec_batch_overlay_cache_hit = cvec_batch_device.composed_overlay_cache_hit();
                     cvec_batch_basis_upload_count = cvec_batch_device.last_basis_upload_count();
                     cvec_batch_composition_us = cvec_batch_device.last_composition_us();
                     cvec_batch_overlay_resident_bytes = cvec_batch_device.composed_overlay_bytes();
@@ -1208,8 +1212,10 @@ private:
             // logical payload estimate, not a measured transport statistic.
             cvec_batch_basis_host_copy_bytes = cvec_batch_basis_cache_hit
                 ? 0 : factorized_basis_bytes;
-            cvec_batch_coefficients_bound_bytes = factorized_coefficients_bytes;
-            cvec_batch_bound_bytes = cvec_batch_basis_host_copy_bytes + factorized_coefficients_bytes;
+            cvec_batch_coefficients_bound_bytes = cvec_batch_overlay_cache_hit
+                ? 0 : factorized_coefficients_bytes;
+            cvec_batch_bound_bytes = cvec_batch_basis_host_copy_bytes +
+                cvec_batch_coefficients_bound_bytes;
         } else {
             cvec_batch_bound_bytes = sparse_values_bytes;
         }
@@ -1238,7 +1244,9 @@ private:
                 cvec_batch_fallback_reason.empty() ? "none" : cvec_batch_fallback_reason.c_str());
         }
         if (used_factorized_binding) {
-            SRV_INF("per-sequence cvec composition count=1 basis_cache=%s basis_uploads=%zu basis_host_copy_bytes=%zu basis_resident_bytes=%zu coefficient_payload_bytes=%zu overlay_resident_bytes=%zu compose_us=%" PRIu64 " bind_us=%" PRIu64 " physical_rows=%zu placement=%s\n",
+            SRV_INF("per-sequence cvec composition count=%u overlay_cache=%s basis_cache=%s basis_uploads=%zu basis_host_copy_bytes=%zu basis_resident_bytes=%zu coefficient_transfer_bytes=%zu overlay_resident_bytes=%zu compose_us=%" PRIu64 " bind_us=%" PRIu64 " physical_rows=%zu placement=%s\n",
+                cvec_batch_overlay_cache_hit ? 0u : 1u,
+                cvec_batch_overlay_cache_hit ? "hit" : "miss",
                 cvec_batch_basis_cache_hit ? "hit" : "miss",
                 cvec_batch_basis_upload_count, cvec_batch_basis_host_copy_bytes,
                 cvec_batch_device.resident_basis_bytes(),
@@ -2577,6 +2585,7 @@ private:
         res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
         res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
         res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
         res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
         res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
         res->flydelta_cvec_composition_us = cvec_batch_composition_us;
@@ -2797,6 +2806,7 @@ private:
         res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
         res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
         res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
         res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
         res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
         res->flydelta_cvec_composition_us = cvec_batch_composition_us;

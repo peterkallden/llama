@@ -175,6 +175,7 @@ struct llama_adapter_cvec_batch {
     // non-CPU backend. The graph callback remains backend-neutral.
     bool device_resident() const { return device_resident_flag; }
     bool resident_basis_cache_hit() const { return last_basis_cache_hit; }
+    bool composed_overlay_cache_hit() const { return last_composed_overlay_cache_hit; }
     size_t resident_basis_upload_count() const { return basis_upload_count; }
     size_t last_basis_upload_count() const { return last_basis_upload_count_value; }
     uint64_t last_composition_us() const { return last_composition_us_value; }
@@ -211,6 +212,7 @@ private:
             const std::vector<uint32_t> & layer_indices,
             bool dense_layout);
     ggml_tensor * tensor_for(int il) const;
+    int32_t row_for_sequence(llama_seq_id sequence_id) const;
     int32_t row_for_token(const llama_ubatch & ubatch, uint32_t token_index) const;
     void mark_callback_failure(const std::string & reason);
 
@@ -249,8 +251,18 @@ private:
     };
     std::string resident_basis_key;
     std::vector<resident_basis_layer> resident_basis;
+    std::string composed_overlay_key;
+    std::string composed_basis_key;
+    std::vector<ggml_context_ptr> composed_ctxs;
+    std::vector<ggml_backend_buffer_ptr> composed_bufs;
+    std::vector<ggml_tensor *> composed_tensors;
+    std::unordered_map<std::string, int32_t> composed_row_by_coefficients;
+    int32_t composed_zero_overlay_row = -1;
+    std::vector<int32_t> seq_overlay_rows;
+    int32_t zero_overlay_row = -1;
     size_t resident_basis_bytes_value = 0;
     bool last_basis_cache_hit = false;
+    bool last_composed_overlay_cache_hit = false;
     size_t basis_upload_count = 0;
     size_t last_basis_upload_count_value = 0;
     uint64_t last_composition_us_value = 0;

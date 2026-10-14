@@ -945,13 +945,18 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         if (error.empty()) error = "FlyDelta coefficient batch returned incomplete arms";
         return false;
     }
-    std::fprintf(stderr, "FlyDelta coefficient wave complete job=%s phase=%s strategy=%s batch=%s wave=%s requested_arms=%zu returned_arms=%zu largest_physical_batch=%zu native_batch=%s model_ms=%.3f elapsed_ms=%.3f\n",
+    std::fprintf(stderr, "FlyDelta coefficient wave complete job=%s phase=%s strategy=%s batch=%s wave=%s requested_arms=%zu returned_arms=%zu physical_batches=%zu largest_physical_batch=%zu native_batch=%s model_ms=%.3f teacher_forced_ms=%.3f host_prepare_ms=%.3f finalize_ms=%.3f host_wall_ms=%.3f elapsed_ms=%.3f\n",
         job.id.c_str(), common_flydelta_experiment_phase_name(phase),
         common_flydelta_coefficient_search_strategy_name(strategy), request.batch_id.c_str(),
         request.wave_id.c_str(), coefficients.size(), batch.arms.size(),
+        batch.execution_stats.physical_batch_count,
         batch.execution_stats.largest_physical_batch,
         batch.execution_stats.native_batch_used ? "yes" : "no",
         batch.execution_stats.model_ms,
+        batch.execution_stats.teacher_forced_ms,
+        batch.execution_stats.host_prepare_ms,
+        batch.execution_stats.finalize_ms,
+        batch.execution_stats.wall_ms,
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - execution_started).count());
     if (paired_diagnostics) {

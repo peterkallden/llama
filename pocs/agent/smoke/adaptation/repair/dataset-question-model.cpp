@@ -33,6 +33,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <optional>
@@ -58,6 +59,8 @@ struct options {
     int n_predict = 512;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    int n_parallel = 2;
+    int n_ctx_per_sequence = 6144;
     std::string backend = "server";
     std::string scenario_id;
     std::string behavior_key;
@@ -96,6 +99,10 @@ bool parse_args(int argc, char ** argv, options & value) {
             std::string(adaptive_alpha) == "true";
     }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
+    if (const char * parallel = std::getenv("LLAMA_AGENT_N_PARALLEL")) value.n_parallel = std::stoi(parallel);
+    if (const char * per_sequence_ctx = std::getenv("LLAMA_AGENT_N_CTX_PER_SEQUENCE")) {
+        value.n_ctx_per_sequence = std::stoi(per_sequence_ctx);
+    }
     if (const char * scenario_id = std::getenv("LLAMA_AGENT_SCENARIO_ID")) value.scenario_id = scenario_id;
     if (const char * max_scenarios = std::getenv("LLAMA_AGENT_MAX_SCENARIOS")) value.max_scenarios = std::stoul(max_scenarios);
     for (int index = 1; index < argc; ++index) {
@@ -120,6 +127,8 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
+        else if (argument == "--n-parallel") { const auto v = next("--n-parallel"); if (!v) return false; value.n_parallel = std::stoi(v); }
+        else if (argument == "--n-ctx-per-sequence") { const auto v = next("--n-ctx-per-sequence"); if (!v) return false; value.n_ctx_per_sequence = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
         else if (argument == "--backend") { const auto v = next("--backend"); if (!v) return false; value.backend = v; }
         else if (argument == "--scenario-id") { const auto v = next("--scenario-id"); if (!v) return false; value.scenario_id = v; }
@@ -413,7 +422,8 @@ int main(int argc, char ** argv) {
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
                   << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep] [--adaptive-alpha-search]"
-                  << " [--threads N] [--n-gpu-layers N]\n";
+                  << " [--threads N] [--n-gpu-layers N] [--n-parallel N]"
+                  << " [--n-ctx-per-sequence N]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -421,7 +431,10 @@ int main(int argc, char ** argv) {
         return 77;
     }
     if (value.suite.empty() || !std::filesystem::is_regular_file(value.suite) ||
-            value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
+            value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0 ||
+            value.n_parallel <= 0 || value.n_parallel > 16 || value.n_ctx_per_sequence <= 0 ||
+            static_cast<int64_t>(value.n_parallel) * value.n_ctx_per_sequence >
+                std::numeric_limits<int32_t>::max()) return 2;
 
     json suite;
     std::string error;
@@ -498,13 +511,13 @@ int main(int argc, char ** argv) {
         // The model-backed repair smoke uses the production server-host
         // binding when requested. Keep two resident sequences so FlyDelta
         // waves can use the same per-sequence overlay/batch path as runtime.
-        server_config.context_key.n_parallel = 2;
-        server_config.context_key.n_sequences = 2;
+        server_config.context_key.n_parallel = value.n_parallel;
+        server_config.context_key.n_sequences = value.n_parallel;
         // Repair must see the complete model-facing tool contract and the
         // host repair context in one resident server request. With two
         // parallel slots, 8192 total tokens left only 4096 per request; the
         // replay suite's full compact tool contracts need more room.
-        server_config.context_key.n_ctx = 12288;
+        server_config.context_key.n_ctx = value.n_parallel * value.n_ctx_per_sequence;
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
         server_config.per_sequence_factorized_cvec_batch =
@@ -532,6 +545,12 @@ int main(int argc, char ** argv) {
         }
         n_embd = static_cast<size_t>(llama_model_n_embd(llama_get_model(context)));
         n_layers = static_cast<size_t>(llama_model_n_layer(llama_get_model(context)));
+        std::cout << "flydelta_smoke_context requested_parallel=" << value.n_parallel
+                  << " requested_ctx_per_sequence=" << value.n_ctx_per_sequence
+                  << " requested_total_ctx=" << server_config.context_key.n_ctx
+                  << " actual_total_ctx=" << llama_n_ctx(context)
+                  << " actual_ctx_per_sequence=" << llama_n_ctx(context) / value.n_parallel
+                  << " actual_parallel=" << value.n_parallel << '\n';
     }
     if (n_embd == 0 || n_layers <= 2) { host.close(); return 1; }
     // Reject an unstable forced-token prefix before buying any model probes.
@@ -1040,7 +1059,8 @@ int main(int argc, char ** argv) {
             // Exercise the same bounded wave semantics used by a production
             // coefficient host. The smoke still permits scalar fallback, but
             // TFO must not bypass the batch runner or exceed this wave size.
-            deep_config.coefficients.max_batch_arms = 2;
+            deep_config.coefficients.max_batch_arms = static_cast<size_t>(
+                std::max(1, value.n_parallel - 1));
             deep_config.coefficients.max_l2_norm = 0.32f;
             deep_config.coefficients.norm_penalty = 0.05f;
             deep_config.coefficients.leakage_penalty = 0.10f;

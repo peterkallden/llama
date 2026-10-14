@@ -195,6 +195,7 @@ struct common_agent_generation_result {
         uint64_t factorized_composition_us = 0;
         size_t factorized_basis_upload_count = 0;
         bool factorized_basis_cache_hit = false;
+        bool factorized_overlay_cache_hit = false;
         size_t physical_batch_size = 0;
         bool factorized_binding = false;
         std::string fallback_reason;
