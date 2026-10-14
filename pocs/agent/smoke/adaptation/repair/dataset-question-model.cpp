@@ -237,6 +237,12 @@ std::string preview(const common_agent_generation_result & result) {
     return output;
 }
 
+std::string deep_arm_trace_id(const std::string & fixture_id, int32_t layer,
+        const std::vector<float> & coefficients, bool full_execution) {
+    return fixture_id + "/deep/" + (full_execution ? "full/" : "diagnostic/") +
+        "layer-" + std::to_string(layer) + "/" + json(coefficients).dump();
+}
+
 void trace_model_exchange(const std::string & phase, const std::string & id,
         const common_agent_generation_request & request,
         const common_agent_generation_result & result) {
@@ -972,9 +978,16 @@ int main(int argc, char ** argv) {
         layer2_samples += evidence_depth.compatible_samples;
         if (evidence_depth.deep_ready) ++deep_groups;
         direction_candidates += directions.size();
+        const size_t learning_eligible_samples = static_cast<size_t>(std::count_if(
+            entry.second.begin(), entry.second.end(), [](const auto & sample) {
+                return sample.credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+                    sample.credit.eligible_for_learning;
+            }));
         std::cout << "flydelta_partition group=" << entry.first
                   << " observations=" << entry.second.size()
                   << " compatible=" << evidence_depth.compatible_samples
+                  << " learning_eligible=" << learning_eligible_samples
+                  << " experimental=" << evidence_depth.experimental_samples
                   << " rejected=" << evidence_depth.incompatible_samples
                   << " depth=" << common_flydelta_search_depth_name(evidence_depth.depth)
                   << " shallow_ready=" << (evidence_depth.shallow_ready ? "yes" : "no")
@@ -993,10 +1006,58 @@ int main(int argc, char ** argv) {
         }
         std::cout
                   << " geometry_stable=" << (evidence_depth.geometry_stable ? "yes" : "no")
+                  << " forced_deep_requested=" << (value.force_deep ? "yes" : "no")
+                  << " forced_deep_override=" << (value.force_deep &&
+                        evidence_depth.depth != common_flydelta_search_depth::deep ? "yes" : "no")
+                  << " forced_deep_override_reason=" << (value.force_deep &&
+                        evidence_depth.depth != common_flydelta_search_depth::deep
+                            ? "smoke_only_evidence_depth_bypass" : "none")
                   << " region_budget=" << search_budget.max_region_trials
                   << " coefficient_budget=" << search_budget.max_coefficient_trials
                   << " tfo_lite=" << (search_budget.allow_tfo_lite ? "yes" : "no")
                   << " direction_candidates=" << directions.size() << '\n';
+        for (const auto outcome : {common_flydelta_counterfactual_outcome::helped,
+                common_flydelta_counterfactual_outcome::harmed,
+                common_flydelta_counterfactual_outcome::neutral,
+                common_flydelta_counterfactual_outcome::unknown}) {
+            const size_t count = static_cast<size_t>(std::count_if(entry.second.begin(), entry.second.end(),
+                [&](const auto & sample) { return sample.credit.outcome == outcome; }));
+            if (count == 0) continue;
+            const size_t eligible_count = static_cast<size_t>(std::count_if(
+                entry.second.begin(), entry.second.end(), [&](const auto & sample) {
+                    return sample.credit.outcome == outcome && sample.credit.eligible_for_learning;
+                }));
+            std::cout << "flydelta_learning_credit group=" << entry.first
+                      << " source=" << (replay_mode ? "synthetic_replay" : "host_verified_repair")
+                      << " sample_outcome=" << common_flydelta_counterfactual_outcome_name(outcome)
+                      << " samples=" << count
+                      << " eligible=" << eligible_count
+                      << " denied=" << (count - eligible_count)
+                      << " decision_reason=" << (eligible_count > 0
+                            ? "host_verified_helped_credit_explicit"
+                            : outcome == common_flydelta_counterfactual_outcome::helped
+                                ? "credit_flag_not_set"
+                                : "outcome_is_not_helped")
+                      << '\n';
+        }
+        for (const auto & sample : entry.second) {
+            const bool eligible = sample.credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+                sample.credit.eligible_for_learning;
+            const char * denial_reason = eligible ? "none"
+                : replay_mode ? "synthetic_replay_is_diagnostic_only"
+                : sample.credit.outcome != common_flydelta_counterfactual_outcome::helped
+                    ? "outcome_is_not_helped"
+                    : "learning_eligibility_flag_not_set";
+            std::cout << "flydelta_learning_credit_sample " << json({
+                {"group", entry.first}, {"sample_id", sample.delta.id},
+                {"fixture_id", sample.credit.fixture_id},
+                {"source", replay_mode ? "synthetic_replay" : "host_verified_repair"},
+                {"outcome", common_flydelta_counterfactual_outcome_name(sample.credit.outcome)},
+                {"quality_delta", sample.credit.quality_delta},
+                {"eligible_for_learning", eligible}, {"denial_reason", denial_reason},
+                {"layer", sample.delta.layer_index}, {"host_evidence_ref", sample.delta.host_evidence_ref},
+            }).dump() << '\n';
+        }
         for (const auto & direction : directions) {
             std::cout << "flydelta_direction group=" << entry.first
                       << " kind=" << common_flydelta_direction_kind_name(direction.kind)
@@ -1267,7 +1328,8 @@ int main(int argc, char ** argv) {
                 generated_result = {};
                 const bool generated = inference->generate(generation_request, generated_result);
                 trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
-                    deep_case.id, generation_request, generated_result);
+                    deep_arm_trace_id(deep_case.id, basis.layer_index, coefficients, full_execution),
+                    generation_request, generated_result);
                 if (generated && apply_overlay && !generated_result.flydelta_runtime.applied) {
                     runner_error = "Deep overlay was requested but runtime did not confirm graph application";
                     return false;
@@ -1277,6 +1339,8 @@ int main(int argc, char ** argv) {
                     deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                 trial = {};
                 trial.executed = generated;
+                trial.arm_id = deep_arm_trace_id(deep_case.id, basis.layer_index,
+                    coefficients, full_execution);
                 trial.host_evaluated = full_execution && generated;
                 trial.verifier_known = full_execution && generated &&
                     verdict.value != host_verdict::kind::unresolved_alternative;
@@ -1286,6 +1350,12 @@ int main(int argc, char ** argv) {
                 trial.intervention_count = apply_overlay ? basis.vectors.size() : 0;
                 trial.evidence_ref = apply_overlay
                     ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
+                trial.expected_decision_summary = deep_case.expected_tool + " " +
+                    deep_case.canonical_arguments.dump();
+                trial.observed_decision_summary = preview(generated_result);
+                trial.verifier_reason = full_execution
+                    ? (generated ? verdict.diagnostic : generated_result.error_message)
+                    : "diagnostic_only_host_verifier_not_run";
                 margin = {};
                 deep_margin_error.clear();
                 if (!deep_case.failed_tool.empty() || !deep_case.failed_continuation.empty()) {
@@ -1550,14 +1620,17 @@ int main(int argc, char ** argv) {
                     geometry_available.reserve(coefficients.size());
                     for (size_t index = 0; index < coefficients.size(); ++index) {
                         const auto & generated_result = generated_results[index];
+                        const std::string arm_trace_id = deep_arm_trace_id(deep_case.id,
+                            basis.layer_index, coefficients[index], full_execution);
                         trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
-                            deep_case.id + "/" + std::to_string(index),
+                            arm_trace_id,
                             generation_requests[index], generated_result);
                         const auto verdict = full_execution ? verify_model_call(generated_result,
                             deep_case.expected_tool, deep_case.canonical_arguments,
                             deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                         common_flydelta_counterfactual_trial trial;
                         trial.executed = common_agent_generation_succeeded(generated_result);
+                        trial.arm_id = arm_trace_id;
                         trial.host_evaluated = full_execution && trial.executed;
                         trial.verifier_known = full_execution && trial.executed &&
                             verdict.value != host_verdict::kind::unresolved_alternative;
@@ -1566,6 +1639,12 @@ int main(int argc, char ** argv) {
                         trial.overlay_applied = generated_result.flydelta_runtime.applied;
                         trial.intervention_count = basis.vectors.size();
                         trial.evidence_ref = "evidence:flydelta-deep-overlay";
+                        trial.expected_decision_summary = deep_case.expected_tool + " " +
+                            deep_case.canonical_arguments.dump();
+                        trial.observed_decision_summary = preview(generated_result);
+                        trial.verifier_reason = full_execution
+                            ? (trial.executed ? verdict.diagnostic : generated_result.error_message)
+                            : "diagnostic_only_host_verifier_not_run";
                         common_flydelta_decision_margin margin;
                         const auto & scored = score_results.choices[index];
                         margin.available = scored.available;
@@ -1688,27 +1767,60 @@ int main(int argc, char ** argv) {
                           << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
                           << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - deep_started).count() << '\n';
-                for (const auto & trial : deep_result.coefficient_trials) {
-                    std::cout << "flydelta_low_rank_arm group=" << entry.first
-                              << " requested_rank=" << requested_rank << " coefficients=";
-                    for (size_t index = 0; index < trial.coefficients.size(); ++index) {
-                        if (index != 0) std::cout << ',';
-                        std::cout << trial.coefficients[index];
-                    }
-                    std::cout << " mutation=" << trial.mutation_kind
-                              << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
-                              << " host_verified=" << (trial.verifier_known ? "yes" : "no")
-                              << " search_fitness=" << trial.search_fitness;
+                for (size_t trial_index = 0;
+                        trial_index < deep_result.coefficient_trials.size(); ++trial_index) {
+                    const auto & trial = deep_result.coefficient_trials[trial_index];
+                    const bool full_generation = trial.mutation_kind == "full_generation_top_arm";
+                    const bool learning_credit = full_generation && trial.executed &&
+                        trial.host_evaluated && trial.verifier_known &&
+                        trial.outcome == common_flydelta_counterfactual_outcome::helped;
+                    const char * credit_reason = !full_generation
+                        ? "diagnostic_only_no_full_generation_oracle_result"
+                        : !trial.executed ? "candidate_generation_failed"
+                        : !trial.host_evaluated ? "host_verifier_not_run"
+                        : !trial.verifier_known ? "host_verifier_unknown"
+                        : trial.outcome == common_flydelta_counterfactual_outcome::helped
+                            ? "baseline_failed_candidate_passed"
+                            : trial.outcome == common_flydelta_counterfactual_outcome::harmed
+                                ? "baseline_passed_candidate_failed"
+                                : trial.outcome == common_flydelta_counterfactual_outcome::neutral
+                                    ? "baseline_and_candidate_passed"
+                                    : "baseline_and_candidate_did_not_establish_helped";
+                    json arm = {
+                        {"group", entry.first}, {"fixture_id", deep_fixture.id},
+                        {"task", deep_case.question}, {"arm_id", trial.arm_id},
+                        {"raw_output_trace_id", trial.arm_id},
+                        {"requested_rank", requested_rank}, {"trial_index", trial_index},
+                        {"coefficients", trial.coefficients}, {"layer", deep_result.layer_index},
+                        {"mutation", trial.mutation_kind},
+                        {"executed", trial.executed}, {"host_evaluated", trial.host_evaluated},
+                        {"verifier_known", trial.verifier_known},
+                        {"verifier_passed", full_generation && trial.verifier_known &&
+                            trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+                            trial.outcome != common_flydelta_counterfactual_outcome::unknown},
+                        {"outcome", common_flydelta_counterfactual_outcome_name(trial.outcome)},
+                        {"counterfactual_credit_eligible", learning_credit},
+                        {"counterfactual_credit_reason", credit_reason},
+                        {"learning_credit_granted", false},
+                        {"learning_credit_grant_reason", "rank_smoke_does_not_persist_learning_credit"},
+                        {"expected_tool", deep_case.expected_tool},
+                        {"expected_arguments", deep_case.canonical_arguments},
+                        {"expected_decision", trial.expected_decision_summary},
+                        {"observed_decision", trial.observed_decision_summary},
+                        {"verifier_reason", trial.verifier_reason},
+                        {"evidence_ref", trial.evidence_ref},
+                        {"search_fitness", trial.search_fitness},
+                    };
                     if (trial.margin.available) {
-                        std::cout << " margin_normalized=" << trial.margin.normalized_delta();
+                        arm["margin_normalized"] = trial.margin.normalized_delta();
                     }
                     if (trial.geometry_available) {
-                        std::cout << " cosine=" << trial.geometry.cosine
-                                  << " progress=" << trial.geometry.progress
-                                  << " leakage=" << trial.geometry.leakage
-                                  << " shift_norm=" << trial.geometry.shift_norm;
+                        arm["geometry"] = {{"cosine", trial.geometry.cosine},
+                            {"progress", trial.geometry.progress},
+                            {"leakage", trial.geometry.leakage},
+                            {"shift_norm", trial.geometry.shift_norm}};
                     }
-                    std::cout << '\n';
+                    std::cout << "flydelta_low_rank_arm " << arm.dump() << '\n';
                 }
             }
         }

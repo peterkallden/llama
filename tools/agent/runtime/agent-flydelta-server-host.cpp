@@ -583,6 +583,7 @@ bool daemon_flydelta_finalize_arm(
         }
         const json value = {{"arm_id", arm.arm_id}, {"intervention_ref", arm.intervention_ref},
             {"batch_id", arm.job_id + ":coefficient"}, {"wave_id", arm.wave_id},
+            {"context_ref", arm.context_ref}, {"fixture_ref", arm.fixture_ref},
             {"workflow_phase", wave_phase}, {"strategy", wave_strategy},
             {"basis_fingerprint", basis_fingerprint}, {"coefficients", effective_coefficients},
             {"phase", arm.request_generation ? "full" : "diagnostic"},
@@ -606,6 +607,11 @@ bool daemon_flydelta_finalize_arm(
             {"stop_reason", common_agent_generation_stop_reason_name(generation.stop_reason)},
             {"host_evaluated", result.host_evaluated}, {"verifier_known", result.verifier_known},
             {"verifier_passed", result.verifier_passed}, {"verifier_reason", result.verifier_reason},
+            {"expected_decision", result.expected_decision_summary},
+            {"observed_decision", result.observed_decision_summary},
+            {"verifier_violation_code", result.verifier_violation_code},
+            {"verifier_violation_kind", result.verifier_violation_kind},
+            {"verifier_violation_dimensions", result.verifier_violation_dimensions},
             {"failure_reason", error}};
         std::fprintf(stderr, "flydelta_daemon_arm %s\n", value.dump().c_str());
     }};

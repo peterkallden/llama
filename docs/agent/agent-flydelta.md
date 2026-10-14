@@ -1296,22 +1296,69 @@ The current v3 supplement uses keys such as
 `tool_use/dataset/data_query` and
 `tool_use/dataset/statistics_describe`.
 
-For each group the smoke reports observation count, compatible and rejected
-samples, effective/stable rank, pairwise alignment, condition number,
-geometry stability, the selected search depth and its bounded search budget.
-Depth is incremental: Bootstrap starts with one compatible sample, Shallow
-requires a small geometrically independent set, and Deep additionally
-requires enough stable evidence for aggregate direction builders and
-TFO-lite. Sample count alone is never sufficient; a near-collinear group
-remains shallow.
+For each group the smoke reports total observations, learning-eligible,
+experimental and incompatible samples, effective/stable rank, alignment,
+geometry, depth and search budgets. `experimental` means the sample passed
+structural validation and may seed an explicitly forced smoke experiment, but
+it is not admitted to evidence depth. The `forced_deep_override` fields make
+this distinction visible when the smoke deliberately runs Deep before the
+production gate is ready.
 
-This report is an aggregation/depth test, not a claim that deep model search
-has run. The dataset repair smoke currently ends after producing retained
-direction candidates and prints `deep_search_executed=no`. A later worker
-stage can consume a Deep-ready group's retained samples and run margin,
-coefficient and full-generation searches without changing the partition or
-promotion rules. Only a host-verified improvement may leave the experimental
-state.
+`flydelta_learning_credit_sample` logs the decision per retained capture delta:
+sample/fixture/evidence IDs, source lane, original paired outcome, quality
+delta, eligibility and a denial reason. The group summary is only an aggregate;
+use this per-sample record to see exactly why a capture was experimental or
+incompatible.
+
+Each `flydelta_low_rank_arm` JSON record includes the fixture and task,
+stable arm ID, coefficients/layer, expected tool and canonical arguments,
+observed decision, verifier reason, evidence reference, outcome and an
+explicit counterfactual-eligibility decision. The rank smoke also states
+`learning_credit_granted=false`: this harness records/evaluates arms but does
+not persist a new learning-credit report. `raw_output_trace_id` joins it to the
+`flydelta_daemon_arm` record (which carries the exact messages and raw model
+content) or to the corresponding `flydelta_model_exchange` record in the
+non-daemon runner. Diagnostic arms are teacher-scored with `n_predict=0`; the
+host verifier is intentionally not run, so their margin/search fitness is
+search guidance only.
+
+### Learning-credit decision
+
+Learning credit is not inferred from a positive teacher-forced margin,
+`search_fitness`, semantic progress, a selected arm, or a successful
+generation. The paired counterfactual classifier first requires that both
+baseline and candidate executed and both have a known host-verifier result.
+It then classifies:
+
+| Baseline | Candidate | Paired outcome | Learning credit |
+|---|---|---|---|
+| failed | passed | `HELPED` | eligible |
+| passed | failed | `HARMED` | ineligible |
+| passed | passed | `NEUTRAL` | ineligible |
+| failed | failed | `UNKNOWN` | ineligible |
+| either not executed or verifier unknown | any | `UNKNOWN` | ineligible |
+
+`common_flydelta_intervention_credit_from_report()` copies the validated
+paired outcome and sets `eligible_for_learning` only for `HELPED`; the credit
+contract rejects `eligible_for_learning=true` for every other outcome. The
+evidence-depth gate applies a further identity check (source, behavior key,
+model profile, execution context, capture layout and layer). Only a matching
+`HELPED` credit contributes to compatible evidence/rank. Valid non-`HELPED`
+samples are counted as experimental, while identity mismatches and `HARMED`
+are counted as incompatible/rejected. Training/promotion remain later,
+separate gates.
+
+This repair smoke has two intentionally different input lanes. A real
+host-certified repair is created only after the failed model call is observed,
+the repair call is host-verified against the canonical fixture, and the
+baseline/candidate captures form a validated repair transition; that lane
+sets `HELPED`, quality delta `1`, and learning eligibility. Synthetic replay
+fixtures instead preserve model captures for diagnostics but explicitly set
+`UNKNOWN`, quality delta `0`, and `eligible_for_learning=false`. Such replay
+samples may be used only in experimental direction search and cannot open the
+production Shallow/Deep evidence gate, create learning credit, or promote an
+artifact. Thus a forced Deep smoke run is a test override, not evidence that
+production would currently admit those samples.
 
 `--strict` makes a non-matching model selection return failure; without it,
 the smoke completes and reports mismatches so they can be inspected and fed
