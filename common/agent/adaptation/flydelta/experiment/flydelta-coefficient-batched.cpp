@@ -398,11 +398,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         trial.margin_comparison.available = baseline_margin.available && arm.margin.available;
         trial.margin_comparison.baseline = baseline_margin;
         trial.margin_comparison.candidate = arm.margin;
-        trial.outcome = common_flydelta_classify_counterfactual(
-            baseline, arm.counterfactual);
-        trial.quality_delta = arm.counterfactual.quality - baseline.quality;
-        trial.executed = arm.counterfactual.executed;
-        trial.verifier_known = baseline.verifier_known && arm.counterfactual.verifier_known;
+        common_flydelta_coefficient_trial_set_observation(trial, baseline, arm.counterfactual);
         if (!common_flydelta_coefficient_detail::copy_geometry(
                 arm.geometry, arm.geometry_available, trial, error)) return false;
         trial.search_fitness = common_flydelta_coefficient_detail::diagnostic_fitness(

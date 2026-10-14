@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 
 #include <cmath>
 #include <iostream>
@@ -91,6 +92,7 @@ int main() {
             trial.verifier_known = true;
             trial.overlay_applied = apply_overlay;
             trial.evidence_ref = "evidence:deep-search-full";
+            trial.host_evaluated = true;
             trial.passed = apply_overlay && coefficients.size() == 2 && coefficients[0] > 0.0f;
             trial.quality = trial.passed ? 1.0f : 0.0f;
             margin = {};
@@ -110,6 +112,16 @@ int main() {
     CHECK(calls == 5); // diagnostic baseline plus four bounded coefficient arms
     CHECK(result.coefficient_trials[result.coefficient_selection.trial_index].outcome ==
         common_flydelta_counterfactual_outcome::helped);
+    const auto & finalist = result.coefficient_trials[result.coefficient_selection.trial_index];
+    CHECK(finalist.host_evaluated && finalist.verifier_known);
+    CHECK(finalist.requested_strength > 0 && finalist.executed_strength > 0);
+    CHECK(finalist.requested_coefficients.size() == finalist.coefficients.size());
+    common_flydelta_intervention_region_trial region;
+    CHECK(common_flydelta_coefficient_trial_to_region(finalist, result.basis, region, error));
+    CHECK(region.host_evaluated && region.verifier_known && region.promising);
+    CHECK(region.candidate.total_scale == finalist.executed_strength);
+    region.host_evaluated = false;
+    CHECK(!common_flydelta_intervention_region_trial_validate(region, error));
 
     size_t diagnostic_batch_calls = 0;
     size_t full_batch_calls = 0;
@@ -126,6 +138,7 @@ int main() {
             trial.verifier_known = true;
             trial.overlay_applied = apply_overlay;
             trial.evidence_ref = "evidence:deep-search-batch";
+            trial.host_evaluated = true;
             trial.quality = apply_overlay && !coefficients.empty() && coefficients[0] > 0.0f
                 ? 1.0f : 0.0f;
             margin = {};
@@ -197,7 +210,7 @@ int main() {
         lifecycle, context, fixture(), config, result,
         "flydelta://sideband/deep-search", error));
     auto records = lifecycle.list(error);
-    CHECK(error.empty() && records.size() == result.coefficient_trials.size());
+    CHECK(error.empty() && records.size() == 2); // only the two full-generation finalists
     CHECK(records.back().payload_json.find("full_generation_top_arm") != std::string::npos);
     return 0;
 }

@@ -4094,6 +4094,17 @@ typed experiment envelope and never changes the active turn, model profile or
 sideband. Basis building, counterfactual evaluation, DeltaMemory updates and
 promotion remain explicit offline host operations.
 
+FlyDelta experiment arms use the daemon's existing resource-backed prepare,
+resident execution and finalize bindings. Full-generation arms inherit the
+finite host/context token limit rather than an implicit 64-token cap; a limit
+stop is inconclusive. Compact DSL and JSON tool outputs are normalized against
+the context's host-owned schemas before verification. Runtime confirmation
+must identify the applied arm, and coefficient-to-region transfer preserves
+the actual dose and host-verification flags. Selected coefficient mixtures
+are retained through the existing composed-direction resource seam. See
+[production arm verification and state transfer](agent-flydelta.md#production-arm-verification-and-state-transfer)
+for diagnostics, compatibility and the production-binding smoke options.
+
 In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 
 A thin resident-host wrapper now exists above this layer. It owns a runtime session and can run multiple turns against the same host contract without forcing session reset after each turn. That keeps the resident path small: it reuses the same runtime host and turn request instead of introducing a second agent loop.

@@ -24,6 +24,12 @@ agent_smoke_build_if_requested
 rank_log="$work_dir/low-rank-rank-sweep.log"
 rank_exit=0
 rank_args=()
+if [[ "${LLAMA_AGENT_LOW_RANK_PRODUCTION_BINDINGS:-1}" == "1" ]]; then
+    rank_args+=(--production-bindings)
+fi
+if [[ "${LLAMA_AGENT_LOW_RANK_PRODUCTION_WHERE:-0}" == "1" ]]; then
+    rank_args+=(--production-where)
+fi
 if [[ -n "${LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY:-}" ]]; then
     rank_args+=(--behavior-key "$LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY")
 fi

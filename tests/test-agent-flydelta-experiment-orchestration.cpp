@@ -25,11 +25,13 @@ int main() {
     std::string error;
     common_flydelta_search_pipeline_result pipeline;
     common_flydelta_search_pipeline_direction_result direction;
+    direction.intervention_ref = "resource://selected-composed-direction";
     direction.region_trials = {arm(22, 0.3f), arm(24, 0.6f), arm(25, 0.5f)};
     pipeline.directions.push_back(direction);
     common_flydelta_search_continuation continuation;
     CHECK(common_flydelta_select_search_continuation(pipeline, continuation, error));
     CHECK(continuation.region.anchor_layer_index == 24 && !continuation.host_helped);
+    CHECK(continuation.intervention_ref == direction.intervention_ref);
     pipeline.directions.front().region_trials.push_back(arm(25, 0.4f, true));
     CHECK(common_flydelta_select_search_continuation(pipeline, continuation, error));
     CHECK(continuation.region.anchor_layer_index == 25 && continuation.host_helped);

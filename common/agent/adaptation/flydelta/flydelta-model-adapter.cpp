@@ -560,15 +560,19 @@ namespace {
 
 common_flydelta_counterfactual_trial arm_trial_from_result(
         const common_flydelta_arm_result & arm,
-        bool apply_overlay,
+        bool,
         size_t intervention_count) {
     common_flydelta_counterfactual_trial trial;
+    trial.arm_id = arm.arm_id;
+    trial.intervention_ref = arm.intervention_ref;
     trial.executed = arm.executed;
     trial.host_evaluated = arm.host_evaluated;
     trial.verifier_known = arm.verifier_known;
     trial.passed = arm.verifier_passed;
     trial.quality = arm.quality;
-    trial.overlay_applied = apply_overlay;
+    trial.overlay_applied = arm.overlay_applied;
+    trial.device_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::device_batch;
+    trial.backend_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::backend_batch;
     trial.intervention_count = intervention_count;
     trial.observed_decision_summary = arm.observed_decision_summary;
     trial.expected_decision_summary = arm.expected_decision_summary;

@@ -138,6 +138,7 @@ int main() {
                 auto & trial, auto & result, auto &, auto &, std::string &) {
             trial.executed = true;
             trial.verifier_known = true;
+            trial.host_evaluated = true;
             trial.evidence_ref = "evidence://coefficient-trial";
             trial.passed = apply && coefficients[0] > 0.0f;
             trial.quality = trial.passed ? 1.0f : 0.0f;
@@ -167,6 +168,7 @@ int main() {
                 std::string &) {
             trial.executed = true;
             trial.verifier_known = true;
+            trial.host_evaluated = true;
             trial.evidence_ref = "evidence://coefficient-tfo-trial";
             trial.passed = apply && coefficients[0] > 0.0f;
             trial.quality = trial.passed ? 1.0f : 0.0f;
@@ -218,6 +220,7 @@ int main() {
             trial = {};
             trial.executed = true;
             trial.verifier_known = true;
+            trial.host_evaluated = true;
             trial.evidence_ref = "evidence://coefficient-batch-baseline";
             margin = {};
             geometry_available = false;
@@ -238,6 +241,7 @@ int main() {
                 common_flydelta_counterfactual_trial trial;
                 trial.executed = true;
                 trial.verifier_known = true;
+                trial.host_evaluated = true;
                 trial.evidence_ref = "evidence://coefficient-batch";
                 trial.passed = values[0] > 0.0f;
                 trial.quality = trial.passed ? 1.0f : 0.0f;
@@ -310,6 +314,7 @@ int main() {
             trial = {};
             trial.executed = true;
             trial.verifier_known = true;
+            trial.host_evaluated = true;
             trial.evidence_ref = "evidence://coefficient-staged-baseline";
             trial.passed = false;
             trial.quality = 0.0f;
@@ -331,6 +336,7 @@ int main() {
                 common_flydelta_counterfactual_trial trial;
                 trial.executed = true;
                 trial.verifier_known = true;
+                trial.host_evaluated = true;
                 trial.evidence_ref = "evidence://coefficient-staged-full";
                 trial.passed = true;
                 trial.quality = values[0] > 0.0f ? 1.0f : 0.5f;

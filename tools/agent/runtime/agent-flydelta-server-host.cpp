@@ -2,24 +2,40 @@
 
 #include "agent/agent-residual-patch.h"
 
+#include <cstdio>
+#include <functional>
+
 namespace agent_daemon_flydelta_internal {
+
+struct daemon_flydelta_arm_trace_guard {
+    std::function<void()> callback;
+    ~daemon_flydelta_arm_trace_guard() noexcept {
+        try { callback(); } catch (...) { std::fprintf(stderr, "flydelta_daemon_arm trace_failed=yes\n"); }
+    }
+};
 
 static std::string daemon_flydelta_verifier_input(
         const common_agent_generation_result & generation) {
     if (!generation.chat_params || generation.content.empty()) return generation.content;
-    common_chat_parser_params parser_params(*generation.chat_params);
-    parser_params.parse_tool_calls = true;
-    if (!generation.chat_params->parser.empty()) {
-        parser_params.parser.load(generation.chat_params->parser);
-    }
-    const auto assistant = common_chat_parse(generation.content, false, parser_params);
-    if (assistant.tool_calls.empty()) return generation.content;
-    const auto & call = assistant.tool_calls.front();
-    const auto arguments = json::parse(call.arguments, nullptr, false);
-    if (arguments.is_discarded() || !arguments.is_object() || call.name.empty()) {
+    try {
+        common_chat_parser_params parser_params(*generation.chat_params);
+        parser_params.parse_tool_calls = true;
+        if (!generation.chat_params->parser.empty()) {
+            parser_params.parser.load(generation.chat_params->parser);
+        }
+        const auto assistant = common_chat_parse(generation.content, false, parser_params);
+        if (assistant.tool_calls.size() != 1) return generation.content;
+        const auto & call = assistant.tool_calls.front();
+        const auto arguments = json::parse(call.arguments, nullptr, false);
+        if (arguments.is_discarded() || !arguments.is_object() || call.name.empty()) {
+            return generation.content;
+        }
+        return json{{"name", call.name}, {"arguments", arguments}}.dump();
+    } catch (const std::exception &) {
+        // Malformed model output belongs to verifier diagnostics, not to a
+        // runtime exception that bypasses the arm's host verdict.
         return generation.content;
     }
-    return json{{"name", call.name}, {"arguments", arguments}}.dump();
 }
 
 bool daemon_flydelta_prepare_arm(
@@ -28,9 +44,11 @@ bool daemon_flydelta_prepare_arm(
         common_agent_generation_request & request,
         std::string & error) {
     if (!daemon_flydelta_parse_context(*provider, arm.context_ref, request, error)) return false;
+    request.options.generation_trace = provider->host && provider->host->config().agent_trace;
     if (arm.max_generated_tokens != 0) {
-        request.options.n_predict = std::min(
-            request.options.n_predict, static_cast<int>(arm.max_generated_tokens));
+        request.options.n_predict = request.options.n_predict > 0
+            ? std::min(request.options.n_predict, static_cast<int>(arm.max_generated_tokens))
+            : static_cast<int>(arm.max_generated_tokens);
     }
     // Diagnostic arms still evaluate the prompt and may capture hidden state,
     // but they must not decode a token.  The arm contract already separates
@@ -38,6 +56,9 @@ bool daemon_flydelta_prepare_arm(
     // resident server request instead of letting the context defaults decode.
     if (!arm.request_generation) {
         request.options.n_predict = 0;
+    } else if (request.options.n_predict <= 0) {
+        error = "FlyDelta full generation requires a finite host/context or arm token budget";
+        return false;
     }
     // A paired device-reduction baseline carries an explicit zero overlay so
     // the server can materialize one per-sequence cvec table for both rows.
@@ -52,9 +73,10 @@ bool daemon_flydelta_prepare_arm(
         std::shared_ptr<const std::vector<float>> shared_flattened_basis;
         bool factorized = false;
         bool factorized_batch_eligible = false;
-        const bool factorized_enabled =
+        const bool factorized_enabled = provider->host &&
+            provider->host->config().per_sequence_factorized_cvec_batch &&
             provider->host->server().per_sequence_factorized_cvec_batch_enabled();
-        const bool parallel_sequences = provider->host->context_key().n_parallel > 1;
+        const bool parallel_sequences = provider->host && provider->host->context_key().n_parallel > 1;
         {
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             const auto it = provider->factorized_directions.find(arm.intervention_ref);
@@ -189,7 +211,7 @@ bool daemon_flydelta_prepare_arm(
         }
         const auto direction = std::find_if(available.begin(), available.end(), [&](const auto & value) {
             return !arm.layer_indices.empty() &&
-                value.layer_index == static_cast<int32_t>(arm.layer_indices.front());
+                value.layer_index == static_cast<int32_t>(*std::max_element(arm.layer_indices.begin(), arm.layer_indices.end()));
         });
         if (direction == available.end()) {
             error = "FlyDelta device diagnostics direction is unavailable";
@@ -199,7 +221,7 @@ bool daemon_flydelta_prepare_arm(
         reduction->enabled = true;
         reduction->group_id = arm.arm_id;
         reduction->baseline_group_id = arm.diagnostics_baseline_arm_id;
-        reduction->layer = direction->layer_index;
+        reduction->layer = direction->layer_index + 1;
         reduction->absolute_position = arm.diagnostics_position;
         if (factorized) {
             reduction->direction.assign(direction->values.size(), 0.0f);
@@ -213,12 +235,20 @@ bool daemon_flydelta_prepare_arm(
         } else {
             reduction->direction = direction->values;
         }
-        request.flydelta_device_diagnostics = std::move(reduction);
+        if (reduction->layer < provider->model_n_layers) {
+            request.flydelta_device_diagnostics = std::move(reduction);
+        }
     }
     if (arm.request_capture) {
         auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
         capture->enabled = true;
         capture->layer_indices = arm.layer_indices;
+        for (const auto layer : arm.layer_indices) {
+            if (layer + 1 < provider->model_n_layers) capture->layer_indices.push_back(layer + 1);
+        }
+        std::sort(capture->layer_indices.begin(), capture->layer_indices.end());
+        capture->layer_indices.erase(std::unique(capture->layer_indices.begin(),
+            capture->layer_indices.end()), capture->layer_indices.end());
         capture->position = common_flydelta_capture_position::generation_boundary;
         capture->token_index = -1;
         capture->max_bytes = arm.max_capture_bytes == 0
@@ -320,7 +350,8 @@ bool daemon_flydelta_verify_generation(
         std::string & violation_kind,
         std::vector<std::string> & violation_dimensions,
         common_flydelta_semantic_progress_observation & progress_observation,
-        std::string & error) {
+        std::string & error,
+        const std::vector<common_chat_tool> & model_tools) {
     error.clear();
     verifier_known = false;
     passed = false;
@@ -356,14 +387,18 @@ bool daemon_flydelta_verify_generation(
         const std::string expected_text = fixture.at("expected_decision").is_string()
             ? fixture.at("expected_decision").get<std::string>()
             : fixture.at("expected_decision").dump();
-        const bool expected_valid = common_flydelta_parse_semantic_decision(
+        const auto expected_json = json::parse(expected_text, nullptr, false);
+        const bool expected_call = expected_json.is_object() && expected_json.contains("name") &&
+            expected_json["name"].is_string() && expected_json.contains("arguments") &&
+            expected_json["arguments"].is_object();
+        const bool expected_valid = expected_call || common_flydelta_parse_semantic_decision(
             expected_text, expected, expected_status, decision_error);
         if (!expected_valid) {
             error = "FlyDelta normalized_call fixture expected_decision is invalid: " +
                 decision_error;
             return false;
         }
-        expected_summary = summarize(expected);
+        expected_summary = expected_call ? expected_text.substr(0, 1024) : summarize(expected);
         common_flydelta_semantic_decision observed;
         common_flydelta_semantic_decision_status observed_status;
         std::string observed_error;
@@ -382,7 +417,7 @@ bool daemon_flydelta_verify_generation(
                 " output=" + preview;
         }
         std::string progress_error;
-        (void) common_flydelta_observe_semantic_progress(
+        if (!expected_call) (void) common_flydelta_observe_semantic_progress(
             generated, expected, progress_observation, progress_error);
         common_flydelta_oracle_request oracle_request;
         oracle_request.oracle_ref = fixture.value(
@@ -400,7 +435,14 @@ bool daemon_flydelta_verify_generation(
         oracle_request.expected_contract_fingerprint = fixture.value(
             "expected_contract_fingerprint", "");
         oracle_request.verifier_ref = fixture.value("verifier_ref", "");
-        oracle_request.expected_decision_available = true;
+        oracle_request.model_tools = model_tools;
+        oracle_request.observed_format = generated.find("open!") == 0 ? "compact_dsl" : "jsonl";
+        oracle_request.expected_tool_call_available = expected_call;
+        if (expected_call) {
+            oracle_request.expected_tool_call.name = expected_json["name"].get<std::string>();
+            oracle_request.expected_tool_call.arguments_json = expected_json["arguments"].dump();
+        }
+        oracle_request.expected_decision_available = !expected_call;
         oracle_request.expected_decision = expected;
         common_flydelta_oracle_result oracle_result;
         if (!common_flydelta_oracle_evaluate(
@@ -477,6 +519,18 @@ bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & resu
         result.verifier_passed;
 }
 
+common_flydelta_counterfactual_outcome daemon_flydelta_classify_arm_pair(
+        const common_flydelta_arm_result & baseline, const common_flydelta_arm_result & candidate) {
+    common_flydelta_counterfactual_trial left, right;
+    left.executed = baseline.executed;
+    right.executed = candidate.executed;
+    left.verifier_known = baseline.host_evaluated && baseline.verifier_known;
+    right.verifier_known = candidate.host_evaluated && candidate.verifier_known;
+    left.passed = daemon_flydelta_arm_semantic_passed(baseline);
+    right.passed = daemon_flydelta_arm_semantic_passed(candidate);
+    return common_flydelta_classify_counterfactual(left, right);
+}
+
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -486,13 +540,59 @@ bool daemon_flydelta_finalize_arm(
     error.clear();
     result = {};
     result.arm_id = arm.arm_id;
+    result.intervention_ref = arm.intervention_ref;
+    result.overlay_applied = generation.flydelta_runtime.applied;
     result.executed = common_agent_generation_succeeded(generation);
     result.requested_alpha = arm.alpha;
     result.executed_alpha = arm.alpha;
     result.generation_available = arm.request_generation;
-    result.quality = static_cast<float>(generation.decoded_tokens);
+    result.quality = 0.0f; // strict verifier quality, never decoded-token count
+    daemon_flydelta_arm_trace_guard trace{[&] {
+        if (!provider->host || !provider->host->config().agent_trace) return;
+        common_agent_generation_request context;
+        std::string trace_error;
+        (void) daemon_flydelta_parse_context(*provider, arm.context_ref, context, trace_error);
+        json messages = json::array();
+        for (const auto & message : context.messages) messages.push_back({{"role", message.role}, {"content", message.content}});
+        std::vector<float> effective_coefficients = arm.coefficients;
+        std::string basis_fingerprint;
+        {
+            std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
+            const auto material = provider->factorized_directions.find(arm.intervention_ref);
+            if (material != provider->factorized_directions.end()) {
+                effective_coefficients = material->second.normalized_coefficients;
+                for (auto & coefficient : effective_coefficients) coefficient *= arm.apply_overlay ? arm.alpha : 0;
+                basis_fingerprint = material->second.basis_fingerprint;
+            }
+        }
+        const json value = {{"arm_id", arm.arm_id}, {"intervention_ref", arm.intervention_ref},
+            {"basis_fingerprint", basis_fingerprint}, {"coefficients", effective_coefficients},
+            {"phase", arm.request_generation ? "full" : "diagnostic"},
+            {"messages", messages}, {"content", generation.content},
+            {"layers", arm.layer_indices}, {"requested_alpha", arm.alpha},
+            {"measurement_layer", arm.layer_indices.empty() ? 0 : arm.layer_indices.back() + 1},
+            {"physical_batch_size", generation.flydelta_runtime.physical_batch_size},
+            {"overlay_applied", generation.flydelta_runtime.applied},
+            {"applied_artifact_id", generation.flydelta_runtime.artifact_id},
+            {"factorized_binding", generation.flydelta_runtime.factorized_binding},
+            {"device_batch", generation.flydelta_device_batch},
+            {"decoded_tokens", generation.decoded_tokens},
+            {"stop_reason", common_agent_generation_stop_reason_name(generation.stop_reason)},
+            {"host_evaluated", result.host_evaluated}, {"verifier_known", result.verifier_known},
+            {"verifier_passed", result.verifier_passed}, {"verifier_reason", result.verifier_reason},
+            {"failure_reason", error}};
+        std::fprintf(stderr, "flydelta_daemon_arm %s\n", value.dump().c_str());
+    }};
     if (!result.executed) {
         result.provenance_ref = generation.error_message;
+        return false;
+    }
+    if (arm.apply_overlay && !generation.flydelta_runtime.applied) {
+        error = "FlyDelta overlay completed without runtime confirmation of graph application";
+        return false;
+    }
+    if (arm.apply_overlay && generation.flydelta_runtime.artifact_id != arm.arm_id) {
+        error = "FlyDelta runtime applied an overlay with a different or missing arm identity";
         return false;
     }
     if (arm.residual_patch) {
@@ -545,6 +645,12 @@ bool daemon_flydelta_finalize_arm(
         result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
         return common_flydelta_arm_result_validate(result, error);
     }
+    if (generation.stop_reason == common_agent_generation_stop_reason::limit) {
+        result.host_evaluated = true;
+        result.verifier_reason = "generation budget exhausted; verification is inconclusive";
+        result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
+        return common_flydelta_arm_result_validate(result, error);
+    }
     json fixture;
     if (!daemon_flydelta_read_json(*provider, arm.fixture_ref, fixture, error)) return false;
     if (arm.request_host_verification) {
@@ -555,6 +661,9 @@ bool daemon_flydelta_finalize_arm(
         bool verifier_known = false;
         bool passed = false;
         const std::string verifier_input = daemon_flydelta_verifier_input(generation);
+        common_agent_generation_request context;
+        std::vector<common_chat_tool> verification_tools;
+        if (!daemon_flydelta_parse_context(*provider, arm.context_ref, context, error, &verification_tools)) return false;
         if (!daemon_flydelta_verify_generation(
                 provider->oracle_registry,
                 fixture, verifier_input, verifier_known, passed,
@@ -565,7 +674,7 @@ bool daemon_flydelta_finalize_arm(
                 result.verifier_violation_kind,
                 result.verifier_violation_dimensions,
                 result.semantic_progress_observation,
-                error)) {
+                error, verification_tools)) {
             return false;
         }
         if (verifier_known) {
@@ -609,6 +718,7 @@ bool daemon_flydelta_diagnostics_for_arm(
         common_flydelta_representation_diagnostics & diagnostics,
         std::string & error) {
     diagnostics = {};
+    if (!arm.layer_indices.empty()) layer = *std::max_element(arm.layer_indices.begin(), arm.layer_indices.end());
     std::shared_ptr<const common_flydelta_hidden_state_capture> baseline;
     std::shared_ptr<const common_flydelta_hidden_state_capture> overlay;
     if (!daemon_flydelta_capture_for_arm(provider, baseline_arm_id, baseline) ||
@@ -620,7 +730,7 @@ bool daemon_flydelta_diagnostics_for_arm(
     const auto direction = std::find_if(directions.begin(), directions.end(), [&](const auto & value) {
         return value.layer_index == static_cast<int32_t>(layer);
     });
-    if (direction == directions.end()) {
+        if (direction == directions.end()) {
         error = "FlyDelta diagnostic arm has no compatible direction";
         return false;
     }
@@ -632,7 +742,8 @@ bool daemon_flydelta_diagnostics_for_arm(
     delta.model_profile_fingerprint = provider->model_profile_fingerprint;
     delta.execution_context_fingerprint = job.seed.execution_context_fingerprint;
     delta.capture_layout_revision = provider->capture_layout_revision;
-    delta.layer_index = direction->layer_index;
+    if (layer + 1 >= provider->model_n_layers) return true;
+    delta.layer_index = direction->layer_index + 1;
     delta.values = direction->values;
     return common_flydelta_representation_diagnostics_from_captures(
         *baseline, *overlay, delta, 4U * 1024U * 1024U, diagnostics, error);
@@ -683,6 +794,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
     }
     std::shared_ptr<const std::vector<float>> shared_flattened_basis =
         std::move(flattened_basis_values);
+    const std::string basis_identity = json{{"layer", basis.layer_index}, {"vectors", basis.vectors}}.dump();
+    const std::string basis_fingerprint = hash_sha256_hex(basis_identity.data(), basis_identity.size());
     for (size_t index = 0; index < coefficients.size(); ++index) {
         const auto & values = coefficients[index];
         std::string intervention_ref = job.seed.candidate_ref;
@@ -698,8 +811,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             std::vector<float> normalized = values;
             for (float & value : normalized) {
                 value /= strength;
-                identity += "\n" + std::to_string(value);
             }
+            identity += "\n" + basis_fingerprint + "\n" + request.wave_id + "\n" + json(normalized).dump();
             intervention_ref = "flydelta://runtime/factorized/" +
                 hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
             daemon_flydelta_factorized_direction material;
@@ -707,6 +820,7 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             material.flattened_basis = shared_flattened_basis;
             material.normalized_coefficients = std::move(normalized);
             material.source_ref = job.seed.candidate_ref;
+            material.basis_fingerprint = basis_fingerprint;
             material.batch_eligible = coefficients.size() >= 2;
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             provider->factorized_directions[intervention_ref] = std::move(material);
@@ -738,10 +852,10 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         arm.request_generation = full_execution;
         arm.request_host_verification = full_execution;
         arm.max_capture_bytes = 4U * 1024U * 1024U;
-        arm.max_generated_tokens = 64;
+        arm.max_generated_tokens = 0; // inherit the bounded immutable context budget
         const std::string identity = job.id + "\n" + request.wave_id + "\n" +
             std::to_string(index) + "\n" + intervention_ref + "\n" +
-            std::to_string(arm.alpha);
+            json(arm.alpha).dump();
         arm.arm_id = "flydelta://runtime/" + job.id + "/coefficient/" +
             hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
         if (!common_flydelta_arm_request_validate(arm, error)) return false;
@@ -851,7 +965,7 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             if (daemon_flydelta_capture_for_arm(
                         provider, request.arms.front().arm_id, baseline_capture) &&
                     daemon_flydelta_capture_for_arm(
-                        provider, request.arms[index].arm_id, overlay_capture)) {
+                        provider, request.arms[index].arm_id, overlay_capture) && cpu_geometry.layer_index != 0) {
                 arm.geometry_available = true;
                 arm.cosine = cpu_geometry.cosine;
                 arm.progress = cpu_geometry.progress;
@@ -861,11 +975,16 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             }
         }
         common_flydelta_counterfactual_trial trial;
+        trial.arm_id = arm.arm_id;
+        trial.intervention_ref = arm.intervention_ref;
         trial.executed = arm.executed;
+        trial.host_evaluated = arm.host_evaluated;
         trial.verifier_known = arm.verifier_known;
         trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         trial.quality = arm.quality;
-        trial.overlay_applied = apply_overlay;
+        trial.overlay_applied = arm.overlay_applied;
+        trial.device_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::device_batch;
+        trial.backend_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::backend_batch;
         trial.intervention_count = request.arms[index].layer_indices.size();
         trial.semantic_progress_observation = arm.semantic_progress_observation;
         trial.observed_decision_summary = arm.observed_decision_summary;
@@ -875,6 +994,7 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         trials.push_back(std::move(trial));
         margins.push_back(arm.margin);
         common_flydelta_representation_diagnostics geometry;
+        geometry.layer_index = static_cast<uint32_t>(basis.layer_index + 1);
         geometry.cosine = arm.cosine;
         geometry.progress = arm.progress;
         geometry.leakage = arm.leakage;
@@ -936,7 +1056,7 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     arm.request_generation = full_execution;
     arm.request_host_verification = full_execution;
     arm.max_capture_bytes = 4U * 1024U * 1024U;
-    arm.max_generated_tokens = full_execution ? 64 : 0;
+    arm.max_generated_tokens = 0;
     if (!common_flydelta_arm_request_validate(arm, error)) return false;
     batch.arms.push_back(arm);
     common_flydelta_arm_batch_result results;
@@ -947,10 +1067,13 @@ bool daemon_flydelta_run_rank1_alpha_arm(
     }
     const auto & result = results.arms.front();
     trial.executed = result.executed;
+    trial.arm_id = result.arm_id;
+    trial.intervention_ref = result.intervention_ref;
+    trial.host_evaluated = result.host_evaluated;
     trial.verifier_known = result.verifier_known;
     trial.passed = daemon_flydelta_arm_semantic_passed(result);
     trial.quality = result.quality;
-    trial.overlay_applied = apply_overlay;
+    trial.overlay_applied = result.overlay_applied;
     trial.intervention_count = apply_overlay ? 1 : 0;
     trial.semantic_progress_observation = result.semantic_progress_observation;
     trial.observed_decision_summary = result.observed_decision_summary;

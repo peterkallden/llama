@@ -96,11 +96,7 @@ bool run_tfo_lite_coefficient_search(
             trial.margin_comparison.available = baseline_margin.available && arm.margin.available;
             trial.margin_comparison.baseline = baseline_margin;
             trial.margin_comparison.candidate = arm.margin;
-            trial.outcome = common_flydelta_classify_counterfactual(
-                baseline, arm.counterfactual);
-            trial.quality_delta = arm.counterfactual.quality - baseline.quality;
-            trial.executed = arm.counterfactual.executed;
-            trial.verifier_known = baseline.verifier_known && arm.counterfactual.verifier_known;
+            common_flydelta_coefficient_trial_set_observation(trial, baseline, arm.counterfactual);
             if (!copy_geometry(arm.geometry, arm.geometry_available, trial, error)) return false;
             trial.iteration = iteration;
             trial.parent_trial_index = population_parents[population_index];

@@ -2602,6 +2602,75 @@ direction candidates
         -> experimental lifecycle / HELPED review
 ```
 
+### Production arm verification and state transfer
+
+Production coefficient waves use the same daemon context/resource binding for
+diagnostics and full-generation finalists. Diagnostic arms use zero decoded
+tokens and no host verdict. Full arms inherit the finite host/context token
+budget (or an explicitly smaller arm budget); there is no implicit 64-token
+ceiling. Budget exhaustion is an evaluated but inconclusive `UNKNOWN`, not a
+verified invalid continuation. Quality is strict verifier quality, never the
+decoded-token count.
+
+Diagnostic observations remain in search state and trace. They are not appended
+as host-evaluated lifecycle events; only full, host-evaluated trials enter that
+journal. This preserves the existing lifecycle authority contract.
+
+An overlay generation must confirm both graph application and the requested
+arm's artifact identity. Request flags alone cannot establish application.
+Bootstrap/frontier comparisons use the ordinary paired classifier, just like
+Deep: fail/pass is `HELPED`, pass/fail is `HARMED`, pass/pass is `NEUTRAL`, and
+fail/fail or unknown verification is `UNKNOWN`.
+
+Schema-aware compact DSL and JSON decode to the same model-facing call. The
+daemon passes the immutable context's tool schemas to Oracle dispatch. A
+textual context stores verification-only schemas in `model_tools`; these do not
+enable native tool calling or JSON grammar. Native contexts retain `tools` and
+an explicit non-none `tool_choice`. Mixing both schema roles is rejected. A
+`normalized_call` fixture whose `expected_decision` is a `{name, arguments}`
+call checks the complete normalized argument object, including multiple
+measures, predicates and sort keys. Legacy semantic-decision fixtures retain
+their narrower declared properties. Missing schemas do not invent authority.
+The tool-contract Oracle uses the same schema-aware flat-DSL parser; schema
+validity alone is not a paired behavioral improvement.
+
+Coefficient results preserve host-evaluation flags, requested/executed dose,
+baseline margin comparison, arm identity and verifier reasons. One typed
+coefficient-to-region mapper is shared by the daemon and contract tests.
+Deep finalists retain the diagnostic arm's executed coefficients and dose;
+they do not reset the selected scale to zero. A selected mixed direction is
+materialized through the existing composed-direction resource seam, and its
+reference and coefficients are retained separately from the original source.
+Negative controls place the sign in coefficients while scale stays positive.
+
+Capture and compact reduction measure the first available layer input after
+the last intervention layer. Interventions at the last exposed layer have no
+downstream capture: geometry is unavailable rather than a fabricated zero
+effect. The CPU fallback can resolve transient factorized basis material;
+it does not treat a factorized reference as a durable direction URI.
+
+The rank smoke script defaults to daemon bindings. Set
+`LLAMA_AGENT_LOW_RANK_PRODUCTION_BINDINGS=0` only for an explicitly labelled
+legacy-callback comparison. `--production-bindings` selects the daemon
+coefficient runner; `--production-where` additionally runs bounded production
+Whirlpool and requires a safe continuation before the rank sweep. The script
+exposes this as `LLAMA_AGENT_LOW_RANK_PRODUCTION_WHERE=1` (default off to retain
+the smaller WHAT-only experiment). No safe WHERE continuation is reported as
+unavailable, not a failed rank measurement. Replay material remains experimental
+and receives no learning credit in either mode.
+
+With the existing explicit trace opt-in, daemon arm logs include logical
+messages, response, actual artifact identity, coefficients, basis fingerprint,
+phase, stop reason and verifier result. Generation tracing also retains the
+template-expanded prompt. A model-free daemon-seams test injects controlled
+backend observations to prove a verified `HELPED` can survive conversion and
+resource roundtrip; it is explicitly not model-quality or GPU proof.
+
+The arm-seam correction pass was validated with 61 relevant model-free CTests
+(FlyDelta, daemon seams, tool catalog/codec, Cozo data store and replay contract),
+all passing. Live-model evidence is recorded separately; deterministic success
+does not establish a behavioral gain.
+
 ### Low-rank rank-sweep model smoke
 
 `scripts/test-agent-flydelta-low-rank-model-smoke.sh` is an opt-in Qwen

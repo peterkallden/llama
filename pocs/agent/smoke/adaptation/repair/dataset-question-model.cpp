@@ -19,6 +19,8 @@
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
+#include "tools/agent/daemon/agent-daemon-flydelta-internal.h"
+#include "tools/agent/resource/agent-resource-store.h"
 #include "common.h"
 
 #include <nlohmann/json.hpp>
@@ -49,6 +51,8 @@ struct options {
     bool force_deep = false;
     bool force_tfo_lite = false;
     bool low_rank_rank_sweep = false;
+    bool production_bindings = false;
+    bool production_where = false;
     bool adaptive_alpha_search = false;
     int n_predict = 512;
     int n_threads = 3;
@@ -110,6 +114,8 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.force_deep = true;
         }
         else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
+        else if (argument == "--production-bindings") value.production_bindings = true;
+        else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
@@ -382,6 +388,7 @@ common_agent_generation_request make_request(const options & value, const std::s
     request.purpose = common_agent_generation_purpose::tool_followup;
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
+    request.options.generation_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
     request.messages = {{"system",
         "Choose the best tool for the request. Return one compact DSL action:\n"
         "open! TOOL_NAME\nfield: value\n"
@@ -499,6 +506,7 @@ int main(int argc, char ** argv) {
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
         server_config.per_sequence_factorized_cvec_batch = value.low_rank_rank_sweep;
+        server_config.agent_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
         if (!server_host->start(server_config, error)) {
             host.close();
             std::cerr << "could not start server backend: " << error << '\n';
@@ -1041,6 +1049,105 @@ int main(int argc, char ** argv) {
             std::optional<common_flydelta_decision_margin> deep_baseline_choice_margin;
             std::string deep_margin_error;
             std::shared_ptr<const std::vector<float>> deep_factorized_basis;
+            agent_catalogued_resource_store production_resources(std::make_shared<agent_in_memory_blob_store>(),
+                std::make_unique<agent_in_memory_resource_catalog>());
+            std::shared_ptr<agent_daemon_flydelta_internal::daemon_flydelta_resource_provider> production_provider;
+            common_flydelta_experiment_job production_job;
+            if (value.production_bindings) {
+                using namespace agent_daemon_flydelta_internal;
+                daemon_options daemon_config;
+                daemon_config.model = value.model;
+                daemon_config.n_predict = value.n_predict;
+                daemon_config.n_threads = value.n_threads;
+                daemon_config.adaptation_flydelta_model_profile_fingerprint = capture->model_profile_fingerprint;
+                daemon_config.adaptation_flydelta_capture_layout_revision = capture->capture_layout_revision;
+                production_provider = daemon_flydelta_make_resource_provider(daemon_config, server_host,
+                    &production_resources, {}, std::make_shared<common_learning_in_memory_lifecycle_store>(), error);
+                if (!production_provider) { host.close(); std::cerr << error << '\n'; return 1; }
+                const auto put = [&](const json & data, std::string & uri) {
+                    agent_resource_put_request request;
+                    request.name = "flydelta-production-smoke.json";
+                    request.mime_type = "application/json";
+                    request.text = data.dump();
+                    request.scope = common_runtime_resource_scope::session;
+                    request.namespace_id = production_provider->authority.namespace_id;
+                    request.session_id = production_provider->authority.session_id;
+                    agent_resource_descriptor descriptor;
+                    if (!production_resources.put_text(request, descriptor, error)) return false;
+                    uri = descriptor.uri;
+                    return true;
+                };
+                production_job.id = "flydelta-production-smoke:" + deep_case.id;
+                production_job.seed.candidate_ref = "flydelta://experimental/repair-replay";
+                production_job.seed.behavior_key = entry.first;
+                production_job.seed.model_profile_fingerprint = capture->model_profile_fingerprint;
+                production_job.seed.task_fingerprint = deep_fixture.task_fingerprint;
+                production_job.seed.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
+                production_job.seed.template_fingerprint = deep_fixture.template_fingerprint;
+                production_job.seed.execution_context_fingerprint = deep_fixture.execution_context_fingerprint;
+                json tools = json::array();
+                for (const auto & name : described_tools) {
+                    const auto * definition = catalog.find_definition(name);
+                    if (!definition) { host.close(); return 1; }
+                    tools.push_back({{"name", name}, {"description", definition->description},
+                        {"parameters", json::parse(common_tool_model_input_schema(*definition))}});
+                }
+                const auto context = make_request(value, contract, deep_case.question, {});
+                json messages = json::array();
+                for (const auto & message : context.messages) messages.push_back({{"role", message.role}, {"content", message.content}});
+                json fixture_data = {{"verification_mode", "normalized_call"},
+                    {"expected_decision", {{"name", deep_case.expected_tool}, {"arguments", deep_case.canonical_arguments}}}};
+                common_agent_teacher_forced_choice_request contrast;
+                std::string contrast_error;
+                if (agent_flydelta_dataset_dsl_contrast(contrast,
+                        tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                        deep_case.failed_continuation, contrast_error)) {
+                    fixture_data["choice_prefix"] = contrast.choice_prefix;
+                    fixture_data["positive_continuation"] = contrast.positive_continuation;
+                    fixture_data["negative_continuation"] = contrast.negative_continuation;
+                }
+                if (!put({{"messages", messages}, {"model_tools", tools}, {"n_predict", value.n_predict}},
+                        production_job.seed.baseline_ref) || !put(fixture_data,
+                        production_job.seed.verifier_ref)) { host.close(); std::cerr << error << '\n'; return 1; }
+                deep_fixture.id = production_job.seed.verifier_ref;
+                std::cout << "flydelta_production_bindings group=" << entry.first
+                          << " active=yes learning_credit=disabled source=experimental_replay\n";
+                if (value.production_where) {
+                    std::vector<common_flydelta_basis_direction> source;
+                    for (const auto & delta : deep_case_deltas) source.push_back({delta.layer_index, delta.values});
+                    if (!daemon_flydelta_register_composed_directions(production_provider,
+                            production_job.seed.candidate_ref, std::move(source), "flydelta:experimental-where-replay",
+                            production_job.seed.candidate_ref, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+                    common_flydelta_search_pipeline_config where_config;
+                    where_config.dimension = n_embd;
+                    where_config.max_directions = 1;
+                    where_config.whirlpool_max_rounds = 1;
+                    where_config.whirlpool_max_trials = where_config.region_max_trials = 4;
+                    where_config.whirlpool_probes_per_round = 4;
+                    common_flydelta_search_pipeline_result where_result;
+                    if (!daemon_flydelta_run_search_pipeline(production_provider, production_job,
+                            where_config, where_result, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+                    common_flydelta_search_continuation continuation;
+                    if (!common_flydelta_select_search_continuation(where_result, continuation, error) ||
+                            continuation.region.layer_indices.empty()) {
+                        std::cout << "flydelta_low_rank_rank_sweep_skipped group=" << entry.first
+                                  << " reason=no_safe_production_where_continuation\n";
+                        continue;
+                    }
+                    const auto layer = continuation.region.anchor_layer_index;
+                    const auto selected_delta = std::find_if(deep_case_deltas.begin(), deep_case_deltas.end(),
+                        [&](const auto & delta) { return delta.layer_index == static_cast<int32_t>(layer); });
+                    if (selected_delta == deep_case_deltas.end()) { host.close(); return 1; }
+                    auto selected_direction = deep_directions.front();
+                    selected_direction.direction.layer_index = layer;
+                    selected_direction.direction.values = selected_delta->values;
+                    selected_direction.direction.kind = common_flydelta_direction_kind::raw_repair;
+                    deep_directions = {std::move(selected_direction)};
+                    std::cout << "flydelta_production_where group=" << entry.first << " layer=" << layer
+                              << " host_helped=" << (continuation.host_helped ? "yes" : "no")
+                              << " continuation=reference_only learning_credit=disabled\n";
+                }
+            }
             auto prepare_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay,
                     bool allow_factorized_overlay,
@@ -1104,6 +1211,19 @@ int main(int argc, char ** argv) {
                     common_flydelta_decision_margin & margin,
                     common_flydelta_representation_diagnostics & geometry,
                     bool & geometry_available, std::string & runner_error) {
+                if (production_provider) {
+                    std::vector<common_flydelta_counterfactual_trial> trials;
+                    std::vector<common_flydelta_decision_margin> margins;
+                    std::vector<common_flydelta_representation_diagnostics> geometries;
+                    std::vector<bool> flags;
+                    if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
+                            production_provider, production_job, deep_fixture, basis, {coefficients}, apply_overlay,
+                            trials, margins, geometries, flags, runner_error, full_execution,
+                            full_execution ? "smoke-full" : "smoke-diagnostic")) return false;
+                    trial = trials.front(); margin = margins.front(); geometry = geometries.front();
+                    geometry_available = flags.front();
+                    return true;
+                }
                 common_agent_generation_result generated_result;
                 geometry = {};
                 geometry_available = false;
@@ -1124,6 +1244,7 @@ int main(int argc, char ** argv) {
                     deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                 trial = {};
                 trial.executed = generated;
+                trial.host_evaluated = full_execution && generated;
                 trial.verifier_known = full_execution && generated &&
                     verdict.value != host_verdict::kind::unresolved_alternative;
                 trial.passed = full_execution && generated && verdict.value == host_verdict::kind::passed;
@@ -1278,6 +1399,17 @@ int main(int argc, char ** argv) {
                         runner_error = "forced Deep batch has no coefficient arms";
                         return false;
                     }
+                    if (production_provider) {
+                        if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
+                                production_provider, production_job, deep_fixture, basis, coefficients, true,
+                                trials, margins, geometries, geometry_available, runner_error, full_execution,
+                                full_execution ? "smoke-full" : "smoke-diagnostic")) return false;
+                        deep_device_batch_used = deep_device_batch_used || std::any_of(trials.begin(), trials.end(),
+                            [](const auto & trial) { return trial.device_batch; });
+                        deep_backend_batch_used = deep_backend_batch_used || std::any_of(trials.begin(), trials.end(),
+                            [](const auto & trial) { return trial.backend_batch; });
+                        return true;
+                    }
                     std::vector<common_agent_generation_request> generation_requests;
                     generation_requests.reserve(coefficients.size());
                     for (const auto & values : coefficients) {
@@ -1353,6 +1485,7 @@ int main(int argc, char ** argv) {
                             deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                         common_flydelta_counterfactual_trial trial;
                         trial.executed = common_agent_generation_succeeded(generated_result);
+                        trial.host_evaluated = full_execution && trial.executed;
                         trial.verifier_known = full_execution && trial.executed &&
                             verdict.value != host_verdict::kind::unresolved_alternative;
                         trial.passed = full_execution && trial.executed && verdict.value == host_verdict::kind::passed;
@@ -1415,13 +1548,13 @@ int main(int argc, char ** argv) {
                 requested_ranks.push_back(1);
                 for (const size_t requested_rank : {size_t{2}, size_t{4}}) {
                     if (evidence_depth.effective_rank >= requested_rank &&
-                            directions.size() >= requested_rank) {
+                            deep_directions.size() >= requested_rank) {
                         requested_ranks.push_back(requested_rank);
                     } else {
                         std::cout << "flydelta_low_rank_rank_unavailable group=" << entry.first
                                   << " requested_rank=" << requested_rank
                                   << " evidence_effective_rank=" << evidence_depth.effective_rank
-                                  << " direction_candidates=" << directions.size()
+                                  << " direction_candidates=" << deep_directions.size()
                                   << " reason=insufficient_independent_evidence\n";
                     }
                 }

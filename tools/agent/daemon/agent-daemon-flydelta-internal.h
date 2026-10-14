@@ -71,6 +71,7 @@ struct daemon_flydelta_factorized_direction {
     std::shared_ptr<const std::vector<float>> flattened_basis;
     std::vector<float> normalized_coefficients;
     std::string source_ref;
+    std::string basis_fingerprint;
     bool batch_eligible = false;
 };
 
@@ -242,7 +243,8 @@ bool daemon_flydelta_parse_context(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
         common_agent_generation_request & request,
-        std::string & error);
+        std::string & error,
+        std::vector<common_chat_tool> * verification_tools = nullptr);
 
 bool daemon_flydelta_parse_directions(
         const daemon_flydelta_resource_provider & provider,
@@ -339,12 +341,17 @@ bool daemon_flydelta_verify_generation(
         std::string & observed_summary,
         std::string & expected_summary,
         std::string & verifier_reason,
+        std::string & violation_code,
         std::string & violation_kind,
         std::vector<std::string> & violation_dimensions,
         common_flydelta_semantic_progress_observation & progress_observation,
-        std::string & error);
+        std::string & error,
+        const std::vector<common_chat_tool> & model_tools = {});
 
 bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & result);
+
+common_flydelta_counterfactual_outcome daemon_flydelta_classify_arm_pair(
+    const common_flydelta_arm_result & baseline, const common_flydelta_arm_result & candidate);
 
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

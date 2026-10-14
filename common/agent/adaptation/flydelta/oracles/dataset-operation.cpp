@@ -1,4 +1,6 @@
 #include "agent/adaptation/flydelta/oracles/dataset-operation.h"
+#include "agent/adaptation/flydelta/oracles/tool-contract.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <algorithm>
 #include <utility>
@@ -95,16 +97,77 @@ bool common_flydelta_dataset_operation_oracle(
         add_check(result, "dataset.applicability", result.verdict, "applicability");
         return true;
     }
+    if (request.expected_tool_call_available) {
+        const auto schema = std::find_if(request.model_tools.begin(), request.model_tools.end(),
+            [&](const common_chat_tool & tool) { return tool.name == request.expected_tool_call.name; });
+        if (schema == request.model_tools.end() || schema->parameters.empty()) {
+            result.reason = "host tool schema is unavailable for the expected call";
+            return true;
+        }
+        std::string expected_arguments;
+        if (!common_schema_normalize_and_validate_object(request.expected_tool_call.arguments_json,
+                schema->parameters, expected_arguments, error)) return false;
+        common_agent_tool_call call;
+        std::string parse_error;
+        const bool parsed = common_flydelta_parse_model_tool_text(
+                common_agent_tool_output_format::jsonl, observed, call, parse_error) ||
+            common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+                observed, request.model_tools, call, parse_error);
+        result.known = true;
+        result.confidence = 1.0f;
+        std::string actual_arguments;
+        if (!parsed || call.name != request.expected_tool_call.name ||
+                !common_schema_normalize_and_validate_object(call.arguments_json,
+                    schema->parameters, actual_arguments, parse_error)) {
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            set_violation(result, parsed && call.name != request.expected_tool_call.name
+                    ? common_flydelta_oracle_violation_kind::wrong_tool
+                    : common_flydelta_oracle_violation_kind::contract_violation,
+                "dataset.tool_contract", "arguments");
+            result.reason = parse_error.empty() ? "observed tool differs from expected tool" : parse_error;
+            return true;
+        }
+        result.normalized_arguments_json = actual_arguments;
+        const bool matches = nlohmann::json::parse(actual_arguments) ==
+            nlohmann::json::parse(expected_arguments);
+        result.verdict = matches ? common_flydelta_oracle_verdict::satisfied
+                                 : common_flydelta_oracle_verdict::violated;
+        if (!matches) set_violation(result, common_flydelta_oracle_violation_kind::contract_violation,
+            "dataset.arguments_mismatch", "arguments");
+        result.reason = matches ? "normalized tool call matches the host-grounded contract"
+                                : "normalized arguments differ from the host-grounded contract";
+        return true;
+    }
     if (!request.expected_decision_available) {
         result.reason = "dataset operation request has no host-grounded expected decision";
         add_check(result, "dataset.expected_decision", result.verdict, "contract");
         return true;
     }
 
+    std::string semantic_text = observed;
+    if (observed.find("open!") == 0) {
+        if (request.model_tools.empty()) {
+            result.reason = "DSL verification requires the host-owned model tool schemas";
+            return true;
+        }
+        common_agent_tool_call call;
+        std::string parse_error;
+        if (!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+                observed, request.model_tools, call, parse_error)) {
+            result.known = true;
+            result.verdict = common_flydelta_oracle_verdict::violated;
+            result.reason = parse_error;
+            set_violation(result, common_flydelta_oracle_violation_kind::contract_violation,
+                "dataset.tool_contract", "arguments");
+            return true;
+        }
+        semantic_text = nlohmann::ordered_json{{"name", call.name},
+            {"arguments", nlohmann::ordered_json::parse(call.arguments_json)}}.dump();
+    }
     common_flydelta_semantic_decision actual;
     common_flydelta_semantic_decision_status status;
     std::string parse_error;
-    if (!common_flydelta_parse_semantic_decision(observed, actual, status, parse_error)) {
+    if (!common_flydelta_parse_semantic_decision(semantic_text, actual, status, parse_error)) {
         result.known = true;
         result.verdict = common_flydelta_oracle_verdict::violated;
         result.confidence = 0.95f;

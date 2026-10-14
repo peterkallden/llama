@@ -88,6 +88,7 @@ const char * observation_status_name(
 json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
     return json{
         {"executed", trial.executed},
+        {"arm_id", trial.arm_id}, {"intervention_ref", trial.intervention_ref},
         {"host_evaluated", trial.host_evaluated},
         {"verifier_known", trial.verifier_known},
         {"status", trial_outcome(trial.passed)},
@@ -108,6 +109,8 @@ json trial_to_json(const common_flydelta_counterfactual_trial & trial) {
 void trial_from_json(const json & value, common_flydelta_counterfactual_trial & trial) {
     trial = {};
     trial.executed = value.value("executed", false);
+    trial.arm_id = value.value("arm_id", "");
+    trial.intervention_ref = value.value("intervention_ref", "");
     trial.host_evaluated = value.value("host_evaluated", false);
     trial.verifier_known = value.value("verifier_known", false);
     trial.passed = value.value("status", "failed") == "passed";

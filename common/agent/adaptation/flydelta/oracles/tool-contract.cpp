@@ -187,7 +187,21 @@ bool common_flydelta_validate_model_tool_text(
 
     common_agent_tool_call call;
     std::string parse_error;
-    if (!common_flydelta_parse_model_tool_text(format, observed, call, parse_error)) {
+    if (contract.model_input_schema_json.empty()) {
+        initialize_result(contract, result);
+        result.reason = "model-facing tool schema is unavailable";
+        return true;
+    }
+    const std::vector<common_chat_tool> tools{{contract.exposed_tool_name, {},
+        contract.model_input_schema_json, {}}};
+    const auto parse_text = [&](common_agent_tool_output_format selected_format) {
+        return selected_format == common_agent_tool_output_format::compact_dsl
+            ? common_parse_model_tool_call(selected_format, observed, tools, call, parse_error)
+            : common_flydelta_parse_model_tool_text(selected_format, observed, call, parse_error);
+    };
+    const bool parsed = parse_text(format) || parse_text(format == common_agent_tool_output_format::compact_dsl
+        ? common_agent_tool_output_format::jsonl : common_agent_tool_output_format::compact_dsl);
+    if (!parsed) {
         initialize_result(contract, result);
         result.known = true;
         result.confidence = 1.0f;

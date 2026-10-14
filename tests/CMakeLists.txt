@@ -465,6 +465,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
         test-agent-factorized-cvec-config.cpp
+        test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-route-compiler.cpp
         test-agent-execution-envelope.cpp
@@ -493,6 +494,10 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-factorized-cvec-config")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-daemon-seams")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-daemon-library)
         endif()
         if (TEST_NAME STREQUAL "test-agent-resource-chunker")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)

@@ -223,7 +223,7 @@ bool common_flydelta_run_search_pipeline_batched(
                     if (diagnostics_available) {
                         diagnostics = {
                             1,
-                            region == nullptr ? 0 : region->anchor_layer_index,
+                            geometry.measurement_layer != 0 ? geometry.measurement_layer : (region == nullptr ? 0 : region->anchor_layer_index),
                             geometry.cosine,
                             geometry.progress,
                             geometry.leakage,
@@ -273,7 +273,7 @@ bool common_flydelta_run_search_pipeline_batched(
                         if (diagnostics_available) {
                             diagnostics = {
                                 1,
-                                region == nullptr ? 0 : region->anchor_layer_index,
+                                geometry.measurement_layer != 0 ? geometry.measurement_layer : (region == nullptr ? 0 : region->anchor_layer_index),
                                 geometry.cosine,
                                 geometry.progress,
                                 geometry.leakage,
@@ -308,7 +308,7 @@ bool common_flydelta_run_search_pipeline_batched(
                                 common_flydelta_representation_diagnostics diagnostic;
                                 if (batch_geometry_available[index]) {
                                     diagnostic = {
-                                        1, candidates[index].anchor_layer_index,
+                                        1, geometries[index].measurement_layer != 0 ? geometries[index].measurement_layer : candidates[index].anchor_layer_index,
                                         geometries[index].cosine, geometries[index].progress,
                                         geometries[index].leakage, geometries[index].shift_norm,
                                     };
@@ -478,7 +478,7 @@ bool common_flydelta_append_search_pipeline_lifecycle(
         for (size_t region_index = 0; region_index < direction.region_trials.size(); ++region_index) {
             const auto & region = direction.region_trials[region_index];
             if (!common_flydelta_intervention_region_trial_validate(region, error)) return false;
-            if (!region.executed) continue;
+            if (!region.executed || !region.host_evaluated) continue;
 
             const std::string suffix = region_arm_suffix(direction_index, region_index);
             common_flydelta_search_observation observation;
@@ -545,7 +545,7 @@ bool common_flydelta_append_search_pipeline_lifecycle(
                 if (scale.geometry_available) {
                     observation.diagnostics = {
                         1,
-                        layer.candidate.anchor_layer_index,
+                        scale.geometry.measurement_layer != 0 ? scale.geometry.measurement_layer : layer.candidate.anchor_layer_index,
                         scale.geometry.cosine,
                         scale.geometry.progress,
                         scale.geometry.leakage,

@@ -432,7 +432,7 @@ if (LLAMA_MEMORY_COZO)
         ${PROJECT_SOURCE_DIR}/tools/agent/runtime
         ${PROJECT_SOURCE_DIR}/tools/agent/data
     )
-    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+    target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
     target_compile_features(${TARGET} PRIVATE cxx_std_17)
 endif()
 

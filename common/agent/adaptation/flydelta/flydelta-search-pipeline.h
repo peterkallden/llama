@@ -61,6 +61,9 @@ struct common_flydelta_search_pipeline_layer_result {
 
 struct common_flydelta_search_pipeline_direction_result {
     common_flydelta_direction_candidate direction;
+    // Selected replayable composition; empty for legacy rank-one results.
+    std::string intervention_ref;
+    std::vector<float> selected_coefficients;
     common_flydelta_layer_search_plan layer_plan;
     std::vector<common_flydelta_layer_search_trial> layer_trials;
     std::vector<common_flydelta_search_pipeline_layer_result> layer_results;

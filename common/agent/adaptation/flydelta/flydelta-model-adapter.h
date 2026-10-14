@@ -131,6 +131,8 @@ struct common_flydelta_arm_result {
     int schema_version = 1;
     // Must echo the request arm_id when a host executes the arm.
     std::string arm_id;
+    std::string intervention_ref;
+    bool overlay_applied = false;
     bool executed = false;
     float requested_alpha = 0.0f;
     float executed_alpha = 0.0f;
