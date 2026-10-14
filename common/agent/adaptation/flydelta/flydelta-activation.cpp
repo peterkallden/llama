@@ -24,6 +24,12 @@ bool common_flydelta_prepare_activation(
     }
     if (!result.gate.apply) return true;
     result.factorized_fallback_reason = request.factorized_fallback_reason;
+    result.execution_batch_id = request.execution_batch_id;
+    result.execution_wave_id = request.execution_wave_id;
+    result.execution_phase = request.execution_phase;
+    result.execution_strategy = request.execution_strategy;
+    result.execution_arm_id = request.execution_arm_id;
+    result.factorized_basis_fingerprint = request.factorized_basis_fingerprint;
     if (!nonempty_bounded(request.candidate_id) ||
             !nonempty_bounded(request.model_profile_fingerprint) ||
             !nonempty_bounded(request.capture_layout_revision)) {

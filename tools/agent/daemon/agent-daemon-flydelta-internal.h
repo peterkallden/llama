@@ -72,6 +72,10 @@ struct daemon_flydelta_factorized_direction {
     std::vector<float> normalized_coefficients;
     std::string source_ref;
     std::string basis_fingerprint;
+    std::string batch_id;
+    std::string wave_id;
+    std::string phase;
+    std::string strategy;
     bool batch_eligible = false;
     std::string batch_ineligible_reason;
 };
@@ -491,7 +495,9 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         std::string & error,
         const bool full_execution = true,
         const std::string & wave_suffix = {},
-        const common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap);
+        const common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap,
+        const common_flydelta_coefficient_search_strategy strategy =
+            common_flydelta_coefficient_search_strategy::coordinate);
 
 bool daemon_flydelta_resolve_evidence_direction_candidates(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

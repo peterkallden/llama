@@ -30,6 +30,14 @@ struct common_flydelta_activation_request {
     std::shared_ptr<const std::vector<float>> factorized_basis;
     int32_t factorized_rank = 0;
     int32_t factorized_layer_index = -1;
+    // Transient execution provenance for tracing coefficient waves through
+    // the resident server. These fields never affect the activation gate.
+    std::string execution_batch_id;
+    std::string execution_wave_id;
+    std::string execution_phase;
+    std::string execution_strategy;
+    std::string execution_arm_id;
+    std::string factorized_basis_fingerprint;
     // Diagnostic-only reason supplied by the runtime when a factorized
     // coefficient wave was eligible in principle but cannot use its native
     // binding on this physical request.
@@ -45,6 +53,12 @@ struct common_flydelta_activation_result {
     common_flydelta_static_overlay overlay;
     common_flydelta_factorized_overlay factorized_overlay;
     std::string factorized_fallback_reason;
+    std::string execution_batch_id;
+    std::string execution_wave_id;
+    std::string execution_phase;
+    std::string execution_strategy;
+    std::string execution_arm_id;
+    std::string factorized_basis_fingerprint;
 };
 
 // Applies the host-owned order of operations: decide the no-op gate first,

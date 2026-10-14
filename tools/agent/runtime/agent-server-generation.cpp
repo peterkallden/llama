@@ -20,6 +20,11 @@ server_task_cvec_ptr make_server_task_cvec(
     cvec->n_embd = factorized.enabled ? factorized.n_embd : overlay.n_embd;
     cvec->il_start = factorized.enabled ? factorized.layer_index : overlay.il_start;
     cvec->il_end = factorized.enabled ? factorized.layer_index : overlay.il_end;
+    cvec->execution_batch_id = activation.execution_batch_id;
+    cvec->execution_wave_id = activation.execution_wave_id;
+    cvec->execution_phase = activation.execution_phase;
+    cvec->execution_strategy = activation.execution_strategy;
+    cvec->execution_arm_id = activation.execution_arm_id;
     cvec->data = overlay.data;
     for (float & value : cvec->data) {
         value *= overlay.scale;
@@ -33,8 +38,9 @@ server_task_cvec_ptr make_server_task_cvec(
         basis->rank = factorized.rank;
         basis->layer_indices = {static_cast<uint32_t>(factorized.layer_index)};
         basis->data = factorized.basis;
-        basis->fingerprint = factorized.artifact_id + ":rank=" +
-            std::to_string(factorized.rank);
+        basis->fingerprint = activation.factorized_basis_fingerprint.empty()
+            ? factorized.artifact_id + ":rank=" + std::to_string(factorized.rank)
+            : activation.factorized_basis_fingerprint;
         cvec->factorized_basis = std::move(basis);
         cvec->factorized_coefficients = factorized.coefficients;
     }

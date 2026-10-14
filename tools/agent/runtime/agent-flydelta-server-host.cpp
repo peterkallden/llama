@@ -74,6 +74,7 @@ bool daemon_flydelta_prepare_arm(
         bool factorized = false;
         bool factorized_batch_eligible = false;
         std::string factorized_ineligible_reason;
+        daemon_flydelta_factorized_direction factorized_material;
         const bool factorized_enabled = provider->host &&
             provider->host->config().per_sequence_factorized_cvec_batch &&
             provider->host->server().per_sequence_factorized_cvec_batch_enabled();
@@ -82,6 +83,7 @@ bool daemon_flydelta_prepare_arm(
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             const auto it = provider->factorized_directions.find(arm.intervention_ref);
             if (it != provider->factorized_directions.end()) {
+                factorized_material = it->second;
                 factorized = true;
                 factorized_batch_eligible = it->second.batch_eligible;
                 factorized_ineligible_reason = it->second.batch_ineligible_reason;
@@ -136,6 +138,13 @@ bool daemon_flydelta_prepare_arm(
         common_flydelta_activation_request activation_request;
         activation_request.candidate_id = arm.intervention_ref;
         activation_request.artifact_id = arm.arm_id;
+        activation_request.execution_batch_id = factorized_material.batch_id;
+        activation_request.execution_wave_id = factorized_material.wave_id.empty()
+            ? arm.wave_id : factorized_material.wave_id;
+        activation_request.execution_phase = factorized_material.phase;
+        activation_request.execution_strategy = factorized_material.strategy;
+        activation_request.execution_arm_id = arm.arm_id;
+        activation_request.factorized_basis_fingerprint = factorized_material.basis_fingerprint;
         activation_request.model_profile_fingerprint = provider->model_profile_fingerprint;
         activation_request.capture_layout_revision = provider->capture_layout_revision;
         activation_request.model_n_embd = provider->model_n_embd;
@@ -559,6 +568,8 @@ bool daemon_flydelta_finalize_arm(
         for (const auto & message : context.messages) messages.push_back({{"role", message.role}, {"content", message.content}});
         std::vector<float> effective_coefficients = arm.coefficients;
         std::string basis_fingerprint;
+        std::string wave_phase;
+        std::string wave_strategy;
         {
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             const auto material = provider->factorized_directions.find(arm.intervention_ref);
@@ -566,9 +577,13 @@ bool daemon_flydelta_finalize_arm(
                 effective_coefficients = material->second.normalized_coefficients;
                 for (auto & coefficient : effective_coefficients) coefficient *= arm.apply_overlay ? arm.alpha : 0;
                 basis_fingerprint = material->second.basis_fingerprint;
+                wave_phase = material->second.phase;
+                wave_strategy = material->second.strategy;
             }
         }
         const json value = {{"arm_id", arm.arm_id}, {"intervention_ref", arm.intervention_ref},
+            {"batch_id", arm.job_id + ":coefficient"}, {"wave_id", arm.wave_id},
+            {"workflow_phase", wave_phase}, {"strategy", wave_strategy},
             {"basis_fingerprint", basis_fingerprint}, {"coefficients", effective_coefficients},
             {"phase", arm.request_generation ? "full" : "diagnostic"},
             {"messages", messages}, {"content", generation.content},
@@ -578,6 +593,14 @@ bool daemon_flydelta_finalize_arm(
             {"overlay_applied", generation.flydelta_runtime.applied},
             {"applied_artifact_id", generation.flydelta_runtime.artifact_id},
             {"factorized_binding", generation.flydelta_runtime.factorized_binding},
+            {"basis_cache_hit", generation.flydelta_runtime.factorized_basis_cache_hit},
+            {"basis_upload_count", generation.flydelta_runtime.factorized_basis_upload_count},
+            {"basis_bound_bytes", generation.flydelta_runtime.factorized_basis_bound_bytes},
+            {"basis_host_copy_bytes", generation.flydelta_runtime.factorized_basis_host_copy_bytes},
+            {"coefficient_payload_bytes", generation.flydelta_runtime.factorized_coefficients_bound_bytes},
+            {"overlay_resident_bytes", generation.flydelta_runtime.factorized_overlay_resident_bytes},
+            {"composition_us", generation.flydelta_runtime.factorized_composition_us},
+            {"binding_us", generation.flydelta_runtime.cvec_binding_us},
             {"device_batch", generation.flydelta_device_batch},
             {"decoded_tokens", generation.decoded_tokens},
             {"stop_reason", common_agent_generation_stop_reason_name(generation.stop_reason)},
@@ -766,7 +789,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         std::string & error,
         const bool full_execution,
         const std::string & wave_suffix,
-        const common_flydelta_experiment_phase phase) {
+        const common_flydelta_experiment_phase phase,
+        const common_flydelta_coefficient_search_strategy strategy) {
     error.clear();
     if (coefficients.empty()) {
         error = "FlyDelta coefficient batch is empty";
@@ -776,6 +800,13 @@ bool daemon_flydelta_run_coefficient_arm_batch(
     request.batch_id = job.id + ":coefficient";
     request.wave_id = apply_overlay ? "coefficient-controls" : "coefficient-baseline";
     if (!wave_suffix.empty()) request.wave_id += ":" + wave_suffix;
+    const bool paired_diagnostics = apply_overlay && !full_execution;
+    std::fprintf(stderr, "FlyDelta coefficient wave prepare job=%s phase=%s strategy=%s batch=%s wave=%s requested_arms=%zu max_parallel=%zu full_execution=%s\n",
+        job.id.c_str(), common_flydelta_experiment_phase_name(phase),
+        common_flydelta_coefficient_search_strategy_name(strategy), request.batch_id.c_str(),
+        request.wave_id.c_str(), coefficients.size(),
+        static_cast<size_t>(provider->host ? provider->host->context_key().n_parallel : 0),
+        full_execution ? "yes" : "no");
     request.arms.reserve(coefficients.size());
     // Factorized coefficient materials are request-scoped conveniences for
     // the native cvec batch binding. They must not accumulate in the daemon
@@ -825,11 +856,22 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             material.normalized_coefficients = std::move(normalized);
             material.source_ref = job.seed.candidate_ref;
             material.basis_fingerprint = basis_fingerprint;
+            material.batch_id = request.batch_id;
+            material.wave_id = request.wave_id;
+            material.phase = common_flydelta_experiment_phase_name(phase);
+            material.strategy = common_flydelta_coefficient_search_strategy_name(strategy);
             // Native B+c is experimental for Deep/TFO coefficient waves only.
             // Shallow, Bootstrap and augmentation retain sparse/dense overlays.
-            material.batch_eligible = daemon_flydelta_factorized_wave_eligible(phase, coefficients.size());
+            const size_t physical_wave_rows = coefficients.size() + (paired_diagnostics ? 1 : 0);
+            const size_t resident_parallelism = static_cast<size_t>(provider->host
+                ? provider->host->context_key().n_parallel : 0);
+            material.batch_eligible = resident_parallelism > 1 &&
+                daemon_flydelta_factorized_wave_eligible(phase, physical_wave_rows);
             material.batch_ineligible_reason = phase != common_flydelta_experiment_phase::deep_controls
-                ? "factorized_requires_deep_or_tfo_phase" : "factorized_requires_parallel_coefficient_wave";
+                ? "factorized_requires_deep_or_tfo_phase"
+                : resident_parallelism <= 1
+                    ? "factorized_requires_parallel_resident_context"
+                    : "factorized_requires_parallel_coefficient_wave";
             std::lock_guard<std::mutex> lock(provider->factorized_direction_mutex);
             provider->factorized_directions[intervention_ref] = std::move(material);
             factorized_refs.push_back(intervention_ref);
@@ -870,7 +912,6 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         request.arms.push_back(std::move(arm));
     }
     const common_flydelta_arm_batch_request unpaired_request = request;
-    const bool paired_diagnostics = apply_overlay && !request.arms.empty() && !full_execution;
     if (paired_diagnostics) {
         common_flydelta_arm_request baseline = request.arms.front();
         baseline.arm_id = "flydelta://runtime/" + job.id + "/coefficient/baseline";
@@ -898,11 +939,21 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         request.arms = std::move(paired);
     }
     common_flydelta_arm_batch_result batch;
+    const auto execution_started = std::chrono::steady_clock::now();
     if (!daemon_flydelta_execute_batch(provider, request, batch, error) ||
             batch.arms.size() != request.arms.size()) {
         if (error.empty()) error = "FlyDelta coefficient batch returned incomplete arms";
         return false;
     }
+    std::fprintf(stderr, "FlyDelta coefficient wave complete job=%s phase=%s strategy=%s batch=%s wave=%s requested_arms=%zu returned_arms=%zu largest_physical_batch=%zu native_batch=%s model_ms=%.3f elapsed_ms=%.3f\n",
+        job.id.c_str(), common_flydelta_experiment_phase_name(phase),
+        common_flydelta_coefficient_search_strategy_name(strategy), request.batch_id.c_str(),
+        request.wave_id.c_str(), coefficients.size(), batch.arms.size(),
+        batch.execution_stats.largest_physical_batch,
+        batch.execution_stats.native_batch_used ? "yes" : "no",
+        batch.execution_stats.model_ms,
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - execution_started).count());
     if (paired_diagnostics) {
         bool missing_device_geometry = false;
         for (size_t index = 1; index < batch.arms.size(); ++index) {

@@ -487,8 +487,18 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
                 generation_results[index].flydelta_runtime.factorized_basis_host_copy_bytes;
             arm_result.execution_metrics.coefficient_bytes_bound =
                 generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
+            arm_result.execution_metrics.composed_overlay_resident_bytes =
+                generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes;
+            arm_result.execution_metrics.overlay_composition_us =
+                generation_results[index].flydelta_runtime.factorized_composition_us;
+            arm_result.execution_metrics.basis_upload_count =
+                generation_results[index].flydelta_runtime.factorized_basis_upload_count;
+            arm_result.execution_metrics.basis_cache_hit =
+                generation_results[index].flydelta_runtime.factorized_basis_cache_hit;
             arm_result.execution_metrics.overlay_bytes_bound =
-                generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                generation_results[index].flydelta_runtime.factorized_binding
+                    ? generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes
+                    : generation_results[index].flydelta_runtime.cvec_bound_bytes;
             arm_result.execution_metrics.overlay_binding_ms =
                 static_cast<float>(generation_results[index].flydelta_runtime.cvec_binding_us) / 1000.0f;
         }
@@ -511,13 +521,18 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
                         ? "factorized" : "sparse_fallback";
                 if (index == 0) {
                     arm_result.execution_metrics.basis_bytes_to_device =
-                        generation_results[index].flydelta_runtime.factorized_basis_bound_bytes;
+                        generation_results[index].flydelta_runtime.factorized_basis_host_copy_bytes;
                     arm_result.execution_metrics.coefficient_bytes_to_device =
                         generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
                     arm_result.execution_metrics.overlay_bytes_to_device =
-                        generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                        generation_results[index].flydelta_runtime.factorized_binding
+                            ? 0
+                            : generation_results[index].flydelta_runtime.cvec_bound_bytes;
                 }
-                if (!generation_results[index].flydelta_runtime.factorized_binding) {
+                if (generation_results[index].flydelta_runtime.factorized_binding) {
+                    arm_result.execution_metrics.materialized_overlay_bytes =
+                        generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes;
+                } else {
                     arm_result.execution_metrics.materialized_overlay_bytes =
                         generation_results[index].flydelta_runtime.cvec_bound_bytes;
                 }

@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <cmath>
@@ -22,6 +23,8 @@ struct options {
     int n_predict = 8;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    int layer_index = -1;
+    int factorized_rank = 1;
     bool scalar = false;
     bool factorized = false;
     bool single_sparse_device = false;
@@ -56,6 +59,14 @@ bool parse_args(int argc, char ** argv, options & value) {
             const char * value_arg = next("--n-gpu-layers");
             if (!value_arg) return false;
             value.n_gpu_layers = std::stoi(value_arg);
+        } else if (argument == "--layer-index") {
+            const char * value_arg = next("--layer-index");
+            if (!value_arg) return false;
+            value.layer_index = std::stoi(value_arg);
+        } else if (argument == "--rank") {
+            const char * value_arg = next("--rank");
+            if (!value_arg) return false;
+            value.factorized_rank = std::stoi(value_arg);
         } else if (argument == "--scalar") {
             value.scalar = true;
         } else if (argument == "--factorized") {
@@ -95,15 +106,30 @@ std::shared_ptr<const common_flydelta_activation_result> make_activation(
 
     common_flydelta_basis_direction direction;
     direction.layer_index = layer_index;
+    const int32_t rank = shared_basis && request.model_n_embd > 0
+        ? static_cast<int32_t>(shared_basis->size() / request.model_n_embd) : 1;
     direction.values.assign(request.model_n_embd, 0.0f);
-    direction.values.front() = 1.0f;
+    const float component_scale = 1.0f / std::sqrt(static_cast<float>(rank));
+    for (int32_t component = 0; component < rank; ++component) {
+        direction.values[static_cast<size_t>(component)] = component_scale;
+    }
     request.directions.push_back(std::move(direction));
     request.coefficients = {value};
     request.allow_factorized_overlay = factorized;
     if (factorized) {
         request.factorized_basis = std::move(shared_basis);
-        request.factorized_rank = 1;
+        request.factorized_rank = static_cast<int32_t>(request.factorized_basis->size() /
+            request.model_n_embd);
+        request.coefficients.assign(static_cast<size_t>(request.factorized_rank),
+            value * component_scale);
         request.factorized_layer_index = layer_index;
+        std::string basis_identity = "cvec-batch-smoke:f32:rank=" +
+            std::to_string(request.factorized_rank) + ":d=" +
+            std::to_string(request.model_n_embd) + ":layer=" + std::to_string(layer_index);
+        basis_identity.append(reinterpret_cast<const char *>(request.factorized_basis->data()),
+            request.factorized_basis->size() * sizeof(float));
+        request.factorized_basis_fingerprint = "sha256:" +
+            hash_sha256_hex(basis_identity.data(), basis_identity.size());
     }
     request.gate_request.explicit_opt_in = true;
     request.gate_request.candidate_status = common_flydelta_candidate_status::approved;
@@ -127,7 +153,8 @@ int main(int argc, char ** argv) {
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--n-predict N] [--threads N] [--n-gpu-layers N]"
-                  << " [--scalar] [--factorized] [--single-sparse-device] [--device-diagnostics]\n";
+                  << " [--scalar] [--factorized] [--rank 1|2|4] [--layer-index N]"
+                  << " [--single-sparse-device] [--device-diagnostics]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -135,6 +162,7 @@ int main(int argc, char ** argv) {
         return 77;
     }
     if (value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
+    if (value.factorized_rank != 1 && value.factorized_rank != 2 && value.factorized_rank != 4) return 2;
 
     auto host = std::make_shared<common_agent_server_context_host>();
     common_agent_server_context_host_config config;
@@ -181,10 +209,19 @@ int main(int argc, char ** argv) {
     auto captured_rows = std::make_shared<std::map<std::string, std::vector<float>>>();
     // Layer inputs precede the overlay at that layer. Leave a downstream
     // layer available when measuring the intervention against a zero arm.
-    const int32_t cvec_layer = llama_model_n_layer(model) - (value.device_diagnostics ? 2 : 1);
+    const int32_t default_layer = llama_model_n_layer(model) - (value.device_diagnostics ? 2 : 1);
+    const int32_t cvec_layer = value.layer_index >= 0 ? value.layer_index : default_layer;
+    if (cvec_layer < 1 || cvec_layer >= llama_model_n_layer(model)) {
+        std::cerr << "cvec layer index is outside the model's non-embedding layers\n";
+        return 2;
+    }
+    const int32_t factorized_rank = value.factorized_rank;
+    const size_t model_embd = static_cast<size_t>(llama_model_n_embd(model));
     auto shared_basis_values = std::make_shared<std::vector<float>>(
-        static_cast<size_t>(llama_model_n_embd(model)), 0.0f);
-    shared_basis_values->front() = 1.0f;
+        model_embd * static_cast<size_t>(factorized_rank), 0.0f);
+    for (int32_t component = 0; component < factorized_rank; ++component) {
+        (*shared_basis_values)[static_cast<size_t>(component) * model_embd + component] = 1.0f;
+    }
     std::shared_ptr<const std::vector<float>> shared_basis = shared_basis_values;
     callbacks.prepare_arm = [model, n_predict = value.n_predict, n_threads = value.n_threads,
             factorized = value.factorized, factorized_batch = !value.scalar && !value.single_sparse_device,
@@ -511,6 +548,14 @@ int main(int argc, char ** argv) {
               << reported_arm.execution_metrics.basis_host_copy_bytes << "\n"
               << "coefficient_bytes_bound="
               << reported_arm.execution_metrics.coefficient_bytes_bound << "\n"
+              << "composed_overlay_resident_bytes="
+              << reported_arm.execution_metrics.composed_overlay_resident_bytes << "\n"
+              << "overlay_composition_us="
+              << reported_arm.execution_metrics.overlay_composition_us << "\n"
+              << "basis_upload_count="
+              << reported_arm.execution_metrics.basis_upload_count << "\n"
+              << "basis_cache_hit="
+              << (reported_arm.execution_metrics.basis_cache_hit ? "yes" : "no") << "\n"
               << "overlay_binding_ms="
               << reported_arm.execution_metrics.overlay_binding_ms << "\n"
               << "physical_batch_size="
@@ -519,6 +564,7 @@ int main(int argc, char ** argv) {
               << (reported_arm.execution_metrics.device_resident ? "yes" : "no") << "\n"
               << "factorized_binding_used="
               << (reported_arm.execution_metrics.factorized_binding_used ? "yes" : "no") << "\n"
+              << "factorized_rank=" << factorized_rank << "\n"
               << "fallback_reason="
               << (reported_arm.execution_metrics.fallback_reason.empty()
                     ? "none" : reported_arm.execution_metrics.fallback_reason) << "\n"

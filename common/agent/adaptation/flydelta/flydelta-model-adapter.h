@@ -92,13 +92,17 @@ struct common_flydelta_arm_execution_metrics {
     size_t coefficient_bytes_to_device = 0;
     size_t materialized_overlay_bytes = 0;
     size_t overlay_bytes_to_device = 0;
-    // Exact bytes passed to backend tensor binding calls and elapsed host-side
-    // binding time from the server. These are distinct from payload-size
-    // estimates and do not imply that the selected backend is a GPU.
+    // Logical backend tensor payload/allocation accounting and elapsed host-
+    // side composition/binding time from the server. These are not measured
+    // PCIe transfer counters and do not imply that the backend is a GPU.
     size_t basis_bytes_bound = 0;
     size_t basis_host_copy_bytes = 0;
     size_t coefficient_bytes_bound = 0;
     size_t overlay_bytes_bound = 0;
+    size_t composed_overlay_resident_bytes = 0;
+    uint64_t overlay_composition_us = 0;
+    size_t basis_upload_count = 0;
+    bool basis_cache_hit = false;
     float overlay_binding_ms = 0.0f;
     size_t physical_batch_size = 0;
     bool factorized_binding_used = false;

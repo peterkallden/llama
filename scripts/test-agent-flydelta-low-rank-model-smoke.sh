@@ -30,6 +30,12 @@ fi
 if [[ "${LLAMA_AGENT_LOW_RANK_PRODUCTION_WHERE:-0}" == "1" ]]; then
     rank_args+=(--production-where)
 fi
+if [[ "${LLAMA_AGENT_LOW_RANK_FACTORIZED:-1}" == "0" ]]; then
+    rank_args+=(--disable-factorized-cvec-batch)
+fi
+if [[ "${LLAMA_AGENT_LOW_RANK_TFO_LITE:-0}" == "1" ]]; then
+    rank_args+=(--force-tfo-lite)
+fi
 if [[ -n "${LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY:-}" ]]; then
     rank_args+=(--behavior-key "$LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY")
 fi
@@ -121,6 +127,45 @@ else
     echo "q1_execution_device=backend_batch_non_device"
 fi
 
+repeat_count="${LLAMA_AGENT_CVEC_REPEAT_COUNT:-4}"
+if [[ ! "$repeat_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "LLAMA_AGENT_CVEC_REPEAT_COUNT must be a positive integer" >&2
+    exit 2
+fi
+for repeat in $(seq 2 "$repeat_count"); do
+    cvec_repeat_log="$work_dir/native-cvec-batch-${repeat}.log"
+    sparse_repeat_log="$work_dir/sparse-cvec-batch-${repeat}.log"
+    LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
+    agent_smoke_run_logged "$cvec_repeat_log" "$cvec_bin" \
+        --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
+        --threads "${LLAMA_AGENT_THREADS:-3}" \
+        --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" --factorized
+    LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
+    agent_smoke_run_logged "$sparse_repeat_log" "$cvec_bin" \
+        --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
+        --threads "${LLAMA_AGENT_THREADS:-3}" \
+        --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"
+    grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$cvec_repeat_log"
+    grep -Fq 'flydelta_cvec_batch_model_smoke=passed' "$sparse_repeat_log"
+    grep -Fq 'factorized_binding_used=yes' "$cvec_repeat_log"
+    repeat_factorized_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$cvec_repeat_log" | tail -n 1)
+    repeat_sparse_output=$(grep '^cvec_smoke_arm_output arm="flydelta://arm/cvec-batch-smoke/1"' "$sparse_repeat_log" | tail -n 1)
+    if [[ -z "$repeat_factorized_output" || "$repeat_factorized_output" != "$repeat_sparse_output" ]]; then
+        echo "Q1 generated output mismatch at repeat=${repeat}" >&2
+        exit 1
+    fi
+    repeat_factorized_margin=$(grep '^cvec_smoke_teacher_margin arm="flydelta://arm/cvec-batch-smoke/1"' "$cvec_repeat_log" | tail -n 1 | sed -E 's/.* total=([^ ]+).*/\1/')
+    repeat_sparse_margin=$(grep '^cvec_smoke_teacher_margin arm="flydelta://arm/cvec-batch-smoke/1"' "$sparse_repeat_log" | tail -n 1 | sed -E 's/.* total=([^ ]+).*/\1/')
+    repeat_margin_delta=$(awk -v factorized="$repeat_factorized_margin" -v sparse="$repeat_sparse_margin" \
+        'BEGIN { delta = factorized - sparse; if (delta < 0) delta = -delta; printf "%.9g", delta }')
+    if [[ -z "$repeat_factorized_margin" || -z "$repeat_sparse_margin" ]] ||
+            ! awk -v delta="$repeat_margin_delta" 'BEGIN { exit !(delta <= 1e-4) }'; then
+        echo "Q1 teacher margin mismatch at repeat=${repeat}: sparse=${repeat_sparse_margin} factorized=${repeat_factorized_margin} delta=${repeat_margin_delta}" >&2
+        exit 1
+    fi
+    echo "q1_repeat=${repeat} generated_output_match=yes teacher_margin_delta=${repeat_margin_delta}"
+done
+echo "q1_repeats=${repeat_count}"
 echo "flydelta_low_rank_model_smoke=completed"
 echo "rank_comparison=${rank_status}"
 echo "rank_log=${rank_log}"

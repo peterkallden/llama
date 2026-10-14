@@ -149,13 +149,37 @@ struct llama_adapter_cvec_batch {
             int32_t n_embd,
             const std::vector<uint32_t> & layer_indices);
 
+    // Compose one backend-resident dense overlay row per sequence before the
+    // model graph runs. The basis is cached by fingerprint/layout; only the
+    // coefficient matrix and composed rows are wave-scoped.
+    LLAMA_API bool apply_factorized_composed(
+            const llama_model & model,
+            ggml_backend_sched_t scheduler,
+            const std::vector<llama_seq_id> & seq_ids,
+            const std::string & basis_fingerprint,
+            const float * basis,
+            size_t basis_len,
+            const std::vector<const float *> & coefficients,
+            int32_t rank,
+            int32_t n_embd,
+            const std::vector<uint32_t> & layer_indices);
+
     LLAMA_API void clear();
+    // Release only the current wave binding while preserving the one-entry
+    // resident basis cache for the next compatible coefficient wave.
+    LLAMA_API void clear_binding();
 
     bool enabled() const { return active; }
 
     // Telemetry: true when at least one per-layer table buffer is owned by a
     // non-CPU backend. The graph callback remains backend-neutral.
     bool device_resident() const { return device_resident_flag; }
+    bool resident_basis_cache_hit() const { return last_basis_cache_hit; }
+    size_t resident_basis_upload_count() const { return basis_upload_count; }
+    size_t last_basis_upload_count() const { return last_basis_upload_count_value; }
+    uint64_t last_composition_us() const { return last_composition_us_value; }
+    size_t resident_basis_bytes() const { return resident_basis_bytes_value; }
+    size_t composed_overlay_bytes() const { return composed_overlay_bytes_value; }
     bool callback_applied() const { return callback_applied_flag.load(); }
     std::string callback_failure_reason() const;
     // Start a fresh graph observation without discarding device buffers. The
@@ -216,6 +240,21 @@ private:
     std::unordered_map<ggml_context *, selector_state> selector_states;
     std::vector<ggml_context_ptr> ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
+    struct resident_basis_layer {
+        ggml_backend_ptr backend;
+        ggml_context_ptr ctx;
+        ggml_tensor * tensor = nullptr;
+        ggml_backend_buffer_ptr buffer;
+        ggml_backend_buffer_type_t buft = nullptr;
+    };
+    std::string resident_basis_key;
+    std::vector<resident_basis_layer> resident_basis;
+    size_t resident_basis_bytes_value = 0;
+    bool last_basis_cache_hit = false;
+    size_t basis_upload_count = 0;
+    size_t last_basis_upload_count_value = 0;
+    uint64_t last_composition_us_value = 0;
+    size_t composed_overlay_bytes_value = 0;
     std::vector<ggml_tensor *> tensors;
     std::vector<ggml_tensor *> factorized_basis_tensors;
     std::vector<ggml_tensor *> factorized_coefficient_tensors;

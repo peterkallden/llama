@@ -53,6 +53,10 @@ bool server_task_cvec_batch_compatible(
         left->data.size() == right->data.size() &&
         left->sparse_layer_indices == right->sparse_layer_indices &&
         left->sparse_data.size() == right->sparse_data.size() &&
+        left->execution_batch_id == right->execution_batch_id &&
+        left->execution_wave_id == right->execution_wave_id &&
+        left->execution_phase == right->execution_phase &&
+        left->execution_strategy == right->execution_strategy &&
         same_representation;
 }
 
@@ -188,6 +192,7 @@ bool server_task_cvec_batch::materialize_factorized(
         if (!value.cvec->factorized_basis ||
                 value.cvec->factorized_basis->rank != basis->rank ||
                 value.cvec->factorized_basis->layer_indices != basis->layer_indices ||
+                value.cvec->factorized_basis->fingerprint != basis->fingerprint ||
                 value.cvec->factorized_basis->data != basis->data ||
                 value.cvec->factorized_coefficients.size() != static_cast<size_t>(basis->rank)) {
             error = "per-sequence factorized control vectors have incompatible basis";

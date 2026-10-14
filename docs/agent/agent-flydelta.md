@@ -1870,9 +1870,11 @@ Shallow/Deep or TFO; hosts without the opt-in capability retain the scalar
 fallback.
 
 The common batch seam is consumed by the bounded Whirlpool region probes and
-by rank-N coordinate/TFO coefficient populations. The baseline remains a
-scalar reference; safety backoffs are submitted as a separate bounded batch,
-and TFO iterations remain sequential CPU control-plane steps. Every affected
+by rank-N coordinate/TFO coefficient populations. The baseline remains the
+zero-overlay semantic reference; diagnostic coefficient waves include it as
+an explicit paired row when the comparison requires a simultaneous forward.
+Safety backoffs are submitted as a separate bounded batch, and TFO iterations
+remain sequential CPU control-plane steps. Every affected
 phase has separate diagnostic and full-generation execution classes: the
 diagnostic wave requests prompt evaluation, capture and teacher-forced
 margin/geometry only, while the pruned top-K frontier explicitly requests full
@@ -2030,6 +2032,30 @@ only after a successful decode graph actually included the overlay. Backend
 batching and device residency are reported separately; backend batching alone
 is not GPU evidence. Byte counts are payload accounting unless telemetry
 explicitly identifies measured backend-bound bytes.
+
+The current Deep/TFO coefficient-wave binding keeps one compatible basis
+resident per model context (fingerprint, rank, embedding width, layer layout,
+FP32 format and backend buffer/device identity). Each physical coefficient
+wave uploads only its coefficient rows when the basis key is unchanged. Before
+the model graph runs, the model context's backend scheduler composes `B × Cᵀ`
+once into a separately retained row table with one row per sequence plus a
+zero row. The model callback then does
+only sequence-row selection and addition; it does not multiply `B × c` for
+each token. The resident basis uses `O(d r)` storage and the wave table uses
+`O(A d)` for `A` physical rows; the coefficients use `O(A r)`. Basis
+replacement synchronizes the backend first, and context teardown releases the
+cache. A failed pre-graph composition falls back to sparse materialization;
+an error after the table enters model execution remains fail-closed.
+
+Wave and physical-binding traces include job/phase/strategy/batch/wave IDs,
+requested and returned arms, physical rows, cache hit/miss, basis uploads,
+coefficient payload, composed-overlay bytes, composition/binding/model time,
+and fallback reason. Byte counts are logical payload/accounting, not measured
+PCIe transfer rates. `device_batch` is reported only when the composed table
+is on a non-CPU backend; otherwise the trace says `backend_batch`. The smoke
+driver can force each control-plane strategy with
+`LLAMA_AGENT_LOW_RANK_TFO_LITE=1` (TFO-lite) or leave it unset (coordinate),
+and compare opt-in on/off with `LLAMA_AGENT_LOW_RANK_FACTORIZED=0`.
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
@@ -2758,6 +2784,42 @@ four coefficient proposals and one full-generation finalist per rank. Its
 default generation limit is 512 tokens (override with
 `LLAMA_AGENT_N_PREDICT`). Groups without two compatible captured directions
 are logged as skipped, not reported as rank results.
+The final matched native-factorized versus sparse cvec check defaults to four
+short paired runs (`LLAMA_AGENT_CVEC_REPEAT_COUNT` changes the count); each
+requires identical generated output and teacher-margin delta at most `1e-4`.
+On 2026-10-14, the Qwen2.5-1.5B Instruct/Vulkan run passed this check with
+identical output and zero teacher-margin delta for both Deep and TFO-lite
+production bindings. Direct native cvec comparisons also passed at ranks 1, 2,
+and 4: both arms produced the same output and exact teacher margins through
+sparse and factorized binding. These rank-shape checks establish overlay
+equivalence, not rank-2/4 behavioral utility.
+
+The matched Deep rank sweep completed with factorized opt-in both on and off.
+Both selected the same rank-1 coefficients and reported the same diagnostic
+margins; rank 2 and 4 were correctly `unavailable` because the replay evidence
+had effective rank zero, and no candidate was selected or host-verified as
+HELPED. The TFO-lite sweep over the full four-scenario fixture exceeded its
+30-minute process timeout in both representations. A bounded two-query TFO-lite
+run with factorized opt-in completed: four diagnostic trials plus one
+full-generation finalist, rank 1 only, `device_batch`, and no selected/HELPED
+candidate; higher ranks were unavailable. The matched opt-out run used the same
+two `data.query` scenarios, four diagnostic trials, one finalist, rank-1
+coefficients, and `device_batch`. Both runs had evidence effective-rank zero,
+rank 2/4 unavailable, no selected candidate, and UNKNOWN counterfactual
+outcomes. Reported rank-sweep elapsed times were 941,259 ms (factorized) and
+938,174 ms (sparse); a single pair at this scale is not a performance claim.
+These are runtime and equivalence checks,
+not evidence of a behavioral improvement or end-to-end latency win.
+
+In the completed factorized TFO waves, a rank-1 basis for `d=1536` occupied
+6,144 resident bytes and was uploaded once; compatible later waves were cache
+hits with zero basis host-copy bytes. A two-row physical batch sent 8
+coefficient bytes and retained an 18,432-byte overlay table including its
+inactive zero row. Observed composition and binding were roughly 0.5–1.5 ms
+per wave. Sparse and factorized variants both used the Vulkan device batch, so
+these numbers isolate the cvec representation work; they do not show an
+inference speedup, since model scoring/generation dominates the smoke.
+
 Teacher scoring uses the same compact DSL as generation: `open!` is the
 common prefix and the targets begin with the following space and remaining
 call text. Keeping whitespace in the target avoids a BPE merge across the

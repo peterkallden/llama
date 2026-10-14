@@ -1422,7 +1422,16 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.strategy = plan.run_tfo_lite
         ? common_flydelta_coefficient_search_strategy::tfo_lite
         : common_flydelta_coefficient_search_strategy::coordinate;
-    const auto run_mode = [provider, &job, &fixture, phase = plan.phase](
+    // Proposal waves may contain up to the resident parallel capacity. The
+    // paired diagnostic runner reserves one physical slot for its baseline
+    // and partitions candidates accordingly below.
+    const size_t resident_parallelism = provider->host
+        ? provider->host->context_key().n_parallel : 0;
+    if (resident_parallelism > 0) {
+        coefficient_config.max_batch_arms = std::min<size_t>(64, resident_parallelism);
+    }
+    const auto run_mode = [provider, &job, &fixture, phase = plan.phase,
+            strategy = coefficient_config.strategy](
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<float> & coefficients,
@@ -1439,7 +1448,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         if (!daemon_flydelta_run_coefficient_arm_batch(
                 provider, job, fixture, current_basis, {coefficients}, apply_overlay,
                 trials, margins, geometries, geometry_flags, runner_error,
-                full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single", phase)) {
+                full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single",
+                phase, strategy)) {
             return false;
         }
         trial = std::move(trials.front());
@@ -1448,7 +1458,9 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         has_geometry = geometry_flags.front();
         return true;
     };
-    const auto run_batch_mode = [provider, &job, &fixture, phase = plan.phase] (
+    const auto run_batch_mode = [provider, &job, &fixture, phase = plan.phase,
+            strategy = coefficient_config.strategy,
+            resident_parallelism] (
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
             const std::vector<std::vector<float>> & coefficients,
@@ -1457,10 +1469,57 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             std::vector<common_flydelta_representation_diagnostics> & geometries,
             std::vector<bool> & geometry_flags, std::string & runner_error,
             const bool full_execution) {
-        return daemon_flydelta_run_coefficient_arm_batch(
-            provider, job, fixture, current_basis, coefficients, true,
-            trials, margins, geometries, geometry_flags, runner_error,
-            full_execution, full_execution ? "deep-full-batch" : "deep-diagnostic-batch", phase);
+        trials.clear();
+        margins.clear();
+        geometries.clear();
+        geometry_flags.clear();
+        if (coefficients.empty()) {
+            runner_error = "Deep/TFO coefficient batch is empty";
+            return false;
+        }
+        // Full-generation finalists have no paired diagnostic baseline and
+        // can use every resident sequence. Diagnostic arms each need a
+        // simultaneous baseline, so leave one slot for it in every physical
+        // batch. This keeps baseline IDs and geometry reductions local to
+        // their corresponding arm even when a proposal wave is larger.
+        const size_t candidate_capacity = full_execution
+            ? std::max<size_t>(1, resident_parallelism)
+            : (resident_parallelism > 1 ? resident_parallelism - 1 : 1);
+        for (size_t begin = 0, part = 0; begin < coefficients.size(); ++part) {
+            const size_t count = std::min(candidate_capacity, coefficients.size() - begin);
+            std::vector<std::vector<float>> chunk(
+                coefficients.begin() + static_cast<std::ptrdiff_t>(begin),
+                coefficients.begin() + static_cast<std::ptrdiff_t>(begin + count));
+            std::vector<common_flydelta_counterfactual_trial> part_trials;
+            std::vector<common_flydelta_decision_margin> part_margins;
+            std::vector<common_flydelta_representation_diagnostics> part_geometries;
+            std::vector<bool> part_geometry_flags;
+            const std::string suffix = full_execution
+                ? "deep-full-batch-part-" + std::to_string(part)
+                : "deep-diagnostic-batch-part-" + std::to_string(part);
+            if (!daemon_flydelta_run_coefficient_arm_batch(
+                    provider, job, fixture, current_basis, chunk, true,
+                    part_trials, part_margins, part_geometries, part_geometry_flags,
+                    runner_error, full_execution, suffix, phase, strategy)) {
+                return false;
+            }
+            trials.insert(trials.end(),
+                std::make_move_iterator(part_trials.begin()),
+                std::make_move_iterator(part_trials.end()));
+            margins.insert(margins.end(),
+                std::make_move_iterator(part_margins.begin()),
+                std::make_move_iterator(part_margins.end()));
+            geometries.insert(geometries.end(),
+                std::make_move_iterator(part_geometries.begin()),
+                std::make_move_iterator(part_geometries.end()));
+            geometry_flags.insert(geometry_flags.end(),
+                part_geometry_flags.begin(), part_geometry_flags.end());
+            begin += count;
+        }
+        return trials.size() == coefficients.size() &&
+            margins.size() == coefficients.size() &&
+            geometries.size() == coefficients.size() &&
+            geometry_flags.size() == coefficients.size();
     };
     const auto run_diagnostic = [run_mode](
             const common_flydelta_experiment_fixture & current_fixture,

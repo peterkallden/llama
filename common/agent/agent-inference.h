@@ -191,6 +191,10 @@ struct common_agent_generation_result {
         size_t factorized_basis_bound_bytes = 0;
         size_t factorized_basis_host_copy_bytes = 0;
         size_t factorized_coefficients_bound_bytes = 0;
+        size_t factorized_overlay_resident_bytes = 0;
+        uint64_t factorized_composition_us = 0;
+        size_t factorized_basis_upload_count = 0;
+        bool factorized_basis_cache_hit = false;
         size_t physical_batch_size = 0;
         bool factorized_binding = false;
         std::string fallback_reason;

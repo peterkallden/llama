@@ -79,6 +79,7 @@ int main() {
     auto basis = std::make_shared<server_task_cvec::factorized_basis_data>();
     basis->rank = 2;
     basis->layer_indices = {4};
+    basis->fingerprint = "fixture-basis-fingerprint";
     basis->data = std::make_shared<const std::vector<float>>(
         std::vector<float>{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f});
     auto factor_a = make_cvec("factor-a", 0);
@@ -87,6 +88,12 @@ int main() {
     factor_b->factorized_basis = basis;
     factor_a->factorized_coefficients = {0.25f, 0.0f};
     factor_b->factorized_coefficients = {0.0f, -0.5f};
+    for (auto * row : {factor_a.get(), factor_b.get()}) {
+        row->execution_batch_id = "batch-1";
+        row->execution_wave_id = "wave-1";
+        row->execution_phase = "deep_controls";
+        row->execution_strategy = "coordinate";
+    }
     server_task_cvec_batch factorized;
     std::shared_ptr<const server_task_cvec::factorized_basis_data> material_basis;
     std::vector<const float *> coefficient_rows;
@@ -96,6 +103,36 @@ int main() {
             material_basis != basis || coefficient_rows.size() != 2 || n_embd != 4 ||
             coefficient_rows[0][0] != 0.25f || coefficient_rows[1][1] != -0.5f) {
         std::cerr << "factorized batch materialization failed: " << error << '\n';
+        return 1;
+    }
+
+    auto wrong_wave = make_cvec("factor-wrong-wave", 0);
+    wrong_wave->factorized_basis = basis;
+    wrong_wave->factorized_coefficients = factor_a->factorized_coefficients;
+    wrong_wave->execution_batch_id = factor_a->execution_batch_id;
+    wrong_wave->execution_wave_id = "wave-2";
+    wrong_wave->execution_phase = factor_a->execution_phase;
+    wrong_wave->execution_strategy = factor_a->execution_strategy;
+    server_task_cvec_batch mixed_wave;
+    if (!mixed_wave.add(10, factor_a, error) || mixed_wave.add(16, wrong_wave, error)) {
+        std::cerr << "different coefficient waves were accepted in one physical batch\n";
+        return 1;
+    }
+    auto mismatched_fingerprint_basis = std::make_shared<server_task_cvec::factorized_basis_data>(*basis);
+    mismatched_fingerprint_basis->fingerprint = "other-basis-fingerprint";
+    auto mismatched_fingerprint = make_cvec("factor-mismatched-fingerprint", 0);
+    mismatched_fingerprint->factorized_basis = mismatched_fingerprint_basis;
+    mismatched_fingerprint->factorized_coefficients = factor_a->factorized_coefficients;
+    mismatched_fingerprint->execution_batch_id = factor_a->execution_batch_id;
+    mismatched_fingerprint->execution_wave_id = factor_a->execution_wave_id;
+    mismatched_fingerprint->execution_phase = factor_a->execution_phase;
+    mismatched_fingerprint->execution_strategy = factor_a->execution_strategy;
+    server_task_cvec_batch mismatched_basis;
+    if (!mismatched_basis.add(10, factor_a, error) ||
+            !mismatched_basis.add(17, mismatched_fingerprint, error) ||
+            mismatched_basis.materialize_factorized(
+                seq_ids, material_basis, coefficient_rows, n_embd, error)) {
+        std::cerr << "different basis fingerprints were accepted in one factorized wave\n";
         return 1;
     }
     std::vector<std::vector<float>> owned_rows;
@@ -121,6 +158,10 @@ int main() {
     auto heterogeneous = make_cvec("factor-c", 0);
     heterogeneous->factorized_basis = other_basis;
     heterogeneous->factorized_coefficients = {0.5f};
+    heterogeneous->execution_batch_id = factor_a->execution_batch_id;
+    heterogeneous->execution_wave_id = factor_a->execution_wave_id;
+    heterogeneous->execution_phase = factor_a->execution_phase;
+    heterogeneous->execution_strategy = factor_a->execution_strategy;
     server_task_cvec_batch mixed_basis;
     if (!mixed_basis.add(10, factor_a, error) ||
             !mixed_basis.add(12, heterogeneous, error) ||
@@ -149,6 +190,10 @@ int main() {
     auto factor_identical = make_cvec("factor-identical", 0);
     factor_identical->factorized_basis = basis;
     factor_identical->factorized_coefficients = factor_a->factorized_coefficients;
+    factor_identical->execution_batch_id = factor_a->execution_batch_id;
+    factor_identical->execution_wave_id = factor_a->execution_wave_id;
+    factor_identical->execution_phase = factor_a->execution_phase;
+    factor_identical->execution_strategy = factor_a->execution_strategy;
     server_task_cvec_batch identical;
     if (!identical.add(14, factor_a, error) || !identical.add(15, factor_identical, error) ||
             !identical.materialize_factorized_sparse(

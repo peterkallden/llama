@@ -51,6 +51,7 @@ struct options {
     bool force_deep = false;
     bool force_tfo_lite = false;
     bool low_rank_rank_sweep = false;
+    bool disable_factorized_cvec_batch = false;
     bool production_bindings = false;
     bool production_where = false;
     bool adaptive_alpha_search = false;
@@ -113,6 +114,7 @@ bool parse_args(int argc, char ** argv, options & value) {
             value.low_rank_rank_sweep = true;
             value.force_deep = true;
         }
+        else if (argument == "--disable-factorized-cvec-batch") value.disable_factorized_cvec_batch = true;
         else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
         else if (argument == "--production-bindings") value.production_bindings = true;
         else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
@@ -505,7 +507,10 @@ int main(int argc, char ** argv) {
         server_config.context_key.n_ctx = 12288;
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
-        server_config.per_sequence_factorized_cvec_batch = value.low_rank_rank_sweep;
+        server_config.per_sequence_factorized_cvec_batch =
+            value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch;
+        std::cout << "flydelta_smoke_factorized_cvec_opt_in="
+                  << (server_config.per_sequence_factorized_cvec_batch ? "yes" : "no") << '\n';
         server_config.agent_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
         if (!server_host->start(server_config, error)) {
             host.close();
@@ -1181,7 +1186,8 @@ int main(int argc, char ** argv) {
                     activation_request.il_end = static_cast<int32_t>(n_layers - 1);
                     activation_request.coefficients = coefficients;
                     activation_request.allow_factorized_overlay =
-                        value.low_rank_rank_sweep && allow_factorized_overlay;
+                        value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch &&
+                        allow_factorized_overlay;
                     if (activation_request.allow_factorized_overlay) {
                         if (!deep_factorized_basis) {
                             auto shared = std::make_shared<std::vector<float>>();
@@ -1407,11 +1413,50 @@ int main(int argc, char ** argv) {
                         return false;
                     }
                     if (production_provider) {
-                        if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
-                                production_provider, production_job, deep_fixture, basis, coefficients, true,
-                                trials, margins, geometries, geometry_available, runner_error, full_execution,
-                                full_execution ? "smoke-full" : "smoke-diagnostic",
-                                common_flydelta_experiment_phase::deep_controls)) return false;
+                        const size_t resident_parallelism = production_provider->host
+                            ? production_provider->host->context_key().n_parallel : 0;
+                        const size_t candidate_capacity = full_execution
+                            ? std::max<size_t>(1, resident_parallelism)
+                            : (resident_parallelism > 1 ? resident_parallelism - 1 : 1);
+                        for (size_t begin = 0, part = 0; begin < coefficients.size(); ++part) {
+                            const size_t count = std::min(candidate_capacity,
+                                coefficients.size() - begin);
+                            std::vector<std::vector<float>> chunk(
+                                coefficients.begin() + static_cast<std::ptrdiff_t>(begin),
+                                coefficients.begin() + static_cast<std::ptrdiff_t>(begin + count));
+                            std::vector<common_flydelta_counterfactual_trial> part_trials;
+                            std::vector<common_flydelta_decision_margin> part_margins;
+                            std::vector<common_flydelta_representation_diagnostics> part_geometries;
+                            std::vector<bool> part_geometry_available;
+                            const std::string wave = std::string(full_execution
+                                ? "smoke-full-part-" : "smoke-diagnostic-part-") +
+                                std::to_string(part);
+                            if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
+                                    production_provider, production_job, deep_fixture, basis, chunk, true,
+                                    part_trials, part_margins, part_geometries,
+                                    part_geometry_available, runner_error, full_execution, wave,
+                                    common_flydelta_experiment_phase::deep_controls,
+                                    deep_config.coefficients.strategy)) return false;
+                            trials.insert(trials.end(),
+                                std::make_move_iterator(part_trials.begin()),
+                                std::make_move_iterator(part_trials.end()));
+                            margins.insert(margins.end(),
+                                std::make_move_iterator(part_margins.begin()),
+                                std::make_move_iterator(part_margins.end()));
+                            geometries.insert(geometries.end(),
+                                std::make_move_iterator(part_geometries.begin()),
+                                std::make_move_iterator(part_geometries.end()));
+                            geometry_available.insert(geometry_available.end(),
+                                part_geometry_available.begin(), part_geometry_available.end());
+                            begin += count;
+                        }
+                        if (trials.size() != coefficients.size() ||
+                                margins.size() != coefficients.size() ||
+                                geometries.size() != coefficients.size() ||
+                                geometry_available.size() != coefficients.size()) {
+                            runner_error = "forced Deep segmented batch returned incomplete results";
+                            return false;
+                        }
                         deep_device_batch_used = deep_device_batch_used || std::any_of(trials.begin(), trials.end(),
                             [](const auto & trial) { return trial.device_batch; });
                         deep_backend_batch_used = deep_backend_batch_used || std::any_of(trials.begin(), trials.end(),

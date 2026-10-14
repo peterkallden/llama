@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
+#include <chrono>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -220,6 +222,18 @@ bool llama_adapter_cvec_batch::init(
 }
 
 void llama_adapter_cvec_batch::clear() {
+    clear_binding();
+    resident_basis.clear();
+    resident_basis_key.clear();
+    resident_basis_bytes_value = 0;
+    basis_upload_count = 0;
+    last_basis_upload_count_value = 0;
+    last_basis_cache_hit = false;
+    last_composition_us_value = 0;
+    composed_overlay_bytes_value = 0;
+}
+
+void llama_adapter_cvec_batch::clear_binding() {
     active = false;
     device_resident_flag = false;
     layer_start = -1;
@@ -344,6 +358,185 @@ bool llama_adapter_cvec_batch::apply_factorized_sparse(
     this->layer_start = static_cast<int32_t>(layer_indices.front());
     this->layer_end = static_cast<int32_t>(layer_indices.back());
     this->factorized = true; this->factorized_rank = rank; this->active = true;
+    return true;
+}
+
+bool llama_adapter_cvec_batch::apply_factorized_composed(
+        const llama_model & model,
+        ggml_backend_sched_t scheduler,
+        const std::vector<llama_seq_id> & seq_ids,
+        const std::string & basis_fingerprint,
+        const float * basis,
+        const size_t basis_len,
+        const std::vector<const float *> & coefficients,
+        const int32_t rank,
+        const int32_t n_embd,
+        const std::vector<uint32_t> & layer_indices) {
+    const auto compose_started = std::chrono::steady_clock::now();
+    clear_binding();
+    last_basis_cache_hit = false;
+    last_basis_upload_count_value = 0;
+    last_composition_us_value = 0;
+    composed_overlay_bytes_value = 0;
+    if (scheduler == nullptr || basis == nullptr || basis_fingerprint.empty() || rank <= 0 || seq_ids.empty() ||
+            seq_ids.size() != coefficients.size() ||
+            n_embd != static_cast<int32_t>(model.hparams.n_embd) || layer_indices.empty() ||
+            static_cast<size_t>(rank) > std::numeric_limits<size_t>::max() /
+                static_cast<size_t>(n_embd) ||
+            layer_indices.size() > std::numeric_limits<size_t>::max() /
+                (static_cast<size_t>(rank) * static_cast<size_t>(n_embd)) ||
+            basis_len != layer_indices.size() * static_cast<size_t>(rank) * static_cast<size_t>(n_embd) ||
+            std::any_of(coefficients.begin(), coefficients.end(), [](const float * value) { return value == nullptr; })) {
+        return false;
+    }
+    std::vector<llama_seq_id> sorted = seq_ids;
+    std::sort(sorted.begin(), sorted.end());
+    if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end() ||
+            std::adjacent_find(layer_indices.begin(), layer_indices.end(),
+                [](uint32_t a, uint32_t b) { return a >= b; }) != layer_indices.end() ||
+            layer_indices.front() < 1 || layer_indices.back() >= model.hparams.n_layer()) {
+        return false;
+    }
+
+    std::ostringstream key_builder;
+    key_builder << basis_fingerprint << ":rank=" << rank << ":d=" << n_embd << ":f32";
+    for (const uint32_t layer : layer_indices) {
+        const auto buft = model.select_buft(layer);
+        const auto device = ggml_backend_buft_get_device(buft);
+        key_builder << ":l=" << layer << ":buft=" << static_cast<const void *>(buft)
+                    << ":dev=" << static_cast<const void *>(device);
+    }
+    const std::string requested_key = key_builder.str();
+    bool cache_hit = resident_basis_key == requested_key && resident_basis.size() == layer_indices.size();
+    last_basis_cache_hit = cache_hit;
+    if (!cache_hit) {
+        // The server synchronizes the model context before rebinding. Also
+        // drain any direct backend streams before releasing the previous key.
+        for (auto & cached : resident_basis) {
+            if (cached.backend) ggml_backend_synchronize(cached.backend.get());
+        }
+        resident_basis.clear();
+        resident_basis_key.clear();
+        resident_basis_bytes_value = 0;
+        resident_basis.reserve(layer_indices.size());
+        const size_t one_basis_bytes = static_cast<size_t>(rank) * n_embd * sizeof(float);
+        for (size_t i = 0; i < layer_indices.size(); ++i) {
+            const uint32_t layer = layer_indices[i];
+            const auto buft = model.select_buft(layer);
+            const auto device = ggml_backend_buft_get_device(buft);
+            if (device == nullptr) {
+                resident_basis.clear();
+                return false;
+            }
+            resident_basis_layer cached;
+            cached.buft = buft;
+            cached.backend.reset(ggml_backend_dev_init(device, nullptr));
+            if (!cached.backend) {
+                resident_basis.clear();
+                return false;
+            }
+            ggml_init_params params = { ggml_tensor_overhead(), nullptr, true };
+            cached.ctx.reset(ggml_init(params));
+            if (!cached.ctx) {
+                resident_basis.clear();
+                return false;
+            }
+            cached.tensor = ggml_new_tensor_2d(cached.ctx.get(), GGML_TYPE_F32, rank, n_embd);
+            if (!cached.tensor) {
+                resident_basis.clear();
+                return false;
+            }
+            cached.buffer.reset(ggml_backend_alloc_ctx_tensors_from_buft(cached.ctx.get(), buft));
+            if (!cached.buffer) {
+                resident_basis.clear();
+                return false;
+            }
+            std::vector<float> graph_basis(static_cast<size_t>(n_embd) * rank);
+            const float * source_basis = basis + i * static_cast<size_t>(rank) * n_embd;
+            for (int32_t hidden = 0; hidden < n_embd; ++hidden) {
+                for (int32_t component = 0; component < rank; ++component) {
+                    graph_basis[static_cast<size_t>(hidden) * rank + component] =
+                        source_basis[static_cast<size_t>(component) * n_embd + hidden];
+                }
+            }
+            ggml_backend_tensor_set(cached.tensor, graph_basis.data(), 0, one_basis_bytes);
+            ggml_backend_synchronize(cached.backend.get());
+            resident_basis_bytes_value += one_basis_bytes;
+            ++basis_upload_count;
+            ++last_basis_upload_count_value;
+            resident_basis.emplace_back(std::move(cached));
+        }
+        resident_basis_key = requested_key;
+    }
+
+    const auto & hparams = model.hparams;
+    tensors.assign(hparams.n_layer(), nullptr);
+    for (size_t i = 0; i < layer_indices.size(); ++i) {
+        const uint32_t layer = layer_indices[i];
+        const auto buft = model.select_buft(layer);
+        ggml_init_params params = {
+            4 * ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
+        ggml_context * ctx = ggml_init(params);
+        if (ctx) ctxs.emplace_back(ctx);
+        if (!ctx || buft == nullptr || ggml_backend_buft_get_device(buft) == nullptr) {
+            clear_binding();
+            return false;
+        }
+        ggml_tensor * coeff_tensor = ggml_new_tensor_2d(
+            ctx, GGML_TYPE_F32, rank, static_cast<int64_t>(seq_ids.size() + 1));
+        if (!coeff_tensor) {
+            clear_binding();
+            return false;
+        }
+        ggml_tensor * projected = ggml_mul_mat(ctx, resident_basis[i].tensor, coeff_tensor);
+        if (!projected) {
+            clear_binding();
+            return false;
+        }
+        ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        if (!buffer) {
+            clear_binding();
+            return false;
+        }
+        ggml_backend_buffer_clear(buffer, 0);
+        for (size_t row = 0; row < coefficients.size(); ++row) {
+            ggml_backend_tensor_set(coeff_tensor, coefficients[row],
+                row * static_cast<size_t>(rank) * sizeof(float),
+                static_cast<size_t>(rank) * sizeof(float));
+        }
+        ggml_cgraph * graph = ggml_new_graph(ctx);
+        ggml_build_forward_expand(graph, projected);
+        // Use the model context's scheduler so temporary composition follows
+        // the same backend placement and copy rules as inference. Each output
+        // table has its own backend buffer and remains alive after scheduler
+        // reset; only graph scratch belongs to the scheduler.
+        ggml_backend_sched_synchronize(scheduler);
+        ggml_backend_sched_reset(scheduler);
+        const ggml_status status = ggml_backend_sched_graph_compute(scheduler, graph);
+        if (status != GGML_STATUS_SUCCESS) {
+            ggml_backend_sched_synchronize(scheduler);
+            ggml_backend_buffer_free(buffer);
+            clear_binding();
+            return false;
+        }
+        // Keep the computed tensor as the normal per-sequence row table. The
+        // final row is zero-initialized for inactive/unbound graph sequences.
+        tensors[layer] = projected;
+        bufs.emplace_back(buffer);
+        composed_overlay_bytes_value += static_cast<size_t>(n_embd) *
+            (seq_ids.size() + 1) * sizeof(float);
+        device_resident_flag = device_resident_flag ||
+            ggml_backend_dev_type(ggml_backend_buft_get_device(buft)) != GGML_BACKEND_DEVICE_TYPE_CPU;
+    }
+    this->seq_ids = seq_ids;
+    this->n_embd = n_embd;
+    this->layer_start = static_cast<int32_t>(layer_indices.front());
+    this->layer_end = static_cast<int32_t>(layer_indices.back());
+    this->factorized = false;
+    this->factorized_rank = rank;
+    this->active = true;
+    last_composition_us_value = static_cast<uint64_t>(std::chrono::duration_cast<
+        std::chrono::microseconds>(std::chrono::steady_clock::now() - compose_started).count());
     return true;
 }
 

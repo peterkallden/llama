@@ -990,6 +990,10 @@ private:
     size_t cvec_batch_physical_batch_size = 0;
     bool cvec_batch_factorized_binding = false;
     std::string cvec_batch_fallback_reason;
+    uint64_t cvec_batch_composition_us = 0;
+    size_t cvec_batch_overlay_resident_bytes = 0;
+    bool cvec_batch_basis_cache_hit = false;
+    size_t cvec_batch_basis_upload_count = 0;
 
     int64_t t_last_load_progress_ms = 0;
 
@@ -1002,9 +1006,13 @@ private:
         cvec_batch_physical_batch_size = 0;
         cvec_batch_factorized_binding = false;
         cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_active) {
             cvec_batch_request.clear();
-            cvec_batch_device.clear();
+            cvec_batch_device.clear_binding();
             return;
         }
 
@@ -1013,7 +1021,7 @@ private:
         // consumed the graph, then restore scalar cvec handling.
         llama_synchronize(ctx_tgt);
         ctx_tgt->set_adapter_cvec_batch(nullptr);
-        cvec_batch_device.clear();
+        cvec_batch_device.clear_binding();
         cvec_batch_request.clear();
         cvec_batch_active = false;
     }
@@ -1028,6 +1036,10 @@ private:
         cvec_batch_physical_batch_size = 0;
         cvec_batch_factorized_binding = false;
         cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_enabled || ctx_dft || !batch.slot_batched || batch.tokens.empty()) {
             return false;
         }
@@ -1114,9 +1126,10 @@ private:
                 seq_ids, basis, coefficients, n_embd, error);
             if (materialized && basis && basis->data) {
                 try {
-                    applied = cvec_batch_device.apply_factorized_sparse(*model_tgt, seq_ids,
-                        basis->data->data(), basis->data->size(), coefficients, basis->rank,
-                        n_embd, basis->layer_indices);
+                    applied = cvec_batch_device.apply_factorized_composed(*model_tgt,
+                        ctx_tgt->get_sched(), seq_ids,
+                        basis->fingerprint, basis->data->data(), basis->data->size(),
+                        coefficients, basis->rank, n_embd, basis->layer_indices);
                 } catch (const std::exception & exception) {
                     error = std::string("factorized cvec preflight allocation failed: ") +
                         exception.what();
@@ -1126,12 +1139,16 @@ private:
                     factorized_basis_bytes = basis->data->size() * sizeof(float);
                     factorized_coefficients_bytes = coefficients.size() *
                         static_cast<size_t>(basis->rank) * sizeof(float);
+                    cvec_batch_basis_cache_hit = cvec_batch_device.resident_basis_cache_hit();
+                    cvec_batch_basis_upload_count = cvec_batch_device.last_basis_upload_count();
+                    cvec_batch_composition_us = cvec_batch_device.last_composition_us();
+                    cvec_batch_overlay_resident_bytes = cvec_batch_device.composed_overlay_bytes();
                 }
             }
             layer_indices = basis ? basis->layer_indices : std::vector<uint32_t>{};
             if (!applied) {
                 const std::string factorized_error = error.empty()
-                    ? "factorized backend buffer is unavailable" : error;
+                    ? "factorized_backend_composition_or_allocation_unavailable" : error;
                 error.clear();
                 std::vector<std::vector<float>> owned_rows;
                 applied = cvec_batch_request.materialize_factorized_sparse(
@@ -1187,12 +1204,12 @@ private:
         cvec_batch_factorized_binding = used_factorized_binding;
         if (used_factorized_binding) {
             cvec_batch_basis_bound_bytes = factorized_basis_bytes;
-            // The host transforms the canonical rank-major basis once into
-            // ggml's [rank, n_embd] contiguous matrix layout per physical
-            // binding. This is measured staging-copy payload, not H2D time.
-            cvec_batch_basis_host_copy_bytes = factorized_basis_bytes;
+            // Count basis staging only on a new cache entry. This is a
+            // logical payload estimate, not a measured transport statistic.
+            cvec_batch_basis_host_copy_bytes = cvec_batch_basis_cache_hit
+                ? 0 : factorized_basis_bytes;
             cvec_batch_coefficients_bound_bytes = factorized_coefficients_bytes;
-            cvec_batch_bound_bytes = factorized_basis_bytes + factorized_coefficients_bytes;
+            cvec_batch_bound_bytes = cvec_batch_basis_host_copy_bytes + factorized_coefficients_bytes;
         } else {
             cvec_batch_bound_bytes = sparse_values_bytes;
         }
@@ -1207,11 +1224,37 @@ private:
         SRV_INF("per-sequence cvec %s bound rows=%zu representation=%s layers=%zu\n",
             binding_mode, seq_ids.size(), representation,
             (factorized || sparse) ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
+        const auto & trace_cvec = slots[slot_ids.front()].cvec;
+        if (trace_cvec && !trace_cvec->execution_batch_id.empty()) {
+            std::string arm_ids;
+            for (const int32_t slot_id : slot_ids) {
+                if (!arm_ids.empty()) arm_ids += ',';
+                arm_ids += slots[slot_id].cvec->execution_arm_id;
+            }
+            SRV_INF("FlyDelta physical coefficient batch batch=%s wave=%s phase=%s strategy=%s requested_rows=%zu physical_rows=%zu arms=[%s] representation=%s fallback=%s\n",
+                trace_cvec->execution_batch_id.c_str(), trace_cvec->execution_wave_id.c_str(),
+                trace_cvec->execution_phase.c_str(), trace_cvec->execution_strategy.c_str(),
+                slot_ids.size(), seq_ids.size(), arm_ids.c_str(), representation,
+                cvec_batch_fallback_reason.empty() ? "none" : cvec_batch_fallback_reason.c_str());
+        }
+        if (used_factorized_binding) {
+            SRV_INF("per-sequence cvec composition count=1 basis_cache=%s basis_uploads=%zu basis_host_copy_bytes=%zu basis_resident_bytes=%zu coefficient_payload_bytes=%zu overlay_resident_bytes=%zu compose_us=%" PRIu64 " bind_us=%" PRIu64 " physical_rows=%zu placement=%s\n",
+                cvec_batch_basis_cache_hit ? "hit" : "miss",
+                cvec_batch_basis_upload_count, cvec_batch_basis_host_copy_bytes,
+                cvec_batch_device.resident_basis_bytes(),
+                cvec_batch_coefficients_bound_bytes, cvec_batch_overlay_resident_bytes,
+                cvec_batch_composition_us, cvec_batch_binding_us, seq_ids.size(),
+                cvec_batch_device.device_resident() ? "device_batch" : "backend_batch");
+        } else if (!cvec_batch_fallback_reason.empty()) {
+            SRV_WRN("per-sequence cvec fallback reason=%s rows=%zu representation=%s\n",
+                cvec_batch_fallback_reason.c_str(), seq_ids.size(), representation);
+        }
         return true;
     }
 
     void destroy() {
         clear_cvec_batch_binding();
+        cvec_batch_device.clear();
         spec.reset();
         spec_init.reset();
 
@@ -2533,6 +2576,10 @@ private:
         res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
         res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
         res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
         res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
         queue_results.send(std::move(res));
     }
@@ -2749,6 +2796,10 @@ private:
         res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
         res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
         res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
         res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
 
         queue_results.send(std::move(res));
