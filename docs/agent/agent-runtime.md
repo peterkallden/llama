@@ -4098,7 +4098,11 @@ FlyDelta experiment arms use the daemon's existing resource-backed prepare,
 resident execution and finalize bindings. Full-generation arms inherit the
 finite host/context token limit rather than an implicit 64-token cap; a limit
 stop is inconclusive. Compact DSL and JSON tool outputs are normalized against
-the context's host-owned schemas before verification. Runtime confirmation
+the context's host-owned schemas before verification. Textual contexts use
+verification-only `model_tools`; native contexts use `tools` with an explicit
+`tool_choice`. Programmatic resident hosts prepare the same writable tensor
+override buffer as the argument parser, so GPU auto-fit can actually run.
+Runtime confirmation
 must identify the applied arm, and coefficient-to-region transfer preserves
 the actual dose and host-verification flags. Selected coefficient mixtures
 are retained through the existing composed-direction resource seam. See

@@ -2648,6 +2648,10 @@ the last intervention layer. Interventions at the last exposed layer have no
 downstream capture: geometry is unavailable rather than a fabricated zero
 effect. The CPU fallback can resolve transient factorized basis material;
 it does not treat a factorized reference as a durable direction URI.
+Broad baseline captures and narrow probe captures may contain different layer
+lists. Geometry compares the same requested measurement layer at each capture's
+own row offset, with matching model, layout revision, width and semantic
+position. A missing measurement layer or mismatched model remains an error.
 
 The rank smoke script defaults to daemon bindings. Set
 `LLAMA_AGENT_LOW_RANK_PRODUCTION_BINDINGS=0` only for an explicitly labelled
@@ -2670,6 +2674,26 @@ The arm-seam correction pass was validated with 61 relevant model-free CTests
 (FlyDelta, daemon seams, tool catalog/codec, Cozo data store and replay contract),
 all passing. Live-model evidence is recorded separately; deterministic success
 does not establish a behavioral gain.
+
+The separate Qwen2.5-1.5B-Instruct Q4_K_M rank-one cvec comparison used NVIDIA
+Vulkan with two physical sequences and confirmed `device_batch` and device
+residency. Sparse and factorized runs both generated `PASS`; their teacher
+margins matched exactly (8.0214386; delta 0). Reported batch model time was
+887.803406 ms sparse versus 887.510620 ms factorized, with binding time
+0.669000 ms versus 0.604000 ms. These single-run timings are wiring/cost
+observations, not a speedup or behavioral-capacity claim. The factorized run
+bound one 6144-byte basis and 8 coefficient bytes. The accompanying WHERE run
+initially stopped on missing source-evidence metadata in the smoke job;
+that result is incomplete, not a negative rank result. The smoke now preserves
+the actual capture source reference, and WHERE preflight rejects a missing
+reference before running any model probes.
+
+After these corrections, the broader model-free agent pass ran 177 registered
+cases: 176 passed and one model-backed runtime fixture was skipped. The separate
+beta pack passed 18 suites but retained one unrelated MCP HTTP vertical-smoke
+failure: its fake runtime only admits legacy `resource_read`/`memory_get`, while
+research requests an unsupported tool. This is recorded separately, not hidden
+as a FlyDelta success or repaired by weakening research/tool validation.
 
 ### Low-rank rank-sweep model smoke
 

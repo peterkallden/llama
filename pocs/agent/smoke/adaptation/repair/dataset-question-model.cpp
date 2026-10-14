@@ -1080,6 +1080,8 @@ int main(int argc, char ** argv) {
                 production_job.id = "flydelta-production-smoke:" + deep_case.id;
                 production_job.seed.candidate_ref = "flydelta://experimental/repair-replay";
                 production_job.seed.behavior_key = entry.first;
+                production_job.seed.evidence_ref = deep_case_deltas.front().host_evidence_ref;
+                production_job.capture_manifest_ids = {deep_case.capture_manifest_id};
                 production_job.seed.model_profile_fingerprint = capture->model_profile_fingerprint;
                 production_job.seed.task_fingerprint = deep_fixture.task_fingerprint;
                 production_job.seed.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
@@ -1142,6 +1144,10 @@ int main(int argc, char ** argv) {
                     selected_direction.direction.layer_index = layer;
                     selected_direction.direction.values = selected_delta->values;
                     selected_direction.direction.kind = common_flydelta_direction_kind::raw_repair;
+                    selected_direction.direction.extraction_id = selected_delta->id;
+                    selected_direction.direction.origin = "production_where_raw_repair";
+                    selected_direction.direction.source_samples = 1;
+                    selected_direction.direction.retained_samples = 1;
                     deep_directions = {std::move(selected_direction)};
                     std::cout << "flydelta_production_where group=" << entry.first << " layer=" << layer
                               << " host_helped=" << (continuation.host_helped ? "yes" : "no")

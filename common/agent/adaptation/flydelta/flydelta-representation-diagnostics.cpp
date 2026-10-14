@@ -86,7 +86,8 @@ bool common_flydelta_representation_diagnostics_from_captures(
     }
     if (baseline.model_profile_fingerprint != overlay.model_profile_fingerprint ||
             baseline.capture_layout_revision != overlay.capture_layout_revision ||
-            baseline.layer_indices != overlay.layer_indices ||
+            baseline.model_profile_fingerprint != behavior_delta.model_profile_fingerprint ||
+            baseline.capture_layout_revision != behavior_delta.capture_layout_revision ||
             baseline.n_embd != overlay.n_embd ||
             baseline.position != overlay.position ||
             (baseline.position == common_flydelta_capture_position::prompt_row &&

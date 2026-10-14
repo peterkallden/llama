@@ -97,6 +97,11 @@ common_params make_agent_server_context_params(
     params.mmproj.path = config.context_key.load_key.mmproj;
     params.n_predict = -1;
     params.fit_params = config.context_key.load_key.fit_params;
+    // Programmatic hosts bypass common_params_parse(), which normally pads
+    // this writable buffer for common_fit_params(). Keep the same contract.
+    if (params.fit_params) {
+        params.tensor_buft_overrides.resize(llama_max_tensor_buft_overrides(), {nullptr, nullptr});
+    }
     params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
     // The project historically used 99 in agent configs as an "all layers"
     // convenience value.  That is unsafe for resident FlyDelta contexts:

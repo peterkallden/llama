@@ -482,6 +482,10 @@ bool daemon_flydelta_run_search_pipeline(
         common_flydelta_search_pipeline_result & result,
         std::string & error) {
     error.clear();
+    if (job.seed.evidence_ref.empty() || job.seed.evidence_ref.size() > 512) {
+        error = "FlyDelta WHERE diagnostics require a bounded source evidence reference";
+        return false;
+    }
     provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
     common_flydelta_experiment_fixture fixture;
     fixture.id = job.seed.verifier_ref;

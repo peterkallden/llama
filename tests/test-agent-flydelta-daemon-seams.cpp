@@ -26,6 +26,9 @@ int main() {
     provider->authority.namespace_id = "seams";
     provider->authority.session_id = "test";
     provider->oracle_registry = common_flydelta_make_default_oracle_registry();
+    common_flydelta_search_pipeline_result incomplete_result;
+    CHECK(!daemon_flydelta_run_search_pipeline(provider, {}, {}, incomplete_result, error));
+    CHECK(error.find("source evidence reference") != std::string::npos);
     const auto put = [&](const json & value, std::string & uri) {
         agent_resource_put_request request;
         request.name = "fixture.json";
