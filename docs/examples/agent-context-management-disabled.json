@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "runtime": {
+    "context_management": {
+      "enabled": false,
+      "persist_session": false,
+      "semantic_compaction": false,
+      "recent_turns": 2,
+      "summary_max_tokens": 512,
+      "max_summary_calls_per_turn": 0,
+      "max_history_chars": 32768
+    }
+  }
+}

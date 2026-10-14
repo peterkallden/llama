@@ -3633,12 +3633,35 @@ the model summary.
 `runtime.context_management` defaults to enabled, persistent when the resource
 backend supports persistence, semantic compaction enabled, two recent turns,
 512 summary tokens, at most one summary call per turn, and a 32 KiB history
-character budget. In-memory resource backends preserve the active session only
-while that backend instance remains alive. Internal `agent.context.*` records
-are excluded from ordinary model-visible resource candidates. When the
-deterministic composition cannot fit or would omit source turns without a
-validated checkpoint, the host fails before the next model generation rather
-than silently dropping them.
+character budget. The setting names and defaults are shown in
+[`agent-context-management.json`](../examples/agent-context-management.json),
+and the complete daemon configuration example includes the same block in
+[`agent-config.example.json`](../examples/agent-config.example.json).
+
+The controls have distinct effects:
+
+| Setting | Default | Effect |
+| --- | ---: | --- |
+| `enabled` | `true` | Enables conversation-turn recording, restoration, composition, and semantic compaction. `false` disables this conversation-context subsystem. |
+| `persist_session` | `true` | Requests durable turn/checkpoint records. Effective only when the configured resource blob and metadata backends are persistent; otherwise the host reports transient storage. |
+| `semantic_compaction` | `true` | Allows one bounded model summary when history pressure requires it. `false` keeps deterministic selection only; if that cannot fit, the turn fails rather than silently discarding uncovered turns. |
+| `recent_turns` | `2` | Number of recent turns prioritized verbatim (valid range 1–32). |
+| `summary_max_tokens` | `512` | Generation limit for the tool-free checkpoint summary (valid range 16–4096). |
+| `max_summary_calls_per_turn` | `1` | Upper bound on compaction generations per incoming turn (valid range 0–1). Set to `0` to prohibit summary generation while keeping deterministic composition enabled. |
+| `max_history_chars` | `32768` | Maximum rendered conversation-history characters (valid range 256–1,048,576). This is a character budget, not a token count. |
+
+For example, to disable only model-generated summaries while retaining
+history and deterministic context selection, set `semantic_compaction` to
+`false` (or `max_summary_calls_per_turn` to `0`). To disable the whole
+conversation-context feature, set `enabled` to `false`; the full example is
+[`agent-context-management-disabled.json`](../examples/agent-context-management-disabled.json).
+This switch does not disable the separate plan working-state compaction used
+by bounded continuations, nor resource chunking. In-memory resource backends
+preserve the active session only while that backend instance remains alive.
+Internal `agent.context.*` records are excluded from ordinary model-visible
+resource candidates. When deterministic composition cannot fit or would omit
+source turns without a validated checkpoint, the host fails before the next
+model generation rather than silently dropping them.
 
 Tool execution and typed binding continue to use the complete host-owned
 provider result. The persisted/model-facing plan observation uses a valid,

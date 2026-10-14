@@ -121,4 +121,20 @@ int main() {
     assert(management.at("recent_turns") == 2);
     assert(management.at("summary_max_tokens") == 512);
     assert(management.at("max_summary_calls_per_turn") == 1);
+
+    agent_host_config disabled_config;
+    assert(parse_agent_host_config_json(json{{"runtime", {{"context_management", {
+        {"enabled", false}, {"persist_session", false}, {"semantic_compaction", false},
+        {"recent_turns", 4}, {"summary_max_tokens", 256},
+        {"max_summary_calls_per_turn", 0}, {"max_history_chars", 4096}}}}}},
+        disabled_config, error));
+    const auto disabled_json = agent_host_config_to_json(disabled_config);
+    const auto & disabled = disabled_json.at("runtime").at("context_management");
+    assert(disabled.at("enabled") == false);
+    assert(disabled.at("persist_session") == false);
+    assert(disabled.at("semantic_compaction") == false);
+    assert(disabled.at("recent_turns") == 4);
+    assert(disabled.at("summary_max_tokens") == 256);
+    assert(disabled.at("max_summary_calls_per_turn") == 0);
+    assert(disabled.at("max_history_chars") == 4096);
 }
