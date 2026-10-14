@@ -3472,7 +3472,7 @@ bool configure_daemon_flydelta_model_residency(
             ? catalog.bases.end() : catalog.bases.find(profile->second.base_model_id);
         if (profile == catalog.profiles.end() || base == catalog.bases.end() ||
                 base->second.backend != "server-context") {
-            error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a server-context model profile";
+            error = "factorized cvec batching requires a server-context model profile; set runtime.adaptation.flydelta.disable_factorized_cvec_batch=true to use sparse/dense overlays";
             return false;
         }
     }
@@ -3483,7 +3483,7 @@ bool configure_daemon_flydelta_model_residency(
         const auto profile = catalog.profiles.find(profile_id);
         if (profile == catalog.profiles.end() || profile->second.n_parallel < 2 ||
                 profile->second.n_sequences < 2) {
-            error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a model profile with parallel and sequence capacity of at least 2";
+            error = "factorized cvec batching requires a model profile with parallel and sequence capacity of at least 2; set runtime.adaptation.flydelta.disable_factorized_cvec_batch=true to use sparse/dense overlays";
             return false;
         }
     }

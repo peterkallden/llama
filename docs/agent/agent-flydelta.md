@@ -2014,18 +2014,22 @@ bounded-arm callback and the explicit `bounded_arm_batch` capability before the 
 FlyDelta adapter can use the batch path; otherwise the common scalar fallback
 is retained.
 
-The optional daemon JSON setting
-`runtime.adaptation.flydelta.factorized_cvec_batch` defaults to `false`. When
-enabled, only Deep coefficient waves (including TFO-lite in `deep_controls`)
-may send one shared FP32 basis plus one coefficient
-row per sequence to the resident server-context backend. Shallow, Bootstrap,
+The daemon JSON opt-out
+`runtime.adaptation.flydelta.disable_factorized_cvec_batch` defaults to
+`false`. Thus factorized `B × c` (batched as `B × Cᵀ`) is used automatically
+for eligible Deep coefficient waves (including TFO-lite in `deep_controls`),
+sending one shared FP32 basis plus one coefficient row per sequence to the
+resident server-context backend. Shallow, Bootstrap,
 AdaptiveAlpha, orthogonal search, WHERE and augmentation continue to use the
 existing sparse/dense path. The coefficient binding defaults to Bootstrap;
-callers must explicitly supply the Deep phase to permit factorization.
-It requires FlyDelta,
-batch mode other than `disabled`, `batch_parallelism >= 2`, and a
-`server-context` model profile. It changes only overlay materialization, not
-Whirlpool, ranking, verification, or promotion. A single-row tail, incompatible
+callers must supply the Deep phase to use factorization. Eligibility requires
+FlyDelta, batch mode other than `disabled`, `batch_parallelism >= 2`, and a
+compatible `server-context` model profile. Unsupported profiles and batches
+continue through the existing fallback. Set `disable_factorized_cvec_batch`
+to `true` to force sparse/dense materialization. Legacy configs using the
+positive `factorized_cvec_batch` key are accepted and translated; newly
+serialized configs use the negative opt-out key. The feature changes only
+overlay materialization, not Whirlpool, ranking, verification, or promotion. A single-row tail, incompatible
 basis, unsupported backend, or pre-graph allocation failure uses the existing
 sparse path; a graph-callback failure aborts the batch. `applied` is reported
 only after a successful decode graph actually included the overlay. Backend
@@ -2064,7 +2068,8 @@ PCIe transfer rates. `device_batch` is reported only when the composed table
 is on a non-CPU backend; otherwise the trace says `backend_batch`. The smoke
 driver can force each control-plane strategy with
 `LLAMA_AGENT_LOW_RANK_TFO_LITE=1` (TFO-lite) or leave it unset (coordinate),
-and compare opt-in on/off with `LLAMA_AGENT_LOW_RANK_FACTORIZED=0`.
+and compare enabled/disabled with `LLAMA_AGENT_LOW_RANK_DISABLE_FACTORIZED=1`
+(`LLAMA_AGENT_LOW_RANK_FACTORIZED=0` remains a compatibility alias).
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
@@ -2775,8 +2780,9 @@ verdicts are retained under
 `/home/prbm/llama-agent-smokes/factorized-20261013/production-arm-seams-where-v4/`:
 `low-rank-rank-sweep.log`, `native-cvec-batch.log`, `sparse-cvec-batch.log` and
 `learning-ledger.jsonl`. The driver reported `rank_comparison=completed` and
-Q1 output equality with teacher-margin delta zero. Factorized execution stays
-experimental and opt-in; neither behavioral gain nor speedup was established.
+Q1 output equality with teacher-margin delta zero. Factorized execution remains
+experimental, enabled by default only on eligible Deep/TFO waves, and can be
+disabled in config; neither behavioral gain nor speedup was established.
 
 ### Low-rank rank-sweep model smoke
 
@@ -2803,7 +2809,8 @@ and 4: both arms produced the same output and exact teacher margins through
 sparse and factorized binding. These rank-shape checks establish overlay
 equivalence, not rank-2/4 behavioral utility.
 
-The matched Deep rank sweep completed with factorized opt-in both on and off.
+The matched Deep rank sweep completed with factorized batching enabled and
+disabled.
 Both selected the same rank-1 coefficients and reported the same diagnostic
 margins; rank 2 and 4 were correctly `unavailable` because the replay evidence
 had effective rank zero, and no candidate was selected or host-verified as
@@ -2863,7 +2870,7 @@ auto-fit did not reduce it. Full traces are under
 `/home/prbm/llama-agent-smokes/factorized-20261014/deep-tfo-batch-matrix/`.
 
 The subsequent full-trace two-fixture Deep and TFO-lite runs each completed for
-factorized opt-in on and off at p=2. All four runs had the same two groups,
+factorized batching enabled and disabled at p=2. All four runs had the same two groups,
 each with only one compatible direction (`observations=1`,
 `direction_candidates=1`), so both rank-2/4 comparison and actual Deep
 coefficient search were `unavailable` (`deep_search_executed=no`); these are
@@ -2961,8 +2968,8 @@ model times were 888.44/882.10 ms. These are observations, not a speedup claim.
 Earlier mismatched-row geometry (approximately 28) is invalid diagnostic data,
 not an observed adverse intervention of that size.
 
-The shared figure is a representation-size model. Experimental coefficient
-waves can additionally opt into a transient native factorized cvec batch:
+The shared figure is a representation-size model. Eligible coefficient waves
+use a transient native factorized cvec batch by default:
 
 ```text
 B[layer][rank][n_embd]  (one shared FP32 basis)
@@ -2970,10 +2977,11 @@ c[sequence][rank]      (one FP32 coefficient row per arm)
         -> graph-local B * c at the ordinary cvec intervention point
 ```
 
-The factorized flag is separate from `per_sequence_cvec_batch` and defaults
-to off. It requires at least two compatible parallel sequences, one common
-basis/layer layout and backend support. Otherwise the established sparse/dense
-cvec fallback remains in use and emits a concrete
+The factorized flag is separate from `per_sequence_cvec_batch` and is enabled
+by default for eligible Deep/TFO waves; the daemon config's
+`disable_factorized_cvec_batch` is the opt-out. It requires at least two
+compatible parallel sequences, one common basis/layer layout and backend
+support. Otherwise the established sparse/dense cvec fallback remains in use and emits a concrete
 `factorized_requires_parallel_coefficient_wave`, `factorized_not_enabled` or
 `factorized_requires_parallel_sequences` diagnostic. Persistent or active
 artifacts never use this form; it is request-scoped and released with the

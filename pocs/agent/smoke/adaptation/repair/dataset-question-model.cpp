@@ -522,7 +522,7 @@ int main(int argc, char ** argv) {
         server_config.per_sequence_cvec_batch = true;
         server_config.per_sequence_factorized_cvec_batch =
             value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch;
-        std::cout << "flydelta_smoke_factorized_cvec_opt_in="
+        std::cout << "flydelta_smoke_factorized_cvec_enabled="
                   << (server_config.per_sequence_factorized_cvec_batch ? "yes" : "no") << '\n';
         server_config.agent_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
         if (!server_host->start(server_config, error)) {

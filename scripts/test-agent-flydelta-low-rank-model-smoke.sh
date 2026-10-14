@@ -35,7 +35,16 @@ fi
 if [[ "${LLAMA_AGENT_LOW_RANK_PRODUCTION_WHERE:-0}" == "1" ]]; then
     rank_args+=(--production-where)
 fi
-if [[ "${LLAMA_AGENT_LOW_RANK_FACTORIZED:-1}" == "0" ]]; then
+factorized_disabled="${LLAMA_AGENT_LOW_RANK_DISABLE_FACTORIZED:-}"
+if [[ -z "$factorized_disabled" ]]; then
+    # Backward-compatible interpretation of the previous positive toggle.
+    if [[ "${LLAMA_AGENT_LOW_RANK_FACTORIZED:-1}" == "0" ]]; then
+        factorized_disabled=1
+    else
+        factorized_disabled=0
+    fi
+fi
+if [[ "$factorized_disabled" == "1" ]]; then
     rank_args+=(--disable-factorized-cvec-batch)
 fi
 if [[ "${LLAMA_AGENT_LOW_RANK_TFO_LITE:-0}" == "1" ]]; then

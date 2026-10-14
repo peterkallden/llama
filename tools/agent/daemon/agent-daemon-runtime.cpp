@@ -81,7 +81,7 @@ bool open_daemon_model_residency(
     residency.reset();
     auto catalog = options.model_catalog;
     if (options.adaptation_flydelta_factorized_cvec_batch && catalog.profiles.empty()) {
-        error = "runtime.adaptation.flydelta.factorized_cvec_batch requires a server-context model profile";
+        error = "factorized cvec batching requires a server-context model profile; set runtime.adaptation.flydelta.disable_factorized_cvec_batch=true to use sparse/dense overlays";
         return false;
     }
     bool native_batch = false;
