@@ -19,12 +19,11 @@ work_dir=$(agent_smoke_prepare_workdir flydelta-low-rank-model)
 
 repair_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-dataset-question-repair-model-smoke)
 cvec_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-cvec-batch-model-smoke)
+agent_smoke_build_if_requested llama-agent-flydelta-dataset-question-repair-model-smoke llama-agent-flydelta-cvec-batch-model-smoke
 agent_smoke_require_file "$model" "Qwen Instruct model"
 agent_smoke_require_file "$suite" "FlyDelta dataset repair replay"
 agent_smoke_require_executable "$repair_bin" "FlyDelta dataset question repair model smoke"
 agent_smoke_require_executable "$cvec_bin" "FlyDelta native cvec batch smoke"
-
-agent_smoke_build_if_requested
 
 rank_log="$work_dir/low-rank-rank-sweep.log"
 rank_exit=0
@@ -80,7 +79,8 @@ if [[ "$rank_exit" -eq 0 ]] && grep -Fq 'flydelta_low_rank_rank_sweep group=' "$
     grep -Eq 'execution_batch=(device_batch|backend_batch)' "$rank_log"
     rank_status=completed
 elif [[ "$rank_exit" -eq 0 ]] && grep -Fq 'flydelta_low_rank_rank_sweep_skipped' "$rank_log"; then
-    echo "rank_comparison=unavailable reason=insufficient_compatible_directions"
+    grep -F 'flydelta_low_rank_rank_sweep_skipped' "$rank_log"
+    echo "rank_comparison=unavailable reason=see_rank_skip_record"
     rank_status=unavailable
 elif [[ "$rank_exit" -eq 124 ]] && grep -Fq 'flydelta_low_rank_rank_sweep group=' "$rank_log"; then
     completed_ranks=$(grep -c '^flydelta_low_rank_rank_sweep group=' "$rank_log")

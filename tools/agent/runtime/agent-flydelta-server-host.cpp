@@ -604,6 +604,13 @@ bool daemon_flydelta_finalize_arm(
             {"binding_us", generation.flydelta_runtime.cvec_binding_us},
             {"device_batch", generation.flydelta_device_batch},
             {"decoded_tokens", generation.decoded_tokens},
+            {"budget", {{"phase", arm.request_generation ? "full_generation" : "diagnostic"},
+                {"token_limit", !arm.request_generation ? size_t{0} :
+                    arm.max_generated_tokens != 0 ? arm.max_generated_tokens :
+                    static_cast<size_t>(std::max(0, context.options.n_predict))},
+                {"decoded_tokens", generation.decoded_tokens},
+                {"exhausted", arm.request_generation && generation.stop_reason == common_agent_generation_stop_reason::limit},
+                {"diagnostic_only", !arm.request_generation}}},
             {"stop_reason", common_agent_generation_stop_reason_name(generation.stop_reason)},
             {"host_evaluated", result.host_evaluated}, {"verifier_known", result.verifier_known},
             {"verifier_passed", result.verifier_passed}, {"verifier_reason", result.verifier_reason},
@@ -678,8 +685,12 @@ bool daemon_flydelta_finalize_arm(
         return common_flydelta_arm_result_validate(result, error);
     }
     if (generation.stop_reason == common_agent_generation_stop_reason::limit) {
-        result.host_evaluated = true;
-        result.verifier_reason = "generation budget exhausted; verification is inconclusive";
+        // No Oracle ran. Budget exhaustion is an execution boundary, not a
+        // host verdict and cannot establish a failed baseline for HELPED.
+        result.host_evaluated = false;
+        result.verifier_violation_code = "generation_token_budget_exhausted";
+        result.verifier_reason = "generation_token_budget_exhausted: phase=full_generation decoded_tokens=" +
+            std::to_string(generation.decoded_tokens) + "; host verifier not run";
         result.generation_ref = "flydelta://runtime/generation/" + arm.arm_id;
         return common_flydelta_arm_result_validate(result, error);
     }

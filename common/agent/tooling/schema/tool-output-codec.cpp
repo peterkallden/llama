@@ -614,7 +614,18 @@ bool parse_flat_compact(
         }
 
         json value;
-        if (!parse_flat_value(source, value, error)) return false;
+        std::vector<std::variant<std::string, size_t>> value_path;
+        const auto * declared_value = split_flat_path(field, value_path)
+            ? flat_path_schema(schema, value_path) : nullptr;
+        const bool declared_string_enum = declared_value && declared_value->is_object() &&
+            declared_value->contains("enum") && (*declared_value)["enum"].is_array() &&
+            std::any_of((*declared_value)["enum"].begin(), (*declared_value)["enum"].end(),
+                [&](const json & item) { return item.is_string() && item.get<std::string>() == source; });
+        if (declared_string_enum) {
+            // Exact host-declared enum values such as >= need no quoting.
+            // Other unquoted punctuation still follows the strict codec.
+            value = source;
+        } else if (!parse_flat_value(source, value, error)) return false;
         if (value.is_array()) {
             std::vector<std::variant<std::string, size_t>> array_path;
             const auto * field_schema = split_flat_path(field, array_path)

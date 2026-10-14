@@ -39,8 +39,15 @@ agent_smoke_run_logged() {
     # narrower or wider budget with LLAMA_AGENT_TIMEOUT_SECONDS.
     set +e; timeout --foreground "${LLAMA_AGENT_TIMEOUT_SECONDS:-600}" "$@" >"$log_path" 2>&1; local status=$?; set -e
     cat "$log_path"
+    if [[ $status -eq 124 ]]; then
+        echo "model_smoke_budget phase=process reason=wall_clock_timeout limit_seconds=${LLAMA_AGENT_TIMEOUT_SECONDS:-600} evaluation_status=incomplete log=${log_path}" >&2
+    fi
     if [[ $status -ne 0 ]]; then echo "model smoke failed: exit=${status}; log=${log_path}" >&2; return "$status"; fi
 }
 agent_smoke_build_if_requested() {
-    if [[ "${LLAMA_AGENT_BUILD:-0}" == 1 ]]; then cmake --build "$(agent_smoke_build_path)" --target llama-agent --parallel "${LLAMA_AGENT_BUILD_JOBS:-1}"; fi
+    if [[ "${LLAMA_AGENT_BUILD:-0}" == 1 ]]; then
+        local targets=("$@")
+        if [[ ${#targets[@]} -eq 0 ]]; then targets=(llama-agent); fi
+        cmake --build "$(agent_smoke_build_path)" --target "${targets[@]}" --parallel "${LLAMA_AGENT_BUILD_JOBS:-1}"
+    fi
 }

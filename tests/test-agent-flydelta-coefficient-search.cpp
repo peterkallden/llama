@@ -62,6 +62,24 @@ int main() {
     CHECK(std::fabs(basis.vectors[0][0] * basis.vectors[1][0] +
         basis.vectors[0][1] * basis.vectors[1][1]) < 0.0001f);
 
+    // Experimental captures can span a basis without earning learning credit;
+    // repeated/collinear captures must not inflate the measured rank.
+    common_flydelta_low_rank_basis measured;
+    auto repeated = direction(2, 1.0f, 0.0f);
+    repeated.experimental_only = true;
+    CHECK(common_flydelta_build_low_rank_basis(2, 4,
+        {repeated, direction(2, 2.0f, 0.0f)}, measured, error));
+    CHECK(measured.vectors.size() == 1);
+    std::vector<common_flydelta_direction_candidate> independent;
+    for (size_t component = 0; component < 4; ++component) {
+        auto value = repeated;
+        value.values.assign(4, 0.0f);
+        value.values[component] = 1.0f;
+        independent.push_back(std::move(value));
+    }
+    CHECK(common_flydelta_build_low_rank_basis(4, 4, independent, measured, error));
+    CHECK(measured.vectors.size() == 4);
+
     common_flydelta_semantic_basis_query query;
     query.concept_key = "dataset.grouped_sum";
     query.behavior_key = "dataset.grouped_sum";

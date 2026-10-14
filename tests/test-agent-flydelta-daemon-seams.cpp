@@ -127,7 +127,15 @@ int main() {
     CHECK(daemon_flydelta_classify_arm_pair(bad, bad) == common_flydelta_counterfactual_outcome::unknown);
     generated.stop_reason = common_agent_generation_stop_reason::limit;
     CHECK(binding.finalize_arm(arm, generated, result, error));
-    CHECK(result.host_evaluated && !result.verifier_known && !result.verifier_passed);
+    CHECK(!result.host_evaluated && !result.verifier_known && !result.verifier_passed);
+    CHECK(result.verifier_violation_code == "generation_token_budget_exhausted");
+    CHECK(daemon_flydelta_classify_arm_pair(result, good) == common_flydelta_counterfactual_outcome::unknown);
+    arm.request_generation = false;
+    arm.request_host_verification = false;
+    CHECK(binding.finalize_arm(arm, generated, result, error));
+    CHECK(!result.host_evaluated && result.verifier_violation_code.empty());
+    arm.request_generation = true;
+    arm.request_host_verification = true;
     generated.stop_reason = common_agent_generation_stop_reason::eos;
 
     common_flydelta_experiment_fixture fixture{1, "fixture:seams", "task", "model", "tokenizer",

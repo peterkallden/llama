@@ -17,6 +17,18 @@
 
 inline constexpr const char * agent_flydelta_dataset_dsl_prefix = "open!";
 
+// Same forced-context representation used by runtime teaching capture:
+// preserve the original task prefix and evaluate a host-owned continuation
+// without asking the model to generate or echo it again.
+inline common_agent_generation_request agent_flydelta_dataset_capture_context(
+        const common_agent_generation_request & prefix, const std::string & continuation) {
+    auto request = prefix;
+    request.options.n_predict = 0;
+    request.flydelta_activation.reset();
+    request.messages.push_back({"assistant", continuation});
+    return request;
+}
+
 inline bool agent_flydelta_dataset_dsl_contrast(
         common_agent_teacher_forced_choice_request & request,
         const std::string & positive, const std::string & negative,

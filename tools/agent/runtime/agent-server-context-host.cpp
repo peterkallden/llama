@@ -7,6 +7,7 @@
 #include "log.h"
 #include "common.h"
 #include "server-context.h"
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -156,6 +157,32 @@ bool common_agent_server_context_host::start(
     server_context_host_trace("start-enter", &config);
     stop();
     initialize_server_context_host_once();
+
+    // Device indices are backend-local and can change when visibility is
+    // masked. Record the resolved descriptions rather than inferring a GPU
+    // vendor from GGML_VK_VISIBLE_DEVICES or the requested offload count.
+    const char * expected_gpu = std::getenv("LLAMA_AGENT_EXPECTED_GPU");
+    size_t visible_gpus = 0;
+    size_t matching_gpus = 0;
+    for (size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+        const auto device = ggml_backend_dev_get(index);
+        const auto type = ggml_backend_dev_type(device);
+        if (type != GGML_BACKEND_DEVICE_TYPE_GPU && type != GGML_BACKEND_DEVICE_TYPE_IGPU) continue;
+        ++visible_gpus;
+        const std::string description = ggml_backend_dev_description(device);
+        if (expected_gpu && description.find(expected_gpu) != std::string::npos) ++matching_gpus;
+        if (server_context_host_trace_enabled()) {
+            size_t free_bytes = 0, total_bytes = 0;
+            ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+            std::fprintf(stderr, "agent server_context host trace: event=visible-device name=%s description=%s free_bytes=%zu total_bytes=%zu\n",
+                ggml_backend_dev_name(device), description.c_str(), free_bytes, total_bytes);
+        }
+    }
+    if (expected_gpu && expected_gpu[0] && (visible_gpus != 1 || matching_gpus != 1)) {
+        error = "GPU preflight requires exactly one visible GPU matching " + std::string(expected_gpu) +
+            "; visible=" + std::to_string(visible_gpus) + " matching=" + std::to_string(matching_gpus);
+        return false;
+    }
 
     if (config.context_key.load_key.model.empty()) {
         error = "resident server_context model path is empty";

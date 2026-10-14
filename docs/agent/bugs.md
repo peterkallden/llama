@@ -3,6 +3,110 @@
 This file records agent-specific bugs that affected runtime behavior and the
 commits that fixed them.
 
+## FlyDelta smoke device identity and phase budget reporting
+
+- Status: corrected locally; verification results are recorded with the runtime change
+- Affected area: resident FlyDelta model smokes and daemon arm finalization
+
+### Verification on 2026-10-14
+
+The complete build passed. The broad agent model-free CTest selection passed
+182/182 tests; four tests reported their configured `Skipped` status (native
+crash tooling and tests requiring a model/runtime). The focused codec,
+daemon-seam, coefficient-search and dataset-repair-contract tests also passed.
+
+The full-trace Qwen Instruct run used `GGML_VK_VISIBLE_DEVICES=1` and the
+optional `LLAMA_AGENT_EXPECTED_GPU=NVIDIA` preflight. The trace resolved the
+visible device to `NVIDIA GeForce 920MX`; there was no device-lost event. The
+preflight is opt-in and backend-generic. It does not make NVIDIA a runtime
+requirement; ordinary deployments leave `LLAMA_AGENT_EXPECTED_GPU` unset.
+
+The two selected dataset-query baselines ended at EOS, not at the token limit.
+They still failed the DSL contract: one reused `where[0]` for multiple
+predicates and emitted `select: * except ...`; the other combined two sort
+keys on one `order_by` line. Their host-canonical continuations were captured
+against the same original prompt, and teacher scoring used the observed bad
+continuations. Both replay relations remained `synthetic_replay`, with
+`learning_credit=none` as required. The measured source deltas produced one
+independent direction, so rank 2/4 and Deep evaluation were unavailable; no
+behavioral or rank comparison is claimed from this run.
+
+Build log: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/full-build.log`.
+CTest log: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/agent-model-free-final.log`.
+Model trace: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/nvidia-matched/full-trace.log`.
+
+On this machine, unmasked Vulkan device 0 is Intel UHD 620 and device 1 is
+NVIDIA GeForce 920MX. `GGML_VK_VISIBLE_DEVICES=0` therefore does not select
+NVIDIA. Elevating the sandbox grants device access; it does not choose the
+device. After masking device 1, the backend renumbers that NVIDIA device to
+Vulkan0. Use its resolved description as the identity.
+
+Resident host tracing now records each visible GPU's name, description and
+memory. A model smoke may set `LLAMA_AGENT_EXPECTED_GPU=NVIDIA` to require
+exactly one matching visible GPU before model loading. On this host, pair it
+with `GGML_VK_VISIBLE_DEVICES=1`; these machine-specific indices must not be
+portable defaults.
+
+A generation stopped at its token limit previously reported
+`host_evaluated=true`, although the Oracle was skipped. It now reports
+`host_evaluated=false` and `generation_token_budget_exhausted`. Model and arm
+traces include the phase, token limit, decoded count, exhaustion and
+diagnostic-only status. A diagnostic `n_predict=0` stop is not exhausted
+generation. Whole-process timeouts are reported separately as incomplete.
+The smoke also reports when no baseline capture pairs permit a rank sweep,
+and no longer claims bootstrap overlay evaluation when no worker ran.
+
+The Intel run on 2026-10-14 returned malformed baselines; a later Intel
+control lost its Vulkan device during paired diagnostic scoring. These are
+not NVIDIA results and do not establish a factorized-overlay regression.
+Binding lifetime remains relevant: the server synchronizes an active batch
+before detaching its callback, clears transient binding state afterwards,
+and retains basis/table allocations until context destruction or replacement.
+A device-loss error during synchronization is not a model/Oracle verdict.
+
+The rank-sweep smoke also incorrectly used learning-eligible effective rank
+to admit experimental rank 2/4. Replay captures carry no learning credit, so
+that rank is zero even when distinct capture pairs span multiple directions.
+The smoke now measures rank with the existing low-rank basis builder over
+distinct raw capture pairs at the selected layer. It excludes derived
+trimmed/whitened variants and duplicates. Production evidence-depth and
+learning-credit gates are unchanged; experimental rank is reported separately.
+
+Replay deltas previously subtracted the generation-boundary captures of two
+different user prompts: the task and an instruction to echo a repair. That
+mixed the repair instruction into WHAT. Replay now uses the established
+forced-context method: the original system/user prefix plus either the exact
+observed assistant output or the host-validated canonical continuation,
+evaluated with zero generated tokens. Free generation remains the test of
+behavior. This remains experimental replay and earns no learning credit.
+Replay no longer buys a free model echo of that already-executed host repair.
+The canonical target is logged as host-derived, never as generated recovery.
+
+The flat DSL codec now accepts an exact string enum declared at the field's
+schema path without quotes (for example `where[0].operator: >=`). Previously
+the generic scalar tokenizer rejected punctuation before consulting the
+schema. Unknown operators remain rejected. Duplicate indexed field paths
+and semantic differences such as `>` versus `>=` remain errors.
+
+Teacher-margin scoring previously replaced an unparseable observed DSL call
+with the replay fixture's invented tool name. That measured a different
+decision from the actual argument error. Scoring now keeps the exact observed
+DSL continuation, including invalid arguments, whenever it has a valid DSL
+prefix. This does not execute or authorize that call. Fixture fallback is
+explicitly traced and used only when no such observed continuation exists.
+
+Machine-readable model/arm/credit events now use one locked stderr write.
+Previously, stdout JSON and resident-thread stderr logs could interleave in
+the redirected full trace, corrupting an arm record during context teardown.
+
+Broad model-free validation also found binaries compiled before the new
+generation-result layout linking against newer shared libraries. The
+two-pass backtrace failed while assigning a string at the new structure
+offset. Rebuild dependent test/smoke executables after header changes before
+running CTest; CTest alone does not build them. The low-rank and dataset-repair
+launchers now pass their actual executable targets to the shared optional
+build helper instead of only rebuilding `llama-agent`.
+
 ## Structured agent grammar failure before tool-family selection
 
 - Status: Fixed locally; contract tests and Qwen web smoke verified

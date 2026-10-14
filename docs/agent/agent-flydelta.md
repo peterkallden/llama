@@ -2,6 +2,33 @@
 
 ## Status and purpose
 
+Resident model traces record resolved visible GPU descriptions. For a
+hardware-specific smoke, set `LLAMA_AGENT_EXPECTED_GPU` to a description
+substring and expose exactly one matching GPU; a mismatch fails before model
+loading. Vulkan indices depend on enumeration and masking, so an index alone
+does not prove NVIDIA execution. See `bugs.md` for the local device mapping.
+
+Model exchanges and arm traces carry phase-local token budget details.
+Exhausted full generation skips the host verifier and records
+`generation_token_budget_exhausted`, with `host_evaluated=false`.
+Diagnostic zero-token requests remain intentional capture/scoring work.
+Missing baseline capture pairs produce an explicit unavailable rank-sweep
+record; process timeouts produce an incomplete wall-clock budget record.
+
+The explicit experimental rank sweep measures independent raw capture pairs
+with the existing basis builder. `flydelta_experimental_rank` reports this
+geometry separately from learning-eligible evidence rank. Synthetic replay
+can exercise a rank-N diagnostic experiment but cannot earn learning credit
+or bypass production evidence-depth admission. Derived variants of the same
+capture are not independent evidence for the rank sweep.
+
+Replay WHAT captures use the original system/user prefix for both sides,
+with the observed assistant output and host-validated canonical continuation
+evaluated as forced contexts (`n_predict=0`). The canonical target is logged
+as a host repair; replay does not run a free model echo. This reuses the
+runtime forced-context method and keeps source
+provenance experimental; it does not manufacture a successful model repair.
+
 ### Internal causal residual-patch seam
 
 `layer_input_residual` patching is a bounded causal-experiment seam, not a

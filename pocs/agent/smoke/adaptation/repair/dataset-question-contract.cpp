@@ -32,6 +32,16 @@ int main(int argc, char ** argv) {
     }
     json suite;
     std::string error;
+    common_agent_generation_request task_prefix;
+    task_prefix.messages = {{"system", "Return one DSL action."}, {"user", "Group sales by region."}};
+    task_prefix.options.n_predict = 512;
+    const auto forced = agent_flydelta_dataset_capture_context(task_prefix, "open! data.aggregate");
+    if (forced.options.n_predict != 0 || forced.messages.size() != 3 ||
+            forced.messages[0].content != task_prefix.messages[0].content ||
+            forced.messages[1].content != task_prefix.messages[1].content ||
+            forced.messages.back().role != "assistant" || forced.messages.back().content != "open! data.aggregate") {
+        std::cerr << "forced capture changed the original task prefix or continuation\n"; return 1;
+    }
     common_agent_teacher_forced_choice_request contrast;
     const std::string positive = "open! data.query dataset=\"dataset://local/sales\" limit=4";
     const std::string negative = "open! data.query dataset=\"dataset://local/sales\" limit=100";
@@ -48,6 +58,11 @@ int main(int argc, char ** argv) {
         std::cerr << "DSL teacher-scoring accepted an invalid contrast\n";
         return 1;
     }
+    const std::string observed_invalid = "open! data.query\nwhere[0].field: region\nwhere[0].field: amount";
+    if (!agent_flydelta_dataset_dsl_contrast(contrast, positive, observed_invalid, error) ||
+            contrast.choice_prefix + contrast.negative_continuation != observed_invalid) {
+        std::cerr << "scoring replaced the observed invalid DSL continuation\n"; return 1;
+    }
     if (!read_json(argv[1], suite, error)) { std::cerr << error << '\n'; return 1; }
     agent_flydelta_dataset_repair_host host;
     if (!host.open("contract", error)) { std::cerr << error << '\n'; return 1; }
@@ -62,6 +77,14 @@ int main(int argc, char ** argv) {
     }
     if (host.parse_model_call("open! web.fetch\nurl: https://example.org", parsed_flat_call, error)) {
         host.close(); std::cerr << "parser accepted a tool outside the model-facing catalog\n"; return 1;
+    }
+    if (!host.parse_model_call("open! data.query\nwhere[0].field: amount\nwhere[0].operator: >=\nwhere[0].value: 4",
+            parsed_flat_call, error) || json::parse(parsed_flat_call.arguments_json)["where"][0]["operator"] != ">=") {
+        host.close(); std::cerr << "parser rejected an exact unquoted schema enum: " << error << '\n'; return 1;
+    }
+    if (host.parse_model_call("open! data.query\nwhere[0].field: amount\nwhere[0].operator: =>\nwhere[0].value: 4",
+            parsed_flat_call, error)) {
+        host.close(); std::cerr << "parser accepted an undeclared operator enum\n"; return 1;
     }
     const json aggregate_arguments = {{"dataset", host.available_datasets().front().ref.uri},
         {"group_by", json::array({"region"})},
