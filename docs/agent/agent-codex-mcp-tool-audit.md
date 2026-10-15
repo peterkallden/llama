@@ -34,9 +34,11 @@ stores, local DOCX/XLSX processor policies and sets
 - The Codex global MCP entry `llama-agent-tool-audit` was added and reports
   enabled. A separate `codex exec` did not expose it to the model: the first
   attempt timed out during MCP startup/handshake, and the next run selected
-  unrelated built-in surfaces before any audit call. Stop and reload/restart
-  the active Codex runtime, then verify the server is callable before running
-  the model audit. Do not count those attempts as tool tests.
+  unrelated built-in surfaces before any audit call. A final one-call
+  `math.calculate` probe also reported the server tool unavailable and emitted
+  no llama-agent tool-call event. Stop and reload/restart the active Codex
+  runtime, then verify the server is callable before running the model audit.
+  Do not count those attempts as tool tests.
 - A narrow CSV/OpenAlex audit prompt and trace locations are prepared, but no
   Codex-driven tool call is yet verified. No raw repository diff, CSV rows or
   PDF full text were sent in the attempted runs.
