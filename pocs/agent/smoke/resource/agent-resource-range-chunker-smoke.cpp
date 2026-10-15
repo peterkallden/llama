@@ -56,7 +56,7 @@ int main() {
             rendered.find("id=r1") == std::string::npos ||
             rendered.find("byte_offset=28") == std::string::npos ||
             rendered.find("byte_length=32") == std::string::npos ||
-            rendered.find("resource_read") == std::string::npos) {
+            rendered.find("resource.read") == std::string::npos) {
         std::fprintf(stderr, "chunk input view did not expose bounded read metadata\n");
         return 1;
     }
@@ -67,7 +67,7 @@ int main() {
     const auto csv_view = common_agent_render_input_resource_context(
         {{csv_resource, "reference", true}}, 2048);
     if (csv_view.find("id=r1") == std::string::npos ||
-            csv_view.find("inspection=resource_inspect,dataset.schema,dataset.sample") == std::string::npos ||
+            csv_view.find("inspection=resource.inspect,dataset.schema,dataset.sample") == std::string::npos ||
             csv_view.find("statistics.describe") == std::string::npos) {
         std::fprintf(stderr, "CSV input view did not expose bounded inspection seams\n");
         return 1;
@@ -77,7 +77,7 @@ int main() {
     document_resource.mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     const auto document_view = common_agent_render_input_resource_context(
         {{document_resource, "reference", true}}, 2048);
-    if (document_view.find("inspection=resource_inspect,document.tables,resource_read") == std::string::npos) {
+    if (document_view.find("inspection=resource.inspect,document.tables,resource.read") == std::string::npos) {
         std::fprintf(stderr, "document input view did not expose document inspection seams\n");
         return 1;
     }

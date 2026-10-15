@@ -20,15 +20,16 @@ int main() {
         return 1;
     }
     assert(!first.definitions_created.empty());
-    assert(catalog.find_definition("memory_search"));
-    const auto * memory_remember = catalog.find_definition("memory_remember");
+    assert(catalog.find_definition("memory.search"));
+    assert(!catalog.find_definition("memory_search"));
+    const auto * memory_remember = catalog.find_definition("memory.remember");
     if (!memory_remember) {
         std::fprintf(stderr, "missing memory_remember tool definition\n");
         return 1;
     }
     assert(memory_remember->requires_confirmation);
     assert(memory_remember->risk_class == common_tool_risk_class::memory_proposal);
-    for (const auto * name : {"memory_get", "memory_propose_update", "memory_propose_forget"}) {
+    for (const auto * name : {"memory.get", "memory.propose_update", "memory.propose_forget"}) {
         const auto * definition = catalog.find_definition(name);
         if (!definition) {
             std::fprintf(stderr, "missing memory tool definition: %s\n", name);
@@ -40,7 +41,7 @@ int main() {
         assert(id.value("minLength", 0) == 1);
         assert(id.value("maxLength", 0) == 256);
     }
-    const auto * link_definition = catalog.find_definition("memory_link");
+    const auto * link_definition = catalog.find_definition("memory.link");
     if (!link_definition) {
         std::fprintf(stderr, "missing memory_link tool definition\n");
         return 1;
@@ -49,15 +50,15 @@ int main() {
     assert(link_schema["properties"]["from"].value("minLength", 0) == 1);
     assert(link_schema["properties"]["to"].value("maxLength", 0) == 256);
     assert(link_schema["properties"]["relation"].value("minLength", 0) == 1);
-    const auto * compact_definition = catalog.find_definition("memory_compact_propose");
+    const auto * compact_definition = catalog.find_definition("memory.compact_propose");
     if (!compact_definition) {
         std::fprintf(stderr, "missing memory_compact_propose tool definition\n");
         return 1;
     }
     const auto compact_schema = nlohmann::json::parse(compact_definition->input_schema_json);
     assert(compact_schema["properties"]["source_ids"]["items"].value("maxLength", 0) == 256);
-    const auto * web_search = catalog.find_definition("web_search");
-    const auto * web_fetch = catalog.find_definition("web_fetch");
+    const auto * web_search = catalog.find_definition("web.search");
+    const auto * web_fetch = catalog.find_definition("web.fetch");
     if (!web_search || !web_fetch) {
         std::fprintf(stderr, "missing web tool definitions\n");
         return 1;
@@ -70,9 +71,11 @@ int main() {
 
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
+    assert(catalog.find_definition("plan.get") && catalog.find_definition("plan.propose"));
+    assert(!catalog.find_definition("plan_get") && !catalog.find_definition("plan_propose"));
     const auto * data_query = catalog.find_definition("data.query");
     const auto * data_join = catalog.find_definition("data.join");
-    assert(calculator && calculator_legacy && calculator_legacy->name == "math.calculate" && data_query && data_join);
+    assert(calculator && !calculator_legacy && data_query && data_join);
     assert(std::find(data_join->capabilities.begin(), data_join->capabilities.end(), "data.join") !=
         data_join->capabilities.end());
     const auto calculator_model = nlohmann::json::parse(calculator->model_input_schema_json);
@@ -255,7 +258,7 @@ int main() {
     assert(compact_read.find("id (required, string)") != std::string::npos);
     assert(compact_read.find("representation (optional, text|bytes)") != std::string::npos);
     assert(compact_read.find("max_bytes (optional, integer[1..32768])") != std::string::npos);
-    const auto * openapi_connect = catalog.find_definition("openapi_connect");
+    const auto * openapi_connect = catalog.find_definition("openapi.connect");
     assert(openapi_connect != nullptr);
     const auto openapi_contract = common_render_compact_tool_description(
         "openapi.connect", openapi_connect->description, openapi_connect->input_schema_json,
@@ -409,7 +412,7 @@ int main() {
         } else {
             assert(!definition.requires_confirmation);
         }
-        assert(definition.name != "memory_remember");
+        assert(definition.name != "memory.remember");
         assert(definition.name != "development.build");
     }
     assert(analysis_has_dataset_schema && analysis_has_document_tables && analysis_has_web_fetch &&

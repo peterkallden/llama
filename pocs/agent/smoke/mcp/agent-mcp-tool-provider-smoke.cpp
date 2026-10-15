@@ -1,5 +1,8 @@
 #include "tools/agent/tooling/agent-tool-provider.h"
+#include "plan/plan-bindings.h"
+#include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -19,6 +22,7 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
 class fake_mcp_tool_client final : public agent_mcp_tool_client {
 public:
     std::string last_arguments;
+    std::vector<mcp_agent_tool_definition> listed_tools;
 
     bool list_tools(
             const agent_tool_context &,
@@ -49,7 +53,21 @@ public:
                 false,
                 false,
             },
+            {
+                "github",
+                "get_issue",
+                "Get one issue by its host-provided issue reference.",
+                R"({"type":"object","additionalProperties":false,"required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"}}})",
+                std::string(),
+                true,
+                false,
+                true,
+                false,
+                false,
+            },
         };
+        tools[1].result_schema_json = R"({"type":"object","required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"},"items":{"type":"array"}}})";
+        listed_tools = tools;
         error.clear();
         return true;
     }
@@ -63,7 +81,7 @@ public:
         last_arguments = arguments_json;
         if (tool.name == "search_issues") {
             result.ok = true;
-            result.structured_content_json = R"({"items":[{"title":"stub issue"}]})";
+            result.structured_content_json = R"({"issue_id":"issue-123","items":[{"title":"stub issue"}]})";
             common_agent_dataset_ref dataset;
             dataset.uri = "dataset://mcp/github/issues";
             dataset.name = "github issues";
@@ -75,6 +93,16 @@ public:
                 dataset.source_resource_uri.clear();
             }
             result.dataset_refs = {std::move(dataset)};
+            error.clear();
+            return true;
+        }
+
+        if (tool.name == "get_issue") {
+            result.ok = true;
+            const auto arguments = nlohmann::ordered_json::parse(arguments_json);
+            result.structured_content_json = nlohmann::ordered_json{
+                {"id", arguments.at("issue_id")},
+            }.dump();
             error.clear();
             return true;
         }
@@ -112,6 +140,17 @@ int main() {
         std::fprintf(stderr, "search_issues was not exposed through the MCP tool view\n");
         return 1;
     }
+    const auto search_model_tool = std::find_if(
+        read_only_view->chat_tools().begin(), read_only_view->chat_tools().end(),
+        [](const auto & tool) { return tool.name == "github_search_issues"; });
+    if (search_model_tool == read_only_view->chat_tools().end() ||
+            search_model_tool->output_schema != R"({"type":"object","required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"},"items":{"type":"array"}}})") {
+        // The fake MCP client retains the exact outputSchema parsed from the
+        // remote server; the provider must expose it independently of the
+        // compact model-facing result projection.
+        std::fprintf(stderr, "MCP provider dropped the canonical output schema\n");
+        return 1;
+    }
     if (has_tool(read_only_view->chat_tools(), "github_create_issue")) {
         std::fprintf(stderr, "create_issue was exposed despite writes being disabled\n");
         return 1;
@@ -131,14 +170,52 @@ int main() {
         std::fprintf(stderr, "search_issues did not return the expected result: %s\n", search_result.content_json.c_str());
         return 1;
     }
+    if (client.last_arguments != R"({"query":"resident inference"})") {
+        std::fprintf(stderr, "MCP provider did not execute normalized search arguments: %s\n", client.last_arguments.c_str());
+        return 1;
+    }
+
+    common_plan_tool_dataflow_contract search_flow;
+    common_plan_tool_dataflow_contract get_issue_flow;
+    if (!read_only_view->describe_tool_dataflow("github_search_issues", search_flow, error) ||
+            !read_only_view->describe_tool_dataflow("github_get_issue", get_issue_flow, error) ||
+            search_flow.outputs.empty() || get_issue_flow.inputs.empty()) {
+        std::fprintf(stderr, "MCP outputSchema did not reach provider dataflow contracts: %s\n", error.c_str());
+        return 1;
+    }
+    common_plan_state bound_plan;
+    common_plan_step source_step{"lookup", "Lookup", "Search for an issue"};
+    source_step.status = common_plan_step_status::completed;
+    source_step.tool_call = common_plan_tool_call{"github_search_issues", R"({"query":"resident inference"})"};
+    bound_plan.steps.push_back(source_step);
+    bound_plan.observations.push_back({
+        "tool:lookup:1", "github_search_issues", search_result.content_json, 1.0f, {}, {}, 0});
+    common_plan_step bound_step{"fetch", "Fetch", "Read the discovered issue"};
+    bound_step.depends_on = {"lookup"};
+    bound_step.tool_call = common_plan_tool_call{
+        "github_get_issue", R"({"issue_id":{"$from_step":"lookup","$json_pointer":"/issue_id"}})"};
+    const auto resolve_flow = [&](const std::string & name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & flow_error) {
+        return read_only_view->describe_tool_dataflow(name, contract, flow_error);
+    };
+    std::string bound_arguments;
+    if (!common_plan_materialize_tool_arguments(
+            bound_plan, bound_step, bound_step.tool_call->arguments_json,
+            bound_arguments, error, resolve_flow)) {
+        std::fprintf(stderr, "MCP result binding failed: %s\n", error.c_str());
+        return 1;
+    }
+    const auto bound_result = read_only_view->call({"call-bound", "github_get_issue", bound_arguments}, error);
+    if (!bound_result.ok || client.last_arguments != R"({"issue_id":"issue-123"})") {
+        std::fprintf(stderr, "bound MCP value was not passed to the next executed call: args=%s error=%s\n",
+            client.last_arguments.c_str(), error.c_str());
+        return 1;
+    }
     if (search_result.dataset_refs.size() != 1 ||
             search_result.dataset_refs.front().uri != "dataset://mcp/github/issues" ||
             search_result.content_json.find("dataset_refs") == std::string::npos) {
         std::fprintf(stderr, "MCP dataset reference was not propagated in the compact result\n");
-        return 1;
-    }
-    if (client.last_arguments != R"({"query":"resident inference"})") {
-        std::fprintf(stderr, "MCP provider did not execute normalized arguments: %s\n", client.last_arguments.c_str());
         return 1;
     }
     const auto invalid_dataset_result = read_only_view->call({

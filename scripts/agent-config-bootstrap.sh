@@ -150,7 +150,7 @@ External catalog tools (exposure is policy-controlled):
   memory.remember, memory.propose_update, memory.propose_forget
   memory.link, memory.compact_propose
   oracle.ruleset.define, oracle.action.verify, oracle.goal.search
-  plan_get, plan_propose
+  plan.get, plan.propose
   repository.list, repository.search, repository.read
   repository.diff, repository.log, repository.status, repository.changed_files
   workspace.list, workspace.read, workspace.search, workspace.patch

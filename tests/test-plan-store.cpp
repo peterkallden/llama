@@ -30,14 +30,14 @@ int main() {
 
     common_plan_state tool_evidence; tool_evidence.id = "tool-evidence"; tool_evidence.goal = "tool evidence"; tool_evidence.status = common_plan_status::active;
     common_plan_step tool_step; tool_step.id = "read"; tool_step.title = "Read"; tool_step.objective = "Read source";
-    tool_step.status = common_plan_step_status::active; tool_step.tool_call = common_plan_tool_call{"resource_read", R"({"uri":"resource://one"})"};
+    tool_step.status = common_plan_step_status::active; tool_step.tool_call = common_plan_tool_call{"resource.read", R"({"uri":"resource://one"})"};
     tool_evidence.steps = {tool_step}; tool_evidence.active_step_id = "read"; assert(store.create(tool_evidence, error));
     auto missing_tool_observation = op(common_plan_operation_kind::complete_step, tool_evidence, "read");
     assert(!store.apply(missing_tool_observation, tool_evidence, error));
     auto prose_evidence = op(common_plan_operation_kind::complete_step, tool_evidence, "read"); prose_evidence.evidence_ids = {"model:claim"};
     assert(!store.apply(prose_evidence, tool_evidence, error));
     auto tool_observation = op(common_plan_operation_kind::record_observation, tool_evidence);
-    tool_observation.observation = common_plan_observation{"tool:read:resource_read", "resource_read", "read result", 1.0f, {}, {}, 0};
+    tool_observation.observation = common_plan_observation{"tool:read:resource_read", "resource.read", "read result", 1.0f, {}, {}, 0};
     assert(store.apply(tool_observation, tool_evidence, error));
     auto observed_complete = op(common_plan_operation_kind::complete_step, tool_evidence, "read"); observed_complete.evidence_ids = {"tool:read:resource_read"};
     assert(store.apply(observed_complete, tool_evidence, error));

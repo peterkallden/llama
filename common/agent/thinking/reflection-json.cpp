@@ -82,8 +82,8 @@ bool parse_compact_tool(
         return false;
     }
     if (item.contains("args")) arguments = item["args"];
-    const bool memory_id_tool = name == "memory_get" ||
-        name == "memory_propose_update" || name == "memory_propose_forget";
+    const bool memory_id_tool = name == "memory.get" ||
+        name == "memory.propose_update" || name == "memory.propose_forget";
     if (!arguments.is_object() && !(memory_id_tool && arguments.is_string())) {
         error = "reflection add_steps tool arguments must be an object";
         return false;
@@ -161,8 +161,8 @@ bool parse_reflection_dsl_tool(const std::string & source, nlohmann::json & outp
     common_agent_tool_call call;
     if (!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl, source, call, error)) return false;
     const auto arguments = nlohmann::json::parse(call.arguments_json, nullptr, false);
-    const bool memory_id_tool = call.name == "memory_get" ||
-        call.name == "memory_propose_update" || call.name == "memory_propose_forget";
+    const bool memory_id_tool = call.name == "memory.get" ||
+        call.name == "memory.propose_update" || call.name == "memory.propose_forget";
     if (!arguments.is_object() && !(memory_id_tool && arguments.is_string())) {
         error = "reflection DSL tool arguments must be an object";
         return false;

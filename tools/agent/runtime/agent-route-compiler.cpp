@@ -107,10 +107,10 @@ void append_unique(std::vector<std::string> & values, const std::string & value)
 }
 
 bool is_ambient_memory_read_tool(const std::string & name) {
-    return name == "memory.search" || name == "memory_search" ||
-        name == "memory.get" || name == "memory_get" ||
-        name == "memory.inspect" || name == "memory_inspect" ||
-        name == "memory.conflict_check" || name == "memory_conflict_check";
+    return name == "memory.search" ||
+        name == "memory.get" ||
+        name == "memory.inspect" ||
+        name == "memory.conflict_check";
 }
 
 bool has_context_fact(
@@ -300,9 +300,9 @@ bool build_agent_execution_envelope(
     auto research = base;
     if (route.kind == common_agent_route_kind::blueprint_workflow) {
         for (const auto & tool : tooling.tools) {
-            if (tool.name == "resource.read" || tool.name == "resource_read" ||
-                    tool.name == "web.search" || tool.name == "web_search" ||
-                    tool.name == "web.fetch" || tool.name == "web_fetch" ||
+            if (tool.name == "resource.read" ||
+                    tool.name == "web.search" ||
+                    tool.name == "web.fetch" ||
                     tool.name == "repository.search") {
                 append_unique(research, tool.name);
             }

@@ -198,10 +198,10 @@ drives the controller sequentially through the existing
 `common_agent_tool_runtime`; its adapter selects a host-approved research tool,
 normalizes the successful result into a workspace source and evidence item,
 and feeds the typed event back to the controller. User-supplied resources are
-acquisition candidates and can be selected through bounded `resource_read`
+acquisition candidates and can be selected through bounded `resource.read`
 tasks. Memory hits already attached to the request are materialized context,
 not acquisition candidates: they are retained with their memory kind and
-role, and the controller never schedules `memory_get` to reread them. Procedure,
+role, and the controller never schedules `memory.get` to reread them. Procedure,
 constraint and decision memories are methodological context, not factual
 evidence for answering a research gap. Read-only memory tools remain available
 to research when the host tool catalog exposes them; memory writes remain
@@ -239,15 +239,15 @@ select only an approved acquisition capability and may not expand the active
 tool profile.
 
 The first deterministic acquisition path is source-driven. When an unused
-user-supplied resource is available, the controller schedules `resource_read`
+user-supplied resource is available, the controller schedules `resource.read`
 with host-owned resource identity and bounds. It does not fall through to
-`web_search` merely because the model mentioned the web. Source comparison and
+`web.search` merely because the model mentioned the web. Source comparison and
 coverage transitions remain controller state transitions, not additional model
 tools or research tasks. The model receives the bounded evidence and synthesis
 context after acquisition has completed.
 
 This boundary is being tightened incrementally. The current model-free CSV
-research smoke verifies that two local resources produce two `resource_read`
+research smoke verifies that two local resources produce two `resource.read`
 calls and no alternative acquisition tool. Completed research is now also
 bridged into the outer plan as one bounded `research_workspace` observation
 carrying evidence IDs and resource references.
@@ -263,8 +263,8 @@ the existing research runner/controller lane while leaving semantic correction
 and final synthesis to the outer runtime.
 
 The runtime also applies the first acquisition ownership guard: in research
-mode, model-planned acquisition calls such as `resource_read`, `web_search`,
-`web_fetch`, repository search, memory retrieval and dataset acquisition are
+mode, model-planned acquisition calls such as `resource.read`, `web.search`,
+`web.fetch`, repository search, memory retrieval and dataset acquisition are
 degraded to bounded reasoning steps before the normal plan scheduler can
 execute them. The controller retains the approved acquisition path. This is a
 runtime ownership guard, not a second tool profile; both paths remain subject
@@ -272,10 +272,10 @@ to the same host-resolved authority.
 
 Inspection is a separate responsibility. After acquisition, the model may
 choose an applicable host-approved inspection or analysis operation, such as
-`resource_inspect`, `dataset.schema`, `dataset.sample`, `statistics.describe`
+`resource.inspect`, `dataset.schema`, `dataset.sample`, `statistics.describe`
 or `statistics.value_counts`, when the corresponding representation or dataset
 reference is available. These operations are not acquisition substitutes: a
-successful `resource_read` establishes bounded source evidence but does not
+successful `resource.read` establishes bounded source evidence but does not
 imply that a tabular schema, document outline or dataset has already been
 materialized. The model-facing resource catalog advertises possible bounded
 inspection seams by MIME type; the host still validates the final reference,
@@ -326,7 +326,7 @@ progress channel.
 
 `llama-agent-research-csv-ctest` is the model-free resource-backed research
 smoke. It reads bounded UTF-8 CSV fixtures through a host-owned
-`resource_read` seam, retains both resource references in research evidence,
+`resource.read` seam, retains both resource references in research evidence,
 creates a deterministic source comparison, checkpoints and reloads the same
 workspace, and verifies that incomplete coverage is deferred rather than
 reported as complete. This complements the deliberate tool smoke: it tests
@@ -525,7 +525,7 @@ choice exposed to the client:
 | --- | --- | --- |
 | Host-native | Reads or changes the host's controlled workspace or repository | `workspace.read`, `workspace.search`, `workspace.patch`, `repository.diff` |
 | Sandbox-backed | Runs build, test, analysis or transformation in an isolated executor | `development.build`, `development.test`, `python_execute`, `data_compute` |
-| Store-backed | Queries an authorized internal store or catalog | `memory_search`, `resource_read`, `plan_lookup` |
+| Store-backed | Queries an authorized internal store or catalog | `memory.search`, `resource.read`, `plan_lookup` |
 | Artifact | Publishes sandbox/store results as named resources with provenance | `artifact_export`, `report_create`, `chart_export` |
 | Provider-backed | Uses a host-configured external provider or MCP server | web search, repository search, remote resource tools |
 | Orchestration-backed | Schedules, delegates or observes bounded operations without performing the work itself | `delegate_task`, operation status and scheduler tools |
@@ -555,12 +555,12 @@ so that a repair suggestion cannot look like a complete call while silently
 inventing unrelated arguments.
 
 Memory reference arguments have one additional compatibility normalization
-before schema validation. `memory_get`, `memory_propose_update` and
-`memory_propose_forget` accept the canonical `{"id":"..."}` form, the
+before schema validation. `memory.get`, `memory.propose_update` and
+`memory.propose_forget` accept the canonical `{"id":"..."}` form, the
 equivalent `{"memory_id":"..."}` form, and (for ID-only calls) a JSON string
 such as `"memory-1"`. All three forms become `{"id":"..."}` internally.
 This normalization changes only the representation; the ID must still come
-from a prior `memory_search` result or an explicit recorded memory reference.
+from a prior `memory.search` result or an explicit recorded memory reference.
 It never selects a memory implicitly, which is important when asynchronous
 plan steps or multiple searches are in flight.
 
@@ -632,7 +632,32 @@ MCP `tools/list` publishes each tool's canonical result schema as
 `outputSchema`. It describes `structuredContent` directly; MCP's outer
 `content`/`isError` transport envelope is not duplicated inside the schema.
 Remote MCP `outputSchema` is retained as the provider's result schema for
-result binding and planning. Older servers that omit it remain supported.
+result binding and planning. Native tools likewise carry the catalog's
+canonical result schema into the resolved model-tool/provider view; the compact
+model-facing result description remains a separate prompt projection. The
+planner derives dataflow contracts from the imported input and output schemas,
+so a typed field such as `title` can be bound from one MCP result into a later
+native or provider tool call. Older servers that omit `outputSchema` remain
+supported, but their results cannot provide schema-backed bindings.
+In compact plan DSL, a step can declare `step as=lookup | open! tool.name`,
+then a later argument can reference `$lookup.field` (for example,
+`query=$lookup.title`). These aliases name values in the model-facing plan;
+canonical step IDs and JSON pointers remain host-owned. The DSL instructions
+must preserve this distinction so host-owned IDs do not accidentally prohibit
+the aliases needed for typed result binding.
+
+The daemon, inbound HTTP MCP server and stdio MCP server use the same
+tool-result conversion for executor failures. Stable failure code, class,
+retryability and safe summary are preserved for the caller; raw exception
+details remain in host diagnostics. A thrown adapter is converted to a failed
+tool result rather than terminating the request loop. HTTP callbacks returning
+false are failures even if they did not populate a result object.
+
+For model-backed daemon diagnostics, `--agent-trace` records the agent/runtime
+stages and `--generation-trace` records the actual prompts and generated text
+for each inference purpose. Model traces may include user data and tool
+arguments/results, so keep them in a private diagnostic directory and review
+before sharing.
 
 * `Foundation` means the bounded host-native behavior is implemented and directly
   testable.
@@ -1431,13 +1456,13 @@ the exact registered name and keep arguments in the owning tool family; it
 must not invent names such as `dataset.aggregate` or move `on` join arguments
 into an aggregate step.
 
-Tool selection also has a host-owned name-normalization step before schema
-validation. Exact names are preferred, followed by compatibility aliases and
-normalized separators/casing. A unique, high-confidence fuzzy match may be
-resolved mechanically; this does not require another model inference. For
-example, `join` can resolve to `data.join` when that is the only sufficiently
-strong candidate in the effective tool view. The resolver never searches
-outside that view.
+Tool selection also has a host-owned name-resolution step before schema
+validation. Canonical dotted names are the supported tool names; legacy bare
+and underscore spellings are not aliases. A unique, high-confidence fuzzy
+match may still be resolved mechanically when a model returns a short
+semantic shorthand; for example, `join` can resolve to `data.join` when that
+is the only sufficiently strong candidate in the effective tool view. The
+resolver never searches outside that view.
 
 If more than one candidate is plausible, the runtime does not silently choose
 one. It preserves the tool intent as an unresolved repair step and exposes the
@@ -1597,11 +1622,11 @@ and statistics families whenever the active profile permits it. Selecting a
 data family does not remove memory; selecting memory remains an explicit
 model-intent decision and does not force memory tools into unrelated turns.
 
-The runtime accepts former underscore spellings such as `calculator`,
-`time_now`, `memory_search`, `resource_read` and `web_search` as execution
-aliases for older clients and saved plans. New model-facing catalogues and MCP
-listings use dotted canonical names. Aliases are not additional advertised
-capabilities and do not bypass profile or policy checks.
+Tool execution accepts canonical dotted names only, for example
+`math.calculate`, `time.now`, `memory.search`, `resource.read` and `web.search`.
+Legacy underscore or bare-tool spellings are not execution aliases. MCP
+providers preserve already-namespaced tool names instead of adding a
+provider-local prefix; unqualified remote names remain provider-qualified.
 
 The navigation context is turn/operation-local and carries operation, plan and
 step identities, current family and tool, an optional asynchronous operation
@@ -1653,8 +1678,8 @@ family:
 | `workspace.patch` |
 
 Repository and workspace tools use only their namespaced model-facing names.
-The former underscore names are retained only as compatibility aliases; new
-catalogue, profile, planning and research paths should use the dotted names.
+Catalogue, profile, planning, research and MCP paths all use the same dotted
+canonical names; old underscore tool names are not accepted as aliases.
 
 Structured data tools use the host-owned `common_agent_data_store` interface. The
 tool layer submits semantic JSON operations and does not select CozoDB, DuckDB or
@@ -2449,7 +2474,7 @@ carry its parent URI, zero-based chunk index/count, byte offset/length,
 overlap, and a host-owned derivation label. Lineage is descriptive metadata,
 not a second content store and not a memory record.
 
-`resource_read` accepts an optional non-negative `offset` together with the
+`resource.read` accepts an optional non-negative `offset` together with the
 existing bounded `max_bytes` limit. The host validates both values, enforces
 resource authority before reading, and never expands the caller's profile or
 scope. A range read may return fewer bytes at the end of a resource. An
@@ -2457,7 +2482,7 @@ out-of-bounds offset is rejected. Backends that do not implement non-zero
 ranges fail explicitly rather than silently loading the whole payload.
 
 The read contract is representation-aware without exposing converters to the
-model. `resource_read` accepts an optional bounded `representation` field. When
+model. `resource.read` accepts an optional bounded `representation` field. When
 it is omitted, the host defaults to and prefers `text`;
 the current host implementation supports `text` only when the resource media
 type is text-like, such as `text/*`, JSON, XML, YAML, or structured `+json`
@@ -2469,8 +2494,8 @@ processing service and cache, then read that derived resource with the same
 bounded offset and `max_bytes` rules. The returned resource reference and
 provenance identify the derived representation; the original resource remains
 authoritative. If no provider is bound, or no processor can satisfy the
-request, `resource_read(representation="text")` still fails closed.
-`resource_inspect` provides the descriptor and the host-resolved
+request, `resource.read(representation="text")` still fails closed.
+`resource.inspect` provides the descriptor and the host-resolved
 `available_representations` list before a read is chosen. This integration is
 synchronous within the existing tool-call/session lane; it does not create a
 second queue or scheduler.
@@ -2485,7 +2510,7 @@ The model-facing resource contract deliberately uses a short current-turn
 handle instead of the authoritative resource URI. The rendered catalog exposes
 bounded descriptors such as id=r1, name, and mime_type; it does not expose
 local paths, blob keys, or storage URIs as the identifier the model must copy.
-For example, the model-facing resource_read input is:
+For example, the model-facing `resource.read` input is:
 
 ```json
 {
@@ -2506,7 +2531,7 @@ use the canonical uri, so resource storage and provenance remain unchanged.
 Unknown handles, handles from another turn, and malformed handles fail closed.
 This is a bounded projection, not a second resource store or a persistent
 identifier namespace. The same model-facing convention is used by
-resource_inspect, `document.tables`, and `document.table`; other
+`resource.inspect`, `document.tables`, and `document.table`; other
 resource-domain tools may adopt it through the same normalization seam when
 their contracts are updated. Document tools retain their strict `resource`
 property internally, but `r1`/`r2` handles are resolved to canonical resource
@@ -2521,9 +2546,9 @@ projection only. It is not a second execution contract and the model still
 returns JSON tool arguments. The full host schema remains the source of truth
 for validation, bounds, enum values, defaults, and host dispatch.
 
-For example, the strict resource_read input schema is projected to:
+For example, the strict `resource.read` input schema is projected to:
 
-    resource_read
+    resource.read
     Read a bounded host-owned resource.
     args: id:string; representation?:text|bytes="text"; offset?:integer[0..1073741824]; max_bytes?:integer[1..32768]
     returns: resource, representation, content, content_encoding
@@ -2629,7 +2654,7 @@ longer maintain independent interpretations of the same schema metadata.
 Arguments follow one normalization pipeline wherever possible:
 
     raw model/reflection arguments
-        -> wrapper and alias normalization
+        -> wrapper and schema-defined argument normalization
         -> canonical tool arguments
         -> typed/reference normalization
         -> strict schema validation
@@ -2637,8 +2662,8 @@ Arguments follow one normalization pipeline wherever possible:
 
 Plan parsing, reflection repair and the native registry reuse the same plan
 argument normalizer. Normalization must be bounded and idempotent; it may
-recognize compatibility aliases but must not silently choose between
-ambiguous semantic values.
+normalize documented argument forms, but must not accept legacy tool names or
+silently choose between ambiguous semantic values.
 
 The contract rule of thumb is:
 
@@ -3059,7 +3084,7 @@ as arbitrary model-selected tools. Derived outputs must retain lineage to the
 authoritative original resource and then enter the existing bounded read and
 chunking path.
 
-The first `resource_read` integration uses a narrow common
+The first `resource.read` integration uses a narrow common
 `agent_resource_processing_provider` seam. The common tool adapter knows only
 how to request a semantic representation; the concrete processing service in
 `tools/agent/resource/` owns registry selection, MIME resolution, limits,
@@ -3072,7 +3097,7 @@ The CLI host assembly installs local processor instances into the same
 selection lifetime as the resource store and native tool view. The current
 set includes PDF text and, when configured, Pandoc DOCX text processing.
 The selection retains the processor instances, registry, and processing service
-together, so `resource_read` receives a valid host provider for the whole
+together, so `resource.read` receives a valid host provider for the whole
 operation. Adding operation-bound processors later should extend this
 host-owned assembly seam rather than create a second provider or queue.
 
@@ -3402,7 +3427,7 @@ compatibility expectation. Version mismatches must produce bounded warning
 and status information. Required policies fail closed when the selected
 execution requirement is unavailable.
 
-`resource_read` remains a semantic tool. For a configured processor
+`resource.read` remains a semantic tool. For a configured processor
 representation, host assembly may install an operation-scoped processing
 factory. Each read then creates the existing registry/service with the current
 resource authority, operation id, workspace and sandbox host context. The
@@ -3581,7 +3606,7 @@ does not guess which gap a chunk finding supports.
 The research runner resolves historical tool aliases to the provider's
 canonical catalog names before invoking the route-scoped runtime, so phase
 enforcement and execution use the same identity (for example,
-`resource_read` resolves to `resource.read`). When workflow text has already
+`resource.read` resolves to `resource.read`). When workflow text has already
 been host-chunked, research reuses those observations instead of rereading the
 fetched body; generic research does not try `resource.read` on its question
 text when no source is pending acquisition.
@@ -4538,9 +4563,9 @@ The first implementation started native-only, and it still uses the existing cat
 
 The embedding callback that sits underneath memory-oriented native tools is also one step less CLI-bound now. There is still a CLI wrapper for convenience, but the underlying helper can now work from a host-owned model path plus `n_gpu_layers`, which lets the daemon and real MCP stdio server construct their own embedding providers without carrying full CLI option objects into that path.
 
-That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web_search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
+That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web.search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
 
-That evidence path now continues one step further into planning state. Tool observations can now retain resolved `resource_refs` alongside their bounded inline summary, and the read-only `resource_read` native tool gives later steps a host-owned way to load the deferred payload back by opaque URI instead of forcing the earlier tool to keep everything inline.
+That evidence path now continues one step further into planning state. Tool observations can now retain resolved `resource_refs` alongside their bounded inline summary, and the read-only `resource.read` native tool gives later steps a host-owned way to load the deferred payload back by opaque URI instead of forcing the earlier tool to keep everything inline.
 
 There is now also a first MCP-shaped provider slice beside the native one. `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape.
 
@@ -4582,7 +4607,7 @@ backend is configured.
 | Memory reads: `memory.search`, `memory.get`, `memory.inspect`, `memory.conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
 | Memory proposals: `memory.remember`, `memory.propose_update`, `memory.propose_forget`, `memory.link`, `memory.compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
 | Semi-oracle: `oracle.ruleset.define`, `oracle.action.verify`, `oracle.goal.search` | Yes, when bound | The `semi-oracle` profile and an active supported session ruleset |
-| Planning: `plan_get`, `plan_propose` | Yes, when bound | A matching profile and plan store; `plan_get` is useful with a bound `plan_id` |
+| Planning: `plan.get`, `plan.propose` | Yes, when bound | A matching profile and plan store; `plan.get` is useful with a bound `plan_id` |
 | Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; `repository.search` accepts either a file or directory path |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
@@ -4636,7 +4661,7 @@ The older common agent runtime is now also structurally decoupled from the concr
 
 What still remains is mostly coverage and convergence work rather than contract churn. The provider-backed path is now the intended modern shape; the next cleanup is to keep broadening smoke and integration coverage around the same interface as more agent/runtime and daemon flows exercise it.
 
-There is now also a focused smoke for the planned-tool-step path itself. It runs a tiny `common_agent_runtime` scenario where the planner emits a calculator tool step and execution goes through a provider-backed tool-runtime adapter rather than a raw registry pointer. That gives the current refactor one concrete end-to-end proof point before broader resident/daemon agent smokes are added.
+There is now also a focused smoke for the planned-tool-step path itself. It runs a tiny `common_agent_runtime` scenario where the planner emits a `math.calculate` tool step and execution goes through a provider-backed tool-runtime adapter rather than a raw registry pointer. That gives the current refactor one concrete end-to-end proof point before broader resident/daemon agent smokes are added.
 
 The resident/session-host layer has also been trimmed a bit further: it now carries `agent_tool_view` for the modern profile-tool path, but no longer keeps threading a separate `tool_registry` field through its own configs just to pass it onward unused. That makes the resident host/session contracts slightly closer to the intended provider-first shape.
 
@@ -4644,7 +4669,7 @@ The agent/runtime assembly path has also dropped its registry-backed tool-runtim
 
 The host/chat contracts have now been trimmed in the same direction. The runtime host, chat driver, CLI host adapter and resident host path no longer carry a parallel `tool_registry` field through their modern provider-backed contracts. Chat dispatch itself also no longer carries a separate legacy tool-handler branch. Modern agent-side tool execution now goes through `agent_tool_view`, with the host deciding which scoped provider view to resolve for the turn.
 
-The first shared memory-tool migration now sits underneath that provider path as well. Native `memory_search` and `memory_remember` execution both go through `common_memory_tool_service`, which keeps host-owned scope, embedding, store and policy bindings in one place while preserving the current synchronous behavior and result shapes.
+The first shared memory-tool migration now sits underneath that provider path as well. Native `memory.search` and `memory.remember` execution both go through `common_memory_tool_service`, which keeps host-owned scope, embedding, store and policy bindings in one place while preserving the current synchronous behavior and result shapes.
 
 The remaining CLI coupling around embeddings has also been narrowed further. The CLI path still supplies one concrete embedding implementation, but profile-tool bindings and runtime memory-learning hooks now reach it through a small `agent_embedding_provider` seam rather than capturing CLI options directly inside the native tool bindings.
 
@@ -5213,7 +5238,7 @@ within normal plan and policy validation.
 
 - Add host-owned resource references with turn/session/project lifetime.
 
-  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option, and `web_search` is now the first native tool that can materialize a full result payload there while returning a shorter inline answer plus `resources`. The next real step is to use that same path more broadly from runtime/tool flows and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
+  Large tool outputs do not need to stay inline forever. The first host-owned resource-store shape now exists with content-addressed filesystem blobs and a first Cozo-backed metadata option, and `web.search` is now the first native tool that can materialize a full result payload there while returning a shorter inline answer plus `resources`. The next real step is to use that same path more broadly from runtime/tool flows and to deepen the metadata side with TTL cleanup, provenance links, blob reference management and richer lookup operations. The intended lifetime split remains `turn` for short-lived tool artifacts, `session` for live working-set reuse across turns, and `project` for longer-lived shared artifacts tied to the work container rather than one conversation lane. As with memory and plan scope, the model should never choose arbitrary resource URIs or storage locations directly.
 
 - Let planning and tool binding treat resource metadata as first-class evidence shape.
 
@@ -5536,7 +5561,7 @@ complete list of every CTest or smoke executable:
 - `llama-agent-tool-provider-smoke`
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-agent-tools-smoke`, verifying the explicit opt-in `delegate_task`, `summarize`, and `review_plan` MCP tool profile, including tool filtering, write-policy rejection, delegation-depth bounds, and dispatcher callback failure mapping
-- `llama-agent-mcp-http-vertical-smoke`, verifying the first complete inbound vertical path: MCP `delegate_task`, deliberate request with host escalation to research, plan creation, research gap/evidence acquisition through `memory_get` and `resource_read`, answer verification, a separate SSE event stream, and a result-only terminal response
+- `llama-agent-mcp-http-vertical-smoke`, verifying the first complete inbound vertical path: MCP `delegate_task`, deliberate request with host escalation to research, plan creation, research gap/evidence acquisition through `memory.get` and `resource.read`, answer verification, a separate SSE event stream, and a result-only terminal response
 - `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including normal framed reads, malformed `tools/list` diagnostics, and bounded termination of a hanging server
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
@@ -5547,7 +5572,7 @@ complete list of every CTest or smoke executable:
 - `llama-agent-tool-provider-ctest`, verifying deterministic dotted-name
   normalization, unique fuzzy resolution (for example `join` to `data.join`)
   and preservation of ambiguous candidates
-- `llama-agent-tool-runtime-smoke` also verifies the current reflection guardrail for incomplete `memory_get` repairs, so that an empty or underspecified `memory_get` tool step degrades to reasoning with a specific "requires an id from a prior memory_search or recorded memory reference" diagnostic instead of surfacing only the generic schema-contract error
+- `llama-agent-tool-runtime-smoke` also verifies the current reflection guardrail for incomplete `memory.get` repairs, so that an empty or underspecified `memory.get` tool step degrades to reasoning with a specific "requires an id from a prior `memory.search` or recorded memory reference" diagnostic instead of surfacing only the generic schema-contract error
 - `llama-agent-resource-store-smoke`, verifying the first host-owned resource/blob store contract for scoped reads, size limits, content-addressed filesystem blob reuse, and Cozo-backed resource metadata in a Cozo-enabled build
 - `llama-agent-runtime-session-manager-smoke`, verifying the new per-session lane bookkeeping, internal mailbox/disposition slice, host-owned cancellation, active-turn cancel routing, reset, and close without needing a live model
 - `llama-agent-runtime-operation-manager-smoke`, verifying deadline cancellation, terminal cleanup outside the operation-manager mutex, and preservation of terminal timeout state without needing a live model
@@ -5866,7 +5891,7 @@ The smoke groups remain category-oriented and are built through the
 
 That split is intentional: smoke groups stay category-oriented and close to the `pocs/agent/smoke/*` layout, while the longer-lived `tests/` binaries are driven through CTest labels and named scenarios.
 
-Another small runtime stabilization in the current slice is around incomplete `memory_get` planning/repair steps. The model still sometimes proposes `memory_get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
+Another small runtime stabilization in the current slice is around incomplete `memory.get` planning/repair steps. The model still sometimes proposes `memory.get` without an opaque `id`, especially in reflection-generated repair steps. The runtime now treats that as an incomplete tool call and degrades it back to reasoning with a memory-specific diagnostic rather than preserving the more generic "required contract field is missing" schema failure.
 
 The daemon/session seam also took another small actor-shaped step in the same sweep. Session lanes already owned their own mailbox and lifecycle once a turn had reached the keyed session manager, but the foreground daemon still had a global dispatcher queue in front of that seam. `cancel_turn` already knew how to remove a queued turn there; `reset_session` and `close_session` now do the equivalent for queued turns that belong to the same session before those turns ever reach the lane. That keeps session lifecycle actions from racing with stale same-session work that was still parked in the transport-side queue.
 

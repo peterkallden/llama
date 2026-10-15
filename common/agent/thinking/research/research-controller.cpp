@@ -214,10 +214,10 @@ common_agent_research_action schedule_next_gap(
     task.attempt = next_attempt - 1;
     task.instruction = query_for_attempt(*selected, task.attempt);
     task.preferred_tools = task.attempt <= 0
-        ? std::vector<std::string>{"repository.search", "web_search"}
+        ? std::vector<std::string>{"repository.search", "web.search"}
         : (task.attempt == 1
-            ? std::vector<std::string>{"web_search", "repository.search"}
-            : std::vector<std::string>{"web_search", "repository.search"});
+            ? std::vector<std::string>{"web.search", "repository.search"}
+            : std::vector<std::string>{"web.search", "repository.search"});
     task.priority = selected->priority;
     task.max_attempts = std::max(1, workspace.budget.max_iterations);
     for (const auto & source : workspace.sources) {
@@ -231,7 +231,7 @@ common_agent_research_action schedule_next_gap(
                 common_agent_research_source_availability::requires_acquisition && source.resource_ref &&
                 !source_used_for_gap(workspace, *selected, source.source_id)) {
             task.instruction = source.resource_ref->uri;
-            task.preferred_tools = {"resource_read"};
+            task.preferred_tools = {"resource.read"};
             break;
         }
     }

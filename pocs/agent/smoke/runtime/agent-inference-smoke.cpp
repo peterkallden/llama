@@ -1587,11 +1587,11 @@ static void test_runtime_execution_builder() {
 static void test_chat_runtime_driver_smoke() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
-        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+        {"memory.search", "Search memory", R"({"type":"object","additionalProperties":false})"},
     };
     inference.queued = {
         make_success(
-            R"(Inspecting first.<tool_calls>[{"name":"memory_search","arguments":{"query":"status"}}]</tool_calls>)",
+            R"(Inspecting first.<tool_calls>[{"name":"memory.search","arguments":{"query":"status"}}]</tool_calls>)",
             5,
             common_agent_generation_stop_reason::none,
             make_tool_call_chat_params(tools)),
@@ -1605,7 +1605,7 @@ static void test_chat_runtime_driver_smoke() {
     test_agent_tool_view tool_view;
     tool_view.tools = tools;
     tool_view.handler = [](const agent_tool_call & call, std::string & error) {
-        assert(call.name == "memory_search");
+        assert(call.name == "memory.search");
         error.clear();
         agent_tool_result result;
         result.ok = true;
@@ -1642,19 +1642,19 @@ static void test_chat_runtime_driver_smoke() {
     assert(inference.seen[1].messages[1].role == "assistant");
     assert(inference.seen[1].messages[1].tool_calls.size() == 1);
     assert(inference.seen[1].messages[2].role == "tool");
-    assert(inference.seen[1].messages[2].tool_name == "memory_search");
+    assert(inference.seen[1].messages[2].tool_name == "memory.search");
 }
 
 static void test_tool_family_singleton_fast_path() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
-        {"time_now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false,"properties":{"timezone":{"type":"string","enum":["UTC"]}}})"},
+        {"time.now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false,"properties":{"timezone":{"type":"string","enum":["UTC"]}}})"},
     };
     inference.queued = {
         // Family routing is intentionally a separate, bounded preflight.
         make_success("TOOLS: time"),
         make_success(
-            R"(<tool_calls>[{"name":"time_now","arguments":{}}]</tool_calls>)",
+            R"(<tool_calls>[{"name":"time.now","arguments":{}}]</tool_calls>)",
             5,
             common_agent_generation_stop_reason::none,
             make_tool_call_chat_params(tools)),
@@ -1693,7 +1693,7 @@ static void test_tool_family_singleton_fast_path() {
     tool_view.tools = tools;
     tool_view.handler = [&dispatch_count](const agent_tool_call & call, std::string & error) {
         ++dispatch_count;
-        assert(call.name == "time_now");
+        assert(call.name == "time.now");
         error.clear();
         agent_tool_result result;
         result.ok = true;
@@ -1744,12 +1744,12 @@ static void test_tool_family_singleton_fast_path() {
     assert(inference.seen[1].purpose == common_agent_generation_purpose::conversation);
     assert(inference.seen[1].tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED);
     assert(inference.seen[1].tools.size() == 1);
-    assert(inference.seen[1].tools[0].name == "time_now");
+    assert(inference.seen[1].tools[0].name == "time.now");
     assert(inference.seen[2].purpose == common_agent_generation_purpose::tool_followup);
     assert(inference.seen[2].tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE);
     assert(inference.seen[2].messages.size() == 3);
     assert(inference.seen[2].messages[2].role == "tool");
-    assert(inference.seen[2].messages[2].tool_name == "time_now");
+    assert(inference.seen[2].messages[2].tool_name == "time.now");
 }
 
 static void test_tool_family_preserves_explicit_tool_requirement() {
@@ -1759,7 +1759,7 @@ static void test_tool_family_preserves_explicit_tool_requirement() {
     // is also rejected here so the test proves the fail-closed seam.
     inference.queued = {make_success("NO_TOOLS"), make_success("NO_TOOLS")};
     const std::vector<common_chat_tool> tools = {
-        {"time_now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false})"},
+        {"time.now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false})"},
     };
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -1874,11 +1874,11 @@ static void test_chat_runtime_continues_text_at_message_boundary() {
 static void test_truncated_tool_call_is_not_dispatched() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
-        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+        {"memory.search", "Search memory", R"({"type":"object","additionalProperties":false})"},
     };
     inference.queued = {
         make_success(
-            R"(<tool_calls>[{"name":"memory_search","arguments":{"query":"partial"}}]</tool_calls>)",
+            R"(<tool_calls>[{"name":"memory.search","arguments":{"query":"partial"}}]</tool_calls>)",
             64,
             common_agent_generation_stop_reason::limit,
             make_tool_call_chat_params(tools)),
@@ -1917,11 +1917,11 @@ static void test_truncated_tool_call_is_not_dispatched() {
 static void test_runtime_host_chat_smoke() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
-        {"memory_search", "Search memory", R"({"type":"object","additionalProperties":false})"},
+        {"memory.search", "Search memory", R"({"type":"object","additionalProperties":false})"},
     };
     inference.queued = {
         make_success(
-            R"(Inspecting first.<tool_calls>[{"name":"memory_search","arguments":{"query":"status"}}]</tool_calls>)",
+            R"(Inspecting first.<tool_calls>[{"name":"memory.search","arguments":{"query":"status"}}]</tool_calls>)",
             5,
             common_agent_generation_stop_reason::none,
             make_tool_call_chat_params(tools)),
@@ -1944,7 +1944,7 @@ static void test_runtime_host_chat_smoke() {
     test_agent_tool_view tool_view;
     tool_view.tools = tools;
     tool_view.handler = [](const agent_tool_call & call, std::string & error) {
-        assert(call.name == "memory_search");
+        assert(call.name == "memory.search");
         error.clear();
         agent_tool_result result;
         result.ok = true;
@@ -2552,7 +2552,7 @@ static void test_cli_runtime_host_adapter_chat_inputs() {
     };
     const std::vector<common_memory_hit> hits;
     const std::vector<common_chat_tool> tools = {
-        {"memory_search", "Search memory", R"({"type":"object"})"},
+        {"memory.search", "Search memory", R"({"type":"object"})"},
     };
     const auto tooling = make_runtime_tooling(tools);
 

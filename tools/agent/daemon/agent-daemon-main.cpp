@@ -1015,19 +1015,30 @@ int main(int argc, char ** argv) {
             };
             common_agent_daemon_command_result daemon_result;
             if (!dispatcher.execute(command, daemon_result, callback_error)) {
-                result.ok = false;
-                result.safe_summary = callback_error;
-                result.content = {{{"type", "text"}, {"text", callback_error}}};
+                const auto & tool_result = daemon_result.tool_result;
+                agent_mcp_set_tool_call_result(
+                    result,
+                    false,
+                    agent_mcp_json::parse(tool_result.content_json, nullptr, false),
+                    tool_result.safe_summary.empty()
+                        ? "The tool execution failed." : tool_result.safe_summary,
+                    tool_result.failure_code.empty()
+                        ? "tool.execution_failed" : tool_result.failure_code,
+                    common_tool_failure_class_name(tool_result.failure_class),
+                    tool_result.retryable,
+                    tool_result.raw_diagnostic.empty() ? callback_error : tool_result.raw_diagnostic);
                 return false;
             }
-            result.ok = daemon_result.tool_result.ok;
-            result.structured_content = nlohmann::ordered_json::parse(
-                daemon_result.tool_result.content_json, nullptr, false);
-            if (result.structured_content.is_discarded()) {
-                result.structured_content = agent_mcp_json::object();
-            }
-            result.safe_summary = daemon_result.tool_result.content_summary;
-            result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
+            const auto & tool_result = daemon_result.tool_result;
+            agent_mcp_set_tool_call_result(
+                result,
+                tool_result.ok,
+                agent_mcp_json::parse(tool_result.content_json, nullptr, false),
+                tool_result.content_summary,
+                tool_result.failure_code,
+                common_tool_failure_class_name(tool_result.failure_class),
+                tool_result.retryable,
+                tool_result.raw_diagnostic);
             callback_error = daemon_result.error;
             return result.ok;
         };

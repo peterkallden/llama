@@ -106,19 +106,27 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
             const auto arguments = params.value("arguments", agent_mcp_json::object());
             agent_mcp_server_tool_result tool_result;
             if (!registry_.call_tool(name, arguments, tool_result, error)) {
-                tool_result.ok = false;
                 const bool not_found = error.rfind("unknown MCP server tool:", 0) == 0;
-                tool_result.failure_code = not_found ? "tool.not_found" : "tool.invalid_arguments";
-                tool_result.failure_class = not_found ? "not_found" : "validation";
-                tool_result.retryable = false;
-                tool_result.safe_summary = error.empty() ? "MCP tool call is invalid." : error;
-                tool_result.raw_diagnostic = error;
-                tool_result.content = agent_mcp_json::array({
-                    {
-                        {"type", "text"},
-                        {"text", tool_result.safe_summary},
-                    },
-                });
+                if (tool_result.failure_code.empty()) {
+                    tool_result.failure_code = not_found ? "tool.not_found" : "tool.invalid_arguments";
+                    tool_result.failure_class = not_found ? "not_found" : "validation";
+                }
+                if (tool_result.safe_summary.empty()) {
+                    tool_result.safe_summary = not_found
+                        ? "MCP tool was not found."
+                        : "MCP tool call is invalid.";
+                }
+                if (tool_result.raw_diagnostic.empty()) tool_result.raw_diagnostic = error;
+                agent_mcp_set_tool_call_result(
+                    tool_result,
+                    false,
+                    tool_result.structured_content,
+                    tool_result.safe_summary,
+                    tool_result.failure_code,
+                    tool_result.failure_class,
+                    tool_result.retryable,
+                    tool_result.raw_diagnostic,
+                    tool_result.content);
             }
             response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tool_call_result(tool_result));
         } else {

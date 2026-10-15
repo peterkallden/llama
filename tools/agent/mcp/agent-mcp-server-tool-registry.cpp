@@ -120,7 +120,49 @@ bool agent_mcp_server_tool_registry::call_tool(
         error = "MCP tool schema validator returned invalid normalized arguments";
         return false;
     }
-    return tool->handler(normalized, result, error);
+    try {
+        if (!tool->handler(normalized, result, error)) {
+            result.ok = false;
+            if (result.failure_code.empty()) {
+                result.failure_code = "tool.execution_failed";
+            }
+            if (result.failure_class.empty()) result.failure_class = "execution";
+            if (result.safe_summary.empty()) result.safe_summary = "The MCP server tool failed.";
+            if (result.content.empty()) {
+                result.content = agent_mcp_json::array({
+                    {{"type", "text"}, {"text", result.safe_summary}},
+                });
+            }
+            if (error.empty()) error = result.raw_diagnostic.empty()
+                ? result.safe_summary : result.raw_diagnostic;
+            return false;
+        }
+        return true;
+    } catch (const std::exception & exception) {
+        result.ok = false;
+        result.failure_code = "tool.executor_exception";
+        result.failure_class = "execution";
+        result.retryable = false;
+        result.safe_summary = "The tool failed unexpectedly.";
+        result.raw_diagnostic = exception.what();
+        result.content = agent_mcp_json::array({
+            {{"type", "text"}, {"text", result.safe_summary}},
+        });
+        error = result.raw_diagnostic;
+        return false;
+    } catch (...) {
+        result.ok = false;
+        result.failure_code = "tool.executor_exception";
+        result.failure_class = "execution";
+        result.retryable = false;
+        result.safe_summary = "The tool failed unexpectedly.";
+        result.raw_diagnostic = "MCP server tool handler threw a non-standard exception";
+        result.content = agent_mcp_json::array({
+            {{"type", "text"}, {"text", result.safe_summary}},
+        });
+        error = result.raw_diagnostic;
+        return false;
+    }
 }
 
 agent_mcp_json agent_mcp_render_tools_list_result(
@@ -209,4 +251,38 @@ agent_mcp_json agent_mcp_render_tool_call_result(
         };
     }
     return rendered;
+}
+
+void agent_mcp_set_tool_call_result(
+        agent_mcp_server_tool_result & result,
+        bool ok,
+        agent_mcp_json structured_content,
+        std::string safe_summary,
+        std::string failure_code,
+        std::string failure_class,
+        bool retryable,
+        std::string raw_diagnostic,
+        agent_mcp_json content) {
+    result.ok = ok;
+    result.structured_content = structured_content.is_null() || structured_content.is_discarded()
+        ? agent_mcp_json::object() : std::move(structured_content);
+    result.safe_summary = std::move(safe_summary);
+    result.failure_code = std::move(failure_code);
+    result.failure_class = std::move(failure_class);
+    result.retryable = retryable;
+    result.raw_diagnostic = std::move(raw_diagnostic);
+    if (!ok) {
+        if (result.failure_code.empty()) result.failure_code = "tool.execution_failed";
+        if (result.failure_class.empty()) result.failure_class = "execution";
+        if (result.safe_summary.empty()) result.safe_summary = "The MCP server tool failed.";
+    }
+    if (content.is_array() && !content.empty()) {
+        result.content = std::move(content);
+    } else if (!result.safe_summary.empty()) {
+        result.content = agent_mcp_json::array({
+            {{"type", "text"}, {"text", result.safe_summary}},
+        });
+    } else {
+        result.content = agent_mcp_json::array();
+    }
 }

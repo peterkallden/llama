@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 using json = nlohmann::ordered_json;
@@ -105,6 +106,50 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "MCP server rejected valid schema arguments: %s\n", schema_error.c_str());
         return 1;
     }
+    if (!schema_registry.register_tool({
+            "throw_smoke",
+            "Throws an exception for transport-boundary coverage",
+            R"({"type":"object"})",
+            true,
+            false,
+            false,
+            false,
+            false,
+            [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) -> bool {
+                throw std::runtime_error("private diagnostic detail");
+            },
+        }, schema_error)) {
+        std::fprintf(stderr, "failed to register exception smoke tool: %s\n", schema_error.c_str());
+        return 1;
+    }
+    if (schema_registry.call_tool("throw_smoke", agent_mcp_json::object(), schema_result, schema_error) ||
+            schema_result.ok || schema_result.failure_code != "tool.executor_exception" ||
+            schema_result.raw_diagnostic.find("private diagnostic detail") == std::string::npos ||
+            agent_mcp_render_tool_call_result(schema_result).dump().find("private diagnostic detail") != std::string::npos ||
+            !schema_registry.call_tool("schema_smoke", agent_mcp_json{{"title", "after exception"}}, schema_result, schema_error) ||
+            !schema_result.ok) {
+        std::fprintf(stderr, "MCP registry exception boundary leaked diagnostics or poisoned later calls\n");
+        return 1;
+    }
+    if (!schema_registry.register_tool({
+            "throw_unknown_smoke",
+            "Throws a non-standard exception for boundary coverage",
+            R"({"type":"object"})",
+            true,
+            false,
+            false,
+            false,
+            false,
+            [](const agent_mcp_json &, agent_mcp_server_tool_result &, std::string &) -> bool {
+                throw 7;
+            },
+        }, schema_error) ||
+            schema_registry.call_tool("throw_unknown_smoke", agent_mcp_json::object(), schema_result, schema_error) ||
+            schema_result.failure_code != "tool.executor_exception" ||
+            schema_result.raw_diagnostic.find("non-standard exception") == std::string::npos) {
+        std::fprintf(stderr, "MCP registry did not contain a non-standard handler exception\n");
+        return 1;
+    }
 
     const auto server_path = get_server_path(argc > 0 ? argv[0] : nullptr);
     if (!std::filesystem::exists(server_path)) {
@@ -146,16 +191,18 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to resolve minimal MCP stdio server tool view: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(minimal_view->chat_tools(), "local_time_now") ||
-            !has_tool(minimal_view->chat_tools(), "local_calculator") ||
+    if (!has_tool(minimal_view->chat_tools(), "time.now") ||
+            !has_tool(minimal_view->chat_tools(), "math.calculate") ||
+            has_tool(minimal_view->chat_tools(), "local_math.calculate") ||
             has_tool(minimal_view->chat_tools(), "local_echo")) {
-        std::fprintf(stderr, "minimal MCP profile did not expose the expected native tools\n");
+        std::fprintf(stderr, "minimal MCP profile did not expose the expected native tools: %s\n",
+            join_tool_names(minimal_view->chat_tools()).c_str());
         return 1;
     }
 
     const auto calculator_result = minimal_view->call({
         "call-1",
-        "local_calculator",
+        "math.calculate",
         R"({"expression":"17 * 23"})",
     }, error);
     if (!calculator_result.ok || calculator_result.content_json.find("391") == std::string::npos) {
@@ -165,7 +212,7 @@ int main(int argc, char ** argv) {
 
     const auto invalid_result = minimal_view->call({
         "call-2",
-        "local_calculator",
+        "math.calculate",
         R"({"expression":"1 / 0"})",
     }, error);
     if (invalid_result.ok ||
@@ -202,15 +249,17 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to resolve memory MCP stdio server tool view: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(memory_view->chat_tools(), "local_memory_search") ||
-            !has_tool(memory_view->chat_tools(), "local_memory_remember")) {
+    if (!has_tool(memory_view->chat_tools(), "memory.search") ||
+        has_tool(memory_view->chat_tools(), "local_memory.search") ||
+        !has_tool(memory_view->chat_tools(), "memory.remember") ||
+        has_tool(memory_view->chat_tools(), "local_memory.remember")) {
         std::fprintf(stderr, "memory MCP profile did not expose expected memory tools: %s\n", join_tool_names(memory_view->chat_tools()).c_str());
         return 1;
     }
 
     const auto remember_result = memory_view->call({
         "call-memory-1",
-        "local_memory_remember",
+        "memory.remember",
         R"({"kind":"procedure","content":"Verify scope before reading stored runtime evidence.","importance":0.8,"confidence":0.75,"rationale":"Useful MCP smoke memory."})",
     }, error);
     if (!remember_result.ok || remember_result.content_json.find("\"ok\":true") == std::string::npos) {
@@ -220,7 +269,7 @@ int main(int argc, char ** argv) {
 
     const auto memory_search_result = memory_view->call({
         "call-memory-2",
-        "local_memory_search",
+        "memory.search",
         R"({"query":"scope runtime evidence","limit":4})",
     }, error);
     if (!memory_search_result.ok || memory_search_result.content_json.find("Verify scope before reading stored runtime evidence.") == std::string::npos) {
@@ -280,7 +329,8 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "failed to resolve research MCP stdio server tool view: %s\n", error.c_str());
         return 1;
     }
-    if (!has_tool(research_view->chat_tools(), "local_repository.list") ||
+    if (!has_tool(research_view->chat_tools(), "repository.list") ||
+            has_tool(research_view->chat_tools(), "local_repository.list") ||
             !has_tool(research_view->chat_tools(), "local_github_search_issues")) {
         std::fprintf(
             stderr,
@@ -291,7 +341,7 @@ int main(int argc, char ** argv) {
 
     const auto repository_result = research_view->call({
         "call-3",
-        "local_repository.list",
+        "repository.list",
         R"({"path":"tools/agent/mcp","depth":0})",
     }, error);
     if (!repository_result.ok || repository_result.content_json.find("agent-mcp-stdio-server-main.cpp") == std::string::npos) {

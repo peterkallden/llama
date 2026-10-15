@@ -105,7 +105,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
     if (!has_tool(selection.tooling.tools, "resource.read")) {
-        std::fprintf(stderr, "CLI MCP selection did not expose resource_read\n");
+        std::fprintf(stderr, "CLI MCP selection did not expose resource.read\n");
         return 1;
     }
     if (has_tool(selection.tooling.tools, "github_create_issue")) {

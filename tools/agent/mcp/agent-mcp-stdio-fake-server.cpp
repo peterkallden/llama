@@ -17,7 +17,7 @@ bool register_fake_tools(
     if (!registry.register_tool({
             "search_issues",
             "Search GitHub issues.",
-            R"({"type":"object","required":["query"]})",
+            R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1}}})",
             true,
             false,
             true,
@@ -37,6 +37,7 @@ bool register_fake_tools(
                     },
                 });
                 result.structured_content = {
+                    {"title", "stub issue"},
                     {"items", agent_mcp_json::array({
                         {{"title", "stub issue"}},
                     })},
@@ -44,6 +45,7 @@ bool register_fake_tools(
                 result.safe_summary = "Returned a stub issue result.";
                 return true;
             },
+            R"({"type":"object","additionalProperties":false,"required":["title","items"],"properties":{"title":{"type":"string"},"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string"}}}}}})",
         }, error)) {
         return false;
     }
@@ -51,7 +53,7 @@ bool register_fake_tools(
     if (!registry.register_tool({
             "search_recent_failures",
             "Simulate a retryable upstream failure.",
-            R"({"type":"object","required":["query"]})",
+            R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1}}})",
             true,
             false,
             true,
@@ -76,7 +78,7 @@ bool register_fake_tools(
     if (!registry.register_tool({
             "create_issue",
             "Create a GitHub issue.",
-            R"({"type":"object","required":["title"]})",
+            R"({"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string","minLength":1}}})",
             false,
             true,
             true,

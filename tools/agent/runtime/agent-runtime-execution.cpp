@@ -256,7 +256,8 @@ bool select_model_tool_families(
               "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
               "are needed. Current-turn attachments are optional inputs: choose the resource or "
               "dataset family when the request concerns an attached file, but keep NO_TOOLS for "
-              "unrelated conversation. Do not explain, use JSON, or invent family ids. Available "
+              "unrelated conversation. Return family ids, not tool names; for example, "
+              "dataset.validate belongs to the dataset family. Do not explain, use JSON, or invent family ids. Available "
               "families:\n" + family_view,
     };
     common_chat_msg user{"user", request.prompt + common_agent_render_input_resource_context(

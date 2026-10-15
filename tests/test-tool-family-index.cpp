@@ -12,10 +12,10 @@ int main() {
         {"data.aggregate", "aggregate", "{}", "{}"},
         {"dataset.list", "list", "{}", "{}"},
         {"diagnostics.native_crash", "native crash", "{}", "{}"},
-        {"web_search", "search", "{}", "{}"},
-        {"time_now", "time", "{}", "{}"},
-        {"calculator", "calculate", "{}", "{}"},
-        {"memory_search", "search memory", "{}", "{}"},
+        {"web.search", "search", "{}", "{}"},
+        {"time.now", "time", "{}", "{}"},
+        {"math.calculate", "calculate", "{}", "{}"},
+        {"memory.search", "search memory", "{}", "{}"},
         {"statistics.describe", "describe", "{}", "{}"},
         {"document.tables", "list document tables", "{}", "{}"},
         {"openapi.connect", "admit fetched OpenAPI spec", "{}", "{}"},
@@ -29,6 +29,8 @@ int main() {
     };
     const auto * data_family = find_family("data");
     assert(data_family && data_family->description == "Query and transform datasets");
+    const auto * math_family = find_family("math");
+    assert(math_family && math_family->tool_names == std::vector<std::string>{"math.calculate"});
     const auto * web_family = [&families]() -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == "web") return &family;
         return nullptr;
@@ -123,6 +125,10 @@ int main() {
     assert(!selection.needs_tools && selection.family_ids.empty());
     assert(common_parse_tool_family_selection_text("TOOLS: dataset, data", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(common_parse_tool_family_selection_text(
+        "TOOLS: dataset.list, data.join", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2 &&
+        selection.family_ids[0] == "dataset" && selection.family_ids[1] == "data");
     assert(common_parse_tool_family_selection_text("TOOLS: data, data, dataset", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2 &&
         selection.family_ids[0] == "data" && selection.family_ids[1] == "dataset");

@@ -275,29 +275,19 @@ agent_mcp_json render_mcp_resource(
 agent_mcp_server_tool_result render_mcp_result(
         const agent_tool_result & tool_result) {
     agent_mcp_server_tool_result result;
-    result.ok = tool_result.ok;
-    result.failure_code = tool_result.failure_code;
-    result.failure_class = common_tool_failure_class_name(tool_result.failure_class);
-    result.retryable = tool_result.retryable;
-    result.safe_summary = tool_result.safe_summary;
-    result.raw_diagnostic = tool_result.raw_diagnostic;
-
     const auto structured = agent_mcp_json::parse(tool_result.content_json, nullptr, false);
-    if (!structured.is_discarded()) {
-        result.structured_content = structured;
-    }
-
-    const std::string text = summarize_tool_result(tool_result, result.structured_content);
-    if (!text.empty()) {
-        result.content = agent_mcp_json::array({
-            {
-                {"type", "text"},
-                {"text", text},
-            },
-        });
-    } else {
-        result.content = agent_mcp_json::array();
-    }
+    const auto structured_content = structured.is_discarded()
+        ? agent_mcp_json::object() : structured;
+    const std::string text = summarize_tool_result(tool_result, structured_content);
+    agent_mcp_set_tool_call_result(
+        result,
+        tool_result.ok,
+        structured_content,
+        text.empty() ? tool_result.safe_summary : text,
+        tool_result.failure_code,
+        common_tool_failure_class_name(tool_result.failure_class),
+        tool_result.retryable,
+        tool_result.raw_diagnostic);
 
     append_resource_links(tool_result.resource_refs, result);
     return result;

@@ -6,15 +6,15 @@ int main() {
     common_agent_tool_navigation_context context;
     std::string error;
     assert(common_agent_tool_family_name("statistics.value_counts") == "statistics");
-    assert(common_agent_tool_family_name("resource_read") == "utility");
+    assert(common_agent_tool_family_name("resource.read") == "resource");
     assert(common_agent_tool_navigation_begin(context, common_agent_thinking_mode::research,
-        "operation-1", "plan-1", "step-1", "resource_read", {"r1", "r2"}, error));
-    assert(context.current_family == "utility");
+        "operation-1", "plan-1", "step-1", "resource.read", {"r1", "r2"}, error));
+    assert(context.current_family == "resource");
     assert(common_agent_tool_navigation_begin_async(context, "runtime-op-1", error) ==
         common_agent_tool_navigation_disposition::await_result);
     assert(common_agent_tool_navigation_complete_tool(context, true, {"r1"}, error) ==
         common_agent_tool_navigation_disposition::continue_family);
-    assert(common_agent_tool_navigation_select_tool(context, "resource_inspect", error));
+    assert(common_agent_tool_navigation_select_tool(context, "resource.inspect", error));
     assert(common_agent_tool_navigation_complete_tool(context, true, {"r2", "r2"}, error) ==
         common_agent_tool_navigation_disposition::return_to_plan);
     assert(common_agent_tool_navigation_return_to_plan(context, error));

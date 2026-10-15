@@ -14,7 +14,6 @@ using json = nlohmann::ordered_json;
 namespace {
 
 std::string family_id_for_tool(const std::string & name) {
-    if (name == "calculator") return "math";
     const auto dot = name.find('.');
     if (dot != std::string::npos && dot > 0) return name.substr(0, dot);
 
@@ -288,13 +287,28 @@ bool common_parse_tool_family_selection_text(
         return false;
     }
     std::set<std::string> available;
-    for (const auto & family : families) available.insert(family.id);
+    std::unordered_map<std::string, std::string> family_by_tool;
+    for (const auto & family : families) {
+        available.insert(family.id);
+        for (const auto & tool_name : family.tool_names) {
+            family_by_tool.emplace(tool_name, family.id);
+        }
+    }
     std::string ids = line.substr(6);
     for (char & ch : ids) if (ch == ',' || ch == ';') ch = ' ';
     std::istringstream stream(ids);
     std::string id;
     selection.needs_tools = true;
     while (stream >> id) {
+        if (!available.count(id)) {
+            // Some compact models return the exact registered tool name
+            // instead of the family id (for example, dataset.validate).
+            // Mapping that known name to its host-generated family is
+            // deterministic and grants no more authority than selecting the
+            // family that already owns the named tool.
+            const auto tool_family = family_by_tool.find(id);
+            if (tool_family != family_by_tool.end()) id = tool_family->second;
+        }
         if (!available.count(id)) {
             // Compact models occasionally copy the rendered catalogue entry
             // as "family:description". Accept only the exact known family

@@ -178,8 +178,8 @@ bool parse_tool_arguments_contract(
         json arguments,
         common_plan_tool_arguments_contract & contract,
         std::string & error) {
-    const bool memory_id_tool = tool_name == "memory_get" ||
-        tool_name == "memory_propose_update" || tool_name == "memory_propose_forget";
+    const bool memory_id_tool = tool_name == "memory.get" ||
+        tool_name == "memory.propose_update" || tool_name == "memory.propose_forget";
     if (memory_id_tool && arguments.is_string()) {
         arguments = json{{"id", arguments.get<std::string>()}};
     }
@@ -197,13 +197,6 @@ bool parse_tool_arguments_contract(
     return true;
 }
 
-bool calculator_expression_from_value(const json & value, std::string & expression) {
-    if (value.is_number_integer()) { expression = std::to_string(value.get<long long>()); return true; }
-    if (value.is_number_unsigned()) { expression = std::to_string(value.get<unsigned long long>()); return true; }
-    if (value.is_number_float()) { expression = std::to_string(value.get<double>()); return true; }
-    return value.is_object() && value.contains("value") && calculator_expression_from_value(value["value"], expression);
-}
-
 json normalize_tool_arguments(const std::string & tool_name, json arguments) {
     if (!arguments.is_object()) return arguments;
     const bool document_table_tool = tool_name == "document.tables" || tool_name == "document.table";
@@ -216,8 +209,8 @@ json normalize_tool_arguments(const std::string & tool_name, json arguments) {
             }
         }
     }
-    const bool memory_id_tool = tool_name == "memory_get" ||
-        tool_name == "memory_propose_update" || tool_name == "memory_propose_forget";
+    const bool memory_id_tool = tool_name == "memory.get" ||
+        tool_name == "memory.propose_update" || tool_name == "memory.propose_forget";
     if (memory_id_tool && arguments.contains("memory_id") && !arguments.contains("id") &&
             arguments["memory_id"].is_string()) {
         arguments["id"] = arguments["memory_id"];
@@ -249,14 +242,7 @@ json normalize_tool_arguments(const std::string & tool_name, json arguments) {
         arguments["table"] = arguments["table_name"];
         arguments.erase("table_name");
     }
-    if (tool_name != "calculator" || !arguments.is_object() || arguments.contains("expression") ||
-        !arguments.contains("operation") || !arguments["operation"].is_string() ||
-        !arguments.contains("operands") || !arguments["operands"].is_array() || arguments["operands"].size() != 2) return arguments;
-    std::string lhs, rhs;
-    if (!calculator_expression_from_value(arguments["operands"][0], lhs) || !calculator_expression_from_value(arguments["operands"][1], rhs)) return arguments;
-    const auto operation = arguments["operation"].get<std::string>();
-    const char * symbol = operation == "add" ? "+" : operation == "subtract" ? "-" : operation == "multiply" ? "*" : operation == "divide" ? "/" : nullptr;
-    return symbol ? json{{"expression", lhs + " " + symbol + " " + rhs}} : arguments;
+    return arguments;
 }
 
 json normalize_safe_integer_arguments(json arguments) {

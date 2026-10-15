@@ -865,7 +865,7 @@ int main() {
         "calculator ok",
         "plan-a",
         "step-a",
-        "calculator",
+        "math.calculate",
         "",
         "tool-call-1",
     });
@@ -926,7 +926,7 @@ int main() {
         "completed",
         "Choose a tool",
         {"plan", "response"},
-        {"calculator"},
+        {"math.calculate"},
         0,
         0,
         0,
@@ -948,7 +948,7 @@ int main() {
             !turn_response.contains("trace") ||
             !turn_response["trace"].is_array() ||
             turn_response["trace"].size() != 1 ||
-            turn_response["trace"][0].value("tool_name", "") != "calculator" ||
+            turn_response["trace"][0].value("tool_name", "") != "math.calculate" ||
             !turn_response.contains("continuation_checkpoint") ||
             turn_response["continuation_checkpoint"].value("checkpoint_id", "") != "checkpoint-1" ||
             turn_response["continuation_checkpoint"].value("request_id", "") != "request-1" ||

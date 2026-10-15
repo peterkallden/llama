@@ -1,13 +1,16 @@
 #include "tools/agent/mcp/agent-mcp-http-server.h"
 #include "tools/agent/daemon/agent-daemon-dispatcher.h"
 #include "tools/agent/daemon/agent-daemon-event-collector.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 #include "agent/tooling/catalog/model-projection.h"
 #include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <cpp-httplib/httplib.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -18,22 +21,49 @@
 
 using json = nlohmann::ordered_json;
 
+static bool validate_catalog_result_sample(
+        const common_tool_catalog & catalog,
+        const std::string & tool_name,
+        const std::string & sample_json) {
+    const auto * definition = catalog.find_definition(tool_name);
+    if (definition == nullptr || definition->result_schema_json.empty()) return false;
+    std::string normalized;
+    std::string error;
+    return common_schema_normalize_and_validate_object(
+        sample_json, definition->result_schema_json, normalized, error);
+}
+
 int main() {
     agent_mcp_server_tool_registry registry;
     std::string error;
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
-    if (!catalog.bootstrap("all-configured", bootstrap, error)) {
+    if (!catalog.bootstrap("research", bootstrap, error)) {
         std::fprintf(stderr, "failed to bootstrap catalog for MCP exposure smoke: %s\n", error.c_str());
+        return 1;
+    }
+    const bool catalog_result_samples_valid =
+        validate_catalog_result_sample(catalog, "dataset.list",
+            R"({"datasets":["dataset://sales"],"names":["sales"],"truncated":false})") &&
+        validate_catalog_result_sample(catalog, "dataset.select",
+            R"({"dataset":"dataset://sales","name":"sales"})") &&
+        validate_catalog_result_sample(catalog, "dataset.inspect",
+            R"({"dataset":"dataset://sales","name":"sales","rows":2,"columns":[{"name":"region"}]})") &&
+        validate_catalog_result_sample(catalog, "dataset.validate",
+            R"({"valid":false,"violations":[{"type":"not_null","column":"region","row":2}],"rows_checked":2})") &&
+        validate_catalog_result_sample(catalog, "repository.search",
+            R"({"matches":[{"path":"src/main.cpp","line":4,"text":"query"}]})") &&
+        validate_catalog_result_sample(catalog, "resource.inspect",
+            R"({"resource":"agent-resource://turn/source","mime_type":"text/csv","size_bytes":42})") &&
+        validate_catalog_result_sample(catalog, "resource.read",
+            R"({"uri":"agent-resource://turn/source","text":"region,amount"})");
+    if (!catalog_result_samples_valid) {
+        std::fprintf(stderr, "representative native results failed their catalog output schemas\n");
         return 1;
     }
 
     const std::vector<std::string> catalog_tools = {
-        "diagnostics.native_crash",
-        "dataset.select",
-        "data.aggregate",
-        "document.table",
-        "artifact.export",
+        "math.calculate",
     };
     const auto profile_tools = catalog.load_profile("all-configured", error);
     for (const auto & name : catalog_tools) {
@@ -44,20 +74,31 @@ int main() {
             return 1;
         }
     }
-    std::vector<common_chat_tool> catalog_chat_tools;
-    for (const auto & name : catalog_tools) {
-        const auto * definition = catalog.find_definition(name);
-        if (definition == nullptr) {
-            std::fprintf(stderr, "catalog tool definition is unavailable: %s\n", name.c_str());
-            return 1;
-        }
-        catalog_chat_tools.push_back({
-            definition->name,
-            definition->description,
-            common_tool_model_input_schema(*definition),
-            common_tool_model_result_schema(*definition),
-            definition->result_schema_json,
+    native_agent_tool_provider catalog_provider(
+        catalog,
+        [](const agent_tool_context &, common_native_tool_bindings & bindings, std::string &) {
+            bindings.repository_root = std::filesystem::current_path().string();
+            return true;
         });
+    agent_tool_context catalog_context;
+    catalog_context.profile_id = "minimal";
+    catalog_context.allow_network = true;
+    catalog_context.allow_policy_gated_writes = true;
+    std::unique_ptr<agent_tool_view> catalog_view = catalog_provider.resolve_tools(catalog_context, error);
+    if (!catalog_view) {
+        std::fprintf(stderr, "failed to resolve production native tool view: %s\n", error.c_str());
+        return 1;
+    }
+    std::vector<common_chat_tool> catalog_chat_tools;
+    for (const auto & tool : catalog_view->chat_tools()) {
+        if (std::find(catalog_tools.begin(), catalog_tools.end(), tool.name) != catalog_tools.end()) {
+            catalog_chat_tools.push_back(tool);
+        }
+    }
+    if (catalog_chat_tools.size() != catalog_tools.size()) {
+        std::fprintf(stderr, "native provider did not resolve the expected catalog tools (resolved=%zu): %s\n",
+            catalog_chat_tools.size(), error.c_str());
+        return 1;
     }
     if (!agent_mcp_register_native_tool_view(
             catalog_chat_tools,
@@ -107,7 +148,7 @@ int main() {
     auto authenticator = std::make_shared<agent_mcp_opaque_token_authenticator>();
     if (!authenticator->register_token("http-smoke-token-a", {
             "caller-a", "llama-agent", "namespace-a", "project-a", "minimal",
-            {"echo", "diagnostics.native_crash", "dataset.select", "data.aggregate", "document.table", "artifact.export"}, false,
+            {"echo", "math.calculate", "diagnostics.native_crash", "dataset.select", "data.aggregate", "document.table", "artifact.export"}, false,
         }, error) ||
             !authenticator->register_token("http-smoke-token-b", {
                 "caller-b", "llama-agent", "namespace-b", "project-b", "restricted", {"not-echo"}, false,
@@ -145,6 +186,11 @@ int main() {
             const agent_mcp_json & arguments,
             agent_mcp_server_tool_result & result,
             std::string & callback_error) {
+        if (tool_name == "echo" && arguments.is_object() &&
+                arguments.value("text", "") == "return-false") {
+            callback_error = "private callback diagnostic";
+            return false;
+        }
         common_agent_daemon_command command;
         command.request_id = "http-dispatcher-tool";
         command.type = common_agent_daemon_command_type::execute_tool;
@@ -158,24 +204,30 @@ int main() {
         };
         common_agent_daemon_command_result command_result;
         if (!dispatcher.execute(command, command_result, callback_error)) {
-            result.ok = false;
-            result.failure_code = command_result.tool_result.failure_code.empty()
-                ? "agent.tool_execution_failed" : command_result.tool_result.failure_code;
-            result.failure_class = "execution";
-            result.retryable = command_result.tool_result.retryable;
-            result.safe_summary = command_result.tool_result.safe_summary.empty()
-                ? callback_error : command_result.tool_result.safe_summary;
-            result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
+            const auto & tool_result = command_result.tool_result;
+            agent_mcp_set_tool_call_result(
+                result,
+                false,
+                json::parse(tool_result.content_json, nullptr, false),
+                tool_result.safe_summary.empty()
+                    ? "The tool execution failed." : tool_result.safe_summary,
+                tool_result.failure_code.empty()
+                    ? "agent.tool_execution_failed" : tool_result.failure_code,
+                "execution",
+                tool_result.retryable,
+                tool_result.raw_diagnostic.empty() ? callback_error : tool_result.raw_diagnostic);
             return false;
         }
-        result.ok = command_result.tool_result.ok;
-        result.structured_content = json::parse(command_result.tool_result.content_json, nullptr, false);
-        if (result.structured_content.is_discarded()) result.structured_content = json::object();
-        result.safe_summary = command_result.tool_result.content_summary;
-        result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
-        result.failure_code = command_result.tool_result.failure_code;
-        result.failure_class = "execution";
-        result.retryable = command_result.tool_result.retryable;
+        const auto & tool_result = command_result.tool_result;
+        agent_mcp_set_tool_call_result(
+            result,
+            tool_result.ok,
+            json::parse(tool_result.content_json, nullptr, false),
+            tool_result.content_summary,
+            tool_result.failure_code,
+            "execution",
+            tool_result.retryable,
+            tool_result.raw_diagnostic);
         callback_error = command_result.error;
         return result.ok;
     };
@@ -301,6 +353,10 @@ int main() {
         R"({"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"echo","arguments":{"text":"throw"}}})", "application/json");
     const auto after_throw_called = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"echo","arguments":{"text":"after throw"}}})", "application/json");
+    const auto false_callback_called = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":35,"method":"tools/call","params":{"name":"echo","arguments":{"text":"return-false"}}})", "application/json");
+    const auto after_false_callback_called = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"echo","arguments":{"text":"after false"}}})", "application/json");
     const auto task_called = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"echo","arguments":{"text":"task hello"},"task":{"ttl":10000}}})", "application/json");
     const auto task_called_json = task_called ? json::parse(task_called->body, nullptr, false) : json();
@@ -421,6 +477,8 @@ int main() {
     const auto called_json = called ? json::parse(called->body, nullptr, false) : json();
     const auto throw_called_json = throw_called ? json::parse(throw_called->body, nullptr, false) : json();
     const auto after_throw_called_json = after_throw_called ? json::parse(after_throw_called->body, nullptr, false) : json();
+    const auto false_callback_json = false_callback_called ? json::parse(false_callback_called->body, nullptr, false) : json();
+    const auto after_false_callback_json = after_false_callback_called ? json::parse(after_false_callback_called->body, nullptr, false) : json();
     const auto task_get_json = task_get ? json::parse(task_get->body, nullptr, false) : json();
     const auto task_result_json = task_result ? json::parse(task_result->body, nullptr, false) : json();
     const auto invalid_json = invalid ? json::parse(invalid->body, nullptr, false) : json();
@@ -438,20 +496,20 @@ int main() {
     };
     const bool catalog_tools_exposed = std::all_of(
         catalog_tools.begin(), catalog_tools.end(), has_listed_tool);
-    bool aggregate_output_schema_matches = false;
+    bool catalog_output_schema_matches = false;
     if (listed_json.is_object() && listed_json.contains("result") &&
             listed_json["result"].contains("tools")) {
         for (const auto & tool : listed_json["result"]["tools"]) {
-            if (tool.value("name", "") != "data.aggregate") continue;
-            const auto * definition = catalog.find_definition("data.aggregate");
-            aggregate_output_schema_matches = definition != nullptr &&
+            if (tool.value("name", "") != "math.calculate") continue;
+            const auto * definition = catalog.find_definition("math.calculate");
+            catalog_output_schema_matches = definition != nullptr &&
                 tool.value("outputSchema", json::object()) ==
                 json::parse(definition->result_schema_json, nullptr, false);
             break;
         }
     }
-    const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 6 &&
-        catalog_tools_exposed && aggregate_output_schema_matches &&
+    const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 2 &&
+        catalog_tools_exposed && catalog_output_schema_matches &&
         missing_protocol && missing_protocol->status == 400 &&
         invalid_cursor && invalid_cursor->status == 400 &&
         initialize_json["result"]["protocolVersion"] == "2025-11-25" &&
@@ -465,8 +523,17 @@ int main() {
         called && called->status == 200 && called_json["result"]["structuredContent"]["text"] == "hello" &&
         throw_called && throw_called->status == 200 && throw_called_json["result"]["isError"] == true &&
         throw_called_json["result"]["errorInfo"]["code"] == "tool.executor_exception" &&
+        throw_called_json["result"]["errorInfo"]["class"] == "execution" &&
+        throw_called_json["result"]["errorInfo"]["retryable"] == false &&
+        throw_called->body.find("dispatcher smoke exception") == std::string::npos &&
         after_throw_called && after_throw_called->status == 200 &&
         after_throw_called_json["result"]["structuredContent"]["text"] == "after throw" &&
+        false_callback_called && false_callback_called->status == 200 &&
+        false_callback_json["result"]["isError"] == true &&
+        false_callback_json["result"]["errorInfo"]["code"] == "tool.execution_failed" &&
+        false_callback_called->body.find("private callback diagnostic") == std::string::npos &&
+        after_false_callback_called && after_false_callback_called->status == 200 &&
+        after_false_callback_json["result"]["structuredContent"]["text"] == "after false" &&
         task_called && task_called->status == 200 && !task_id.empty() &&
         task_get && task_get->status == 200 && task_get_json["result"]["taskId"] == task_id &&
         task_result && task_result->status == 200 && task_result_json["result"]["structuredContent"]["text"] == "task hello" &&
@@ -494,12 +561,12 @@ int main() {
 
     server_thread.join();
     if (!ok) {
-        std::fprintf(stderr, "HTTP inbound server smoke failed init=%d listed=%d count=%zu catalog=%d aggregate_schema=%d reloaded_schema=%d called=%d throw=%d after_throw=%d task_called=%d task_get=%d task_result=%d cleanup=%d other_cleanup=%d\n",
+        std::fprintf(stderr, "HTTP inbound server smoke failed init=%d listed=%d count=%zu catalog=%d native_schema=%d reloaded_schema=%d called=%d throw=%d after_throw=%d task_called=%d task_get=%d task_result=%d cleanup=%d other_cleanup=%d\n",
             initialize_json["result"]["protocolVersion"] == "2025-11-25",
             listed ? listed->status : 0,
             listed_json["result"]["tools"].size(),
             catalog_tools_exposed,
-            aggregate_output_schema_matches,
+            catalog_output_schema_matches,
             reloaded_listed_json["result"]["tools"][0].value("outputSchema", json::object()) ==
                 json::parse(R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string"}}})"),
             called ? called->status : 0,
@@ -510,6 +577,7 @@ int main() {
             task_result ? task_result->status : 0,
             cleanup ? cleanup->status : 0,
             other_cleanup ? other_cleanup->status : 0);
+        std::fprintf(stderr, "listed_tools=%s\n", listed_json.dump().c_str());
         if (task_called) std::fprintf(stderr, "task_called=%s\n", task_called->body.c_str());
         if (task_get) std::fprintf(stderr, "task_get=%s\n", task_get->body.c_str());
         if (task_result) std::fprintf(stderr, "task_result=%s\n", task_result->body.c_str());
@@ -522,7 +590,7 @@ int main() {
     }
     const auto session_header = headers.find("Mcp-Session-Id");
     std::printf("http_inbound_session=%s\n", session_header == headers.end() ? "" : session_header->second.c_str());
-    std::printf("http_inbound_tools=1\n");
+    std::printf("http_inbound_tools=%zu\n", listed_json["result"]["tools"].size());
     std::printf("http_inbound_callers=2\n");
     std::printf("http_inbound_cleanup=ok\n");
     std::printf("http_inbound_sse=ok\n");

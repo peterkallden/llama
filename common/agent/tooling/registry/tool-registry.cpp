@@ -20,22 +20,12 @@ bool common_tool_registry::register_tool(common_registered_tool tool, std::strin
     }
     const std::string canonical_name = tool.name;
     tools.emplace(canonical_name, std::move(tool));
-    // Built-in executor ids retain the historical short name. Keep that
-    // spelling as an execution alias while the model-facing contract uses
-    // the namespaced canonical name (for example time_now -> time.now).
     error.clear(); return true;
 }
 
 const common_registered_tool * common_tool_registry::find_tool(const std::string & name) const {
     const auto direct = tools.find(name);
-    if (direct != tools.end()) return &direct->second;
-    for (const auto & entry : tools) {
-        const auto separator = entry.second.executor_id.rfind('.');
-        if (separator != std::string::npos && entry.second.executor_id.substr(separator + 1) == name) {
-            return &entry.second;
-        }
-    }
-    return nullptr;
+    return direct != tools.end() ? &direct->second : nullptr;
 }
 
 bool common_tool_registry::validate(const common_registered_tool_call & call, std::string & error) const {

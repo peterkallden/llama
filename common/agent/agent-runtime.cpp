@@ -391,12 +391,12 @@ static bool normalize_agent_tool_call(
 }
 
 static bool is_research_acquisition_tool(const std::string & tool_name) {
-    return tool_name == "resource.read" || tool_name == "resource_read" ||
+    return tool_name == "resource.read" ||
         tool_name == "repository.search" ||
-        tool_name == "web.search" || tool_name == "web_search" ||
-        tool_name == "web.fetch" || tool_name == "web_fetch" ||
-        tool_name == "memory.get" || tool_name == "memory_get" ||
-        tool_name == "memory.search" || tool_name == "memory_search";
+        tool_name == "web.search" ||
+        tool_name == "web.fetch" ||
+        tool_name == "memory.get" ||
+        tool_name == "memory.search";
 }
 
 static bool merge_reflection_tool_repair_arguments(
@@ -626,14 +626,14 @@ static bool is_incomplete_tool_call(
     }
 
     if (validation_error == "required contract field is missing" && arguments.empty()) {
-        if (tool_name == "memory.get" || tool_name == "memory_get") {
-            validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
+        if (tool_name == "memory.get") {
+            validation_error = "memory.get requires an id from a prior memory.search or recorded memory reference";
         }
         return true;
     }
 
-    if ((tool_name == "memory.get" || tool_name == "memory_get") && !arguments.contains("id")) {
-        validation_error = "memory_get requires an id from a prior memory_search or recorded memory reference";
+    if (tool_name == "memory.get" && !arguments.contains("id")) {
+        validation_error = "memory.get requires an id from a prior memory.search or recorded memory reference";
         return true;
     }
 
@@ -1625,7 +1625,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (plan.workflow_definition &&
                     plan.workflow_definition->resource_read_policy ==
                         common_plan_workflow_resource_read_policy::chunked &&
-                    (tool_call->name == "resource.read" || tool_call->name == "resource_read") &&
+                    tool_call->name == "resource.read" &&
                     execution.resource_refs.size() == 1 &&
                     execution.resource_refs.front().size_bytes > context_budgets.resource_chunk_max_bytes) {
                 result.chunk_resource_request = execution.resource_refs.front();

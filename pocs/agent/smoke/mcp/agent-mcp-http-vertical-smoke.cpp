@@ -23,8 +23,8 @@ public:
     bool is_policy_gated(const std::string &) const override { return false; }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
-        if (call.name != "resource_read" && call.name != "memory_get") {
-            error = "vertical smoke only exposes resource_read and memory_get";
+        if (call.name != "resource.read" && call.name != "memory.get") {
+            error = "vertical smoke only exposes resource.read and memory.get";
             return false;
         }
         const auto arguments = json::parse(call.arguments_json, nullptr, false);
@@ -32,7 +32,7 @@ public:
             error = "vertical smoke received invalid tool arguments";
             return false;
         }
-        const char * field = call.name == "resource_read" ? "uri" : "id";
+        const char * field = call.name == "resource.read" ? "uri" : "id";
         if (!arguments.contains(field) || !arguments[field].is_string() || arguments[field].get<std::string>().empty()) {
             error = std::string("vertical smoke requires ") + field;
             return false;
@@ -43,7 +43,7 @@ public:
 
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         const auto arguments = json::parse(call.arguments_json, nullptr, false);
-        if (call.name == "resource_read") {
+        if (call.name == "resource.read") {
             ++resource_reads;
             const std::string uri = arguments.value("uri", "");
             return common_tool_execution_result::success(

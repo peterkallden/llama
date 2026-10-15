@@ -47,8 +47,8 @@ public:
     bool is_policy_gated(const std::string &) const override { return false; }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
-        if (call.name != "resource_read") {
-            error = "CSV research smoke exposes only resource_read";
+        if (call.name != "resource.read") {
+            error = "CSV research smoke exposes only resource.read";
             return false;
         }
         error.clear();
@@ -164,7 +164,7 @@ int main() {
         std::fprintf(stderr, "CSV research completion failed: %s\n", error.c_str());
         return 1;
     }
-    if (tools.call_names != std::vector<std::string>{"resource_read", "resource_read"}) {
+    if (tools.call_names != std::vector<std::string>{"resource.read", "resource.read"}) {
         std::fprintf(stderr, "CSV research selected a non-local acquisition tool\n");
         return 1;
     }

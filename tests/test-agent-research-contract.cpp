@@ -37,7 +37,7 @@ public:
             std::string & resolved,
             std::vector<std::string> & candidates) const override {
         candidates.clear();
-        if (requested != "resource_read") return false;
+        if (requested != "resource.read") return false;
         resolved = "resource.read";
         return true;
     }
@@ -176,7 +176,7 @@ int main() {
     common_agent_research_controller factory_controller;
     const auto input_action = factory_controller.begin(factory_workspace, factory_error);
     assert(input_action.kind == common_agent_research_action_kind::schedule_task);
-    assert(input_action.preferred_tools.size() == 1 && input_action.preferred_tools.front() == "resource_read");
+    assert(input_action.preferred_tools.size() == 1 && input_action.preferred_tools.front() == "resource.read");
     assert(input_action.instruction == input_resource.resource.uri);
 
     // The research controller keeps its historical underscore alias, but the
@@ -190,7 +190,7 @@ int main() {
     canonical_action.task_id = "alias-task";
     canonical_action.gap_id = canonical_workspace.gaps.front().gap_id;
     canonical_action.instruction = input_resource.resource.uri;
-    canonical_action.preferred_tools = {"resource_read"};
+    canonical_action.preferred_tools = {"resource.read"};
     common_agent_research_event canonical_event;
     assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
     assert(canonical_runtime.last_validated_name == "resource.read");
@@ -205,9 +205,9 @@ int main() {
     const auto memory_action = factory_controller.begin(factory_workspace, factory_error);
     assert(memory_action.kind == common_agent_research_action_kind::schedule_task);
     assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
-        "resource_read") == memory_action.preferred_tools.end());
+        "resource.read") == memory_action.preferred_tools.end());
     assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
-        "memory_get") == memory_action.preferred_tools.end());
+        "memory.get") == memory_action.preferred_tools.end());
     assert(memory_action.instruction == factory_workspace.gaps.front().question);
 
     common_agent_research_workspace workspace;
@@ -250,7 +250,7 @@ int main() {
     auto invalid_dependency_workspace = workspace;
     invalid_dependency_workspace.tasks.push_back({
         "task-2", "gap-1", "Use the first result", common_agent_research_task_kind::fetch,
-        {"resource_read"}, {"missing-task"}, 1, 0, 1});
+        {"resource.read"}, {"missing-task"}, 1, 0, 1});
     assert(!common_agent_research_workspace_validate(invalid_dependency_workspace, error));
     assert(error.find("invalid task dependency") != std::string::npos);
     assert(!common_agent_research_record_evidence(workspace, workspace.evidence.front(), error));

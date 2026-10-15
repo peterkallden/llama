@@ -256,6 +256,7 @@ common_agent_runtime_config make_daemon_runtime_config(
     config.generation_config.memory_learning_n_predict = options.memory_learning_n_predict;
     config.generation_config.n_threads = options.n_threads;
     config.generation_config.agent_trace = options.agent_trace;
+    config.generation_config.generation_trace = options.generation_trace;
     config.generation_config.context_size_tokens = static_cast<size_t>(std::max(0, options.context_size));
     // Keep daemon turns on the same host-owned family preflight path as the
     // CLI.  The daemon already exposes agent_plan=auto, but previously only

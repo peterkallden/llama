@@ -414,6 +414,29 @@ canonical structured-result contract for planning and typed result binding.
 Servers that omit it continue to work, but their results have no imported
 output contract.
 
+The native catalog and remote MCP provider both carry this schema into the
+resolved tool view. Inbound MCP `tools/list` publishes the same canonical
+schema as `outputSchema`, describing the tool's `structuredContent` rather than
+the surrounding MCP response envelope. Planner bindings use the schema field
+types; compact result descriptions shown to a model are a separate projection.
+Executor exceptions and transport failures retain their stable error code,
+failure class and retryability while exposing only a safe summary to the
+caller. Raw diagnostics stay on the daemon side, and failed calls do not stop
+the MCP request loop.
+
+For a local end-to-end trace, run
+`scripts/test-agent-mcp-schema-binding-model-smoke.sh` from the checkout. It
+uses the built daemon and fake stdio MCP provider, tests a repository-relative
+`dataset.validate` call and a result-to-next-tool binding, and writes full
+prompt/output trace to
+`$HOME/llama-agent-smoke/mcp-schema-binding/mcp-schema-binding.log` by default.
+The default model is `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`; set
+`LLAMA_AGENT_MODEL`, `GGML_VK_VISIBLE_DEVICES`, or
+`LLAMA_AGENT_TIMEOUT_SECONDS` to select an installed model/device or adjust
+the bounded run time. The smoke is successful only if the model actually
+executes the expected tool calls; a completed conversational response alone
+does not count as a pass.
+
 Utgående HTTP-MCP använder hostens bearer-auth och följer inte redirects. En
 credential skickas alltså inte vidare till en annan adress. OAuth-discovery för
 MCP är ett separat senare steg; OpenAPI-providerens OAuth-fält ska inte kopieras
@@ -576,7 +599,7 @@ Useful overrides are:
 | Area | Flags |
 | --- | --- |
 | model | `--model`, optional `--embedding-model`, `--n-predict`, `--n-gpu-layers` |
-| runtime | `--default-mode`, `--thinking-mode`, `--memory-learn`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-trace` |
+| runtime | `--default-mode`, `--thinking-mode`, `--memory-learn`, `--max-reflection-rounds`, `--max-plan-revisions`, `--max-research-iterations`, `--agent-trace`, `--generation-trace` |
 | stores | `--backend`, `--memory-db`, `--plan-backend`, `--plan-db`, `--data-backend`, `--data-db` |
 | resources | `--resource-blob-backend`, `--resource-blob-root`, `--resource-metadata-backend`, `--resource-metadata-db` |
 | tools | `--tool-profile`, `--repository-root`, `--mcp-tool-command`, `--mcp-tool-arg`, `--mcp-tool-server-name`, `--mcp-tool-prefix` |

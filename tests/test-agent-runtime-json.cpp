@@ -270,7 +270,7 @@ int main() {
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
-        "web_search",
+        "web.search",
         nlohmann::ordered_json::object(),
         normalized,
         changed,
@@ -283,7 +283,7 @@ int main() {
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
-        "resource_read",
+        "resource.read",
         nlohmann::ordered_json::object({{"uri", "agent-resource://turn/t/r"}}),
         normalized,
         changed,
@@ -304,7 +304,7 @@ int main() {
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
-        "resource_read",
+        "resource.read",
         nlohmann::ordered_json::object({{"id", "r2"}}),
         normalized,
         changed,
@@ -373,7 +373,7 @@ int main() {
     changed = false;
     TEST_ASSERT(common_agent_runtime_apply_safe_tool_defaults_to_json(
         csv_request,
-        "resource_read",
+        "resource.read",
         nlohmann::ordered_json::object({{"uri", "old.csv"}}),
         normalized,
         changed,
@@ -403,7 +403,7 @@ int main() {
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
         csv_request,
-        "resource_inspect",
+        "resource.inspect",
         nlohmann::ordered_json::object({{"uri", "missing.csv"}}),
         normalized,
         changed,
@@ -472,7 +472,7 @@ int main() {
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
-        "resource_read",
+        "resource.read",
         nlohmann::ordered_json::object({{"id", "r3"}}),
         normalized,
         changed,
@@ -483,7 +483,7 @@ int main() {
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(
         request,
-        "web_search",
+        "web.search",
         nlohmann::ordered_json::array(),
         normalized,
         changed,

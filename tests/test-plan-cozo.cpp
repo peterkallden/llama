@@ -91,8 +91,8 @@ int main() {
         op.reason_summary = "test";
         op.step = common_plan_step{"s", "step", "objective"};
         op.step->intended_contribution = "preserve the persisted evidence";
-        op.step->selected_tool = "web_search";
-        op.step->tool_call = common_plan_tool_call{"web_search", R"({"query":"cozo"})"};
+        op.step->selected_tool = "web.search";
+        op.step->tool_call = common_plan_tool_call{"web.search", R"({"query":"cozo"})"};
         assert(store.apply(op, plan, error));
     }
 
@@ -104,7 +104,7 @@ int main() {
         assert(plan->scope == common_plan_scope::global && plan->purpose == "persist and resume");
         assert(plan->steps.size() == 1 &&
             plan->steps[0].intended_contribution == "preserve the persisted evidence" &&
-            plan->steps[0].tool_call && plan->steps[0].tool_call->name == "web_search");
+            plan->steps[0].tool_call && plan->steps[0].tool_call->name == "web.search");
         assert(plan->version == 2 && plan->workflow_policy == common_plan_workflow_policy::required &&
             plan->procedure_refs == std::vector<std::string>{"data-quality-v1"});
         assert(plan->workflow_bindings.size() == 2 && plan->selected_workflow &&

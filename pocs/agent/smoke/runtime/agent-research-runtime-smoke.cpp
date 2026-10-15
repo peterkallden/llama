@@ -12,8 +12,8 @@ public:
     bool is_policy_gated(const std::string &) const override { return false; }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
-        if (call.name != "repository.search" && call.name != "memory_get") {
-            error = "only repository.search and memory_get are exposed in this smoke";
+        if (call.name != "repository.search" && call.name != "memory.get") {
+            error = "only repository.search and memory.get are exposed in this smoke";
             return false;
         }
         error.clear();
@@ -22,11 +22,11 @@ public:
 
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         ++calls;
-        if (call.name == "memory_get") {
+        if (call.name == "memory.get") {
             ++memory_get_calls;
             return common_tool_execution_result::success(
                 "{\"memory\":{\"id\":\"memory-smoke-1\",\"summary\":\"Use the existing runtime contract.\"}}",
-                "memory_get returned one deterministic memory record");
+                "memory.get returned one deterministic memory record");
         }
         ++repository_search_calls;
         return common_tool_execution_result::success(
@@ -87,8 +87,8 @@ public:
     bool is_policy_gated(const std::string &) const override { return false; }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
-        if (call.name != "resource_read") {
-            error = "research guard smoke exposes only resource_read";
+        if (call.name != "resource.read") {
+            error = "research guard smoke exposes only resource.read";
             return false;
         }
         error.clear();
@@ -105,7 +105,7 @@ public:
         resource.scope = common_runtime_resource_scope::turn;
         return common_tool_execution_result::success(
             "controller-owned resource evidence",
-            "resource_read completed",
+            "resource.read completed",
             {resource});
     }
 
@@ -126,9 +126,9 @@ public:
             "model-acquisition", "Model acquisition", "Read the supplied resource."};
         acquisition.status = common_plan_step_status::active;
         acquisition.mode = common_plan_step_mode::tool;
-        acquisition.selected_tool = "resource_read";
+        acquisition.selected_tool = "resource.read";
         acquisition.tool_call = common_plan_tool_call{
-            "resource_read", R"({"uri":"agent-resource://guarded","max_bytes":32768})"};
+            "resource.read", R"({"uri":"agent-resource://guarded","max_bytes":32768})"};
         common_plan_step answer{"answer", "Answer", "Return the researched answer"};
         answer.mode = common_plan_step_mode::final_response;
         answer.depends_on = {"model-acquisition"};

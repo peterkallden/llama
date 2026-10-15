@@ -371,7 +371,17 @@ bool agent_mcp_http_server::handle_message(
                 }
             }
         } else if (options_.execute_tool) {
-            options_.execute_tool(policy, name, arguments, result, error);
+            const bool callback_ok = options_.execute_tool(policy, name, arguments, result, error);
+            if (!callback_ok) {
+                result.ok = false;
+                if (result.failure_code.empty()) result.failure_code = "tool.execution_failed";
+                if (result.failure_class.empty()) result.failure_class = "execution";
+                if (result.safe_summary.empty()) result.safe_summary = "The MCP tool execution failed.";
+                if (result.raw_diagnostic.empty()) result.raw_diagnostic = error;
+                if (!result.content.is_array() || result.content.empty()) {
+                    result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
+                }
+            }
         } else if (!registry.call_tool(name, arguments, result, error)) {
             result.ok = false;
             if (result.failure_code.empty()) {
@@ -385,20 +395,15 @@ bool agent_mcp_http_server::handle_message(
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
         }
         } catch (const std::exception & exception) {
-            result.ok = false;
-            result.failure_code = "tool.executor_exception";
-            result.failure_class = "execution";
-            result.retryable = false;
-            result.safe_summary = "The tool failed unexpectedly.";
-            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+            agent_mcp_set_tool_call_result(
+                result, false, agent_mcp_json::object(), "The tool failed unexpectedly.",
+                "tool.executor_exception", "execution", false, exception.what());
             error = exception.what();
         } catch (...) {
-            result.ok = false;
-            result.failure_code = "tool.executor_exception";
-            result.failure_class = "execution";
-            result.retryable = false;
-            result.safe_summary = "The tool failed unexpectedly.";
-            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+            agent_mcp_set_tool_call_result(
+                result, false, agent_mcp_json::object(), "The tool failed unexpectedly.",
+                "tool.executor_exception", "execution", false,
+                "MCP HTTP tool callback threw a non-standard exception");
             error = "MCP tool callback threw a non-standard exception";
         }
         response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tool_call_result(result));

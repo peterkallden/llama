@@ -38,21 +38,21 @@ int main() {
         "reflect retry C", result, error, {}, 8, {}, {}, {}, retry_choices));
 
     const common_chat_tool memory_search_tool{
-        "memory_search", "Search memory.",
+        "memory.search", "Search memory.",
         R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":10}}})",
         R"({"type":"object"})",
     };
     assert(common_reflection_parse_compact_dsl(
         "reflect revise\nquery: \"corrected lookup\"\nlimit: 3\n",
-        result, error, "failed-search", 8, "memory_search", {}, {memory_search_tool}));
+        result, error, "failed-search", 8, "memory.search", {}, {memory_search_tool}));
     assert(result.proposed_plan_operations.size() == 1);
-    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory_search");
+    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory.search");
     assert(*result.proposed_plan_operations[0].step_id == "failed-search");
     assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json,
         R"({"query":"corrected lookup","limit":3})"));
     assert(!common_reflection_parse_compact_dsl(
         "reflect revise\nunknown: value\n",
-        result, error, "failed-search", 8, "memory_search", {}, {memory_search_tool}));
+        result, error, "failed-search", 8, "memory.search", {}, {memory_search_tool}));
 
     assert(common_reflection_parse_json(
         R"({"decision":"revise","assurance_action":"escalate_research","issues":[]})",
@@ -92,15 +92,15 @@ int main() {
     assert(result.proposed_plan_operations[1].assumption && result.proposed_plan_operations[1].assumption->confidence == 0.8f);
     assert(result.proposed_plan_operations[2].kind == common_plan_operation_kind::invalidate_assumption);
     assert(result.proposed_plan_operations[2].target_id && *result.proposed_plan_operations[2].target_id == "old-model");
-    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_search","args":{"tool":{"name":"memory_search","arguments":{"query":"regression procedure","limit":"2"}}}}],"replace_steps":[{"step_id":"fetch","tool":"memory_search","args":{"tool":"memory_search","arguments":{"query":"corrected lookup","limit":"3"}}}]})", result, error));
+    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.search","args":{"tool":{"name":"memory.search","arguments":{"query":"regression procedure","limit":"2"}}}}],"replace_steps":[{"step_id":"fetch","tool":"memory.search","args":{"tool":"memory.search","arguments":{"query":"corrected lookup","limit":"3"}}}]})", result, error));
     assert(result.proposed_plan_operations.size() == 2);
     assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
     assert(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
-    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_search","args":{"tool":"memory_search","query":"regression procedure","limit":"2"}}],"replace_steps":[{"step_id":"fetch","tool":"memory_search","args":{"tool":"memory_search","query":"corrected lookup","limit":"3"}}]})", result, error));
+    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.search","args":{"tool":"memory.search","query":"regression procedure","limit":"2"}}],"replace_steps":[{"step_id":"fetch","tool":"memory.search","args":{"tool":"memory.search","query":"corrected lookup","limit":"3"}}]})", result, error));
     assert(result.proposed_plan_operations.size() == 2);
     assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
     assert(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
-    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory_get","args":"memory-1"}],"replace_steps":[]})", result, error));
+    assert(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.get","args":"memory-1"}],"replace_steps":[]})", result, error));
     assert(result.proposed_plan_operations.size() == 1);
     assert(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"id":"memory-1"})"));
     assert(common_reflection_parse_json(R"({"decision":"accept","ready_to_answer":true,"confidence":0.9,"revision_guidance":[],"learning_hint":{"category":"tool_precondition","statement":"Verify a repository path before reading it.","expected_reuse":0.8},"operations":[]})", result, error));
@@ -108,7 +108,7 @@ int main() {
     const std::string explicit_tool_call_reflection =
         "{\"decision\":\"revise\",\"operations\":[{\"kind\":\"add_step\",\"step\":"
         "{\"id\":\"repair-fetch\",\"title\":\"Repair fetch\",\"objective\":\"Retry the fetch with normalized args\","
-        "\"tool_call\":{\"name\":\"memory_search\",\"arguments_json\":\"{\\\"tool\\\":\\\"memory_search\\\",\\\"query\\\":\\\"reopened evidence\\\",\\\"limit\\\":\\\"4\\\"}\"}}}]}";
+        "\"tool_call\":{\"name\":\"memory.search\",\"arguments_json\":\"{\\\"tool\\\":\\\"memory.search\\\",\\\"query\\\":\\\"reopened evidence\\\",\\\"limit\\\":\\\"4\\\"}\"}}}]}";
     assert(common_reflection_parse_json(explicit_tool_call_reflection, result, error));
     assert(result.proposed_plan_operations.size() == 1);
     assert(result.proposed_plan_operations[0].step->tool_call);
@@ -125,37 +125,37 @@ int main() {
     assert(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"add_assumption","assumption":{"id":"a","statement":"x","confidence":2}}]})", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"invalidate_assumption"}]})", result, error));
     assert(!common_reflection_parse_json(R"({"decision":"revise","complete":"lookup"})", result, error));
-    assert(!common_reflection_parse_json(R"({"decision":"revise","replace_steps":[{"tool":"memory_search","args":{"query":"repair"}}]})", result, error));
+    assert(!common_reflection_parse_json(R"({"decision":"revise","replace_steps":[{"tool":"memory.search","args":{"query":"repair"}}]})", result, error));
     assert(common_reflection_parse_json(
-        R"({"decision":"revise","replace_steps":[{"tool":"memory_search","args":{"query":"repair"}}]})",
+        R"({"decision":"revise","replace_steps":[{"tool":"memory.search","args":{"query":"repair"}}]})",
         result, error, 8, "failed-search"));
     assert(result.proposed_plan_operations.size() == 1);
     assert(*result.proposed_plan_operations[0].step_id == "failed-search");
     assert(!common_reflection_parse_json(
-        R"({"decision":"revise","replace_steps":[{"step_id":"","tool":"memory_search","args":{"query":"repair"}}]})",
+        R"({"decision":"revise","replace_steps":[{"step_id":"","tool":"memory.search","args":{"query":"repair"}}]})",
         result, error, 8, "failed-search"));
     assert(!common_reflection_parse_json(
-        R"({"decision":"revise","replace_steps":[{"step_id":"other-step","tool":"memory_search","args":{"query":"repair"}}]})",
+        R"({"decision":"revise","replace_steps":[{"step_id":"other-step","tool":"memory.search","args":{"query":"repair"}}]})",
         result, error, 8, "failed-search"));
 
     assert(common_reflection_parse_compact_dsl(
         "reflect decision=revise\nguidance \"repair the failed lookup\"\n"
-        "replace | open! memory_search query=\"corrected lookup\" limit=3\n",
+        "replace | open! memory.search query=\"corrected lookup\" limit=3\n",
         result, error, "failed-search"));
     assert(result.decision == common_reflection_decision::revise);
     assert(result.revision_guidance == std::vector<std::string>{"repair the failed lookup"});
     assert(result.proposed_plan_operations.size() == 1);
     assert(*result.proposed_plan_operations[0].step_id == "failed-search");
-    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory_search");
+    assert(result.proposed_plan_operations[0].step->tool_call->name == "memory.search");
     assert(same_json_object(
         result.proposed_plan_operations[0].step->tool_call->arguments_json,
         R"({"limit":3,"query":"corrected lookup"})"));
     assert(!common_reflection_parse_compact_dsl(
-        "reflect decision=revise\nreplace other-step | open! memory_search query=\"wrong target\" limit=3\n",
+        "reflect decision=revise\nreplace other-step | open! memory.search query=\"wrong target\" limit=3\n",
         result, error, "failed-search"));
     assert(common_reflection_parse_compact_dsl(
         "reflect decision=revise\ncomplete lookup\n"
-        "add | open! memory_search query=\"follow-up\" limit=2\n",
+        "add | open! memory.search query=\"follow-up\" limit=2\n",
         result, error));
     assert(result.proposed_plan_operations.size() == 2);
     assert(*result.proposed_plan_operations[0].step_id == "lookup");

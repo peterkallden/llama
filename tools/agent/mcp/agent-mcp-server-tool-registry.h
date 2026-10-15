@@ -73,3 +73,13 @@ bool agent_mcp_register_native_tool_view(
 
 agent_mcp_json agent_mcp_render_tool_call_result(
         const agent_mcp_server_tool_result & result);
+void agent_mcp_set_tool_call_result(
+        agent_mcp_server_tool_result & result,
+        bool ok,
+        agent_mcp_json structured_content,
+        std::string safe_summary,
+        std::string failure_code,
+        std::string failure_class,
+        bool retryable,
+        std::string raw_diagnostic,
+        agent_mcp_json content = agent_mcp_json::array());

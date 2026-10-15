@@ -84,6 +84,7 @@ struct daemon_options {
     float memory_learn_min_reuse = 0.65f;
     bool plan_show_summary = false;
     bool agent_trace = false;
+    bool generation_trace = false;
     bool adaptation_capture = false;
     bool adaptation_collection_allowed = false;
     size_t adaptation_max_evidence = 16;

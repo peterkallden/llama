@@ -18,8 +18,8 @@ public:
         proposal.plan.status = common_plan_status::active;
         common_plan_step step{"search", "Search memory", "Find relevant memory"};
         step.status = common_plan_step_status::active;
-        step.selected_tool = "memory_search";
-        step.tool_call = common_plan_tool_call{"memory_search", "{}"};
+        step.selected_tool = "memory.search";
+        step.tool_call = common_plan_tool_call{"memory.search", "{}"};
         proposal.plan.steps.push_back(std::move(step));
         proposal.plan.active_step_id = "search";
         return proposal;
@@ -48,7 +48,7 @@ int main() {
     assert(store.open("", error));
     common_tool_registry tools;
     common_registered_tool tool;
-    tool.name = "memory_search";
+    tool.name = "memory.search";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"}}})";
     tool.handler = [](const std::string & input) {
         assert(input == R"({"query":"What is my favorite breakfast?"})");

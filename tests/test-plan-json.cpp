@@ -45,7 +45,7 @@ int main() {
     assert(shorthand_args["dataset"].value("$from_step", "") == "table");
     assert(shorthand_args["dataset"].value("$json_pointer", "") == "/dataset");
 
-    const auto normalized = R"({"goal":"calculate","steps":[{"id":"calculate","tool":"calculator","args":{"operation":"multiply","operands":[{"value":17},{"value":23}]}}]})";
+    const auto normalized = R"({"goal":"calculate","steps":[{"id":"calculate","tool":"math.calculate","args":{"expression":"17 * 23"}}]})";
     assert(common_plan_parse_proposal_json(normalized, plan, operations, error));
     assert(operations.size() == 2); // native final synthesis
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
@@ -78,7 +78,7 @@ int main() {
     assert(merged.value("offset", -1) == 0);
     assert(merged.value("max_bytes", 0) == 8192);
 
-    const auto wrapped_tool_arguments = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":{"name":"memory_search","arguments":{"query":"regression procedure","limit":"2"}}}}]})";
+    const auto wrapped_tool_arguments = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory.search","args":{"tool":{"name":"memory.search","arguments":{"query":"regression procedure","limit":"2"}}}}]})";
     assert(common_plan_parse_proposal_json(wrapped_tool_arguments, plan, operations, error));
     const auto wrapped_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
     assert(wrapped_actual.is_object());
@@ -87,7 +87,7 @@ int main() {
     assert(wrapped_actual["limit"].is_number_integer());
     assert(wrapped_actual["limit"].get<int>() == 2);
 
-    const auto sibling_tool_argument = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory_search","args":{"tool":"memory_search","query":"regression procedure","limit":"2"}}]})";
+    const auto sibling_tool_argument = R"({"goal":"inspect memory","steps":[{"id":"search","tool":"memory.search","args":{"tool":"memory.search","query":"regression procedure","limit":"2"}}]})";
     assert(common_plan_parse_proposal_json(sibling_tool_argument, plan, operations, error));
     const auto sibling_actual = nlohmann::json::parse(operations[0].step->tool_call->arguments_json, nullptr, false);
     assert(sibling_actual.is_object());
@@ -167,7 +167,7 @@ int main() {
     assert(error.find("plan.binding.alias_used_as_literal") != std::string::npos);
 
     // The prior full proposal format remains accepted for persisted or older callers.
-    const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"calculator","arguments_json":"{'operation':'multiply','operands':[{'value':17},{'value':23}]}"}}}]})";
+    const auto legacy = R"({"goal":"answer","success_criteria":"clear","next_action":"draft","operations":[{"kind":"add_step","reason_summary":"tool use","evidence_ids":[],"step":{"id":"s1","title":"Calc","objective":"compute","depends_on":[],"required_evidence":[],"tool":{"name":"math.calculate","arguments_json":"{\"expression\":\"17 * 23\"}"}}}]})";
     assert(common_plan_parse_proposal_json(legacy, plan, operations, error));
     assert(same_json_object(operations[0].step->tool_call->arguments_json, R"({"expression":"17 * 23"})"));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[]})", plan, operations, error));
@@ -177,16 +177,16 @@ int main() {
     // grounded step. The host owns that synthesis, so retain the work and
     // replace only the redundant marker with the native final operation.
     assert(common_plan_parse_proposal_json(
-        R"({"goal":"x","steps":[{"tool":"calculator","args":{"expression":"6 * 7"}},{"mode":"final"}]})",
+        R"({"goal":"x","steps":[{"tool":"math.calculate","args":{"expression":"6 * 7"}},{"mode":"final"}]})",
         plan, operations, error));
     assert(operations.size() == 2);
     assert(operations[0].step && operations[0].step->tool_call);
-    assert(operations[0].step->tool_call->name == "calculator");
+    assert(operations[0].step->tool_call->name == "math.calculate");
     assert(operations[1].step && common_plan_step_effective_mode(*operations[1].step) == common_plan_step_mode::final_response);
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"invalid","mode":"tool"}]})", plan, operations, error));
     assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"search","tool":"repository.search","args":{"query":"x"}},{"id":"search","mode":"final"}]})", plan, operations, error));
     assert(error == "duplicate step id");
-    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"answer","tool":"calculator","args":{"expression":"6 * 7"}}]})", plan, operations, error));
+    assert(!common_plan_parse_proposal_json(R"({"goal":"x","steps":[{"id":"answer","tool":"math.calculate","args":{"expression":"6 * 7"}}]})", plan, operations, error));
     assert(error == "native final step id conflicts with proposed step");
     assert(common_plan_proposal_json_schema().find("arguments_json") == std::string::npos);
     assert(common_plan_proposal_json_schema().find(R"("required":["id"])") == std::string::npos);

@@ -250,6 +250,11 @@ bool is_mcp_definition_allowed(
 std::string make_mcp_exposed_name(
         const std::string & prefix,
         const std::string & tool_name) {
+    // Preserve namespaced canonical MCP names; a provider id must not turn
+    // math.calculate into a transport-specific local_math family.
+    if (tool_name.find('.') != std::string::npos) {
+        return tool_name;
+    }
     if (prefix.empty()) {
         return tool_name;
     }
@@ -624,6 +629,20 @@ public:
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    bool describe_tool_dataflow(
+            const std::string & name,
+            common_plan_tool_dataflow_contract & contract,
+            std::string & error) const override {
+        const auto it = definitions.find(name);
+        if (it == definitions.end()) { error.clear(); return false; }
+        return common_plan_dataflow_contract_from_schemas(
+            name,
+            it->second.input_schema_json,
+            it->second.result_schema_json,
+            contract,
+            error);
     }
 
     bool validate_plan(const common_plan_state & plan, std::string & error) const override {
@@ -1164,6 +1183,7 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             model_description,
             common_tool_model_input_schema(definition),
             common_tool_model_result_schema(definition),
+            definition.result_schema_json,
         });
         resolved_definitions.emplace(definition.name, definition);
     }
@@ -1230,6 +1250,7 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
             model_description,
             model_input_schema,
             model_result_schema,
+            definition.result_schema_json,
         });
         resolved_definitions.emplace(exposed_name, std::move(definition));
     }

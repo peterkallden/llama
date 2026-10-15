@@ -6,6 +6,8 @@
 #include <csignal>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 namespace {
 
 std::filesystem::path get_fake_server_path(const char * argv0) {
@@ -29,6 +31,15 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
         }
     }
     return false;
+}
+
+const common_chat_tool * find_tool(
+        const std::vector<common_chat_tool> & tools,
+        const std::string & name) {
+    for (const auto & tool : tools) {
+        if (tool.name == name) return &tool;
+    }
+    return nullptr;
 }
 
 bool contains(const std::string & haystack, const std::string & needle) {
@@ -83,6 +94,14 @@ int main(int argc, char ** argv) {
         }
         if (!has_tool(read_view->chat_tools(), "github_search_recent_failures")) {
             std::fprintf(stderr, "github_search_recent_failures was not exposed through the MCP stdio tool view\n");
+            return 1;
+        }
+        const auto * search_tool = find_tool(read_view->chat_tools(), "github_search_issues");
+        const auto output_schema = search_tool == nullptr
+            ? nlohmann::json() : nlohmann::json::parse(search_tool->output_schema, nullptr, false);
+        if (!output_schema.is_object() || !output_schema.contains("properties") ||
+                !output_schema["properties"].contains("items")) {
+            std::fprintf(stderr, "github_search_issues did not preserve MCP outputSchema through provider registration\n");
             return 1;
         }
         if (has_tool(read_view->chat_tools(), "github_create_issue")) {

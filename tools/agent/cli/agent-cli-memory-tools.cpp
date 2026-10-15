@@ -238,7 +238,7 @@ bool ensure_memory_cli_embedding_from_model(
 
 common_chat_tool memory_search_tool_definition() {
     common_chat_tool tool;
-    tool.name = "memory_search";
+    tool.name = "memory.search";
     tool.description = "Search the user's stored memory for relevant factual context. This is read-only. Use it only when stored memory could answer the user's question.";
     tool.parameters = R"({"type":"object","properties":{"query":{"type":"string","description":"Focused natural-language memory query.","maxLength":1024},"limit":{"type":"integer","description":"Maximum number of memories to return.","minimum":1,"maximum":8}},"required":["query"],"additionalProperties":false})";
     return tool;
@@ -246,7 +246,7 @@ common_chat_tool memory_search_tool_definition() {
 
 common_chat_tool memory_remember_tool_definition() {
     common_chat_tool tool;
-    tool.name = "memory_remember";
+    tool.name = "memory.remember";
     tool.description = "Propose a low-risk durable memory based on what the user explicitly stated. Native policy may reject, deduplicate, or store it.";
     tool.parameters = R"({"type":"object","properties":{"kind":{"type":"string","description":"Memory kind to propose.","enum":["fact","preference","procedure","constraint","decision","goal","observation","reflection","episode"]},"content":{"type":"string","description":"Single durable memory candidate stated as a concise sentence.","maxLength":512},"importance":{"type":"number","description":"Estimated importance from 0 to 1.","minimum":0.0,"maximum":1.0},"confidence":{"type":"number","description":"Estimated confidence from 0 to 1.","minimum":0.0,"maximum":1.0},"rationale":{"type":"string","description":"Short reason this might be worth remembering.","maxLength":240}},"required":["kind","content"],"additionalProperties":false})";
     return tool;
