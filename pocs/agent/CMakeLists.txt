@@ -1953,6 +1953,9 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-candidate-lifecycle
     test-agent-flydelta-runtime-observer
     test-agent-flydelta-server-binding
+    test-agent-flydelta-resource-scope
+    test-agent-factorized-cvec-config
+    test-agent-flydelta-daemon-seams
     test-agent-flydelta-layer-search
     test-agent-flydelta-scale-search
     test-agent-flydelta-alpha-response-search
