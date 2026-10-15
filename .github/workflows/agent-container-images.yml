@@ -42,7 +42,6 @@ jobs:
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.name == 'Agent development package (.tar.gz)' &&
-       github.event.workflow_run.head_branch == 'feature/llama-agent' &&
        github.event.workflow_run.event != 'pull_request' &&
        github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' &&
@@ -51,10 +50,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Resolve verified archive source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN_ID: ${{ github.event.workflow_run.id || inputs.package_run_id }}
+        run: python .github/scripts/agent-package-source.py
+
       - name: Check out image definition
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref || 'feature/llama-agent' }}
+          ref: ${{ steps.source.outputs.commit_sha }}
 
       - name: Download development package
         id: package
@@ -67,6 +78,7 @@ jobs:
           rm -rf package-artifact docker-context
           gh run download "$PACKAGE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
+            --pattern 'llama-agent-dev-*' \
             --dir package-artifact
 
           archive="$(find package-artifact -type f -name 'llama-agent-dev-*.tar.gz' -print -quit)"
@@ -135,7 +147,7 @@ jobs:
             org.opencontainers.image.title=llama-agent-dev
             org.opencontainers.image.description=llama-agent development package image
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.commit_sha }}
             org.opencontainers.image.version=${{ steps.package.outputs.package_id }}
           cache-from: type=gha
           # Cache export is an optimization; a temporary GitHub cache outage

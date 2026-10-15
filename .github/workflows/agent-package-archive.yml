@@ -98,6 +98,7 @@ jobs:
             }
 
             echo "ci_run_id=$CI_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "sanitizer_run_id=$SANITIZER_RUN_ID" >> "$GITHUB_OUTPUT"
             echo "commit_sha=$ci_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -136,6 +137,7 @@ jobs:
 
                 ci_id="$(jq -r '.databaseId' <<< "$ci_run")"
                 echo "ci_run_id=$ci_id" >> "$GITHUB_OUTPUT"
+                echo "sanitizer_run_id=$(jq -r '.databaseId' <<< "$sanitizer_run")" >> "$GITHUB_OUTPUT"
                 echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
@@ -234,6 +236,28 @@ jobs:
           sha256sum "$archive" > "${archive}.sha256"
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Record verified package source
+        env:
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_ref }}
+          COMMIT_SHA: ${{ steps.verification.outputs.commit_sha }}
+          CI_RUN_ID: ${{ steps.verification.outputs.ci_run_id }}
+          SANITIZER_RUN_ID: ${{ steps.verification.outputs.sanitizer_run_id }}
+        shell: bash
+        run: |
+          jq -n --arg branch "$SOURCE_BRANCH" --arg sha "$COMMIT_SHA" \
+            --arg ci "$CI_RUN_ID" --arg sanitizer "$SANITIZER_RUN_ID" --arg package "$GITHUB_RUN_ID" \
+            '{version: 1, source_branch: $branch, commit_sha: $sha, source_ci_run_id: $ci,
+              sanitizer_run_id: $sanitizer, package_workflow_run_id: $package}' \
+            > agent-package-source.json
+
+      - name: Publish verified package source
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-development-source
+          path: agent-package-source.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Publish development package artifact
         uses: actions/upload-artifact@v6

@@ -98,6 +98,32 @@ The Linux dependency and Cozo setup used by CI is defined in
 uses the `alpine:3.20` Kubernetes smoke image, and builds with four parallel
 workers.
 
+### GitHub verification and development packages
+
+Pushes to `feature/llama-agent` run the Linux, sanitizer and Android agent
+workflows when their path filters match. Code Style and EditorConfig also run
+on `master`. Apple and IBM backend builds are available through manual dispatch.
+The fork disables upstream self-hosted backend/model checks and upstream
+issue/PR and release-publication automation in GitHub workflow settings; these
+settings do not modify the upstream workflow files. Agent release workflows
+remain available.
+
+The development archive waits for successful Linux and sanitizer runs for the
+same feature commit. It publishes the archive and a separate, small
+`agent-development-source` artifact containing the source branch, commit and
+both verification run IDs. Debian, Windows and development container jobs
+validate this metadata and the referenced GitHub runs, then check out that exact
+source commit. They do not use the archive workflow's `head_branch` or `head_sha`:
+a `workflow_run` archive is recorded under the repository's default branch even
+when its contents were built from the feature branch.
+
+The chained workflow definitions and helper script must also be present on the
+default branch. Manual Debian/Windows builds require a successful development
+archive's `package_run_id`, as development container builds already do. Archives
+created before the source metadata was introduced must be recreated before use
+by this chain. Source metadata is retained for 30 days; the existing retention
+policy still keeps only the five newest archive artifacts.
+
 ## Windows configure and build
 
 Use the Visual Studio generator with an out-of-source build directory. The

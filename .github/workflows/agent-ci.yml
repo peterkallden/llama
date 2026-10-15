@@ -6,7 +6,8 @@ on:
     branches:
       - feature/llama-agent
     paths:
-      - '.github/workflows/agent-ci.yml'
+      - '.github/workflows/agent-*.yml'
+      - '.github/scripts/**'
       - 'common/agent/**'
       - 'common/memory/**'
       - 'common/plan/**'
@@ -26,7 +27,8 @@ on:
     branches:
       - feature/llama-agent
     paths:
-      - '.github/workflows/agent-ci.yml'
+      - '.github/workflows/agent-*.yml'
+      - '.github/scripts/**'
       - 'common/agent/**'
       - 'common/memory/**'
       - 'common/plan/**'
@@ -65,6 +67,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Verify development package source validation
+        run: python3 .github/scripts/test_agent_package_source.py -v
 
       - name: Install build and agent dependencies
         run: |
