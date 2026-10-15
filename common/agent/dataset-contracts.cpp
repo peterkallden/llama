@@ -471,6 +471,17 @@ bool normalize_common_agent_dataset_tool_arguments(
         const std::string & tool_name,
         nlohmann::ordered_json & arguments,
         std::string & error) {
+    if (tool_name == "dataset.inspect" || tool_name == "dataset.schema" ||
+            tool_name == "dataset.sample" || tool_name == "dataset.validate") {
+        size_t source_count = 0;
+        for (const char * field : {"dataset", "resource", "path"}) {
+            if (arguments.contains(field)) ++source_count;
+        }
+        if (source_count != 1) {
+            error = tool_name + " requires exactly one of dataset, resource or path";
+            return false;
+        }
+    }
     if (tool_name == "data.query") {
         if (arguments.contains("where")) {
             nlohmann::ordered_json normalized;

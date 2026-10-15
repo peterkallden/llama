@@ -10,6 +10,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -100,6 +101,194 @@ bool dataset_file(const common_native_tool_bindings & bindings,
     return true;
 }
 
+bool prepare_dataset_validation_rules(
+        const json & rules,
+        const std::vector<std::string> & columns,
+        std::vector<std::pair<std::string, size_t>> & prepared,
+        std::string & error) {
+    if (!rules.is_array() || rules.empty() || rules.size() > 32) {
+        error = "dataset.validate requires 1 to 32 rules";
+        return false;
+    }
+    prepared.clear();
+    for (const auto & rule : rules) {
+        if (!rule.is_object() || rule.size() != 2 ||
+                !rule.contains("type") || !rule["type"].is_string() ||
+                !rule.contains("column") || !rule["column"].is_string()) {
+            error = "each dataset.validate rule requires only type and column";
+            return false;
+        }
+        const auto type = rule["type"].get<std::string>();
+        if (type != "not_null" && type != "unique") {
+            error = "dataset.validate rule type must be not_null or unique";
+            return false;
+        }
+        const auto column_name = rule["column"].get<std::string>();
+        if (column_name.empty() || column_name.size() > 128) {
+            error = "dataset.validate column must be a non-empty name of at most 128 characters";
+            return false;
+        }
+        const auto column = std::find(columns.begin(), columns.end(), column_name);
+        if (column == columns.end()) {
+            error = "dataset.validate column does not exist in the dataset schema: " + column_name;
+            return false;
+        }
+        prepared.emplace_back(type, static_cast<size_t>(std::distance(columns.begin(), column)));
+    }
+    return true;
+}
+
+bool validate_dataset_descriptor_scope(
+        const common_native_tool_bindings & bindings,
+        const common_agent_dataset_descriptor & descriptor,
+        common_tool_execution_result & failure);
+
+common_tool_execution_result evaluate_dataset_validation_rows(
+        const std::vector<std::string> & columns,
+        const std::vector<std::vector<std::string>> & rows,
+        const json & rules) {
+    std::vector<std::pair<std::string, size_t>> prepared;
+    std::string error;
+    if (!prepare_dataset_validation_rules(rules, columns, prepared, error)) {
+        return common_adapter_validation_failure(
+            "tool.dataset.validate.invalid_rule", std::move(error));
+    }
+    json violations = json::array();
+    for (size_t rule_index = 0; rule_index < prepared.size(); ++rule_index) {
+        const auto & [type, column] = prepared[rule_index];
+        size_t count = 0;
+        std::set<std::string> seen;
+        for (const auto & row : rows) {
+            const auto value = column < row.size() ? row[column] : std::string();
+            if ((type == "not_null" && value.empty()) ||
+                    (type == "unique" && !seen.insert(value).second)) {
+                ++count;
+            }
+        }
+        if (count > 0) {
+            violations.push_back({
+                {"rule", type + ":" + columns[column]},
+                {"count", count},
+            });
+        }
+    }
+    return common_adapter_success_json({
+        {"valid", violations.empty()},
+        {"violations", std::move(violations)},
+        {"rows_checked", rows.size()},
+    });
+}
+
+common_tool_execution_result validate_csv_stream(
+        std::istream & input,
+        const json & rules) {
+    std::string line;
+    if (!std::getline(input, line)) {
+        return common_adapter_validation_failure(
+            "tool.dataset.validate.empty_file", "dataset.validate requires a CSV header row");
+    }
+    const auto columns = split_csv(line);
+    std::vector<std::pair<std::string, size_t>> prepared;
+    std::string error;
+    if (!prepare_dataset_validation_rules(rules, columns, prepared, error)) {
+        return common_adapter_validation_failure(
+            "tool.dataset.validate.invalid_rule", std::move(error));
+    }
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(4096);
+    while (rows.size() < 100000 && std::getline(input, line)) {
+        rows.push_back(split_csv(line));
+    }
+    if (rows.size() == 100000 && std::getline(input, line)) {
+        return common_adapter_failure(
+            "tool.dataset.validate.row_limit", common_tool_failure_class::limit, false,
+            "Dataset validation exceeded the 100000 row limit.",
+            "dataset.validate stopped before reaching end of CSV");
+    }
+    return evaluate_dataset_validation_rows(columns, rows, rules);
+}
+
+common_tool_execution_result validate_dataset_reference(
+        const common_native_tool_bindings & bindings,
+        const std::string & dataset_uri,
+        const json & rules) {
+    if (bindings.data_store == nullptr) {
+        return common_adapter_execution_failure(
+            "tool.dataset.backend_unavailable", "dataset backend is unavailable",
+            "The dataset backend is unavailable.");
+    }
+    common_agent_dataset_descriptor descriptor;
+    std::string error;
+    if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, error)) {
+        return common_adapter_not_found_failure(
+            "tool.dataset.validate.unavailable", std::move(error),
+            "The dataset is unavailable.");
+    }
+    if (descriptor.import_processor_id != "csv-resource-import-v1" ||
+            descriptor.ref.source_representation != "csv:dataset") {
+        return common_adapter_validation_failure(
+            "tool.dataset.validate.unsupported_format",
+            "dataset.validate currently supports only CSV-imported datasets");
+    }
+    common_tool_execution_result scope_failure;
+    if (!validate_dataset_descriptor_scope(bindings, descriptor, scope_failure)) {
+        return scope_failure;
+    }
+    json query = {
+        {"dataset", dataset_uri},
+        {"limit", 100000},
+        {"max_scan_rows", 100000},
+        {"max_result_rows", 100000},
+    };
+    std::string result_json;
+    if (!bindings.data_store->execute("data.query", query.dump(), result_json, error)) {
+        return common_adapter_execution_failure(
+            "tool.dataset.validate.query_failed", std::move(error),
+            "Dataset rows could not be read for validation.");
+    }
+    const auto result = json::parse(result_json, nullptr, false);
+    if (!result.is_object() || !result.contains("rows") || !result["rows"].is_array()) {
+        return common_adapter_execution_failure(
+            "tool.dataset.validate.invalid_query_result",
+            "dataset backend returned an invalid query result",
+            "Dataset rows could not be validated.");
+    }
+    if (result.value("scan_truncated", false) || result.value("result_truncated", false) ||
+            result["rows"].size() >= 100000) {
+        return common_adapter_failure(
+            "tool.dataset.validate.row_limit", common_tool_failure_class::limit, false,
+            "Dataset validation exceeded the 100000 row limit.",
+            "dataset.validate query result was truncated or reached the row limit");
+    }
+    std::vector<std::string> columns;
+    if (descriptor.columns.empty() && result.contains("columns") && result["columns"].is_array()) {
+        for (const auto & column : result["columns"]) {
+            if (column.is_string()) columns.push_back(column.get<std::string>());
+        }
+    } else {
+        for (const auto & column : descriptor.columns) columns.push_back(column.name);
+    }
+    std::vector<std::vector<std::string>> rows;
+    rows.reserve(result["rows"].size());
+    for (const auto & row : result["rows"]) {
+        if (!row.is_object()) {
+            return common_adapter_execution_failure(
+                "tool.dataset.validate.invalid_query_result",
+                "dataset query returned a non-object row",
+                "Dataset rows could not be validated.");
+        }
+        std::vector<std::string> values;
+        values.reserve(columns.size());
+        for (const auto & column : columns) {
+            if (!row.contains(column) || row[column].is_null()) values.emplace_back();
+            else if (row[column].is_string()) values.push_back(row[column].get<std::string>());
+            else values.push_back(row[column].dump());
+        }
+        rows.push_back(std::move(values));
+    }
+    return evaluate_dataset_validation_rows(columns, rows, rules);
+}
+
 bool is_current_turn_derived_dataset(
         const common_agent_dataset_descriptor & descriptor,
         const agent_resource_runtime & runtime) {
@@ -176,6 +365,12 @@ bool validate_dataset_reference_scope(
         failure = common_adapter_validation_failure(
             "tool.dataset.invalid_reference",
             "dataset references must use the canonical dataset:// scheme");
+        return false;
+    }
+    if (bindings.data_store == nullptr) {
+        failure = common_adapter_execution_failure(
+            "tool.dataset.backend_unavailable", "dataset backend is unavailable",
+            "The dataset backend is unavailable.");
         return false;
     }
     common_agent_dataset_descriptor descriptor;
@@ -323,52 +518,89 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.statistics.value_counts";
     if (!is_data_tool) return false;
 
-    if (definition.executor_id == "builtin.dataset.validate" && !bindings.repository_root.empty()) {
+    if (definition.executor_id == "builtin.dataset.validate" &&
+            (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             std::string error;
             json arguments;
             if (!common_adapter_parse_object(input, arguments, error) ||
-                    !arguments.contains("dataset") || !arguments["dataset"].is_string() ||
                     !arguments.contains("rules") || !arguments["rules"].is_array()) {
                 return common_adapter_validation_failure(
-                    "tool.dataset.validate.invalid_arguments", "dataset.validate requires dataset and rules");
+                    "tool.dataset.validate.invalid_arguments", "dataset.validate requires a source and rules");
+            }
+            const auto source_count = static_cast<size_t>(arguments.contains("dataset")) +
+                static_cast<size_t>(arguments.contains("resource")) +
+                static_cast<size_t>(arguments.contains("path"));
+            if (source_count != 1) {
+                return common_adapter_validation_failure(
+                    "tool.dataset.validate.invalid_arguments",
+                    "dataset.validate requires exactly one of dataset, resource or path");
+            }
+
+            if (arguments.contains("dataset")) {
+                if (!arguments["dataset"].is_string()) {
+                    return common_adapter_validation_failure(
+                        "tool.dataset.validate.invalid_arguments", "dataset must be a dataset:// reference");
+                }
+                common_tool_execution_result scope_failure;
+                if (!validate_dataset_reference_scope(
+                        bindings, arguments["dataset"].get<std::string>(), scope_failure)) {
+                    return scope_failure;
+                }
+                return validate_dataset_reference(
+                    bindings, arguments["dataset"].get<std::string>(), arguments["rules"]);
+            }
+
+            if (arguments.contains("resource")) {
+                if (!arguments["resource"].is_string()) {
+                    return common_adapter_validation_failure(
+                        "tool.dataset.validate.invalid_arguments", "resource must be a host-owned resource reference");
+                }
+                if (!bindings.dataset_from_resource) {
+                    return common_adapter_not_found_failure(
+                        "tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable",
+                        "This resource cannot be validated as a dataset in the current runtime.");
+                }
+                const auto materialized = bindings.dataset_from_resource(
+                    arguments["resource"].get<std::string>(), "inspect");
+                if (!materialized.ok) return materialized;
+                const auto materialized_json = json::parse(materialized.output, nullptr, false);
+                if (!materialized_json.is_object() || !materialized_json.contains("dataset") ||
+                        !materialized_json["dataset"].is_string()) {
+                    return common_adapter_execution_failure(
+                        "tool.dataset.materialization_invalid", "resource materializer returned no dataset reference",
+                        "The resource could not be validated as a dataset.");
+                }
+                return validate_dataset_reference(
+                    bindings, materialized_json["dataset"].get<std::string>(), arguments["rules"]);
+            }
+
+            if (!arguments["path"].is_string()) {
+                return common_adapter_validation_failure(
+                    "tool.dataset.validate.invalid_arguments", "path must be repository-relative");
             }
             std::filesystem::path path;
-            if (!dataset_file(bindings, arguments["dataset"].get<std::string>(), path, error)) {
+            if (!dataset_file(bindings, arguments["path"].get<std::string>(), path, error)) {
                 return common_adapter_not_found_failure(
                     "tool.dataset.validate.unavailable", std::move(error), "Dataset is unavailable.");
+            }
+            std::error_code fs_error;
+            if (!std::filesystem::is_regular_file(path, fs_error) || fs_error) {
+                return common_adapter_not_found_failure(
+                    "tool.dataset.validate.unavailable", "dataset path is not a regular file",
+                    "Dataset is unavailable.");
             }
             if (lower_copy(path.extension().string()) != ".csv") {
                 return common_adapter_validation_failure(
                     "tool.dataset.validate.unsupported_format", "dataset.validate currently supports CSV");
             }
             std::ifstream file(path);
-            std::string line;
-            if (!std::getline(file, line)) return common_adapter_success_json({{"valid", true}, {"violations", json::array()}});
-            const auto columns = split_csv(line);
-            std::vector<std::string> rows;
-            while (rows.size() < 100000 && std::getline(file, line)) rows.push_back(line);
-            json violations = json::array();
-            for (const auto & rule : arguments["rules"]) {
-                if (!rule.is_object() || !rule.contains("type") || !rule["type"].is_string() ||
-                        !rule.contains("column") || !rule["column"].is_string()) continue;
-                const auto type = rule["type"].get<std::string>();
-                const auto it = std::find(columns.begin(), columns.end(), rule["column"].get<std::string>());
-                if (it == columns.end()) {
-                    violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", rows.size()}, {"message", "column not found"}});
-                    continue;
-                }
-                const auto index = static_cast<size_t>(std::distance(columns.begin(), it));
-                size_t count = 0;
-                std::set<std::string> values;
-                for (const auto & row_text : rows) {
-                    const auto fields = split_csv(row_text);
-                    const auto value = index < fields.size() ? fields[index] : std::string();
-                    if ((type == "not_null" && value.empty()) || (type == "unique" && !values.insert(value).second)) ++count;
-                }
-                if (count > 0) violations.push_back({{"rule", type + ":" + rule["column"].get<std::string>()}, {"count", count}});
+            if (!file) {
+                return common_adapter_not_found_failure(
+                    "tool.dataset.validate.unavailable", "dataset file could not be opened",
+                    "Dataset is unavailable.");
             }
-            return common_adapter_success_json({{"valid", violations.empty()}, {"violations", violations}});
+            return validate_csv_stream(file, arguments["rules"]);
         }, error);
     } else if (definition.executor_id == "builtin.data.query" ||
             definition.executor_id == "builtin.data.filter" ||

@@ -2,6 +2,9 @@
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "plan/plan-contract.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -179,6 +182,14 @@ int main() {
     assert(dataset_schema_result["properties"].contains("columns"));
     assert(dataset_sample_result["properties"].contains("rows"));
     assert(dataset_validate_result["properties"]["valid"].value("type", "") == "boolean");
+    assert(validate_input["oneOf"].size() == 3 && validate_model_input["oneOf"].size() == 3);
+    for (const auto * source_tool : {"dataset.inspect", "dataset.schema", "dataset.sample"}) {
+        const auto * definition = catalog.find_definition(source_tool);
+        assert(definition != nullptr);
+        const auto host_schema = nlohmann::json::parse(definition->input_schema_json);
+        const auto model_schema = nlohmann::json::parse(definition->model_input_schema_json);
+        assert(host_schema["oneOf"].size() == 3 && model_schema["oneOf"].size() == 3);
+    }
     const auto value_counts_schema = nlohmann::json::parse(value_counts->input_schema_json);
     assert(value_counts_schema["required"].size() == 2);
     assert(value_counts_schema["properties"]["limit"].value("maximum", 0) == 1000);

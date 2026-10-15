@@ -33,6 +33,7 @@ struct agent_mcp_server_tool {
         const agent_mcp_json & arguments,
         agent_mcp_server_tool_result & result,
         std::string & error)> handler;
+    std::string output_schema_json;
 };
 
 class agent_mcp_server_tool_registry {
@@ -56,7 +57,9 @@ private:
 };
 
 agent_mcp_json agent_mcp_render_tools_list_result(
-        const agent_mcp_server_tool_registry & registry);
+    const agent_mcp_server_tool_registry & registry);
+agent_mcp_json agent_mcp_canonical_output_schema(
+    const std::string & result_schema_json);
 
 // Injects the current native model-facing tool view into the MCP registry.
 // Execution remains owned by the daemon dispatcher; the registry handler is

@@ -199,6 +199,10 @@ bool parse_mcp_tool_definition(
     if (item.contains("inputSchema")) {
         definition.input_schema_json = item["inputSchema"].dump();
     }
+    if (item.contains("outputSchema") && item["outputSchema"].is_object()) {
+        definition.result_schema_json = item["outputSchema"].dump();
+        definition.model_result_schema_json = definition.result_schema_json;
+    }
 
     if (item.contains("annotations") && item["annotations"].is_object()) {
         definition.read_only = item["annotations"].value("readOnlyHint", definition.read_only);

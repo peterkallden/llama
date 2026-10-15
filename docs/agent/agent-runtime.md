@@ -599,10 +599,10 @@ do not select implementations or host paths.
 | `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | Semantic references, reference kinds and project-index persistence |
 | `diagnostics.call_hierarchy` | Host-native analysis | Semantic-provider contract; unavailable without a provider | Experimental | clangd/LSP callers/callees, depth bounds and project-index persistence |
 | `dataset.list` | Host-native | Lists bounded host-approved dataset references and legacy files | Limited | Dataset registry, permissions/provenance and non-file sources |
-| `dataset.inspect` | Host-native | Returns bounded dataset identity, source and shape metadata | Limited | Workbook/sheet metadata and richer lineage |
-| `dataset.schema` | Host-native | Returns a bounded typed column schema | Limited | Type confidence, constraints and backend parity |
-| `dataset.sample` | Host-native | Returns a bounded sample from a dataset reference | Limited | Random/stratified sampling, seed handling and non-Cozo backends |
-| `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules | Limited | Range/type/regex rules, validation profiles and artifact reports |
+| `dataset.inspect` | Host-native | Accepts exactly one registered dataset, host-owned CSV resource or repository-relative path | Limited | Workbook/sheet metadata and richer lineage |
+| `dataset.schema` | Host-native | Returns a bounded typed column schema from exactly one approved source | Limited | Type confidence, constraints and backend parity |
+| `dataset.sample` | Host-native | Returns a bounded sample from exactly one approved source | Limited | Random/stratified sampling, seed handling and non-Cozo backends |
+| `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules against registered datasets, host-owned CSV resources or repository-relative paths; incomplete scans fail instead of reporting valid | Limited | Range/type/regex rules, validation profiles and artifact reports |
 | `data.query` | Store-backed | Executes a bounded backend-neutral structured query | Limited | Broader query language, materialized inputs and backend parity |
 | `data.filter` | Store-backed | Applies declarative predicates through the configured data store | Limited | More operators, typed values and derived dataset artifacts |
 | `data.aggregate` | Store-backed | Applies bounded grouping and aggregate operations | Limited | More aggregate functions, null semantics and provenance |
@@ -618,6 +618,21 @@ do not select implementations or host paths.
 | `artifact.export` | Store-backed artifact | Publishes bounded text or dataset results through the host resource store | Limited | Binary formats and richer provenance/retention policy |
 
 Maturity is a capability status, not a quality rating:
+
+The four dataset source tools accept exactly one of `dataset` (`dataset://`),
+`resource` (a host-owned resource reference), or `path` (relative to the
+configured repository root). The host resolves and authorizes the source; a
+model-provided path is never interpreted relative to the process working
+directory. `dataset.validate` currently scans CSV only and supports exactly
+`not_null` and `unique`, each naming an existing schema column. Unknown or
+malformed rules are errors, and reaching the bounded scan limit is not reported
+as a successful validation.
+
+MCP `tools/list` publishes each tool's canonical result schema as
+`outputSchema`. It describes `structuredContent` directly; MCP's outer
+`content`/`isError` transport envelope is not duplicated inside the schema.
+Remote MCP `outputSchema` is retained as the provider's result schema for
+result binding and planning. Older servers that omit it remain supported.
 
 * `Foundation` means the bounded host-native behavior is implemented and directly
   testable.

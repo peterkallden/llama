@@ -1,6 +1,9 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 
 int main() {
@@ -19,6 +22,8 @@ int main() {
     assert(tools[0].description.find("expression (required, string)") != std::string::npos);
     assert(tools[0].description.find("Returns:") != std::string::npos);
     assert(tools[0].parameters.find("expression") != std::string::npos);
+    const auto * math_definition = catalog.find_definition("math.calculate");
+    assert(math_definition != nullptr && tools[0].output_schema == math_definition->result_schema_json);
 
     common_chat_msg assistant;
     assistant.role = "assistant";

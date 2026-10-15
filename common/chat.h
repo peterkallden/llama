@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 using chat_template_caps = jinja::caps;
@@ -221,6 +222,19 @@ struct common_chat_msg_delimiters {
 };
 
 struct common_chat_tool {
+    common_chat_tool() = default;
+    common_chat_tool(
+            std::string tool_name,
+            std::string tool_description,
+            std::string tool_parameters,
+            std::string tool_result_schema = {},
+            std::string tool_output_schema = {})
+        : name(std::move(tool_name)),
+          description(std::move(tool_description)),
+          parameters(std::move(tool_parameters)),
+          result_schema(std::move(tool_result_schema)),
+          output_schema(std::move(tool_output_schema)) {}
+
     std::string name;
     std::string description;
     std::string parameters;
@@ -228,6 +242,9 @@ struct common_chat_tool {
     // render this field; planner/reflection prompt builders may use it to
     // describe values available for plan bindings.
     std::string result_schema;
+    // Canonical tool output schema. Unlike result_schema, this is not the
+    // model-facing projection and is suitable for exposing over MCP.
+    std::string output_schema;
 };
 
 enum common_chat_tool_choice {

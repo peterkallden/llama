@@ -3,6 +3,8 @@
 #include "agent/dataset-contracts.h"
 #include "plan/plan-json.h"
 
+#include <exception>
+
 bool common_tool_registry::register_tool(common_registered_tool tool, std::string & error) {
     if (tool.name.empty() || !tool.handler) { error = "registered tool requires a name and handler"; return false; }
     if (tools.count(tool.name)) { error = "tool is already registered"; return false; }
@@ -64,7 +66,17 @@ common_tool_execution_result common_tool_registry::execute(const common_register
     if (!normalize_and_validate(call, normalized, error)) {
         return common_tool_execution_result::failure("tool.invalid_arguments", common_tool_failure_class::validation, false, "Tool arguments do not satisfy the registered contract.", std::move(error));
     }
-    return tool->handler(normalized);
+    try {
+        return tool->handler(normalized);
+    } catch (const std::exception & exception) {
+        return common_tool_execution_result::failure(
+            "tool.executor_exception", common_tool_failure_class::execution, false,
+            "The tool failed unexpectedly.", exception.what());
+    } catch (...) {
+        return common_tool_execution_result::failure(
+            "tool.executor_exception", common_tool_failure_class::execution, false,
+            "The tool failed unexpectedly.", "tool handler threw a non-standard exception");
+    }
 }
 
 bool common_tool_registry::contains(const std::string & name) const {

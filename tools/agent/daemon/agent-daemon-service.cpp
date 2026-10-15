@@ -1920,7 +1920,27 @@ bool common_agent_daemon_service::execute_outcome(
             outcome.response_kind = common_agent_daemon_response_kind::tool;
             command_events.emit(common_agent_daemon_event_type::tool_queued, command.tool->tool_name);
             command_events.emit(common_agent_daemon_event_type::tool_started, command.tool->tool_name);
-            outcome.ok = runtime.tool_executor(*command.tool, outcome.tool_result, error);
+            try {
+                outcome.ok = runtime.tool_executor(*command.tool, outcome.tool_result, error);
+            } catch (const std::exception & exception) {
+                outcome.ok = false;
+                error = exception.what();
+                outcome.tool_result.ok = false;
+                outcome.tool_result.failure_code = "tool.executor_exception";
+                outcome.tool_result.failure_class = common_tool_failure_class::execution;
+                outcome.tool_result.retryable = false;
+                outcome.tool_result.safe_summary = "The tool failed unexpectedly.";
+                outcome.tool_result.raw_diagnostic = error;
+            } catch (...) {
+                outcome.ok = false;
+                error = "Tool executor threw a non-standard exception";
+                outcome.tool_result.ok = false;
+                outcome.tool_result.failure_code = "tool.executor_exception";
+                outcome.tool_result.failure_class = common_tool_failure_class::execution;
+                outcome.tool_result.retryable = false;
+                outcome.tool_result.safe_summary = "The tool failed unexpectedly.";
+                outcome.tool_result.raw_diagnostic = error;
+            }
             outcome.event = outcome.ok ? "tool_completed" : "tool_failed";
             outcome.error = error.empty() ? outcome.tool_result.raw_diagnostic : error;
             if (!outcome.tool_result.safe_summary.empty()) {

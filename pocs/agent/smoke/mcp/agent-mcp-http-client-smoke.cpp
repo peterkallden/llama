@@ -43,10 +43,21 @@ int main() {
             };
             response.set_header("Mcp-Session-Id", "http-smoke-session");
         } else if (method == "tools/list") {
+            const json output_schema = {
+                {"type", "object"},
+                {"required", {"matches"}},
+                {"properties", {
+                    {"matches", {
+                        {"type", "array"},
+                        {"items", {{"type", "string"}}},
+                    }},
+                }},
+            };
             result = {{"tools", json::array({json{
                 {"name", "search"},
                 {"description", "HTTP smoke search"},
                 {"inputSchema", {{"type", "object"}}},
+                {"outputSchema", output_schema},
             }})}};
         } else if (method == "tools/call") {
             result = {
@@ -107,7 +118,13 @@ int main() {
     mcp_agent_resource_read_result resource;
     const bool resource_read = resources_listed && client.read_resource(resources.front().resource.uri, resource, error);
 
-    if (!listed || tools.size() != 1 || !called || !call_result.ok ||
+    const auto expected_output_schema = json{{"type", "object"}, {"required", {"matches"}},
+        {"properties", {{"matches", {{"type", "array"}, {"items", {{"type", "string"}}}}}}}};
+    const auto parsed_output_schema = tools.empty()
+        ? json()
+        : json::parse(tools.front().result_schema_json, nullptr, false);
+    if (!listed || tools.size() != 1 || parsed_output_schema != expected_output_schema ||
+            !called || !call_result.ok ||
             call_result.text_content != "http smoke result" || !resources_listed ||
             resources.size() != 1 || !resource_read || resource.text_content != R"({"ok":true})" ||
             !auth_seen) {

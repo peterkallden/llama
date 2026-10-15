@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <exception>
 
 namespace {
 
@@ -245,11 +246,18 @@ bool agent_mcp_http_server::handle_message(
             if (!agent_mcp_policy_allows_tool(
                     policy, tool.name, tool.read_only, tool.requires_confirmation)) continue;
             const auto schema = agent_mcp_json::parse(tool.input_schema_json, nullptr, false);
-            tools.push_back({
+            agent_mcp_json tool_entry = {
                 {"name", tool.name},
                 {"description", tool.description},
                 {"inputSchema", schema.is_discarded() ? agent_mcp_json::object() : schema},
-            });
+            };
+            const auto output_schema = agent_mcp_json::parse(
+                tool.output_schema_json, nullptr, false);
+            if (output_schema.is_object()) {
+                tool_entry["outputSchema"] = agent_mcp_canonical_output_schema(
+                    tool.output_schema_json);
+            }
+            tools.push_back(std::move(tool_entry));
         }
         response = agent_mcp_make_json_rpc_result(id, {{"tools", std::move(tools)}});
         return true;
@@ -323,6 +331,7 @@ bool agent_mcp_http_server::handle_message(
                 name,
                 listed_tool->read_only,
                 listed_tool->requires_confirmation);
+        try {
         if (!caller_allowed) {
             error = "MCP tool is not allowed for caller policy: " + name;
             result.ok = false;
@@ -365,11 +374,32 @@ bool agent_mcp_http_server::handle_message(
             options_.execute_tool(policy, name, arguments, result, error);
         } else if (!registry.call_tool(name, arguments, result, error)) {
             result.ok = false;
-            result.failure_code = error.rfind("unknown MCP server tool:", 0) == 0
-                ? "tool.not_found" : "tool.invalid_arguments";
-            result.failure_class = result.failure_code == "tool.not_found" ? "not_found" : "validation";
-            result.safe_summary = error.empty() ? "MCP tool call is invalid." : error;
+            if (result.failure_code.empty()) {
+                result.failure_code = error.rfind("unknown MCP server tool:", 0) == 0
+                    ? "tool.not_found" : "tool.invalid_arguments";
+                result.failure_class = result.failure_code == "tool.not_found" ? "not_found" : "validation";
+            }
+            if (result.safe_summary.empty()) {
+                result.safe_summary = error.empty() ? "MCP tool call is invalid." : error;
+            }
             result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+        }
+        } catch (const std::exception & exception) {
+            result.ok = false;
+            result.failure_code = "tool.executor_exception";
+            result.failure_class = "execution";
+            result.retryable = false;
+            result.safe_summary = "The tool failed unexpectedly.";
+            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+            error = exception.what();
+        } catch (...) {
+            result.ok = false;
+            result.failure_code = "tool.executor_exception";
+            result.failure_class = "execution";
+            result.retryable = false;
+            result.safe_summary = "The tool failed unexpectedly.";
+            result.content = agent_mcp_json::array({{{"type", "text"}, {"text", result.safe_summary}}});
+            error = "MCP tool callback threw a non-standard exception";
         }
         response = agent_mcp_make_json_rpc_result(id, agent_mcp_render_tool_call_result(result));
         return true;

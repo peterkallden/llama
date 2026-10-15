@@ -4,12 +4,16 @@
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <stdexcept>
 
 class test_resource_store final : public agent_resource_store {
 public:
@@ -52,6 +56,15 @@ class test_data_store final : public common_agent_data_store {
 public:
     bool get_dataset_descriptor(const std::string & dataset_uri,
             common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        if (dataset_uri == "dataset://analysis/csv-sales") {
+            descriptor = stored_descriptor;
+            descriptor.ref.uri = dataset_uri;
+            descriptor.ref.source_resource_uri = "resource://uploads/sales.csv";
+            descriptor.ref.source_representation = "csv:dataset";
+            descriptor.origin.kind = "csv_resource";
+            descriptor.import_processor_id = "csv-resource-import-v1";
+            return true;
+        }
         if (dataset_uri != stored_descriptor.ref.uri && dataset_uri != "dataset://tool-events") {
             error = "unknown dataset";
             return false;
@@ -283,6 +296,14 @@ int main() {
     foundation_resources.available_uris.insert("resource://session/long-text");
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
+    foundation_bindings.dataset_from_resource = [](const std::string & resource, const std::string & operation) {
+        if (resource != "resource://uploads/sales.csv" || operation != "inspect") {
+            return common_tool_execution_result::failure(
+                "tool.dataset.resource_unavailable", common_tool_failure_class::not_found,
+                false, "CSV resource is unavailable.", "unexpected resource materialization request");
+        }
+        return common_tool_execution_result::success(R"({"dataset":"dataset://analysis/csv-sales"})");
+    };
     foundation_bindings.openapi_connect = [](const std::string & input) {
         const auto arguments = nlohmann::json::parse(input, nullptr, false);
         if (!arguments.is_object() || arguments.value("spec_resource", std::string{}).empty()) {
@@ -386,8 +407,41 @@ int main() {
            result.raw_diagnostic.find("choose one of: Sales (dataset://analysis/sales)") != std::string::npos);
     result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
     assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
-    result = foundation_registry.execute({"dataset.validate", R"({"dataset":"datasets/sample.csv","rules":[{"type":"not_null","column":"name"},{"type":"unique","column":"name"}]})"});
+    const std::string valid_rules = R"([{"type":"not_null","column":"name"},{"type":"unique","column":"name"}])";
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"path":"datasets/sample.csv","rules":)") + valid_rules + "}"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos &&
+           result.output.find("\"rows_checked\":2") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"dataset":"dataset://analysis/csv-sales","rules":)") + valid_rules + "}"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"dataset":"dataset://analysis/sales","rules":)") + valid_rules + "}"});
+    assert(!result.ok && result.failure_code == "tool.dataset.validate.unsupported_format");
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"resource":"resource://uploads/sales.csv","rules":)") + valid_rules + "}"});
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","dataset":"dataset://analysis/sales","rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"../outside.csv","rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"regex","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"unique"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"unique","column":"absent"}]})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.validate.invalid_rule");
+    common_registered_tool throwing_adapter;
+    throwing_adapter.name = "throwing_adapter";
+    throwing_adapter.version = 1;
+    throwing_adapter.executor_id = "test.throwing_adapter";
+    throwing_adapter.arguments_schema = R"({"type":"object"})";
+    throwing_adapter.handler = [](const std::string &) -> common_tool_execution_result {
+        throw std::runtime_error("adapter failure fixture");
+    };
+    assert(foundation_registry.register_tool(std::move(throwing_adapter), error));
+    result = foundation_registry.execute({"throwing_adapter", "{}"});
+    assert(!result.ok && result.failure_code == "tool.executor_exception" &&
+           result.raw_diagnostic == "adapter failure fixture");
     const auto saved_descriptor = foundation_data.stored_descriptor;
     common_tool_catalog data_catalog;
     common_tool_bootstrap_result data_bootstrap;

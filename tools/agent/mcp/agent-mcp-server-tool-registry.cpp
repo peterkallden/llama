@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <exception>
+
 namespace {
 
 const agent_mcp_server_tool * find_tool(
@@ -19,6 +21,17 @@ const agent_mcp_server_tool * find_tool(
 }
 
 } // namespace
+
+agent_mcp_json agent_mcp_canonical_output_schema(const std::string & result_schema_json) {
+    // MCP outputSchema validates structuredContent itself. The transport
+    // envelope (content/isError/structuredContent) is outside that object,
+    // and native tool output is the canonical result object, not a second
+    // synthetic {ok,result,...} wrapper.
+    auto schema = result_schema_json.empty()
+        ? agent_mcp_json::object()
+        : agent_mcp_json::parse(result_schema_json, nullptr, false);
+    return schema.is_object() ? schema : agent_mcp_json::object();
+}
 
 bool agent_mcp_server_tool_registry::register_tool(
         agent_mcp_server_tool tool,
@@ -132,6 +145,14 @@ agent_mcp_json agent_mcp_render_tools_list_result(
                 {"writesPlan", tool.writes_plan},
             }},
         });
+        if (!tool.output_schema_json.empty()) {
+            const auto output_schema = agent_mcp_json::parse(
+                tool.output_schema_json, nullptr, false);
+            if (output_schema.is_object()) {
+                tools.back()["outputSchema"] = agent_mcp_canonical_output_schema(
+                    tool.output_schema_json);
+            }
+        }
     }
     return {{"tools", std::move(tools)}};
 }
@@ -147,7 +168,7 @@ bool agent_mcp_register_native_tool_view(
             error = "native MCP tool view contains an unnamed tool";
             return false;
         }
-        if (!registry.register_tool({
+        agent_mcp_server_tool server_tool{
                 tool.name,
                 tool.description,
                 tool.parameters,
@@ -160,7 +181,9 @@ bool agent_mcp_register_native_tool_view(
                     handler_error = "native MCP tool requires the host dispatcher executor";
                     return false;
                 },
-            }, error)) {
+            };
+        server_tool.output_schema_json = tool.output_schema;
+        if (!registry.register_tool(std::move(server_tool), error)) {
             return false;
         }
     }

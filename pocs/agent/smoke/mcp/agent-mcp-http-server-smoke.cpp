@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <atomic>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -55,6 +56,7 @@ int main() {
             definition->description,
             common_tool_model_input_schema(*definition),
             common_tool_model_result_schema(*definition),
+            definition->result_schema_json,
         });
     }
     if (!agent_mcp_register_native_tool_view(
@@ -81,6 +83,7 @@ int main() {
                 result.safe_summary = arguments.at("text").get<std::string>();
                 return true;
             },
+            R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string"}}})",
         }, error)) {
         std::fprintf(stderr, "failed to register HTTP smoke tool: %s\n", error.c_str());
         return 1;
@@ -101,7 +104,6 @@ int main() {
         std::fprintf(stderr, "failed to register HTTP smoke write probe: %s\n", error.c_str());
         return 1;
     }
-
     auto authenticator = std::make_shared<agent_mcp_opaque_token_authenticator>();
     if (!authenticator->register_token("http-smoke-token-a", {
             "caller-a", "llama-agent", "namespace-a", "project-a", "minimal",
@@ -120,6 +122,10 @@ int main() {
             agent_tool_result & result,
             std::string & callback_error) {
         const auto arguments = json::parse(payload.arguments_json, nullptr, false);
+        if (payload.tool_name == "echo" && arguments.is_object() &&
+                arguments.value("text", "") == "throw") {
+            throw std::runtime_error("dispatcher smoke exception");
+        }
         if (arguments.is_discarded() || !arguments.is_object() ||
                 payload.tool_name != "echo" || arguments.value("text", "").empty()) {
             callback_error = "dispatcher tool executor rejected arguments";
@@ -153,8 +159,13 @@ int main() {
         common_agent_daemon_command_result command_result;
         if (!dispatcher.execute(command, command_result, callback_error)) {
             result.ok = false;
-            result.safe_summary = callback_error;
-            result.content = {{{"type", "text"}, {"text", callback_error}}};
+            result.failure_code = command_result.tool_result.failure_code.empty()
+                ? "agent.tool_execution_failed" : command_result.tool_result.failure_code;
+            result.failure_class = "execution";
+            result.retryable = command_result.tool_result.retryable;
+            result.safe_summary = command_result.tool_result.safe_summary.empty()
+                ? callback_error : command_result.tool_result.safe_summary;
+            result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
             return false;
         }
         result.ok = command_result.tool_result.ok;
@@ -162,6 +173,9 @@ int main() {
         if (result.structured_content.is_discarded()) result.structured_content = json::object();
         result.safe_summary = command_result.tool_result.content_summary;
         result.content = {{{"type", "text"}, {"text", result.safe_summary}}};
+        result.failure_code = command_result.tool_result.failure_code;
+        result.failure_class = "execution";
+        result.retryable = command_result.tool_result.retryable;
         callback_error = command_result.error;
         return result.ok;
     };
@@ -262,6 +276,7 @@ int main() {
                 result.safe_summary = arguments.at("text").get<std::string>();
                 return true;
             },
+            R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string"}}})",
         }, error) ||
             !replacement_registry.register_tool({
                 "write_probe",
@@ -282,6 +297,10 @@ int main() {
         R"({"jsonrpc":"2.0","id":9,"method":"tools/list","params":{}})", "application/json");
     const auto called = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hello"}}})", "application/json");
+    const auto throw_called = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"echo","arguments":{"text":"throw"}}})", "application/json");
+    const auto after_throw_called = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"echo","arguments":{"text":"after throw"}}})", "application/json");
     const auto task_called = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"echo","arguments":{"text":"task hello"},"task":{"ttl":10000}}})", "application/json");
     const auto task_called_json = task_called ? json::parse(task_called->body, nullptr, false) : json();
@@ -400,6 +419,8 @@ int main() {
         ? json::parse(unsupported_initialize->body, nullptr, false) : json();
     const auto reloaded_listed_json = reloaded_listed ? json::parse(reloaded_listed->body, nullptr, false) : json();
     const auto called_json = called ? json::parse(called->body, nullptr, false) : json();
+    const auto throw_called_json = throw_called ? json::parse(throw_called->body, nullptr, false) : json();
+    const auto after_throw_called_json = after_throw_called ? json::parse(after_throw_called->body, nullptr, false) : json();
     const auto task_get_json = task_get ? json::parse(task_get->body, nullptr, false) : json();
     const auto task_result_json = task_result ? json::parse(task_result->body, nullptr, false) : json();
     const auto invalid_json = invalid ? json::parse(invalid->body, nullptr, false) : json();
@@ -417,8 +438,20 @@ int main() {
     };
     const bool catalog_tools_exposed = std::all_of(
         catalog_tools.begin(), catalog_tools.end(), has_listed_tool);
+    bool aggregate_output_schema_matches = false;
+    if (listed_json.is_object() && listed_json.contains("result") &&
+            listed_json["result"].contains("tools")) {
+        for (const auto & tool : listed_json["result"]["tools"]) {
+            if (tool.value("name", "") != "data.aggregate") continue;
+            const auto * definition = catalog.find_definition("data.aggregate");
+            aggregate_output_schema_matches = definition != nullptr &&
+                tool.value("outputSchema", json::object()) ==
+                json::parse(definition->result_schema_json, nullptr, false);
+            break;
+        }
+    }
     const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 6 &&
-        catalog_tools_exposed &&
+        catalog_tools_exposed && aggregate_output_schema_matches &&
         missing_protocol && missing_protocol->status == 400 &&
         invalid_cursor && invalid_cursor->status == 400 &&
         initialize_json["result"]["protocolVersion"] == "2025-11-25" &&
@@ -427,7 +460,13 @@ int main() {
         unsupported_initialize_json["error"]["code"] == -32602 &&
         reloaded_listed && reloaded_listed->status == 200 &&
         reloaded_listed_json["result"]["tools"][0]["description"] == "HTTP inbound smoke echo after catalog reload" &&
+        reloaded_listed_json["result"]["tools"][0]["outputSchema"] ==
+            json::parse(R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string"}}})") &&
         called && called->status == 200 && called_json["result"]["structuredContent"]["text"] == "hello" &&
+        throw_called && throw_called->status == 200 && throw_called_json["result"]["isError"] == true &&
+        throw_called_json["result"]["errorInfo"]["code"] == "tool.executor_exception" &&
+        after_throw_called && after_throw_called->status == 200 &&
+        after_throw_called_json["result"]["structuredContent"]["text"] == "after throw" &&
         task_called && task_called->status == 200 && !task_id.empty() &&
         task_get && task_get->status == 200 && task_get_json["result"]["taskId"] == task_id &&
         task_result && task_result->status == 200 && task_result_json["result"]["structuredContent"]["text"] == "task hello" &&
@@ -455,9 +494,17 @@ int main() {
 
     server_thread.join();
     if (!ok) {
-        std::fprintf(stderr, "HTTP inbound server smoke failed init=%d listed=%d task_called=%d task_get=%d task_result=%d cleanup=%d other_cleanup=%d\n",
+        std::fprintf(stderr, "HTTP inbound server smoke failed init=%d listed=%d count=%zu catalog=%d aggregate_schema=%d reloaded_schema=%d called=%d throw=%d after_throw=%d task_called=%d task_get=%d task_result=%d cleanup=%d other_cleanup=%d\n",
             initialize_json["result"]["protocolVersion"] == "2025-11-25",
             listed ? listed->status : 0,
+            listed_json["result"]["tools"].size(),
+            catalog_tools_exposed,
+            aggregate_output_schema_matches,
+            reloaded_listed_json["result"]["tools"][0].value("outputSchema", json::object()) ==
+                json::parse(R"({"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string"}}})"),
+            called ? called->status : 0,
+            throw_called ? throw_called->status : 0,
+            after_throw_called ? after_throw_called->status : 0,
             task_called ? task_called->status : 0,
             task_get ? task_get->status : 0,
             task_result ? task_result->status : 0,
@@ -466,6 +513,7 @@ int main() {
         if (task_called) std::fprintf(stderr, "task_called=%s\n", task_called->body.c_str());
         if (task_get) std::fprintf(stderr, "task_get=%s\n", task_get->body.c_str());
         if (task_result) std::fprintf(stderr, "task_result=%s\n", task_result->body.c_str());
+        if (throw_called) std::fprintf(stderr, "throw_called=%s\n", throw_called->body.c_str());
         return 1;
     }
     if (!stream_ok) {
