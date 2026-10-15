@@ -2241,6 +2241,7 @@ void apply_agent_host_config_to_args(
     options.mcp_providers = config.mcp_providers;
     options.openapi_providers = config.openapi_providers;
     options.sandbox = config.sandbox;
+    options.diagnostics = config.diagnostics;
     options.repository_root = config.repository_root;
     options.resource_blob_backend = config.resource_blob_backend;
     options.resource_blob_root = config.resource_blob_root;

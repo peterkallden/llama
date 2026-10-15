@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context",
+    "path": "MODEL.gguf"
+  },
+  "runtime": {
+    "default_mode": "agent",
+    "thinking_mode": "research",
+    "n_predict": 256,
+    "n_threads": 4,
+    "n_gpu_layers": 99,
+    "context_size": 8192
+  },
+  "stores": {
+    "data": {
+      "backend": "cozo",
+      "path": "var/codex-mcp-tool-audit/structured.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "fs",
+    "blob_root": "var/codex-mcp-tool-audit/resources",
+    "metadata_backend": "cozo",
+    "metadata_db": "var/codex-mcp-tool-audit/resources.cozo",
+    "processor_policies": {
+      "docx.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "pandoc"
+      },
+      "xlsx.workbook": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "python",
+        "script": "scripts/agent-xlsx-to-json.py"
+      }
+    }
+  },
+  "tools": {
+    "profile": "codex-tools-audit",
+    "repository_root": "../..",
+    "include_dir": "openalex-provider.d",
+    "families": {
+      "openalex": {
+        "description": "Search OpenAlex works and entities, inspect metadata and open-access full-text locations"
+      }
+    },
+    "capabilities": {
+      "codex.audit.read": [
+        "math.calculate",
+        "time.now",
+        "memory.search",
+        "memory.get",
+        "memory.inspect",
+        "memory.conflict_check",
+        "plan.get",
+        "repository.list",
+        "repository.search",
+        "repository.read",
+        "repository.diff",
+        "repository.log",
+        "repository.status",
+        "repository.changed_files",
+        "workspace.list",
+        "workspace.read",
+        "workspace.search",
+        "diagnostics.compile",
+        "diagnostics.symbol",
+        "diagnostics.references",
+        "diagnostics.call_hierarchy",
+        "diagnostics.test_failures",
+        "diagnostics.format",
+        "diagnostics.include_graph",
+        "diagnostics.native_crash",
+        "dataset.list",
+        "dataset.select",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.sample",
+        "dataset.validate",
+        "data.query",
+        "data.filter",
+        "data.aggregate",
+        "data.join",
+        "data.transform",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts",
+        "resource.inspect",
+        "resource.read",
+        "document.tables",
+        "document.table",
+        "web.search",
+        "web.fetch",
+        "openapi.connect"
+      ]
+    },
+    "profiles": {
+      "codex-tools-audit": {
+        "include_capabilities": ["codex.audit.read"],
+        "allow_network": true,
+        "allow_policy_gated_writes": false
+      }
+    }
+  },
+  "diagnostics": {
+    "semantic_backend": "auto",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "auto"
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "tool_timeout_ms": 30000,
+    "mcp_request_timeout_ms": 30000
+  }
+}

@@ -7,6 +7,7 @@
 #include "agent/sandbox/sandbox-host-config.h"
 #include "tools/agent/host/agent-host-mcp-provider-config.h"
 #include "tools/agent/host/agent-host-openapi-provider-config.h"
+#include "tools/agent/host/agent-diagnostics-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "plan/plan-store.h"
@@ -104,6 +105,7 @@ struct args {
     std::map<std::string, std::string> tool_family_descriptions;
     std::map<std::string, common_tool_profile> tool_profiles;
     common_agent_sandbox_host_config sandbox;
+    agent_host_diagnostics_config diagnostics;
     bool thinking_mode_explicit = false;
     bool memory_learn_explicit = false;
     bool agent_profile_explicit = false;

@@ -576,11 +576,15 @@ agent_host_tool_selection_request make_server_tool_selection_request(
         options.resource_metadata_backend,
         options.resource_metadata_db,
     };
+    request.data_store_config = {options.data_backend, options.data_db};
     request.tool_capabilities = options.tool_capabilities;
+    request.tool_family_descriptions = options.tool_family_descriptions;
     request.tool_profiles = options.tool_profiles;
     request.sandbox = options.sandbox;
     request.resource_processor_policies = options.resource_processor_policies;
+    request.diagnostics = options.diagnostics;
     append_configured_stdio_mcp_providers(configured_mcp_providers, request.mcp_providers);
+    request.openapi_providers = options.openapi_providers;
     return request;
 }
 
