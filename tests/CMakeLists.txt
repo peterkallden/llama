@@ -499,6 +499,10 @@ test-agent-flydelta-alpha-response-search.cpp
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp")
+            target_include_directories(${TEST_NAME} PRIVATE ${COZO_INCLUDE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE ${COZO_LIBRARY})
+        endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
         if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-resource-chunker|plan-cozo|tool-catalog|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
