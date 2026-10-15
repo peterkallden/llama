@@ -45,10 +45,12 @@
     },
     "classes": {
       "resource.processor.pdf.page_image": {
+        "timeout_ms": 180000,
         "max_output_bytes": 4194304,
         "filesystem": "artifact_write"
       },
       "resource.processor.ocr.tesseract": {
+        "timeout_ms": 180000,
         "max_output_bytes": 4194304,
         "filesystem": "artifact_write"
       }

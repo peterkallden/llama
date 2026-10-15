@@ -168,7 +168,7 @@
     },
     "classes": {
       "resource.processor.pdf.page_image": {
-        "timeout_ms": 120000,
+        "timeout_ms": 180000,
         "cpu_count": 1,
         "max_output_bytes": 4194304,
         "memory_bytes": 2147483648,
@@ -177,7 +177,7 @@
         "allow_artifacts": true
       },
       "resource.processor.ocr.tesseract": {
-        "timeout_ms": 120000,
+        "timeout_ms": 180000,
         "cpu_count": 1,
         "max_output_bytes": 4194304,
         "network": "none",

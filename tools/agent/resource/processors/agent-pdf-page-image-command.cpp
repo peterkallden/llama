@@ -1,4 +1,5 @@
 #include "agent-pdf-page-image-command.h"
+#include "tools/agent/resource/agent-resource-processor-defaults.h"
 
 #include <charconv>
 #include <cctype>
@@ -84,7 +85,7 @@ bool make_agent_pdf_page_image_request(
     request.workspace_id = workspace_id;
     request.execution_class = "resource.processor.pdf.page_image";
     request.workspace.input_resources.push_back(source);
-    request.limits.timeout_ms = 120000;
+    request.limits.timeout_ms = AGENT_RESOURCE_PROCESSOR_DEFAULT_TIMEOUT_MS;
     request.limits.max_output_bytes = options.max_output_bytes;
     request.network = common_agent_sandbox_network_scope::none;
     request.filesystem = common_agent_sandbox_filesystem_scope::artifact_write;
@@ -159,7 +160,7 @@ bool make_agent_pdf_page_count_request(
     request.workspace_id = workspace_id;
     request.execution_class = "resource.processor.pdf.page_image";
     request.workspace.input_resources.push_back(source);
-    request.limits.timeout_ms = 120000;
+    request.limits.timeout_ms = AGENT_RESOURCE_PROCESSOR_DEFAULT_TIMEOUT_MS;
     request.limits.max_output_bytes = 65536;
     request.network = common_agent_sandbox_network_scope::none;
     request.filesystem = common_agent_sandbox_filesystem_scope::readonly;

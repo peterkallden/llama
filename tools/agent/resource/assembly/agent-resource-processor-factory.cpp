@@ -1,4 +1,5 @@
 #include "agent-resource-processor-factory.h"
+#include "tools/agent/resource/agent-resource-processor-defaults.h"
 
 #include "tools/agent/resource/agent-resource-processing-host.h"
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
@@ -52,6 +53,12 @@ common_agent_sandbox_policy make_sandbox_policy(
     } else if (const size_t class_default = agent_resource_processor_default_sandbox_output_bytes(execution_class);
             class_default != 0) {
         policy.limits.max_output_bytes = class_default;
+    }
+    if (it == assembly.sandbox_classes.end()) {
+        if (const uint32_t class_default = agent_resource_processor_default_sandbox_timeout_ms(execution_class);
+                class_default != 0) {
+            policy.limits.timeout_ms = class_default;
+        }
     }
     policy.execution_class = execution_class;
     if (!image.empty()) policy.image = image;

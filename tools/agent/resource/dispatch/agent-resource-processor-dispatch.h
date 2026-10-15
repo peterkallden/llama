@@ -3,24 +3,9 @@
 #include "common/resource/resource-contract.h"
 
 #include <array>
-#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
-
-// Page rendering and OCR commonly produce outputs larger than the generic
-// sandbox command budget. Keep the larger cap scoped to these host-owned
-// processor classes; arbitrary sandbox commands retain the conservative
-// common_agent_sandbox_limits default.
-inline constexpr size_t AGENT_RESOURCE_PROCESSOR_DEFAULT_OUTPUT_BYTES = 4 * 1024 * 1024;
-
-inline size_t agent_resource_processor_default_sandbox_output_bytes(const std::string & execution_class) {
-    if (execution_class == "resource.processor.pdf.page_image" ||
-            execution_class == "resource.processor.ocr.tesseract") {
-        return AGENT_RESOURCE_PROCESSOR_DEFAULT_OUTPUT_BYTES;
-    }
-    return 0;
-}
 
 // Host-owned processor selection. This is deliberately independent of model
 // input: the resolver only combines configured processor policies with the

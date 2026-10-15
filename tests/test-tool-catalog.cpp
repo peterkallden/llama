@@ -228,7 +228,7 @@ int main() {
     }
 
     const auto * resource_read = catalog.find_definition("resource.read");
-    assert(resource_read);
+    assert(resource_read && resource_read->timeout_ms == 180000);
     const auto resource_schema = nlohmann::json::parse(resource_read->input_schema_json);
     const auto resource_model_schema = nlohmann::json::parse(resource_read->model_input_schema_json);
     assert(resource_model_schema["required"].size() == 1);
