@@ -11,8 +11,8 @@
   "tools": {
     "profile": "local-minimal",
     "capabilities": {
-      "utility.read": ["calculator", "time_now"],
-      "memory.read": ["memory_search", "memory_get"]
+      "utility.read": ["math.calculate", "time.now"],
+      "memory.read": ["memory.search", "memory.get"]
     },
     "profiles": {
       "local-minimal": {

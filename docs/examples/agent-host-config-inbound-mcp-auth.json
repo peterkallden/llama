@@ -25,9 +25,9 @@
           "audience": "llama-agent",
           "namespace": "local",
           "project": "default",
-          "tool_profile": "minimal",
+          "tool_profile": "developer-read",
           "allowed_tools": [
-            "calculator",
+            "math.calculate",
             "repository.read"
           ],
           "allow_writes": false

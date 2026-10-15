@@ -222,6 +222,10 @@ int main() {
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src"})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/missing.txt"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::not_found);
     result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
     assert(result.ok && result.output.find("needle in a haystack") != std::string::npos);
     result = repository_registry.execute({"web_search", R"({"query":"llama","limit":1})"});

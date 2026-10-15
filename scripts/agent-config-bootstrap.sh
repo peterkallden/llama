@@ -144,25 +144,27 @@ Internal agent capabilities (always available to the agent):
   memory, planning, deliberation, reflection, research, resources
 
 External catalog tools (exposure is policy-controlled):
-  calculator
-  time_now
-  memory_search, memory_get
-  memory_inspect, memory_conflict_check
-  memory_remember, memory_propose_update, memory_propose_forget
-  memory_link, memory_compact_propose
+  math.calculate
+  time.now
+  memory.search, memory.get, memory.inspect, memory.conflict_check
+  memory.remember, memory.propose_update, memory.propose_forget
+  memory.link, memory.compact_propose
+  oracle.ruleset.define, oracle.action.verify, oracle.goal.search
   plan_get, plan_propose
   repository.list, repository.search, repository.read
   repository.diff, repository.log, repository.status, repository.changed_files
   workspace.list, workspace.read, workspace.search, workspace.patch
   diagnostics.compile, diagnostics.symbol, diagnostics.references
-  diagnostics.call_hierarchy, diagnostics.test_failures
-  diagnostics.format, diagnostics.include_graph
-  dataset.list, dataset.inspect, dataset.schema, dataset.sample, dataset.validate
+  diagnostics.call_hierarchy, diagnostics.test_failures, diagnostics.format
+  diagnostics.include_graph, diagnostics.native_crash
+  dataset.list, dataset.select, dataset.inspect, dataset.schema
+  dataset.sample, dataset.validate
+  document.tables, document.table
   data.query, data.filter, data.aggregate, data.join, data.transform
   statistics.describe, statistics.outliers, statistics.value_counts
   artifact.export
-  resource_read
-  web_search, web_fetch
+  resource.inspect, resource.read
+  web.search, web.fetch, openapi.connect
   development.build, development.test
 
 Use --enable-tools with a comma-separated subset when configuring an

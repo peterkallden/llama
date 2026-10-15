@@ -144,11 +144,43 @@ bool common_try_register_repository_tool_adapter(
             if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) return common_adapter_validation_failure("tool.repository.search.out_of_bounds", "repository.search arguments are out of bounds", "Repository search arguments are out of bounds.");
             std::filesystem::path root;
             if (!repository_path(bindings.repository_root, arguments.value("path", std::string{}), root, error)) return common_adapter_validation_failure("tool.repository.search.invalid_path", std::move(error), "Repository path is outside the allowed root.");
+            std::filesystem::path repository_root;
+            if (!repository_path(bindings.repository_root, {}, repository_root, error)) return common_adapter_validation_failure("tool.repository.search.invalid_root", std::move(error), "Repository root could not be resolved.");
+            std::error_code fs_error;
+            const bool path_exists = std::filesystem::exists(root, fs_error);
+            if (fs_error) return common_adapter_failure("tool.repository.search.path_error", common_tool_failure_class::execution, false, "Repository search path could not be inspected.", fs_error.message());
+            if (!path_exists) return common_adapter_not_found_failure("tool.repository.search.path_not_found", "repository.search path was not found", "Repository search path was not found.");
+            const bool is_file = std::filesystem::is_regular_file(root, fs_error);
+            if (fs_error) return common_adapter_failure("tool.repository.search.path_error", common_tool_failure_class::execution, false, "Repository search path could not be inspected.", fs_error.message());
+            const bool is_directory = !is_file && std::filesystem::is_directory(root, fs_error);
+            if (fs_error) return common_adapter_failure("tool.repository.search.path_error", common_tool_failure_class::execution, false, "Repository search path could not be inspected.", fs_error.message());
+            if (!is_file && !is_directory) return common_adapter_validation_failure("tool.repository.search.invalid_path_type", "repository.search path must be a file or directory", "Repository search path must be a text file or directory.");
             json matches = json::array();
-            for (auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied); it != std::filesystem::recursive_directory_iterator() && matches.size() < static_cast<size_t>(limit); ++it) {
-                if (!it->is_regular_file() || it->file_size() > 512 * 1024 || !text_file(it->path())) continue;
-                std::ifstream file(it->path()); std::string line;
-                for (int number = 1; std::getline(file, line) && matches.size() < static_cast<size_t>(limit); ++number) if (line.find(query) != std::string::npos) matches.push_back({{"path", std::filesystem::relative(it->path(), bindings.repository_root).generic_string()}, {"line", number}, {"preview", line.substr(0, 512)}});
+            const auto scan_file = [&](const std::filesystem::path & candidate) {
+                std::error_code candidate_error;
+                if (!std::filesystem::is_regular_file(candidate, candidate_error) || candidate_error) return;
+                const auto size = std::filesystem::file_size(candidate, candidate_error);
+                if (candidate_error || size > 512 * 1024 || !text_file(candidate)) return;
+                std::ifstream file(candidate);
+                std::string line;
+                for (int number = 1; std::getline(file, line) && matches.size() < static_cast<size_t>(limit); ++number) {
+                    if (line.find(query) == std::string::npos) continue;
+                    matches.push_back({{"path", candidate.lexically_relative(repository_root).generic_string()},
+                        {"line", number}, {"preview", line.substr(0, 512)}});
+                }
+            };
+            if (is_file) {
+                scan_file(root);
+            } else {
+                std::filesystem::recursive_directory_iterator it(
+                    root, std::filesystem::directory_options::skip_permission_denied, fs_error);
+                const std::filesystem::recursive_directory_iterator end;
+                if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false, "Repository search could not open the requested directory.", fs_error.message());
+                while (it != end && matches.size() < static_cast<size_t>(limit)) {
+                    scan_file(it->path());
+                    it.increment(fs_error);
+                    if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false, "Repository search could not continue through the requested directory.", fs_error.message());
+                }
             }
             return common_adapter_success_json({{"matches", matches}});
         }, error);

@@ -4578,18 +4578,22 @@ backend is configured.
 
 | Tool/capability group | Available through real MCP stdio server | What it requires today |
 | --- | --- | --- |
-| `calculator`, `time_now` | Yes | A profile containing the tools, such as `minimal` |
-| Memory reads: `memory_search`, `memory_get`, `memory_inspect`, `memory_conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
-| Memory proposals: `memory_remember`, `memory_propose_update`, `memory_propose_forget`, `memory_link`, `memory_compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
+| `math.calculate`, `time.now` | Yes | A profile containing the tools, such as `minimal` |
+| Memory reads: `memory.search`, `memory.get`, `memory.inspect`, `memory.conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
+| Memory proposals: `memory.remember`, `memory.propose_update`, `memory.propose_forget`, `memory.link`, `memory.compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
+| Semi-oracle: `oracle.ruleset.define`, `oracle.action.verify`, `oracle.goal.search` | Yes, when bound | The `semi-oracle` profile and an active supported session ruleset |
 | Planning: `plan_get`, `plan_propose` | Yes, when bound | A matching profile and plan store; `plan_get` is useful with a bound `plan_id` |
-| Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root` |
+| Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; `repository.search` accepts either a file or directory path |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
-| Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
-| Dataset: `dataset.list`, `dataset.inspect`, `dataset.schema`, `dataset.sample`, `dataset.validate` | Yes | A matching profile and host-owned repository/workspace root; current file support is bounded, with CSV as the primary implementation |
+| Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.call_hierarchy`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph`, `diagnostics.native_crash` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
+| Dataset: `dataset.list`, `dataset.select`, `dataset.inspect`, `dataset.schema`, `dataset.sample`, `dataset.validate` | Yes | A matching profile and host-owned repository/workspace root; current file support is bounded, with CSV as the primary implementation |
+| Documents: `document.tables`, `document.table` | Yes, when bound | A matching profile and readable resource/document processor |
 | Structured data: `data.query`, `data.filter`, `data.aggregate`, `data.join`, `data.transform`, `statistics.describe`, `statistics.outliers` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
-| `resource_read` and `artifact.export` | Yes, when bound | A matching profile and host-owned resource store; artifact output remains bounded |
-| Network: `web_search`, `web_fetch` | Yes, when allowed | A matching profile, network policy and the host's safe network provider |
+| Statistics: `statistics.value_counts` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
+| `resource.inspect`, `resource.read` and `artifact.export` | Yes, when bound | A matching profile and host-owned resource store; artifact output remains bounded |
+| Network: `web.search`, `web.fetch` | Yes, when allowed | A matching profile, network policy and the host's safe network provider |
+| OpenAPI: `openapi.connect` | Yes, when allowed | A matching profile, fetched specification resource and host admission policy |
 | `resources/list` and `resources/read` | Yes | The real MCP stdio server owns a scoped host resource store and exposes host-authorized resource descriptors and reads |
 | External MCP subprocess tools such as prefixed `github_search_issues` | Yes, when configured | Host configuration enabling an stdio MCP provider with a prefix and command |
 | Full agent/planning runtime, reflection loop and memory-learning loop | No | These are runtime behaviors, not MCP tools in the current surface |

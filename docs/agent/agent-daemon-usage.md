@@ -496,7 +496,7 @@ Profiles can be defined in host configuration through capabilities:
     "profile": "local-developer",
     "capabilities": {
       "workspace.read": ["repository.list", "repository.read", "repository.search"],
-      "research.read": ["web_search", "web_fetch"]
+      "research.read": ["web.search", "web.fetch"]
     },
     "profiles": {
       "local-developer": {

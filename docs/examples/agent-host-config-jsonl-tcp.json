@@ -23,7 +23,7 @@
           "namespace": "container",
           "project": "example",
           "tool_profile": "minimal",
-          "allowed_tools": ["calculator"],
+          "allowed_tools": ["math.calculate"],
           "allow_writes": false,
           "allow_admin": false
         },
