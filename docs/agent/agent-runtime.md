@@ -4572,11 +4572,11 @@ There is now also a first MCP-shaped provider slice beside the native one. `mcp_
 That seam now has two concrete test paths:
 
 - an in-process fake MCP client used to exercise provider filtering and result normalization
-- a first stdio-based MCP client adapter that speaks JSON-RPC-style `Content-Length` framed messages to a subprocess
+- a stdio-based MCP client adapter that exchanges newline-delimited JSON-RPC messages with a subprocess
 
 The stdio client is still deliberately small. It is enough to prove the provider boundary through a real child process with `initialize`, `tools/list`, `tools/call`, `resources/list`, and `resources/read`. The subprocess is started with the async/no-wait sheredom options, and all stdout response reads use `subprocess_read_stdout()` into an incremental byte buffer. The client must not mix those options with blocking `FILE*` reads such as `fgetc()` or `fread()`; on Windows that can leave a pipe read blocked and can also make timeout cleanup hang while joining a reader thread. A request deadline now terminates the child process on expiry, while the no-deadline configuration uses the same non-blocking subprocess read path without imposing a synthetic deadline. Reconnect logic, approval model, streaming event path, and broader capability surface remain deferred.
 
-The regression contract is covered by `llama-agent-mcp-stdio-client-smoke`, registered as `llama-agent-mcp-stdio-client-ctest` under the `agent` label. The smoke exercises ordinary framed responses, malformed-server diagnostics, and a hanging `tools/list` server that must be terminated within the configured request deadline. This is intentionally a transport-lifecycle check rather than a newline-format check: MCP framing remains `Content-Length` plus CRLF separators, but the transport read API is the portability boundary.
+The regression contract is covered by `llama-agent-mcp-stdio-client-smoke`, registered as `llama-agent-mcp-stdio-client-ctest` under the `agent` label. The smoke exercises newline-delimited responses, malformed-server diagnostics, and a hanging `tools/list` server that must be terminated within the configured request deadline. Client and server share the bounded JSON-line parser. The server smoke also feeds literal wire messages independently of our client, covering fragmented/buffered messages, escaped newlines, version negotiation, absent capabilities and actual calls. MCP stdio uses one compact JSON object per line; `Content-Length` belongs to the separate clangd/LSP transport and must not be used for MCP.
 
 On the server side, the subprocess path is now also a little more explicit. There is a small reusable stdio MCP server core in the PoC layer: JSON-RPC framing helpers, a tiny server-side tool registry, and a stdio server loop that dispatches `initialize`, `tools/list`, `tools/call`, `shutdown`, and `exit`. The older fake subprocess now reuses that same core, and the first real PoC MCP stdio server binary now exports a host-resolved tool surface through the same catalog/provider/bindings path used by the host runtime. That keeps the current subprocess path from drifting into a second ad hoc server shape while still staying much smaller than a full agent daemon or broader MCP host surface.
 
@@ -4632,7 +4632,7 @@ This is also the cleanest way to think about memory, planning and resources thro
 
 So the current MCP stdio server is best understood as "native tool export through an MCP transport seam", not yet as "the agent runtime itself exposed as an MCP server".
 
-Even in this small slice, the stdio client now does a little more than the original smoke seam: it switches Windows stdio pipes to binary framing for `Content-Length` transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and can map structured MCP-side tool error metadata back into the shared failure contract used by native tools.
+The stdio client uses binary-mode Windows pipes for consistent newline-delimited JSON transport, attempts a best-effort `shutdown` plus `exit` sequence before tearing down the child process, and maps structured MCP-side tool error metadata back into the shared failure contract used by native tools.
 
 The stdio client now also keeps a small stderr tail from the MCP child and appends it to transport-level failures when the subprocess exits early or emits malformed JSON-RPC data. That keeps the first real subprocess smoke debuggable without pulling in a larger async lifecycle or logging subsystem yet.
 
@@ -5562,7 +5562,7 @@ complete list of every CTest or smoke executable:
 - `llama-agent-mcp-tool-provider-smoke`
 - `llama-agent-mcp-agent-tools-smoke`, verifying the explicit opt-in `delegate_task`, `summarize`, and `review_plan` MCP tool profile, including tool filtering, write-policy rejection, delegation-depth bounds, and dispatcher callback failure mapping
 - `llama-agent-mcp-http-vertical-smoke`, verifying the first complete inbound vertical path: MCP `delegate_task`, deliberate request with host escalation to research, plan creation, research gap/evidence acquisition through `memory.get` and `resource.read`, answer verification, a separate SSE event stream, and a result-only terminal response
-- `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including normal framed reads, malformed `tools/list` diagnostics, and bounded termination of a hanging server
+- `llama-agent-mcp-stdio-client-smoke`, verifying the client/provider path against the reusable fake stdio MCP server core, including newline-delimited reads, malformed `tools/list` diagnostics, and bounded termination of a hanging server
 - `llama-agent-mcp-stdio-server-smoke`, verifying the same client/provider path against the first real PoC stdio MCP server binary while exporting host-resolved tool surfaces such as `minimal`, `research`, and `research` plus configured external MCP subprocess tools
 - MCP-related subprocess smokes now also rebuild their helper server targets explicitly before execution, which closes the stale-helper regression that previously surfaced as a misleading `resources/list` hang in the client smoke
 - `llama-agent-tool-runtime-smoke`, verifying structured trace history across plan creation, tool execution, and final response completion

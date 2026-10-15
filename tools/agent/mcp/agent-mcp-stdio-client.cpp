@@ -30,80 +30,6 @@ std::vector<char *> to_cstr_vec(const std::vector<std::string> & values) {
     return result;
 }
 
-bool write_json_rpc_message(FILE * stream, const json & message, std::string & error) {
-    error.clear();
-    const std::string body = message.dump();
-    const std::string framed =
-        "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
-
-    if (std::fwrite(framed.data(), 1, framed.size(), stream) != framed.size()) {
-        error = "failed to write MCP request";
-        return false;
-    }
-    if (std::fflush(stream) != 0) {
-        error = "failed to flush MCP request";
-        return false;
-    }
-    return true;
-}
-
-bool try_parse_buffered_json_rpc_message(
-        std::string & buffer,
-        json & message,
-        std::string & error) {
-    message = json();
-    error.clear();
-
-    const size_t header_end = buffer.find("\r\n\r\n");
-    if (header_end == std::string::npos) {
-        return false;
-    }
-
-    size_t content_length = 0;
-    bool have_content_length = false;
-    size_t line_begin = 0;
-    while (line_begin < header_end) {
-        size_t line_end = buffer.find("\r\n", line_begin);
-        if (line_end == std::string::npos || line_end > header_end) {
-            line_end = header_end;
-        }
-        std::string line = buffer.substr(line_begin, line_end - line_begin);
-        constexpr const char * prefix = "Content-Length:";
-        if (line.rfind(prefix, 0) == 0) {
-            std::string value = line.substr(std::strlen(prefix));
-            while (!value.empty() && value.front() == ' ') {
-                value.erase(value.begin());
-            }
-            content_length = static_cast<size_t>(std::strtoull(value.c_str(), nullptr, 10));
-            have_content_length = true;
-        }
-        line_begin = line_end + 2;
-    }
-
-    if (!have_content_length) {
-        error = "MCP server response missing Content-Length header";
-        return true;
-    }
-
-    const size_t body_begin = header_end + 4;
-    const size_t frame_end = body_begin + content_length;
-    if (buffer.size() < frame_end) {
-        return false;
-    }
-
-    const std::string body = buffer.substr(body_begin, content_length);
-    const auto parsed = json::parse(body, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object()) {
-        error = "MCP server returned invalid JSON-RPC payload";
-        buffer.erase(0, frame_end);
-        return true;
-    }
-
-    message = parsed;
-    buffer.erase(0, frame_end);
-    return true;
-}
-
 bool read_json_rpc_message_from_subprocess(
         subprocess_s & process,
         std::string & buffer,
@@ -111,7 +37,7 @@ bool read_json_rpc_message_from_subprocess(
         std::string & error,
         std::optional<std::chrono::steady_clock::time_point> deadline) {
     for (;;) {
-        if (try_parse_buffered_json_rpc_message(buffer, message, error)) {
+        if (parse_mcp_stdio_message(buffer, message, error)) {
             return error.empty();
         }
         if (deadline.has_value() && std::chrono::steady_clock::now() >= *deadline) {
@@ -127,7 +53,7 @@ bool read_json_rpc_message_from_subprocess(
         }
         if (!subprocess_alive(&process)) {
             if (buffer.empty()) {
-                error = "MCP server response missing Content-Length header";
+                error = "MCP server closed stdout before a JSON-RPC response";
             } else {
                 error = "failed to read complete MCP server response body";
             }
@@ -244,6 +170,11 @@ bool agent_mcp_stdio_client::ensure_started(
         return false;
     }
 
+    if (!common_mcp_is_supported_protocol_version(response["result"].value("protocolVersion", ""))) {
+        error = "MCP initialize response selected an unsupported protocol version";
+        return false;
+    }
+
     if (!send_notification("notifications/initialized", json::object(), error)) {
         return false;
     }
@@ -260,7 +191,7 @@ bool agent_mcp_stdio_client::send_notification(
         error = "MCP stdio client is not writable";
         return false;
     }
-    return write_json_rpc_message(
+    return write_mcp_stdio_message(
         state->in,
         make_mcp_jsonrpc_notification(method, params),
         error);
@@ -281,7 +212,7 @@ bool agent_mcp_stdio_client::send_request(
     }
 
     const int request_id = state->next_request_id++;
-    if (!write_json_rpc_message(
+    if (!write_mcp_stdio_message(
             state->in,
             make_mcp_jsonrpc_request(request_id, method, params),
             error)) {

@@ -1,4 +1,5 @@
 #include "agent-pdf-text-processor.h"
+#include "../agent-resource-text-normalize.h"
 
 #include <cctype>
 
@@ -115,6 +116,11 @@ agent_resource_processing_result agent_pdf_text_processor::process(
     std::string text;
     if (!extract_text_layer(request.source_bytes, max_output_bytes, text)) {
         return failure("resource.text_representation_unavailable", "The PDF has no bounded extractable text layer or the output limit was exceeded.");
+    }
+    text = agent_resource_normalize_utf8(text);
+    if (text.size() > max_output_bytes) {
+        return failure("resource.text_representation_unavailable",
+            "The normalized PDF text layer exceeded the configured output limit.");
     }
 
     agent_resource_processing_result result;

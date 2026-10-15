@@ -1,6 +1,7 @@
 # Copy this server entry to ~/.codex/config.toml after building llama-agent.
 # Use the absolute checkout path for command; the launcher resolves all other paths.
-[mcp_servers.llama_agent_tool_audit]
+[mcp_servers.llama-agent-tool-audit]
 command = "/bin/bash"
 args = ["/absolute/path/to/llama/scripts/agent-codex-mcp-tools.sh"]
 startup_timeout_sec = 30
+tool_timeout_sec = 180

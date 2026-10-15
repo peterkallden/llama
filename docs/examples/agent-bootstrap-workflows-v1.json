@@ -294,7 +294,7 @@
           {"id": "answer_from_abstract", "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.", "to": "abstract_complete"},
           {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract.", "to": "full_text_pending", "requires": ["/result/best_oa_location/pdf_url"]}
         ]},
-        {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":8388608}", "bindings": [
+        {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":10485760}", "bindings": [
           {"target": "/url", "from": "get-work", "source": "/result/best_oa_location/pdf_url"}
         ]},
         {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [

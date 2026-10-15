@@ -1,28 +1,5 @@
 #include "agent-mcp-server-protocol.h"
-
-#include <cstdlib>
-#include <cstring>
-
-namespace {
-
-bool read_header_line(FILE * stream, std::string & line) {
-    line.clear();
-    for (;;) {
-        const int ch = std::fgetc(stream);
-        if (ch == EOF) {
-            return !line.empty();
-        }
-        if (ch == '\n') {
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            return true;
-        }
-        line.push_back(static_cast<char>(ch));
-    }
-}
-
-} // namespace
+#include "agent-mcp-protocol.h"
 
 bool agent_mcp_read_json_rpc_message(
         FILE * stream,
@@ -31,63 +8,29 @@ bool agent_mcp_read_json_rpc_message(
     message = agent_mcp_json();
     error.clear();
 
-    size_t content_length = 0;
-    bool have_content_length = false;
     std::string line;
-    while (read_header_line(stream, line)) {
-        if (line.empty()) {
-            break;
-        }
-
-        constexpr const char * prefix = "Content-Length:";
-        if (line.rfind(prefix, 0) == 0) {
-            std::string value = line.substr(std::strlen(prefix));
-            while (!value.empty() && value.front() == ' ') {
-                value.erase(value.begin());
+    for (;;) {
+        const int ch = std::fgetc(stream);
+        if (ch == EOF) {
+            if (std::ferror(stream)) {
+                error = "failed to read MCP stdio message";
+            } else if (!line.empty()) {
+                error = "incomplete MCP stdio message at end of stream";
             }
-            content_length = static_cast<size_t>(std::strtoull(value.c_str(), nullptr, 10));
-            have_content_length = true;
+            return false;
+        }
+        line.push_back(static_cast<char>(ch));
+        if (ch == '\n' || line.size() > common_mcp_max_stdio_message_bytes) {
+            return parse_mcp_stdio_message(line, message, error) && error.empty();
         }
     }
-
-    if (!have_content_length) {
-        error = "MCP message missing Content-Length header";
-        return false;
-    }
-
-    std::string body(content_length, '\0');
-    if (std::fread(body.data(), 1, content_length, stream) != content_length) {
-        error = "failed to read complete MCP message body";
-        return false;
-    }
-
-    const auto parsed = agent_mcp_json::parse(body, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object()) {
-        error = "MCP message contained invalid JSON-RPC payload";
-        return false;
-    }
-
-    message = parsed;
-    return true;
 }
 
 bool agent_mcp_write_json_rpc_message(
         FILE * stream,
         const agent_mcp_json & message,
         std::string & error) {
-    error.clear();
-    const std::string body = message.dump();
-    const std::string framed =
-        "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
-    if (std::fwrite(framed.data(), 1, framed.size(), stream) != framed.size()) {
-        error = "failed to write MCP JSON-RPC message";
-        return false;
-    }
-    if (std::fflush(stream) != 0) {
-        error = "failed to flush MCP JSON-RPC message";
-        return false;
-    }
-    return true;
+    return write_mcp_stdio_message(stream, message, error);
 }
 
 bool agent_mcp_write_malformed_json_rpc_result(
@@ -96,9 +39,8 @@ bool agent_mcp_write_malformed_json_rpc_result(
         std::string & error) {
     error.clear();
     const std::string body = std::string("{\"jsonrpc\":\"2.0\",\"id\":") + id.dump() + ",\"result\":";
-    const std::string framed =
-        "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
-    if (std::fwrite(framed.data(), 1, framed.size(), stream) != framed.size()) {
+    const std::string line = body + '\n';
+    if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
         error = "failed to write malformed MCP JSON-RPC message";
         return false;
     }

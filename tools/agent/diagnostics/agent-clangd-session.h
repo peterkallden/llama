@@ -26,6 +26,12 @@ public:
             agent_clangd_json & response,
             std::string & error);
 
+    bool open_document(
+            const std::string & uri,
+            const std::string & language_id,
+            const std::string & text,
+            std::string & error);
+
     bool initialized() const;
 
 private:

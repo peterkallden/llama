@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <sstream>
@@ -52,7 +53,7 @@ std::string workspace_content_token(const std::string & content) {
 }
 
 bool git_read(const std::string & root, const std::string & arguments,
-        std::string & output, std::string & error) {
+        std::string & output, std::string & error, bool * truncated = nullptr) {
     if (root.find_first_of("\"&|;<>`") != std::string::npos) {
         error = "repository root cannot be represented safely for Git";
         return false;
@@ -66,7 +67,15 @@ bool git_read(const std::string & root, const std::string & arguments,
     if (!process) { error = "unable to launch Git"; return false; }
     char buffer[512];
     output.clear();
-    while (fgets(buffer, sizeof(buffer), process) && output.size() < 16384) output += buffer;
+    if (truncated) *truncated = false;
+    // Drain stdout even after the bounded result is full. Closing the pipe
+    // early gives Git SIGPIPE and turns a successful large status into an error.
+    while (fgets(buffer, sizeof(buffer), process)) {
+        const size_t count = std::strlen(buffer);
+        const size_t retained = std::min(count, size_t(16384) - output.size());
+        output.append(buffer, retained);
+        if (truncated && retained < count) *truncated = true;
+    }
 #ifdef _WIN32
     const int status = _pclose(process);
 #else
@@ -237,13 +246,27 @@ bool common_try_register_repository_tool_adapter(
             return common_adapter_success_json({{"status", status}});
         }, error);
     } else if (definition.executor_id == "builtin.repository.changed_files" && !bindings.repository_root.empty()) {
-        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+        installed = common_adapter_register_definition(definition, registry, [bindings, max_bytes = definition.max_result_bytes](const std::string & input) {
             std::string error; json arguments;
             if (!common_adapter_parse_object(input, arguments, error) || !arguments.empty()) { if (error.empty()) error = "repository.changed_files takes no arguments"; return common_adapter_validation_failure("tool.repository.changed_files.invalid_arguments", std::move(error), "Changed files does not take arguments."); }
-            std::string status; if (!git_read(bindings.repository_root, "status --short --untracked-files=all", status, error)) return common_adapter_execution_failure("tool.repository.changed_files.git_failed", std::move(error), "Changed files could not be read.");
+            bool truncated = false;
+            std::string status; if (!git_read(bindings.repository_root, "status --short --untracked-files=all", status, error, &truncated)) return common_adapter_execution_failure("tool.repository.changed_files.git_failed", std::move(error), "Changed files could not be read.");
+            if (truncated) {
+                const auto last_line = status.rfind('\n');
+                status.resize(last_line == std::string::npos ? 0 : last_line + 1);
+            }
             json files = json::array(); std::istringstream lines(status); std::string line;
-            while (std::getline(lines, line) && files.size() < 512) { if (line.size() < 3) continue; files.push_back({{"status", line.substr(0, 2)}, {"path", line.substr(3)}}); }
-            return common_adapter_success_json({{"files", files}});
+            size_t serialized_bytes = 64; // Envelope and truncation marker.
+            while (std::getline(lines, line) && files.size() < 512) {
+                if (line.size() < 3) continue;
+                json file = {{"status", line.substr(0, 2)}, {"path", line.substr(3)}};
+                const size_t bytes = file.dump().size() + 1;
+                if (serialized_bytes + bytes > max_bytes) { truncated = true; break; }
+                serialized_bytes += bytes;
+                files.push_back(std::move(file));
+            }
+            truncated = truncated || !lines.eof();
+            return common_adapter_success_json({{"files", files}, {"truncated", truncated}});
         }, error);
     }
     return true;

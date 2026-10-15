@@ -9,6 +9,7 @@
 #endif
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -185,7 +186,9 @@ int main() {
     result = proposal_registry.execute({"memory.remember", R"({"kind":"fact","content":"verified"})"});
     assert(result.ok && result.output.find("accept") != std::string::npos);
 
-    const auto repository = std::filesystem::temp_directory_path() / "llama-agent-repository-tool-test";
+    const auto repository = std::filesystem::temp_directory_path() /
+        ("llama-agent-repository-tool-test-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(repository / "src");
     { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
     const auto git_init = "git -C \"" + repository.string() + "\" init -q";
@@ -234,6 +237,10 @@ int main() {
     assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos &&
            result.http.provider == "web.fetch" && result.http.status == 200 &&
            result.http.response_bytes == 128 && result.http.duration_ms == 23);
+    const auto fetch_schema = nlohmann::ordered_json::parse(research_catalog.find_definition("web.fetch")->input_schema_json);
+    assert(fetch_schema["properties"]["max_bytes"]["default"] == 10 * 1024 * 1024);
+    assert(repository_registry.validate({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":10485760})"}, error));
+    assert(!repository_registry.validate({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":10485761})"}, error));
     result = repository_registry.execute({"repository.read", R"({"path":"../outside.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
 
@@ -252,6 +259,16 @@ int main() {
     assert(result.ok && result.output.find("src") != std::string::npos);
     result = developer_registry.execute({"repository.changed_files", "{}"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    std::filesystem::create_directories(repository / "long-status");
+    for (size_t i = 0; i < 400; ++i) {
+        std::ofstream file(repository / "long-status" / (std::to_string(i) + std::string(180, 'x')));
+        file << "large bounded Git status fixture\n";
+    }
+    result = developer_registry.execute({"repository.changed_files", "{}"});
+    assert(result.ok);
+    const auto large_status = nlohmann::ordered_json::parse(result.output);
+    assert(large_status["truncated"] == true && !large_status["files"].empty());
+    assert(result.output.size() <= developer_catalog.find_definition("repository.changed_files")->max_result_bytes);
 
     std::filesystem::create_directories(repository / "datasets");
     { std::ofstream file(repository / "datasets" / "sample.csv"); file << "name,value\nalpha,1\nbeta,2\n"; }
@@ -336,6 +353,10 @@ int main() {
     foundation_bindings.resource_runtime.namespace_id = "test";
     foundation_bindings.resource_runtime.session_id = "session-1";
     foundation_bindings.resource_runtime.turn_id = "turn-1";
+    foundation_bindings.diagnostics_symbol = [](const std::string &) {
+        return common_tool_execution_result::success(
+            R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
+    };
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
     result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
     assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&
@@ -362,8 +383,14 @@ int main() {
     assert(result.ok && result.output.find("assertion_failure") != std::string::npos && result.output.find("timeout") != std::string::npos && result.output.find("\"count\":2") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});
     assert(result.ok && result.output.find("formatted") != std::string::npos && result.output.find("sample.cpp") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp:1:10: warning: formatting differs\n"})"});
+    assert(result.ok && result.output.find("\"formatted\":false") != std::string::npos && result.output.find("formatting differs") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"a.h -> b.h\nb.h -> c.h\n"})"});
     assert(result.ok && result.output.find("a.h") != std::string::npos && result.output.find("c.h") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":". a.h\n.. b.h\n... c.h\n. d.h\n"})"});
+    assert(result.ok && result.output.find("\"from\":\"a.h\",\"to\":\"b.h\"") != std::string::npos && result.output.find("\"from\":\"b.h\",\"to\":\"c.h\"") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"source.o: source.cpp header.h\n"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.include_graph.unrecognized_output");
     result = foundation_registry.execute({"dataset.list", "{}"});
     assert(result.ok && result.output.find("Sales") != std::string::npos);
     result = foundation_registry.execute({"dataset.inspect", R"({"path":"datasets/sample.csv"})"});

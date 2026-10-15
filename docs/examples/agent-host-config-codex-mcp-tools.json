@@ -1,16 +1,7 @@
 {
   "schema_version": 1,
   "model": {
-    "backend": "server-context",
-    "path": "MODEL.gguf"
-  },
-  "runtime": {
-    "default_mode": "agent",
-    "thinking_mode": "research",
-    "n_predict": 256,
-    "n_threads": 4,
-    "n_gpu_layers": 99,
-    "context_size": 8192
+    "backend": "server-context"
   },
   "stores": {
     "data": {
@@ -24,6 +15,17 @@
     "metadata_backend": "cozo",
     "metadata_db": "var/codex-mcp-tool-audit/resources.cozo",
     "processor_policies": {
+      "pdf.page_image": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "mutool",
+        "max_pages": 16
+      },
+      "ocr.tesseract": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "tesseract"
+      },
       "docx.text": {
         "execution": "local_preferred",
         "backend": "auto",
@@ -37,6 +39,24 @@
       }
     }
   },
+  "sandbox": {
+    "defaults": {
+      "timeout_ms": 180000
+    },
+    "classes": {
+      "resource.processor.pdf.page_image": {
+        "max_output_bytes": 4194304,
+        "filesystem": "artifact_write"
+      },
+      "resource.processor.ocr.tesseract": {
+        "max_output_bytes": 4194304,
+        "filesystem": "artifact_write"
+      }
+    },
+    "workspace": {
+      "root": "var/codex-mcp-tool-audit/workspaces"
+    }
+  },
   "tools": {
     "profile": "codex-tools-audit",
     "repository_root": "../..",
@@ -47,7 +67,7 @@
       }
     },
     "capabilities": {
-      "codex.audit.read": [
+      "codex.audit.tools": [
         "math.calculate",
         "time.now",
         "memory.search",
@@ -98,22 +118,22 @@
     },
     "profiles": {
       "codex-tools-audit": {
-        "include_capabilities": ["codex.audit.read"],
+        "include_capabilities": ["codex.audit.tools"],
         "allow_network": true,
         "allow_policy_gated_writes": false
       }
     }
   },
   "diagnostics": {
-    "semantic_backend": "auto",
+    "semantic_backend": "clangd",
     "clang_executable": "clang",
     "clangd_executable": "clangd",
-    "compile_commands": "auto"
+    "compile_commands": "build-agent-vulkan-cozo"
   },
   "limits": {
     "worker_count": 2,
     "inference_max_active": 1,
-    "tool_timeout_ms": 30000,
-    "mcp_request_timeout_ms": 30000
+    "tool_timeout_ms": 180000,
+    "mcp_request_timeout_ms": 180000
   }
 }

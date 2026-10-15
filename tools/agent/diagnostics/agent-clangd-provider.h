@@ -16,6 +16,7 @@ public:
 private:
     common_tool_execution_result workspace_symbol(const agent_clangd_json & arguments);
     bool resolve_location(const agent_clangd_json & arguments, agent_clangd_json & location, std::string & error);
+    bool open_location(const agent_clangd_json & location, std::string & error);
     common_tool_execution_result location_query(const agent_clangd_json & arguments, const std::string & method);
 
     std::unique_ptr<agent_clangd_session> session_;

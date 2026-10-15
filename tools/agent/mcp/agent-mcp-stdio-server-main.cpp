@@ -1,5 +1,6 @@
 #include "agent-mcp-stdio-server.h"
 #include "agent-mcp-http-server.h"
+#include "agent-mcp-protocol.h"
 
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 
@@ -8,6 +9,7 @@
 #include "../host/agent-host-config.h"
 #include "../resource/agent-resource-store.h"
 #include "../tooling/agent-tool-provider.h"
+#include "../tooling/agent-tool-result-json-contracts.h"
 #include "tools/agent/cli/agent-cli-options.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "memory/memory-in-memory.h"
@@ -26,6 +28,7 @@
 #endif
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -560,6 +563,12 @@ agent_tool_context make_tool_context(
     context.allow_memory_proposals = context.allow_policy_gated_writes;
     context.allow_plan_proposals = context.allow_policy_gated_writes;
     context.max_calls = std::max<size_t>(options.max_tool_rounds, 1);
+    context.default_timeout_ms = options.tool_timeout_ms > 0
+        ? options.tool_timeout_ms : context.default_timeout_ms;
+    context.execution_control = make_common_agent_runtime_execution_control({
+        0, 0, options.tool_timeout_ms, options.mcp_connect_timeout_ms,
+        options.mcp_request_timeout_ms, options.mcp_shutdown_timeout_ms,
+    });
     return context;
 }
 
@@ -645,12 +654,10 @@ bool register_resolved_profile_tools(
         const common_tool_definition definition = has_definition ? definition_it->second : common_tool_definition{};
         if (!registry.register_tool({
                 tool.name,
-                tool.description.empty()
-                    ? (has_definition ? definition.description : tool.name)
-                    : tool.description,
-                tool.parameters.empty()
-                    ? (has_definition ? definition.input_schema_json : R"({"type":"object"})")
-                    : tool.parameters,
+                has_definition ? definition.description
+                    : (tool.description.empty() ? tool.name : tool.description),
+                has_definition ? definition.input_schema_json
+                    : (tool.parameters.empty() ? R"({"type":"object"})" : tool.parameters),
                 initial_selection.tool_view->is_read_only(tool.name),
                 has_definition
                     ? definition.requires_confirmation
@@ -674,10 +681,17 @@ bool register_resolved_profile_tools(
                         tool_name,
                         arguments.dump(),
                     }, error);
+                    if (!tool_result.ok && std::getenv("LLAMA_AGENT_MCP_TRACE_TOOL_ERRORS") != nullptr) {
+                        std::fprintf(stderr, "MCP tool failure name=%s code=%s diagnostic=%s\n",
+                            tool_name.c_str(), tool_result.failure_code.c_str(),
+                            tool_result.raw_diagnostic.empty() ? error.c_str() : tool_result.raw_diagnostic.c_str());
+                    }
                     result = render_mcp_result(tool_result);
                     call_error = tool_result.ok ? std::string() : error;
                     return true;
                 },
+                tool.output_schema.empty() ? std::string()
+                    : make_agent_tool_success_payload_schema_json(tool.output_schema).dump(),
             }, error)) {
             return false;
         }
@@ -849,7 +863,7 @@ int main(int argc, char ** argv) {
                 http_options.max_result_bytes,
                 "llama-agent-mcp-http-server",
                 "0.2",
-                "2024-11-05",
+                common_mcp_default_protocol_version(),
                 list_resources,
                 read_resource,
                 {},
@@ -866,7 +880,7 @@ int main(int argc, char ** argv) {
         {
             "llama-agent-mcp-stdio-server",
             "0.2",
-            "2024-11-05",
+            common_mcp_default_protocol_version(),
             false,
             false,
             false,

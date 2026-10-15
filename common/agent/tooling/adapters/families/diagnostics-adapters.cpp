@@ -118,15 +118,27 @@ bool common_try_register_diagnostics_tool_adapter(
         installed = common_adapter_register_definition(definition, registry, [bindings, references](const std::string & input) {
             std::string error; json args;
             if (!common_adapter_parse_object(input, args, error) || !args.contains("symbol") || !args["symbol"].is_string()) return common_adapter_validation_failure(references ? "tool.diagnostics.references.invalid_arguments" : "tool.diagnostics.symbol.invalid_arguments", "diagnostics requires a symbol");
-            if (references ? static_cast<bool>(bindings.diagnostics_references) : static_cast<bool>(bindings.diagnostics_symbol)) return references ? bindings.diagnostics_references(input) : bindings.diagnostics_symbol(input);
+            if (references ? static_cast<bool>(bindings.diagnostics_references) : static_cast<bool>(bindings.diagnostics_symbol)) {
+                auto result = references ? bindings.diagnostics_references(input) : bindings.diagnostics_symbol(input);
+                if (!result.ok) return result;
+                const auto semantic = json::parse(result.output, nullptr, false);
+                if (semantic.is_object() && semantic.value("backend", std::string{}) == "clangd" &&
+                        semantic.value("semantic", false) && semantic.value("count", size_t{0}) == 0) {
+                    // clangd can return an empty workspace-index result before
+                    // its background index is available. Preserve useful bounded
+                    // results, and label them as non-semantic text matches.
+                    return symbol_fallback(bindings, args, references);
+                }
+                return result;
+            }
             return symbol_fallback(bindings, args, references);
         }, error);
     } else if (id == "builtin.diagnostics.call_hierarchy") {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             std::string error; json args;
             if (!common_adapter_parse_object(input, args, error) || !args.contains("symbol") || !args["symbol"].is_string()) return common_adapter_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy requires a symbol");
-            const auto direction = args.value("direction", std::string("both")); const auto depth = args.value("max_depth", 3); const auto limit = args.value("max_results", 128);
-            if ((direction != "callers" && direction != "callees" && direction != "both") || depth < 1 || depth > 8 || limit < 1 || limit > 128) return common_adapter_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy arguments are out of bounds");
+            const auto direction = args.value("direction", std::string("both")); const auto limit = args.value("max_results", 128);
+            if ((direction != "callers" && direction != "callees" && direction != "both") || limit < 1 || limit > 128) return common_adapter_validation_failure("tool.diagnostics.call_hierarchy.invalid_arguments", "diagnostics.call_hierarchy arguments are out of bounds");
             if (bindings.diagnostics_call_hierarchy) return bindings.diagnostics_call_hierarchy(input);
             return common_adapter_execution_failure("tool.diagnostics.call_hierarchy.unavailable", "diagnostics.call_hierarchy requires a semantic provider", "Call hierarchy is unavailable until a clangd or project-index provider is configured.");
         }, error);
@@ -149,9 +161,53 @@ bool common_try_register_diagnostics_tool_adapter(
             return common_adapter_execution_failure("tool.diagnostics.native_crash.backend_unavailable", "native crash diagnostics provider is not configured", "Native crash analysis is unavailable on this host.");
         }, error);
     } else if (id == "builtin.diagnostics.format") {
-        installed = common_adapter_register_definition(definition, registry, [](const std::string & input) { std::string error; json args; if (!common_adapter_parse_object(input, args, error) || !args.contains("output") || !args["output"].is_string()) return common_adapter_validation_failure("tool.diagnostics.format.invalid_output", "diagnostics.format requires formatter output"); const auto text = args["output"].get<std::string>(); json files = json::array(); std::istringstream lines(text); std::string line; while (std::getline(lines, line) && files.size() < 256) if (line.find("would reformat") != std::string::npos || line.find("needs formatting") != std::string::npos) files.push_back(line); return common_adapter_success_json({{"formatted", files.empty()}, {"files", files}, {"raw_output", text.substr(0, 65536)}}); }, error);
+        installed = common_adapter_register_definition(definition, registry, [](const std::string & input) {
+            std::string error; json args;
+            if (!common_adapter_parse_object(input, args, error) || !args.contains("output") || !args["output"].is_string()) return common_adapter_validation_failure("tool.diagnostics.format.invalid_output", "diagnostics.format requires formatter output");
+            const auto text = args["output"].get<std::string>();
+            json files = json::array(); std::istringstream lines(text); std::string line;
+            while (std::getline(lines, line) && files.size() < 256) {
+                const auto lower = lower_copy(line);
+                if (lower.find("would reformat") != std::string::npos || lower.find("needs formatting") != std::string::npos ||
+                        lower.find("formatting differs") != std::string::npos || lower.find("clang-format-violations") != std::string::npos) files.push_back(line);
+            }
+            return common_adapter_success_json({{"formatted", files.empty()}, {"files", files}, {"raw_output", text.substr(0, 65536)}});
+        }, error);
     } else {
-        installed = common_adapter_register_definition(definition, registry, [](const std::string & input) { std::string error; json args; if (!common_adapter_parse_object(input, args, error) || !args.contains("output") || !args["output"].is_string()) return common_adapter_validation_failure("tool.diagnostics.include_graph.invalid_output", "diagnostics.include_graph requires dependency output"); json nodes = json::array(), edges = json::array(); std::set<std::string> seen; std::istringstream lines(args["output"].get<std::string>()); std::string line; while (std::getline(lines, line) && edges.size() < 512) { const auto separator = line.find(" -> "); if (separator == std::string::npos) continue; const auto from = line.substr(0, separator), to = line.substr(separator + 4); if (from.empty() || to.empty()) continue; if (seen.insert(from).second) nodes.push_back(from); if (seen.insert(to).second) nodes.push_back(to); edges.push_back({{"from", from}, {"to", to}}); } return common_adapter_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}}); }, error);
+        installed = common_adapter_register_definition(definition, registry, [](const std::string & input) {
+            std::string error; json args;
+            if (!common_adapter_parse_object(input, args, error) || !args.contains("output") || !args["output"].is_string()) return common_adapter_validation_failure("tool.diagnostics.include_graph.invalid_output", "diagnostics.include_graph requires clang -H trace or explicit parent -> child edges");
+            json nodes = json::array(), edges = json::array();
+            std::set<std::string> seen;
+            std::vector<std::string> include_stack;
+            std::istringstream lines(args["output"].get<std::string>()); std::string line;
+            size_t parsed = 0;
+            while (std::getline(lines, line) && edges.size() < 512) {
+                const auto separator = line.find(" -> ");
+                if (separator != std::string::npos) {
+                    const auto from = line.substr(0, separator), to = line.substr(separator + 4);
+                    if (from.empty() || to.empty()) continue;
+                    if (seen.insert(from).second) nodes.push_back(from);
+                    if (seen.insert(to).second) nodes.push_back(to);
+                    edges.push_back({{"from", from}, {"to", to}});
+                    ++parsed;
+                    continue;
+                }
+                size_t depth = 0;
+                while (depth < line.size() && line[depth] == '.') ++depth;
+                if (depth == 0 || depth >= line.size() || line[depth] != ' ') continue;
+                const auto header = line.substr(depth + 1);
+                if (header.empty()) continue;
+                if (seen.insert(header).second) nodes.push_back(header);
+                if (depth > 1 && include_stack.size() >= depth - 1)
+                    edges.push_back({{"from", include_stack[depth - 2]}, {"to", header}});
+                if (include_stack.size() < depth) include_stack.resize(depth);
+                include_stack[depth - 1] = header;
+                ++parsed;
+            }
+            if (parsed == 0) return common_adapter_validation_failure("tool.diagnostics.include_graph.unrecognized_output", "No clang -H include trace or parent -> child edge was found.");
+            return common_adapter_success_json({{"nodes", nodes}, {"edges", edges}, {"cycles", json::array()}});
+        }, error);
     }
     return installed;
 }

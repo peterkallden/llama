@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <future>
+#include <set>
 #include <thread>
 #include <utility>
 #ifdef _WIN32
@@ -30,6 +31,7 @@ struct agent_clangd_session::impl {
     int exit_code = 1;
     int64_t next_id = 1;
     agent_clangd_message_decoder decoder;
+    std::set<std::string> open_documents;
 };
 
 agent_clangd_session::agent_clangd_session(agent_clangd_session_config config)
@@ -46,10 +48,14 @@ bool agent_clangd_session::ensure_started(std::string & error) {
     if (state_->initialized) return true;
     if (!state_->running) {
         if (config_.executable.empty()) { error = "clangd executable is empty"; return false; }
-        std::vector<std::string> command = {config_.executable, "--background-index=false", "--offset-encoding=utf-16"};
+        // Keep clangd's workspace index enabled: workspace/symbol depends on
+        // it, while the location-based queries are opened explicitly below.
+        std::vector<std::string> command = {config_.executable, "--offset-encoding=utf-16"};
         if (!config_.compile_commands_dir.empty() && config_.compile_commands_dir != "auto") command.push_back("--compile-commands-dir=" + config_.compile_commands_dir);
         auto argv = argv_for(command);
-        if (subprocess_create(argv.data(), subprocess_option_no_window | subprocess_option_enable_async | subprocess_option_inherit_environment, &state_->process) != 0) {
+        if (subprocess_create(argv.data(), subprocess_option_no_window | subprocess_option_enable_async |
+                subprocess_option_inherit_environment | subprocess_option_search_user_path,
+                &state_->process) != 0) {
             error = "failed to start clangd";
             return false;
         }
@@ -82,10 +88,10 @@ bool agent_clangd_session::send_notification(const std::string & method, const a
 bool agent_clangd_session::read_message(agent_clangd_json & message, std::string & error) {
     for (;;) {
         if (state_->decoder.pop(message)) return true;
-        char buffer[4096];
-        const auto count = std::fread(buffer, 1, sizeof(buffer), state_->output);
-        if (count == 0) { error = "clangd closed its output"; return false; }
-        if (!state_->decoder.feed(buffer, count, error)) return false;
+        const int value = std::fgetc(state_->output);
+        if (value == EOF) { error = "clangd closed its output"; return false; }
+        const char byte = static_cast<char>(value);
+        if (!state_->decoder.feed(&byte, 1, error)) return false;
     }
 }
 
@@ -124,6 +130,18 @@ bool agent_clangd_session::request(const std::string & method, const agent_clang
     return send_request(method, params, response, error);
 }
 
+bool agent_clangd_session::open_document(const std::string & uri, const std::string & language_id,
+        const std::string & text, std::string & error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!ensure_started(error)) return false;
+    if (state_->open_documents.find(uri) != state_->open_documents.end()) return true;
+    if (!send_notification("textDocument/didOpen", {
+            {"textDocument", {{"uri", uri}, {"languageId", language_id}, {"version", 1}, {"text", text}}}
+        }, error)) return false;
+    state_->open_documents.insert(uri);
+    return true;
+}
+
 void agent_clangd_session::shutdown() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!state_ || !state_->running) return;
@@ -133,14 +151,17 @@ void agent_clangd_session::shutdown() {
         send_request("shutdown", agent_clangd_json::object(), ignored, error);
         send_notification("exit", agent_clangd_json::object(), error);
     }
-    if (state_->input) { std::fclose(state_->input); state_->input = nullptr; }
     if (!state_->joined) {
         if (subprocess_alive(&state_->process)) subprocess_terminate(&state_->process);
         subprocess_join(&state_->process, &state_->exit_code);
         state_->joined = true;
     }
+    // subprocess_join owns and closes the child's stdin FILE*. state_->input
+    // aliases that handle, so closing it here as well would double-free it.
+    state_->input = nullptr;
     subprocess_destroy(&state_->process);
     state_->output = nullptr;
     state_->running = false;
     state_->initialized = false;
+    state_->open_documents.clear();
 }

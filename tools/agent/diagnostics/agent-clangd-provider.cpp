@@ -1,6 +1,9 @@
 #include "agent-clangd-provider.h"
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <system_error>
 
 namespace {
 using json = agent_clangd_json;
@@ -12,6 +15,43 @@ common_tool_execution_result provider_error(const std::string & code, const std:
 std::string uri_path(const std::string & uri) {
     if (uri.rfind("file://", 0) == 0) return uri.substr(7);
     return uri;
+}
+
+std::string file_uri(const std::filesystem::path & path) {
+    std::string result = "file://";
+    for (const unsigned char c : path.generic_string()) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.' || c == '~' || c == ':') {
+            result.push_back(static_cast<char>(c));
+        } else {
+            static constexpr char hex[] = "0123456789ABCDEF";
+            result.push_back('%');
+            result.push_back(hex[c >> 4]);
+            result.push_back(hex[c & 0x0f]);
+        }
+    }
+    return result;
+}
+
+std::string language_id(const std::filesystem::path & path) {
+    const auto extension = path.extension().string();
+    if (extension == ".c") return "c";
+    if (extension == ".h") return "cpp";
+    if (extension == ".m") return "objective-c";
+    if (extension == ".mm") return "objective-cpp";
+    return "cpp";
+}
+
+size_t utf16_units(const std::string & utf8, size_t byte_count) {
+    size_t units = 0;
+    for (size_t i = 0; i < byte_count;) {
+        const auto lead = static_cast<unsigned char>(utf8[i]);
+        size_t width = lead < 0x80 ? 1 : (lead & 0xe0) == 0xc0 ? 2 : (lead & 0xf0) == 0xe0 ? 3 : (lead & 0xf8) == 0xf0 ? 4 : 1;
+        if (i + width > byte_count) width = 1;
+        units += width == 4 ? 2 : 1;
+        i += width;
+    }
+    return units;
 }
 
 json location_json(const json & location) {
@@ -53,28 +93,89 @@ common_tool_execution_result agent_clangd_diagnostics_provider::workspace_symbol
 }
 
 bool agent_clangd_diagnostics_provider::resolve_location(const json & arguments, json & location, std::string & error) {
+    std::filesystem::path requested;
+    int line = 0;
+    int column = 1;
     if (arguments.contains("definition_path") && arguments.contains("definition_line")) {
-        const auto path = std::filesystem::path(arguments["definition_path"].get<std::string>()).is_absolute()
-            ? std::filesystem::path(arguments["definition_path"].get<std::string>())
-            : std::filesystem::path(repository_root_) / arguments["definition_path"].get<std::string>();
-        location = {{"uri", "file:///" + path.generic_string()}, {"range", {{"start", {{"line", arguments["definition_line"].get<int>() - 1}, {"character", arguments.value("definition_column", 1) - 1}}}}}};
-        return true;
+        requested = arguments["definition_path"].get<std::string>();
+        line = arguments["definition_line"].get<int>();
+        column = arguments.value("definition_column", 1);
+    } else if (arguments.contains("path_hint") && arguments.contains("line")) {
+        requested = arguments["path_hint"].get<std::string>();
+        line = arguments["line"].get<int>();
+        column = arguments.value("column", 1);
+    } else {
+        error = "semantic diagnostics request requires a source location";
+        return false;
     }
-    if (arguments.contains("path_hint") && arguments.contains("line")) {
-        const auto path = std::filesystem::path(arguments["path_hint"].get<std::string>()).is_absolute()
-            ? std::filesystem::path(arguments["path_hint"].get<std::string>())
-            : std::filesystem::path(repository_root_) / arguments["path_hint"].get<std::string>();
-        location = {{"uri", "file:///" + path.generic_string()}, {"range", {{"start", {{"line", arguments["line"].get<int>() - 1}, {"character", arguments.value("column", 1) - 1}}}}}};
-        return true;
+
+    const auto root = std::filesystem::weakly_canonical(repository_root_);
+    const auto candidate = std::filesystem::weakly_canonical(requested.is_absolute() ? requested : root / requested);
+    const auto relative = candidate.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || *relative.begin() == ".." ||
+            !std::filesystem::is_regular_file(candidate)) {
+        error = "semantic diagnostics source must be a file inside the configured repository";
+        return false;
     }
-    error = "semantic diagnostics request requires a source location";
-    return false;
+    if (line < 1 || column < 1) {
+        error = "semantic diagnostics source position is invalid";
+        return false;
+    }
+    std::error_code size_error;
+    if (std::filesystem::file_size(candidate, size_error) > 4 * 1024 * 1024 || size_error) {
+        error = "semantic diagnostics source is unavailable or exceeds the 4 MiB limit";
+        return false;
+    }
+    std::ifstream source(candidate, std::ios::binary);
+    std::string source_line;
+    bool line_found = false;
+    for (int current = 1; current <= line && std::getline(source, source_line); ++current) {
+        if (current != line) continue;
+        line_found = true;
+        const auto symbol = arguments.value("symbol", std::string{});
+        const auto symbol_offset = source_line.find(symbol);
+        if (symbol.empty() || symbol_offset == std::string::npos) {
+            error = "symbol does not occur on the requested source line; choose a matching path and line";
+            return false;
+        }
+        column = static_cast<int>(utf16_units(source_line, symbol_offset)) + 1;
+    }
+    if (!line_found) {
+        error = "requested source line is unavailable";
+        return false;
+    }
+    location = {{"uri", file_uri(candidate)}, {"path", candidate.string()},
+        {"range", {{"start", {{"line", line - 1}, {"character", column - 1}}}}}};
+    return true;
+}
+
+bool agent_clangd_diagnostics_provider::open_location(const json & location, std::string & error) {
+    constexpr uintmax_t max_source_bytes = 4 * 1024 * 1024;
+    const std::filesystem::path path(location.at("path").get<std::string>());
+    std::error_code file_error;
+    const auto size = std::filesystem::file_size(path, file_error);
+    if (file_error) {
+        error = "semantic diagnostics source could not be inspected";
+        return false;
+    }
+    if (size > max_source_bytes) {
+        error = "semantic diagnostics source exceeds the 4 MiB limit";
+        return false;
+    }
+    std::ifstream source(path, std::ios::binary);
+    if (!source) {
+        error = "semantic diagnostics source could not be opened";
+        return false;
+    }
+    const std::string text((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+    return session_->open_document(location.at("uri").get<std::string>(), language_id(path), text, error);
 }
 
 common_tool_execution_result agent_clangd_diagnostics_provider::location_query(const json & arguments, const std::string & method) {
     json location;
     std::string error;
     if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.semantic.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for this semantic query.", error);
+    if (!open_location(location, error)) return provider_error("tool.diagnostics.semantic.provider_unavailable", error);
     json response;
     const auto params = json{{"textDocument", {{"uri", location["uri"]}}}, {"position", location["range"]["start"]}};
     if (!session_->request(method, params, response, error)) return provider_error("tool.diagnostics.semantic.provider_unavailable", error);
@@ -104,6 +205,7 @@ common_tool_execution_result agent_clangd_diagnostics_provider::call_hierarchy(c
     json location;
     std::string error;
     if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for call hierarchy.", error);
+    if (!open_location(location, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
     json prepared;
     if (!session_->request("textDocument/prepareCallHierarchy", {{"textDocument", {{"uri", location["uri"]}}}, {"position", location["range"]["start"]}}, prepared, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
     const auto items = prepared.value("result", json::array());

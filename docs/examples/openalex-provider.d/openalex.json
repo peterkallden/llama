@@ -19,7 +19,7 @@
       },
       "getWork": {
         "enabled": true,
-        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,abstract_inverted_index,primary_topic,topics,best_oa_location,has_content"
+        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,primary_topic,topics,best_oa_location,has_content"
       },
       "listAuthors": {
         "enabled": true,

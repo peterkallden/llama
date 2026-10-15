@@ -9,7 +9,7 @@
 struct agent_mcp_stdio_server_options {
     std::string server_name = "llama-agent-mcp";
     std::string server_version = "0.1";
-    std::string protocol_version = "2024-11-05";
+    std::string protocol_version = "2025-06-18";
     bool emit_malformed_tools_list = false;
     bool hang_on_tools_list = false;
     bool exit_after_initialize = false;

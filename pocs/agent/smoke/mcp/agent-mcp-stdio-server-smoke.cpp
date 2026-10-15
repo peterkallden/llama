@@ -1,5 +1,8 @@
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
+#include "tools/agent/mcp/agent-mcp-stdio-server.h"
+#include "tools/agent/mcp/agent-mcp-protocol.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <nlohmann/json.hpp>
 #include <cstdio>
@@ -12,6 +15,107 @@
 using json = nlohmann::ordered_json;
 
 namespace {
+
+// Deliberately use literal wire messages and independent JSON-line reads:
+// testing only our own client against our own server hid the framing bug.
+bool check_stdio_wire_contract() {
+    FILE * input = std::tmpfile();
+    FILE * output = std::tmpfile();
+    FILE * diagnostics = std::tmpfile();
+    if (!input || !output || !diagnostics) {
+        if (input) std::fclose(input);
+        if (output) std::fclose(output);
+        if (diagnostics) std::fclose(diagnostics);
+        return false;
+    }
+    const std::string requests =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"wire-test\",\"version\":\"1\"}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"text\":\"first\\nsecond\"}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"missing\",\"arguments\":{}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"resources/list\"}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"shutdown\"}\n"
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}\n";
+    std::fwrite(requests.data(), 1, requests.size(), input);
+    std::rewind(input);
+    agent_mcp_server_tool_registry registry;
+    std::string error;
+    bool ok = registry.register_tool({
+        "echo", "Echo text", R"({"type":"object","required":["text"],"properties":{"text":{"type":"string"}}})",
+        true, false, false, false, false,
+        [](const agent_mcp_json & args, agent_mcp_server_tool_result & result, std::string &) {
+            result.ok = true;
+            result.structured_content = args;
+            result.safe_summary = "echoed";
+            return true;
+        },
+    }, error);
+    agent_mcp_stdio_server server(std::move(registry));
+    ok = ok && server.run(input, output, diagnostics) == 0;
+    std::rewind(output);
+    std::vector<json> responses;
+    char line[8192];
+    while (std::fgets(line, sizeof(line), output)) {
+        const auto response = json::parse(line, nullptr, false);
+        ok = ok && response.is_object();
+        responses.push_back(response);
+    }
+    ok = ok && responses.size() == 8;
+    if (ok) {
+        for (size_t i = 0; i < responses.size(); ++i) {
+            ok = ok && responses[i].value("id", 0) == static_cast<int>(i + 1);
+        }
+        ok = ok && responses[0]["result"]["protocolVersion"] == "2025-11-25" &&
+            responses[0]["result"]["capabilities"]["tools"].is_object() &&
+            !responses[0]["result"]["capabilities"].contains("resources") &&
+            responses[1]["result"].is_object() &&
+            responses[2]["result"]["tools"].size() == 1 &&
+            responses[3]["result"]["structuredContent"]["text"] == "first\nsecond" &&
+            responses[4]["result"]["isError"] == true &&
+            responses[5]["result"]["isError"] == true &&
+            responses[6]["error"]["code"] == -32601;
+    }
+    std::fclose(input);
+    std::fclose(output);
+    std::fclose(diagnostics);
+    return ok;
+}
+
+bool check_buffered_stdio_messages() {
+    std::string buffer = R"({"jsonrpc":"2.0","id":1,"result":{"text":"a\nb"}})";
+    json message;
+    std::string error;
+    if (parse_mcp_stdio_message(buffer, message, error) || !error.empty()) return false;
+    buffer += "\r\n{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n";
+    if (!parse_mcp_stdio_message(buffer, message, error) || !error.empty() ||
+            message["result"]["text"] != "a\nb") return false;
+    if (!parse_mcp_stdio_message(buffer, message, error) || !error.empty() ||
+            message["id"] != 2 || !buffer.empty()) return false;
+    buffer = "{broken\n";
+    if (!parse_mcp_stdio_message(buffer, message, error) || error.empty()) return false;
+    buffer = "[]\n";
+    if (!parse_mcp_stdio_message(buffer, message, error) || error.empty()) return false;
+    buffer.assign(common_mcp_max_stdio_message_bytes + 1, 'x');
+    return parse_mcp_stdio_message(buffer, message, error) && !error.empty();
+}
+
+bool matches_advertised_result(const agent_tool_view & view, const agent_tool_result & result) {
+    const auto provider_payload = json::parse(result.content_json, nullptr, false);
+    if (!provider_payload.is_object() || !provider_payload.contains("result")) return false;
+    for (const auto & tool : view.chat_tools()) {
+        if (tool.name != result.tool_name) continue;
+        std::string normalized;
+        std::string error;
+        if (common_schema_normalize_and_validate_object(
+                provider_payload["result"].dump(), tool.output_schema, normalized, error)) return true;
+        std::fprintf(stderr, "%s result does not match outputSchema: %s\n", tool.name.c_str(), error.c_str());
+        return false;
+    }
+    return false;
+}
 
 std::filesystem::path get_server_path(const char * argv0) {
     std::filesystem::path argv_path = argv0 != nullptr ? std::filesystem::path(argv0) : std::filesystem::path();
@@ -64,6 +168,10 @@ std::string join_tool_names(const std::vector<common_chat_tool> & tools) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    if (!check_stdio_wire_contract() || !check_buffered_stdio_messages()) {
+        std::fprintf(stderr, "standard newline-delimited MCP stdio contract failed\n");
+        return 1;
+    }
     agent_mcp_server_tool_registry schema_registry;
     std::string schema_error;
     if (!schema_registry.register_tool({
@@ -199,13 +307,22 @@ int main(int argc, char ** argv) {
             join_tool_names(minimal_view->chat_tools()).c_str());
         return 1;
     }
+    for (const auto & tool : minimal_view->chat_tools()) {
+        const auto schema = json::parse(tool.output_schema, nullptr, false);
+        if (!schema.is_object() || !schema.contains("properties") ||
+                !schema["properties"].contains("ok") || !schema["properties"].contains("result")) {
+            std::fprintf(stderr, "real MCP stdio registration lost outputSchema for %s\n", tool.name.c_str());
+            return 1;
+        }
+    }
 
     const auto calculator_result = minimal_view->call({
         "call-1",
         "math.calculate",
         R"({"expression":"17 * 23"})",
     }, error);
-    if (!calculator_result.ok || calculator_result.content_json.find("391") == std::string::npos) {
+    if (!calculator_result.ok || calculator_result.content_json.find("391") == std::string::npos ||
+            !matches_advertised_result(*minimal_view, calculator_result)) {
         std::fprintf(stderr, "calculator tool did not return the expected result: %s\n", calculator_result.content_json.c_str());
         return 1;
     }
@@ -302,11 +419,12 @@ int main(int argc, char ** argv) {
                         {"server_name", "github"},
                         {"command", json::array({
                             fake_server_path.string(),
+                            "--mode", "delayed-tool-call",
                         })},
                     },
                 })},
             }},
-            {"limits", {{"max_tool_rounds", 8}}},
+            {"limits", {{"max_tool_rounds", 8}, {"tool_timeout_ms", 5000}}},
         }.dump(2);
     }
     agent_mcp_stdio_client research_client({
@@ -323,6 +441,7 @@ int main(int argc, char ** argv) {
     research_context.request_id = "mcp-server-smoke";
     research_context.turn_id = "turn-2";
     research_context.allow_network = true;
+    research_context.default_timeout_ms = 5000;
 
     std::unique_ptr<agent_tool_view> research_view = research_provider.resolve_tools(research_context, error);
     if (!research_view) {
@@ -338,13 +457,30 @@ int main(int argc, char ** argv) {
             join_tool_names(research_view->chat_tools()).c_str());
         return 1;
     }
+    for (const auto & tool : research_view->chat_tools()) {
+        if (tool.name != "resource.read" && tool.name != "resource.inspect") continue;
+        const auto schema = json::parse(tool.parameters, nullptr, false);
+        if (!schema.is_object() || !schema["properties"].contains("uri") ||
+                schema["properties"].contains("id")) {
+            std::fprintf(stderr, "MCP must advertise canonical resource URI arguments, not model handles\n");
+            return 1;
+        }
+    }
+    const auto missing_resource = research_view->call({
+        "call-resource", "resource.inspect", R"({"uri":"agent-resource://resource/missing"})",
+    }, error);
+    if (missing_resource.ok || missing_resource.failure_class != common_tool_failure_class::not_found) {
+        std::fprintf(stderr, "canonical resource URI was rejected before resource lookup\n");
+        return 1;
+    }
 
     const auto repository_result = research_view->call({
         "call-3",
         "repository.list",
         R"({"path":"tools/agent/mcp","depth":0})",
     }, error);
-    if (!repository_result.ok || repository_result.content_json.find("agent-mcp-stdio-server-main.cpp") == std::string::npos) {
+    if (!repository_result.ok || repository_result.content_json.find("agent-mcp-stdio-server-main.cpp") == std::string::npos ||
+            !matches_advertised_result(*research_view, repository_result)) {
         std::fprintf(stderr, "repository.list did not return the expected repository payload: %s\n", repository_result.content_json.c_str());
         return 1;
     }
@@ -354,7 +490,8 @@ int main(int argc, char ** argv) {
         "local_github_search_issues",
         R"({"query":"runtime host"})",
     }, error);
-    if (!github_result.ok || github_result.content_json.find("stub issue") == std::string::npos) {
+    if (!github_result.ok || github_result.content_json.find("stub issue") == std::string::npos ||
+            !matches_advertised_result(*research_view, github_result)) {
         std::fprintf(stderr, "github_search_issues did not return the expected MCP payload: %s\n", github_result.content_json.c_str());
         return 1;
     }

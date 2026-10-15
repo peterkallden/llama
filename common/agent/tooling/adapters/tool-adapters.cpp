@@ -791,7 +791,7 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
                 const size_t remaining = max_bytes > body.size() ? max_bytes - body.size() : 0;
                 const size_t take = std::min(len, remaining);
                 body.append(data, take);
-                if (take < len || body.size() >= max_bytes) {
+                if (take < len) {
                     truncated = true;
                     return false;
                 }
@@ -801,6 +801,11 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
         if (!res) {
             record_http(status, content_type, body.size());
             response["http"]["final_url"] = final_url;
+            if (truncated) {
+                response["truncated"] = true;
+                error = "response exceeds max_bytes";
+                return false;
+            }
             error = status > 0 ? "HTTP status " + std::to_string(status) :
                 "HTTP request failed: " + std::string(httplib::to_string(res.error()));
             return false;
@@ -949,7 +954,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         return tool_validation_failure("tool.web_search.out_of_bounds", "web_search arguments are out of bounds", "Web search arguments are out of bounds.");
                     }
                     const auto search_query = site.empty() ? query : query + " site:" + site;
-                    json fetched;
+                    json fetched = json::object();
                     std::string raw_html;
                     if (!http_fetch_text("https://lite.duckduckgo.com/lite/?q=" + url_encode(search_query), 128 * 1024, fetched, err, &raw_html)) {
                         return tool_network_failure("tool.web_search.fetch_failed", std::move(err), "Web search request failed.");
@@ -1029,14 +1034,17 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     }
                     const auto url = trim_copy(arguments["url"].get<std::string>());
                     const auto extract = arguments.value("extract", std::string("text"));
-                    const int max_bytes = arguments.value("max_bytes", 64000);
-                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 8 * 1024 * 1024) {
+                    const int max_bytes = arguments.value("max_bytes", 10 * 1024 * 1024);
+                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 10 * 1024 * 1024) {
                         return tool_validation_failure("tool.web_fetch.out_of_bounds", "web_fetch arguments are out of bounds", "Web fetch arguments are out of bounds.");
                     }
                     json fetched;
                     std::string raw_body;
                     if (!http_fetch_text(url, (size_t) max_bytes, fetched, err, &raw_body)) {
-                        auto failure = tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
+                        auto failure = fetched.is_object() && fetched.value("truncated", false)
+                            ? tool_limit_failure("tool.web_fetch.byte_limit", std::move(err),
+                                "Resource exceeds max_bytes; request a larger bound within the tool's limit.")
+                            : tool_network_failure("tool.web_fetch.request_failed", std::move(err), "Web fetch request failed.");
                         if (fetched.contains("http") && fetched["http"].is_object()) {
                             const auto & http = fetched["http"];
                             failure.http.provider = http.value("provider", std::string{});

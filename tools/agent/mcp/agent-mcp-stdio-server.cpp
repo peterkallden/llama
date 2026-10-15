@@ -1,6 +1,7 @@
 #include "agent-mcp-stdio-server.h"
 
 #include "agent-mcp-server-protocol.h"
+#include "agent-mcp-protocol.h"
 
 #include <utility>
 #include <thread>
@@ -18,7 +19,11 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
         agent_mcp_json message;
         std::string error;
         if (!agent_mcp_read_json_rpc_message(input, message, error)) {
-            return 0;
+            if (!error.empty() && diagnostics != nullptr) {
+                std::fprintf(diagnostics, "%s: %s\n", options_.server_name.c_str(), error.c_str());
+                std::fflush(diagnostics);
+            }
+            return error.empty() ? 0 : 1;
         }
 
         const std::string method = message.value("method", "");
@@ -33,12 +38,17 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
         agent_mcp_json response;
 
         if (method == "initialize") {
+            const auto params = message.value("params", agent_mcp_json::object());
+            std::string version = common_mcp_negotiate_protocol_version(params.value("protocolVersion", ""));
+            if (version.empty()) {
+                version = common_mcp_negotiate_protocol_version(options_.protocol_version);
+                if (version.empty()) version = common_mcp_default_protocol_version();
+            }
+            agent_mcp_json capabilities = {{"tools", agent_mcp_json::object()}};
+            if (options_.list_resources) capabilities["resources"] = agent_mcp_json::object();
             response = agent_mcp_make_json_rpc_result(id, {
-                {"protocolVersion", options_.protocol_version},
-                {"capabilities", {
-                    {"tools", agent_mcp_json::object()},
-                    {"resources", options_.list_resources ? agent_mcp_json::object() : agent_mcp_json()},
-                }},
+                {"protocolVersion", version},
+                {"capabilities", std::move(capabilities)},
                 {"serverInfo", {
                     {"name", options_.server_name},
                     {"version", options_.server_version},
@@ -57,7 +67,9 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
             continue;
         }
 
-        if (method == "shutdown") {
+        if (method == "ping") {
+            response = agent_mcp_make_json_rpc_result(id, agent_mcp_json::object());
+        } else if (method == "shutdown") {
             shutdown_requested = true;
             response = agent_mcp_make_json_rpc_result(id, agent_mcp_json::object());
         } else if (method == "tools/list") {

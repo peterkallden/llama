@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -103,6 +104,11 @@ bool common_agent_sandbox_local_runtime::execute(
     } else {
         result.status = common_agent_sandbox_status::failed;
         result.error = "local sandbox process returned a non-zero exit code";
+        if (std::getenv("LLAMA_AGENT_MCP_TRACE_TOOL_ERRORS") != nullptr) {
+            std::fprintf(stderr, "local sandbox failed program=%s exit=%d cwd=%s output=%s\n",
+                request.command.program.c_str(), exit_code, working_directory.c_str(),
+                result.stdout_excerpt.substr(0, 2048).c_str());
+        }
     }
     error.clear();
     return true;

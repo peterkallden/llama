@@ -22,6 +22,7 @@ bool has_tool(const std::vector<common_chat_tool> & tools, const std::string & n
 class fake_mcp_tool_client final : public agent_mcp_tool_client {
 public:
     std::string last_arguments;
+    bool mirror_structured_text = false;
     std::vector<mcp_agent_tool_definition> listed_tools;
 
     bool list_tools(
@@ -82,6 +83,9 @@ public:
         if (tool.name == "search_issues") {
             result.ok = true;
             result.structured_content_json = R"({"issue_id":"issue-123","items":[{"title":"stub issue"}]})";
+            if (mirror_structured_text) {
+                result.text_content = result.structured_content_json;
+            }
             common_agent_dataset_ref dataset;
             dataset.uri = "dataset://mcp/github/issues";
             dataset.name = "github issues";
@@ -247,6 +251,17 @@ int main() {
         std::fprintf(stderr, "MCP result-size limit was not enforced\n");
         return 1;
     }
+
+    agent_tool_context mirrored_context = read_only_context;
+    mirrored_context.turn_id = "turn-mirrored-result";
+    mirrored_context.default_max_result_bytes = 64;
+    client.mirror_structured_text = true;
+    auto mirrored_view = provider.resolve_tools(mirrored_context, error);
+    if (!mirrored_view || !mirrored_view->call({"call-mirrored", "github_search_issues", R"({"query":"x"})"}, error).ok) {
+        std::fprintf(stderr, "duplicated MCP JSON was charged twice: %s\n", error.c_str());
+        return 1;
+    }
+    client.mirror_structured_text = false;
 
     agent_tool_context filtered_context;
     filtered_context.request_id = "mcp-provider-smoke";

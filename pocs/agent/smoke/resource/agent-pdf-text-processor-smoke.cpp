@@ -15,6 +15,10 @@ int main() {
     request.name = "text-layer.pdf";
     request.mime_type = "application/octet-stream";
     request.bytes = "%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nBT (Hello PDF) Tj (Second line) Tj ET\nendstream\nendobj\n";
+    std::string invalid_utf8_text = "Second ";
+    invalid_utf8_text.push_back(static_cast<char>(0x96));
+    invalid_utf8_text += " line";
+    request.bytes.replace(request.bytes.find("Second line"), 11, invalid_utf8_text);
     request.scope = common_runtime_resource_scope::session;
     request.namespace_id = "tenant-a";
     request.session_id = "session-1";
@@ -58,7 +62,7 @@ int main() {
             128,
             text,
             error) ||
-            text != "Hello PDF\nSecond line") {
+            text != "Hello PDF\nSecond \xef\xbf\xbd line") {
         std::fprintf(stderr, "unexpected PDF text output: %s (%s)\n", text.c_str(), error.c_str());
         return 1;
     }

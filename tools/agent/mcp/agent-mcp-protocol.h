@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
 #include <string>
 
 // Transport implementations share this version set.  Negotiation belongs to
@@ -11,6 +12,18 @@
 const char * common_mcp_default_protocol_version();
 bool common_mcp_is_supported_protocol_version(const std::string & version);
 std::string common_mcp_negotiate_protocol_version(const std::string & requested);
+
+// Standard MCP stdio uses one compact JSON-RPC object per line. The buffered
+// parser returns false only while a complete line is not yet available.
+constexpr size_t common_mcp_max_stdio_message_bytes = 16 * 1024 * 1024;
+bool parse_mcp_stdio_message(
+    std::string & buffer,
+    nlohmann::ordered_json & message,
+    std::string & error);
+bool write_mcp_stdio_message(
+    FILE * stream,
+    const nlohmann::ordered_json & message,
+    std::string & error);
 
 nlohmann::ordered_json make_mcp_jsonrpc_request(
     int id,

@@ -2,6 +2,22 @@
 
 using json = nlohmann::ordered_json;
 
+json make_agent_tool_success_payload_schema_json(const std::string & result_schema_json) {
+    const auto result = json::parse(result_schema_json, nullptr, false);
+    if (!result.is_object()) return json();
+    return {
+        {"type", "object"},
+        {"required", {"ok", "result"}},
+        {"properties", {
+            {"ok", {{"type", "boolean"}, {"const", true}}},
+            {"result", result},
+            {"summary", {{"type", "string"}}},
+            {"resources", {{"type", "array"}, {"items", {{"type", "object"}}}}},
+            {"dataset_refs", {{"type", "array"}, {"items", {{"type", "object"}}}}},
+        }},
+    };
+}
+
 json render_agent_tool_resource_ref_json(const common_runtime_resource_ref & resource) {
     json result = {
         {"uri", resource.uri},

@@ -1701,6 +1701,12 @@ if (BUILD_TESTING)
     # turn the child-side close into a nondeterministic SIGPIPE.
     set_tests_properties(llama-agent-mcp-stdio-client-ctest PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
+    add_test(NAME llama-agent-mcp-stdio-server-ctest
+        COMMAND $<TARGET_FILE:llama-agent-mcp-stdio-server-smoke>)
+    set_tests_properties(llama-agent-mcp-stdio-server-ctest PROPERTIES
+        LABELS agent TIMEOUT 120 RUN_SERIAL TRUE
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
     add_test(NAME llama-agent-mcp-http-client-ctest
         COMMAND $<TARGET_FILE:llama-agent-mcp-http-client-smoke>)
     set_property(TEST llama-agent-mcp-http-client-ctest PROPERTY LABELS agent)

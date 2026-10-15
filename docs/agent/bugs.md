@@ -3,6 +3,36 @@
 This file records agent-specific bugs that affected runtime behavior and the
 commits that fixed them.
 
+## MCP stdio handshake blocked by LSP-style framing
+
+- Affected area: both the MCP stdio client and server
+- Reproduction: send a compact JSON `initialize` request followed by a newline
+  to `scripts/agent-codex-mcp-tools.sh`. The old server waited for a blank
+  header line and never replied; Codex timed out during initialization.
+- Cause: both ends used `Content-Length` framing from LSP instead of the
+  MCP-required newline-delimited JSON transport. Tests using our own client
+  against our own server shared the bug and therefore passed. A configured,
+  enabled MCP entry and a self-client tool listing did not prove interoperability.
+- Correction: use a common bounded JSON-line codec for MCP client/server,
+  negotiate the requested supported protocol revision, omit unavailable
+  capabilities instead of emitting null, and support `ping`. Preserve LSP
+  framing only in the separate clangd implementation.
+- Regression coverage: the server smoke supplies literal independent wire
+  messages and checks actual calls, notification ordering, escaped newlines,
+  errors, version and capabilities. Buffered parser tests cover partial and
+  multiple responses, malformed JSON and message-size bounds. The real stdio
+  registration also forwards `outputSchema`, which was previously dropped.
+- Reproduction and model verification: `scripts/test-agent-codex-mcp-tools.py`
+  records raw requests/responses before starting a fresh Codex/GPT-5.6-luna
+  process and requires real MCP call events. Traces live under the supplied
+  work directory, outside Git.
+- The next real OpenAlex call exposed a separate stdio assembly bug:
+  `limits.tool_timeout_ms=30000` was dropped while constructing its tool
+  context, leaving the internal 1000 ms default. A completed network call
+  could therefore be reclassified as `mcp.tool_timeout`. Stdio now forwards
+  the configured timeout and MCP deadline policy, with a 1200 ms fake-provider
+  regression under a 5000 ms configured limit.
+
 ## FlyDelta smoke device identity and phase budget reporting
 
 - Status: corrected locally; verification results are recorded with the runtime change
@@ -457,6 +487,72 @@ The launcher previously mapped `tools.repository_root` to an empty temporary
 workspace. It now defaults that binding to the checkout and passes it as an
 explicit daemon override, while `LLAMA_AGENT_REPOSITORY_ROOT` remains
 available for a deliberately different fixture.
+
+## Relative sandbox workspace roots broke local PDF/OCR processors
+
+- Status: Fixed locally; direct MCP resource-read and full Codex PDF smoke pass
+- Affected area: CLI host sandbox assembly and local resource processors
+- Symptom: `resource.read` could fetch and inspect a PDF, but the configured
+  `mutool` page renderer reported that its source file did not exist. The
+  workspace root was relative, while the subprocess working directory was
+  already inside the per-operation source directory; the relative path was
+  consequently applied twice.
+- Correction: resolve relative workspace and artifact roots against the
+  repository root before constructing the sandbox and resource processor
+  hosts. Keep the example portable rather than hard-coding an absolute host
+  path. The audit profile grants only the PDF renderer and OCR execution
+  classes the bounded output/artifact permissions their processors require.
+- Verification: the saved OpenAlex → arXiv PDF fallback fetched a 2.2 MiB
+  PDF under the 10 MiB default, then materialized OCR text from all 15 pages.
+  The direct parser's malformed UTF-8 path also now degrades to OCR rather
+  than escaping as a JSON exception. Full trace:
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/pdf-e2e-after-workspace-fix/`.
+
+## clangd MCP diagnostics hung, failed to load source files, and double-closed stdin
+
+- Status: Corrected locally and verified through the real MCP stdio server
+- Affected tools: `diagnostics.symbol`, `diagnostics.references`, and
+  `diagnostics.call_hierarchy`
+- Causes: the subprocess did not search `PATH`; the LSP reader used a blocking
+  buffered read that waited for 4 KiB even when a complete response was shorter;
+  location queries did not notify clangd that the source document was open; and
+  shutdown closed the subprocess-owned stdin stream before `subprocess_join`
+  closed it again.
+- Correction: enable executable lookup on `PATH`, read the LSP stream without
+  waiting for a full buffer, send one bounded `textDocument/didOpen` per
+  repository-contained source file, and let `subprocess_join` own stdin
+  cleanup. Source documents are limited to 4 MiB. Empty clangd workspace-symbol
+  results use the existing text search only as a clearly labeled
+  `text-fallback` with `semantic:false`.
+- Verification: live clangd protocol test exits cleanly; MCP call hierarchy
+  returns an in-repository caller and bounded callees; symbol lookup returns
+  labeled text matches when the clangd workspace index is empty. Targeted
+  adapter and protocol CTests pass. Traces:
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/diagnostics-clangd-real-calls/`.
+- A later Codex/GPT-5.6-luna diagnostics run made calls to all eight advertised
+  diagnostics tools. The agent supplied an exact symbol and source line for
+  call hierarchy/references after the contract update. Symbol/references used
+  labeled text fallback where clangd's workspace index returned no match;
+  call hierarchy returned semantic results. Native crash analysis was invoked
+  with a source file and PDF rather than a binary/core pair and returned
+  `parse_failed`; this does not validate a successful native-crash analysis.
+  The final trace is under
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/diagnostics-codex-final/`.
+
+## Diagnostics tool descriptions and parser fixtures disagreed
+
+- Status: Corrected locally; diagnostics model rerun pending
+- The call-hierarchy schema made location fields optional but the adapter
+  needs a path/line pair; its description now explains the two accepted pairs,
+  checks that the source line contains the requested symbol, and reports the
+  actual one-hop behavior instead of advertising an unused depth setting.
+  `diagnostics.include_graph` previously described generic compiler dependency
+  output while parsing only explicit arrows. It now accepts clang `-H` nesting
+  or explicit edges and rejects input with no recognized graph records; flat
+  `clang -M` output is explicitly excluded because it does not preserve
+  parent/child relationships. `diagnostics.format` now recognizes the common
+  “formatting differs” and clang-format violation forms instead of reporting
+  those outputs as clean.
 
 ## CUDA release verification needs toolkit stubs and Debian dependency handling
 

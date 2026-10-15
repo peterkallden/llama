@@ -18,6 +18,12 @@ void attach_agent_tool_dataset_refs_json(
     const std::vector<common_agent_dataset_ref> & datasets,
     nlohmann::ordered_json & payload);
 
+// Derive the schema of the common success payload from the canonical tool
+// result schema. This describes make_agent_tool_*_success_payload_json, not
+// the transport's own content/isError envelope.
+nlohmann::ordered_json make_agent_tool_success_payload_schema_json(
+    const std::string & result_schema_json);
+
 nlohmann::ordered_json make_agent_tool_failure_payload_json(
     const std::string & code,
     const std::string & message,

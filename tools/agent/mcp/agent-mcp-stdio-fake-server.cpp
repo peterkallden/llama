@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <chrono>
+#include <thread>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -13,6 +15,7 @@ namespace {
 
 bool register_fake_tools(
         agent_mcp_server_tool_registry & registry,
+        bool delayed,
         std::string & error) {
     if (!registry.register_tool({
             "search_issues",
@@ -23,7 +26,8 @@ bool register_fake_tools(
             true,
             false,
             false,
-            [](const agent_mcp_json &, agent_mcp_server_tool_result & result, std::string &) {
+            [delayed](const agent_mcp_json &, agent_mcp_server_tool_result & result, std::string &) {
+                if (delayed) std::this_thread::sleep_for(std::chrono::milliseconds(1200));
                 result.ok = true;
                 result.content = agent_mcp_json::array({
                     {{"type", "text"}, {"text", "stub issue"}},
@@ -121,7 +125,7 @@ int main(int argc, char ** argv) {
 
     std::string error;
     agent_mcp_server_tool_registry registry;
-    if (!register_fake_tools(registry, error)) {
+    if (!register_fake_tools(registry, mode == "delayed-tool-call", error)) {
         std::fprintf(stderr, "fake-mcp: failed to register tools: %s\n", error.c_str());
         return 1;
     }

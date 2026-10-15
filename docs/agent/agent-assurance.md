@@ -1036,7 +1036,7 @@ previous result when the branch or test configuration changes.
 - Focused checks: direct stdio client smoke passed; CLI/MCP and stdio client
   CTests passed 2/2.
 - Agent CTest: 20/20 passed. The new
-  `llama-agent-mcp-stdio-client-ctest` covers normal framed reads, malformed
+  `llama-agent-mcp-stdio-client-ctest` covers newline-delimited reads, malformed
   server diagnostics, and termination of a hanging server within its request
   deadline.
 - Registered inventory: 64 total CTest cases, with 20 under the `agent` label.

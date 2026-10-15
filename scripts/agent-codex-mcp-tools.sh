@@ -17,4 +17,9 @@ fi
 mkdir -p "${repo_root}/var/codex-mcp-tool-audit/resources"
 cd "${repo_root}"
 
+# The dedicated Codex audit launcher writes raw host-side tool diagnostics to
+# its stderr trace when an operation fails. MCP clients still receive only the
+# bounded safe summary.
+export LLAMA_AGENT_MCP_TRACE_TOOL_ERRORS=1
+
 exec "${server}" --config "${config}" --repository-root "${repo_root}"

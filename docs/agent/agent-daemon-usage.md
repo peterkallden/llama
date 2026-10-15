@@ -1244,6 +1244,12 @@ and **Chat: Configure Tools** in VS Code. The same `servers` shape can be
 used in the supported `mcp.json` locations in Visual Studio. These clients
 perform the MCP handshake and query `tools/list` before exposing tools.
 
+The stdio transport uses compact JSON-RPC objects separated by newlines,
+as required by MCP. It does not use clangd/LSP `Content-Length` headers.
+The server negotiates a supported protocol version during `initialize` and
+supports `ping`. For the Codex profile, launcher and reproducible audit cases,
+see [Codex MCP tool audit](agent-codex-mcp-tool-audit.md).
+
 For inbound delegation, use the HTTP server configuration above and use the
 copyable [vscode-mcp-inbound.json](../examples/vscode-mcp-inbound.json) instead
 of the stdio entry:

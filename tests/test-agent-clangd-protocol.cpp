@@ -2,6 +2,8 @@
 #include "agent-clangd-session.h"
 
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 int main() {
     const auto request = agent_clangd_request(7, "textDocument/definition", {{"textDocument", {{"uri", "file:///workspace/main.cpp"}}}});
@@ -24,5 +26,14 @@ int main() {
 
     agent_clangd_session unavailable({"__llama_missing_clangd__", "", "", 100, 100});
     assert(!unavailable.request("workspace/symbol", {{"query", "needle"}}, decoded, error));
+
+    if (std::getenv("LLAMA_AGENT_CLANGD_LIVE_TEST") != nullptr) {
+        agent_clangd_session live({"clangd", "", "", 5000, 5000});
+        error.clear();
+        if (!live.request("workspace/symbol", {{"query", "common_schema_normalize"}}, decoded, error)) {
+            std::fprintf(stderr, "clangd live request failed: %s\n", error.c_str());
+            return 2;
+        }
+    }
     return 0;
 }

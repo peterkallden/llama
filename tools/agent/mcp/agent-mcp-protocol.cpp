@@ -17,6 +17,41 @@ std::string common_mcp_negotiate_protocol_version(const std::string & requested)
     return common_mcp_is_supported_protocol_version(requested) ? requested : std::string();
 }
 
+bool parse_mcp_stdio_message(std::string & buffer, json & message, std::string & error) {
+    message = json();
+    error.clear();
+    const size_t end = buffer.find('\n');
+    if ((end == std::string::npos ? buffer.size() : end) > common_mcp_max_stdio_message_bytes) {
+        error = "MCP stdio message exceeds size limit";
+        return true;
+    }
+    if (end == std::string::npos) {
+        return false;
+    }
+    const auto parsed = json::parse(buffer.begin(), buffer.begin() + end, nullptr, false);
+    buffer.erase(0, end + 1);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+        error = "MCP stdio message contained invalid JSON-RPC payload";
+        return true;
+    }
+    message = parsed;
+    return true;
+}
+
+bool write_mcp_stdio_message(FILE * stream, const json & message, std::string & error) {
+    error.clear();
+    const std::string line = message.dump() + '\n';
+    if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
+        error = "failed to write MCP JSON-RPC message";
+        return false;
+    }
+    if (std::fflush(stream) != 0) {
+        error = "failed to flush MCP JSON-RPC message";
+        return false;
+    }
+    return true;
+}
+
 namespace {
 
 bool parse_resource_ref_from_json(

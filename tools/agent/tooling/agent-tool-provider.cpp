@@ -280,8 +280,15 @@ agent_tool_result normalize_mcp_execution_result(
         return result;
     }
 
+    // Some providers mirror their JSON body into textContent. Retain it once,
+    // rather than charging twice or rendering the full body as its own summary.
+    std::string summary = execution.safe_summary.empty() ? execution.text_content : execution.safe_summary;
+    if (!execution.structured_content_json.empty() && summary == execution.structured_content_json) {
+        summary.clear();
+    }
+    const auto & retained_text = execution.structured_content_json.empty() ? execution.text_content : summary;
     if (execution.structured_content_json.size() > result_limit ||
-            execution.text_content.size() > result_limit - execution.structured_content_json.size()) {
+            retained_text.size() > result_limit - execution.structured_content_json.size()) {
         return make_failure_result(
             call,
             "tool_result_too_large",
@@ -308,7 +315,7 @@ agent_tool_result normalize_mcp_execution_result(
         auto result = make_agent_tool_structured_success_result(
             call,
             execution.structured_content_json,
-            execution.text_content,
+            summary,
             execution.resource_refs, execution.dataset_refs);
         result.http = execution.http;
         return result;

@@ -724,9 +724,26 @@ bool resolve_agent_host_tool_selection(
             };
         }
 
-        const auto needs_sandbox_assembly = [&request]() {
-            return request.sandbox.backend == "docker" || request.sandbox.backend == "kubernetes" ||
-                request.sandbox.backend == "lxc" ||
+        // Resource processors execute in a per-operation working directory.
+        // Resolve configured workspace/artifact roots against the repository
+        // root once here so subprocess adapters do not reinterpret relative
+        // roots from inside that operation directory (for example, mutool).
+        auto sandbox_config = request.sandbox;
+        const auto sandbox_path_base = request.repository_root.empty()
+            ? std::filesystem::current_path()
+            : std::filesystem::absolute(request.repository_root).lexically_normal();
+        const auto resolve_sandbox_path = [&sandbox_path_base](std::string & value) {
+            if (value.empty()) return;
+            auto path = std::filesystem::path(value);
+            if (path.is_relative()) path = sandbox_path_base / path;
+            value = std::filesystem::absolute(path).lexically_normal().string();
+        };
+        resolve_sandbox_path(sandbox_config.workspace.workspace_root);
+        resolve_sandbox_path(sandbox_config.workspace.artifact_root);
+
+        const auto needs_sandbox_assembly = [&request, &sandbox_config]() {
+            return sandbox_config.backend == "docker" || sandbox_config.backend == "kubernetes" ||
+                sandbox_config.backend == "lxc" ||
                 request.resource_processor_policies.find("pdf.page_image") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("ocr.tesseract") != request.resource_processor_policies.end() ||
                 request.resource_processor_policies.find("docx.text") != request.resource_processor_policies.end() ||
@@ -742,7 +759,7 @@ bool resolve_agent_host_tool_selection(
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
         if (needs_sandbox_assembly()) {
             auto sandbox_assembly = make_agent_host_sandbox_assembly({
-                request.sandbox,
+                sandbox_config,
                 request.tool_context.scope,
                 resource_store,
             });
@@ -755,7 +772,7 @@ bool resolve_agent_host_tool_selection(
             bindings.sandbox_execute = std::move(sandbox_assembly.execute);
         } else {
             bindings.sandbox_execute = make_agent_host_sandbox_assembly({
-                request.sandbox,
+                sandbox_config,
                 request.tool_context.scope,
                 resource_store,
             }).execute;
@@ -764,8 +781,8 @@ bool resolve_agent_host_tool_selection(
         if (needs_sandbox_assembly()) {
             agent_resource_processing_assembly_request assembly;
             assembly.policies = request.resource_processor_policies;
-            assembly.sandbox_classes = request.sandbox.classes;
-            assembly.sandbox_defaults = request.sandbox.defaults;
+            assembly.sandbox_classes = sandbox_config.classes;
+            assembly.sandbox_defaults = sandbox_config.defaults;
 #if LLAMA_AGENT_SANDBOX
             assembly.docker_runtime = docker_runtime;
             assembly.kubernetes_runtime = kubernetes_runtime;
@@ -776,7 +793,7 @@ bool resolve_agent_host_tool_selection(
 #endif
             assembly.workspace_manager = workspace_manager;
             assembly.resource_store = resource_store;
-            assembly.sandbox_backend = request.sandbox.backend;
+            assembly.sandbox_backend = sandbox_config.backend;
             bindings.resource_processing_provider_factory =
                 make_agent_resource_processing_provider_factory(std::move(assembly));
         }
