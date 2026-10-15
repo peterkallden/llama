@@ -10,7 +10,8 @@ bool common_try_register_oracle_tool_adapter(
         std::string & error) {
     installed=false;
     if(definition.executor_id!="builtin.oracle_ruleset_define"&&
-            definition.executor_id!="builtin.oracle_action_verify")return false;
+            definition.executor_id!="builtin.oracle_action_verify"&&
+            definition.executor_id!="builtin.oracle_goal_search")return false;
     if(bindings.semi_oracle) {
         installed=common_adapter_register_definition(definition,registry,
             [bindings, name=definition.name](const std::string & input) {

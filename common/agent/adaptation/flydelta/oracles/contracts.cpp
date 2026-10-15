@@ -3,6 +3,7 @@
 
 #include <array>
 #include <algorithm>
+#include <sstream>
 #include <utility>
 
 const char * common_flydelta_oracle_strength_name(common_flydelta_oracle_strength value) {
@@ -98,9 +99,7 @@ bool registration_matches(
         (registration.expected_contract_ref.empty() ||
             registration.expected_contract_ref == request.expected_contract_ref) &&
         (registration.expected_contract_revision.empty() ||
-            registration.expected_contract_revision == request.expected_contract_revision) &&
-        (registration.evaluator_revision.empty() || request.oracle_revision.empty() ||
-            registration.evaluator_revision == request.oracle_revision);
+            registration.expected_contract_revision == request.expected_contract_revision);
 }
 
 } // namespace
@@ -236,6 +235,13 @@ bool common_flydelta_oracle_evaluate(
         result = std::move(unresolved);
         return true;
     }
-    error = "no registered Oracle evaluator owns this semantic contract";
+    std::ostringstream detail;
+    detail << "no registered Oracle evaluator owns semantic_kind='" << request.semantic_kind
+           << "' contract_kind='" << request.expected_contract_kind
+           << "' contract_ref='" << request.expected_contract_ref
+           << "' contract_revision='" << request.expected_contract_revision
+           << "' oracle_revision='" << request.oracle_revision
+           << "' (registered=" << registry.evaluators.size() << ")";
+    error = detail.str();
     return false;
 }

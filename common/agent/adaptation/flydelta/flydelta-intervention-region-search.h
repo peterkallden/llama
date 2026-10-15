@@ -48,6 +48,9 @@ bool common_flydelta_intervention_region_candidate_validate(
         std::string & error);
 
 struct common_flydelta_intervention_region_trial {
+    std::string arm_id;
+    std::string intervention_ref;
+    std::vector<float> coefficients;
     common_flydelta_intervention_region_candidate candidate;
     float requested_total_scale = 0.0f;
     float executed_total_scale = 0.0f;

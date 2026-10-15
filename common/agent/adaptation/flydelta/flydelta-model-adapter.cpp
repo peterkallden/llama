@@ -154,6 +154,10 @@ bool common_flydelta_arm_result_validate(
         error = "FlyDelta arm execution fallback reason is too long";
         return false;
     }
+    if (result.execution_metrics.overlay_representation.size() > 32) {
+        error = "FlyDelta arm overlay representation is too long";
+        return false;
+    }
     if (result.observed_decision_summary.size() > 1024 ||
             result.expected_decision_summary.size() > 1024 ||
             result.verifier_reason.size() > 1024 ||
@@ -320,8 +324,16 @@ bool common_flydelta_arm_batch_result_validate(
         return false;
     }
     if (!std::isfinite(result.execution_stats.model_ms) ||
-            result.execution_stats.model_ms < 0.0f) {
-        error = "FlyDelta arm batch execution statistics have an invalid model time";
+            result.execution_stats.model_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.teacher_forced_ms) ||
+            result.execution_stats.teacher_forced_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.finalize_ms) ||
+            result.execution_stats.finalize_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.host_prepare_ms) ||
+            result.execution_stats.host_prepare_ms < 0.0f ||
+            !std::isfinite(result.execution_stats.wall_ms) ||
+            result.execution_stats.wall_ms < 0.0f) {
+        error = "FlyDelta arm batch execution statistics have an invalid timing value";
         return false;
     }
     for (size_t index = 0; index < result.arms.size(); ++index) {
@@ -419,6 +431,10 @@ bool common_flydelta_run_bounded_arm_batch(
                 result.execution_stats.largest_physical_batch, wave.arms.size());
             result.execution_stats.native_batch_used = true;
             result.execution_stats.model_ms += wave_result.execution_stats.model_ms;
+            result.execution_stats.teacher_forced_ms += wave_result.execution_stats.teacher_forced_ms;
+            result.execution_stats.finalize_ms += wave_result.execution_stats.finalize_ms;
+            result.execution_stats.host_prepare_ms += wave_result.execution_stats.host_prepare_ms;
+            result.execution_stats.wall_ms += wave_result.execution_stats.wall_ms;
             for (size_t position = 0; position < wave_result.arms.size(); ++position) {
                 auto arm = std::move(wave_result.arms[position]);
                 if (arm.execution_metrics.execution_path ==
@@ -556,15 +572,19 @@ namespace {
 
 common_flydelta_counterfactual_trial arm_trial_from_result(
         const common_flydelta_arm_result & arm,
-        bool apply_overlay,
+        bool,
         size_t intervention_count) {
     common_flydelta_counterfactual_trial trial;
+    trial.arm_id = arm.arm_id;
+    trial.intervention_ref = arm.intervention_ref;
     trial.executed = arm.executed;
     trial.host_evaluated = arm.host_evaluated;
     trial.verifier_known = arm.verifier_known;
     trial.passed = arm.verifier_passed;
     trial.quality = arm.quality;
-    trial.overlay_applied = apply_overlay;
+    trial.overlay_applied = arm.overlay_applied;
+    trial.device_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::device_batch;
+    trial.backend_batch = arm.execution_metrics.execution_path == common_flydelta_arm_execution_metrics::path::backend_batch;
     trial.intervention_count = intervention_count;
     trial.observed_decision_summary = arm.observed_decision_summary;
     trial.expected_decision_summary = arm.expected_decision_summary;

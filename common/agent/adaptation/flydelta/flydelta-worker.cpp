@@ -56,6 +56,8 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.phase = "region";
     arm.arm_id = "region:" + std::to_string(direction_index) + ":" +
         std::to_string(trial_index);
+    if (!trial.arm_id.empty()) arm.arm_id = trial.arm_id;
+    arm.coefficients = trial.coefficients;
     arm.layer_indices = trial.candidate.layer_indices;
     arm.scale = trial.candidate.total_scale;
     arm.requested_scale = trial.requested_total_scale > 0.0f

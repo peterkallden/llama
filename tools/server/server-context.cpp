@@ -22,6 +22,7 @@
 #include "mtmd-helper.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cinttypes>
 #include <exception>
@@ -298,6 +299,7 @@ struct server_slot {
     bool has_next_token = true;
     bool has_new_line   = false;
     bool truncated      = false;
+    bool flydelta_overlay_applied = false;
 
     stop_type stop;
 
@@ -1045,6 +1047,14 @@ public:
         cvec_batch_enabled = enabled;
     }
 
+    bool per_sequence_factorized_cvec_batch_enabled() const {
+        return cvec_batch_enabled && factorized_cvec_batch_enabled;
+    }
+
+    void set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+        factorized_cvec_batch_enabled = enabled;
+    }
+
     bool agent_trace_enabled() const {
         return trace_enabled;
     }
@@ -1068,6 +1078,7 @@ private:
     // Experimental opt-in. The scalar server path remains authoritative
     // unless this is explicitly enabled and the current batch is compatible.
     bool cvec_batch_enabled = false;
+    bool factorized_cvec_batch_enabled = false;
     bool cvec_batch_active = false;
     server_task_cvec_batch cvec_batch_request;
     llama_adapter_cvec_batch cvec_batch_device;
@@ -1131,12 +1142,39 @@ private:
 
     bool sleeping = false;
 
+    uint64_t cvec_batch_binding_us = 0;
+    size_t cvec_batch_bound_bytes = 0;
+    size_t cvec_batch_basis_bound_bytes = 0;
+    size_t cvec_batch_basis_host_copy_bytes = 0;
+    size_t cvec_batch_coefficients_bound_bytes = 0;
+    size_t cvec_batch_physical_batch_size = 0;
+    bool cvec_batch_factorized_binding = false;
+    std::string cvec_batch_fallback_reason;
+    uint64_t cvec_batch_composition_us = 0;
+    size_t cvec_batch_overlay_resident_bytes = 0;
+    bool cvec_batch_basis_cache_hit = false;
+    bool cvec_batch_overlay_cache_hit = false;
+    size_t cvec_batch_basis_upload_count = 0;
+
     int64_t t_last_load_progress_ms = 0;
 
     void clear_cvec_batch_binding() {
+        cvec_batch_binding_us = 0;
+        cvec_batch_bound_bytes = 0;
+        cvec_batch_basis_bound_bytes = 0;
+        cvec_batch_basis_host_copy_bytes = 0;
+        cvec_batch_coefficients_bound_bytes = 0;
+        cvec_batch_physical_batch_size = 0;
+        cvec_batch_factorized_binding = false;
+        cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_active) {
             cvec_batch_request.clear();
-            cvec_batch_device.clear();
+            cvec_batch_device.clear_binding();
             return;
         }
 
@@ -1145,13 +1183,26 @@ private:
         // consumed the graph, then restore scalar cvec handling.
         llama_synchronize(ctx_tgt);
         ctx_tgt->set_adapter_cvec_batch(nullptr);
-        cvec_batch_device.clear();
+        cvec_batch_device.clear_binding();
         cvec_batch_request.clear();
         cvec_batch_active = false;
     }
 
     bool prepare_cvec_batch_binding(std::string & error) {
         error.clear();
+        cvec_batch_binding_us = 0;
+        cvec_batch_bound_bytes = 0;
+        cvec_batch_basis_bound_bytes = 0;
+        cvec_batch_basis_host_copy_bytes = 0;
+        cvec_batch_coefficients_bound_bytes = 0;
+        cvec_batch_physical_batch_size = 0;
+        cvec_batch_factorized_binding = false;
+        cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
         if (!cvec_batch_enabled || ctx_dft || !batch.slot_batched || batch.tokens.empty()) {
             return false;
         }
@@ -1208,9 +1259,10 @@ private:
         // sparse overlay is different. Keeping its sparse layer layout avoids
         // materialising and uploading a dense, all-layer cvec solely because
         // this ubatch happens to contain one sequence.
+        const bool has_factorized = cvec_batch_request.has_factorized();
         const bool single_sparse = slot_ids.size() == 1 &&
             cvec_batch_request.has_sparse();
-        if (!distinct && !single_sparse) {
+        if (!distinct && !single_sparse && !has_factorized) {
             cvec_batch_request.clear();
             return false;
         }
@@ -1221,19 +1273,86 @@ private:
         int32_t n_embd = 0;
         int32_t il_start = 1;
         int32_t il_end = 0;
-        const bool sparse = cvec_batch_request.has_sparse();
+        const bool factorized = factorized_cvec_batch_enabled && has_factorized;
+        const bool sparse = cvec_batch_request.has_sparse() || has_factorized;
+        const auto binding_started = std::chrono::steady_clock::now();
+        bool used_factorized_binding = false;
+        size_t factorized_basis_bytes = 0;
+        size_t factorized_coefficients_bytes = 0;
+        size_t sparse_values_bytes = 0;
         std::vector<uint32_t> layer_indices;
         bool applied = false;
-        if (sparse) {
+        if (factorized) {
+            std::shared_ptr<const server_task_cvec::factorized_basis_data> basis;
+            std::vector<const float *> coefficients;
+            const bool materialized = cvec_batch_request.materialize_factorized(
+                seq_ids, basis, coefficients, n_embd, error);
+            if (materialized && basis && basis->data) {
+                try {
+                    applied = cvec_batch_device.apply_factorized_composed(*model_tgt,
+                        ctx_tgt->get_sched(), seq_ids,
+                        basis->fingerprint, basis->data->data(), basis->data->size(),
+                        coefficients, basis->rank, n_embd, basis->layer_indices);
+                } catch (const std::exception & exception) {
+                    error = std::string("factorized cvec preflight allocation failed: ") +
+                        exception.what();
+                }
+                used_factorized_binding = applied;
+                if (applied) {
+                    factorized_basis_bytes = basis->data->size() * sizeof(float);
+                    factorized_coefficients_bytes = coefficients.size() *
+                        static_cast<size_t>(basis->rank) * sizeof(float);
+                    cvec_batch_basis_cache_hit = cvec_batch_device.resident_basis_cache_hit();
+                    cvec_batch_overlay_cache_hit = cvec_batch_device.composed_overlay_cache_hit();
+                    cvec_batch_basis_upload_count = cvec_batch_device.last_basis_upload_count();
+                    cvec_batch_composition_us = cvec_batch_device.last_composition_us();
+                    cvec_batch_overlay_resident_bytes = cvec_batch_device.composed_overlay_bytes();
+                }
+            }
+            layer_indices = basis ? basis->layer_indices : std::vector<uint32_t>{};
+            if (!applied) {
+                const std::string factorized_error = error.empty()
+                    ? "factorized_backend_composition_or_allocation_unavailable" : error;
+                error.clear();
+                std::vector<std::vector<float>> owned_rows;
+                applied = cvec_batch_request.materialize_factorized_sparse(
+                    seq_ids, owned_rows, data, n_embd, layer_indices, error) &&
+                    !owned_rows.empty() &&
+                    cvec_batch_device.apply_sparse(
+                        *model_tgt, seq_ids, data, owned_rows.front().size(),
+                        n_embd, layer_indices);
+                if (applied) {
+                    sparse_values_bytes = owned_rows.size() * owned_rows.front().size() * sizeof(float);
+                    cvec_batch_fallback_reason = factorized_error;
+                    SRV_WRN("factorized cvec binding fell back to sparse: %s\n",
+                        factorized_error.c_str());
+                }
+            }
+        } else if (has_factorized) {
+            std::vector<std::vector<float>> owned_rows;
+            applied = cvec_batch_request.materialize_factorized_sparse(
+                seq_ids, owned_rows, data, n_embd, layer_indices, error) &&
+                !owned_rows.empty() &&
+                cvec_batch_device.apply_sparse(
+                    *model_tgt, seq_ids, data, owned_rows.front().size(),
+                    n_embd, layer_indices);
+            if (applied) {
+                sparse_values_bytes = owned_rows.size() * owned_rows.front().size() * sizeof(float);
+                cvec_batch_fallback_reason = "factorized_cvec_batch_not_enabled";
+                SRV_INF("%s", "factorized cvec disabled; using sparse fallback\n");
+            }
+        } else if (sparse) {
             applied = cvec_batch_request.materialize_sparse(
                 seq_ids, data, data_len, n_embd, layer_indices, error) &&
                 cvec_batch_device.apply_sparse(
                     *model_tgt, seq_ids, data, data_len, n_embd, layer_indices);
+            if (applied) sparse_values_bytes = data_len * seq_ids.size() * sizeof(float);
         } else {
             applied = cvec_batch_request.materialize(
                 seq_ids, data, data_len, n_embd, il_start, il_end, error) &&
                 cvec_batch_device.apply(
                     *model_tgt, seq_ids, data, data_len, n_embd, il_start, il_end);
+            if (applied) sparse_values_bytes = data_len * seq_ids.size() * sizeof(float);
         }
         if (!applied) {
             if (error.empty()) {
@@ -1243,17 +1362,67 @@ private:
             return false;
         }
 
+        cvec_batch_binding_us = static_cast<uint64_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - binding_started).count());
+        cvec_batch_physical_batch_size = seq_ids.size();
+        cvec_batch_factorized_binding = used_factorized_binding;
+        if (used_factorized_binding) {
+            cvec_batch_basis_bound_bytes = factorized_basis_bytes;
+            // Count basis staging only on a new cache entry. This is a
+            // logical payload estimate, not a measured transport statistic.
+            cvec_batch_basis_host_copy_bytes = cvec_batch_basis_cache_hit
+                ? 0 : factorized_basis_bytes;
+            cvec_batch_coefficients_bound_bytes = cvec_batch_overlay_cache_hit
+                ? 0 : factorized_coefficients_bytes;
+            cvec_batch_bound_bytes = cvec_batch_basis_host_copy_bytes +
+                cvec_batch_coefficients_bound_bytes;
+        } else {
+            cvec_batch_bound_bytes = sparse_values_bytes;
+        }
+
         ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
         cvec_batch_active = true;
+        const char * binding_mode = used_factorized_binding
+            ? "factorized binding"
+            : factorized ? "sparse fallback" : single_sparse ? "sparse binding" : "batch";
+        const char * representation = used_factorized_binding
+            ? "factorized" : sparse ? "sparse" : "dense";
         SRV_INF("per-sequence cvec %s bound rows=%zu representation=%s layers=%zu\n",
-            single_sparse ? "sparse binding" : "batch",
-            seq_ids.size(), sparse ? "sparse" : "dense",
-            sparse ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
+            binding_mode, seq_ids.size(), representation,
+            (factorized || sparse) ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
+        const auto & trace_cvec = slots[slot_ids.front()].cvec;
+        if (trace_cvec && !trace_cvec->execution_batch_id.empty()) {
+            std::string arm_ids;
+            for (const int32_t slot_id : slot_ids) {
+                if (!arm_ids.empty()) arm_ids += ',';
+                arm_ids += slots[slot_id].cvec->execution_arm_id;
+            }
+            SRV_INF("FlyDelta physical coefficient batch batch=%s wave=%s phase=%s strategy=%s requested_rows=%zu physical_rows=%zu arms=[%s] representation=%s fallback=%s\n",
+                trace_cvec->execution_batch_id.c_str(), trace_cvec->execution_wave_id.c_str(),
+                trace_cvec->execution_phase.c_str(), trace_cvec->execution_strategy.c_str(),
+                slot_ids.size(), seq_ids.size(), arm_ids.c_str(), representation,
+                cvec_batch_fallback_reason.empty() ? "none" : cvec_batch_fallback_reason.c_str());
+        }
+        if (used_factorized_binding) {
+            SRV_INF("per-sequence cvec composition count=%u overlay_cache=%s basis_cache=%s basis_uploads=%zu basis_host_copy_bytes=%zu basis_resident_bytes=%zu coefficient_transfer_bytes=%zu overlay_resident_bytes=%zu compose_us=%" PRIu64 " bind_us=%" PRIu64 " physical_rows=%zu placement=%s\n",
+                cvec_batch_overlay_cache_hit ? 0u : 1u,
+                cvec_batch_overlay_cache_hit ? "hit" : "miss",
+                cvec_batch_basis_cache_hit ? "hit" : "miss",
+                cvec_batch_basis_upload_count, cvec_batch_basis_host_copy_bytes,
+                cvec_batch_device.resident_basis_bytes(),
+                cvec_batch_coefficients_bound_bytes, cvec_batch_overlay_resident_bytes,
+                cvec_batch_composition_us, cvec_batch_binding_us, seq_ids.size(),
+                cvec_batch_device.device_resident() ? "device_batch" : "backend_batch");
+        } else if (!cvec_batch_fallback_reason.empty()) {
+            SRV_WRN("per-sequence cvec fallback reason=%s rows=%zu representation=%s\n",
+                cvec_batch_fallback_reason.c_str(), seq_ids.size(), representation);
+        }
         return true;
     }
 
     void destroy() {
         clear_cvec_batch_binding();
+        cvec_batch_device.clear();
         spec.reset();
         spec_init.reset();
 
@@ -2132,6 +2301,7 @@ private:
                 slot.prompt_clear();
             }
             slot.cvec = task.params.cvec;
+            slot.flydelta_overlay_applied = false;
         }
 
         slot.capture_request = task.params.capture;
@@ -2498,7 +2668,7 @@ private:
         send_error(slot.task->id, error, type, slot.task->n_tokens(), slot.n_ctx);
     }
 
-    void capture_prompt_boundary(server_slot & slot) {
+    void capture_prompt_boundary(server_slot & slot, const common_batch & batch_view, int32_t batch_row) {
         if (!slot.capture_request || !slot.capture_request->enabled || slot.capture_result.attempted) {
             return;
         }
@@ -2530,15 +2700,17 @@ private:
         result.n_embd = static_cast<uint32_t>(n_embd);
         result.token_id = slot.task->tokens[result.token_index];
         result.values.reserve(result.layer_indices.size() * n_embd);
+        const llama_pos capture_pos = request.token_index < 0
+            ? batch_view.tokens[batch_row].pos[0]
+            : static_cast<llama_pos>(request.token_index);
         for (const uint32_t layer : result.layer_indices) {
-            const float * values = llama_get_embeddings_layer_inp(slot.ctx_tgt, layer);
-            if (values == nullptr) {
+            const float * row = llama_get_embeddings_layer_inp_row(slot.ctx_tgt, layer, slot.id, capture_pos);
+            if (row == nullptr) {
                 result.values.clear();
                 result.n_embd = 0;
-                result.failure_reason = "llama.cpp did not return the requested layer input";
+                result.failure_reason = "requested sequence/position is not present in the latest layer-input capture";
                 return;
             }
-            const float * row = values + static_cast<size_t>(result.token_index) * n_embd;
             result.values.insert(result.values.end(), row, row + n_embd);
         }
         result.captured = true;
@@ -2606,6 +2778,19 @@ private:
         res->total_logprob = slot.teacher_forced_logprob;
         res->token_count = slot.teacher_forced_tokens.size();
         res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
+        res->flydelta_cvec_binding_us = cvec_batch_binding_us;
+        res->flydelta_cvec_bound_bytes = cvec_batch_bound_bytes;
+        res->flydelta_cvec_basis_bound_bytes = cvec_batch_basis_bound_bytes;
+        res->flydelta_cvec_basis_host_copy_bytes = cvec_batch_basis_host_copy_bytes;
+        res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
+        res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
+        res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
+        res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
         queue_results.send(std::move(res));
     }
 
@@ -2786,6 +2971,7 @@ private:
         }
 
         res->generation_params = slot.task->params; // copy the parameters
+        res->flydelta_overlay_applied = slot.flydelta_overlay_applied;
         res->capture = std::move(slot.capture_result);
         for (const auto & entry : layer_reduction_ref.entries) {
             if (entry.overlay_sequence_id != slot.id) {
@@ -2813,6 +2999,19 @@ private:
             res->residual_patch_observation.site = patch.site;
         }
         res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
+        res->flydelta_cvec_binding_us = cvec_batch_binding_us;
+        res->flydelta_cvec_bound_bytes = cvec_batch_bound_bytes;
+        res->flydelta_cvec_basis_bound_bytes = cvec_batch_basis_bound_bytes;
+        res->flydelta_cvec_basis_host_copy_bytes = cvec_batch_basis_host_copy_bytes;
+        res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
+        res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
+        res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
+        res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
 
         queue_results.send(std::move(res));
     }
@@ -3910,7 +4109,6 @@ private:
                 abort_all_slots("failed to apply request control vector");
                 return;
             }
-
             if (slot_batched->residual_patch) {
                 const auto & patch = *slot_batched->residual_patch;
                 slot_batched->residual_patch_ref = {
@@ -4893,11 +5091,45 @@ private:
         // note: the sync is done here too, so that the wait is also covered by the yield
         int ret = 0;
         queue_tasks.yield_to_queue([&]() {
+            if (cvec_batch_active) {
+                cvec_batch_device.begin_graph_observation();
+            }
             ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
             if (ret == 0 && has_output) {
                 llama_synchronize(ctx_tgt);
             }
         });
+
+        const std::string callback_failure = cvec_batch_active
+            ? cvec_batch_device.callback_failure_reason() : std::string{};
+        if (ret == 0 && cvec_batch_active &&
+                (!callback_failure.empty() || !cvec_batch_device.callback_applied())) {
+            const std::string reason = "cvec graph callback failed: " +
+                (callback_failure.empty()
+                    ? std::string("no overlay operation was added to the graph")
+                    : callback_failure);
+            SRV_ERR("%s\n", reason.c_str());
+            llama_synchronize(ctx_tgt);
+            abort_all_slots(reason);
+            clear_cvec_batch_binding();
+            return true;
+        }
+
+        // Do not report an overlay merely because its host-side binding was
+        // accepted. Mark only slots whose decode graph completed after the
+        // scalar cvec or sequence-specific callback path was actually used.
+        if (ret == 0) {
+            std::unordered_set<int32_t> applied_slots;
+            for (const auto & token : batch.tokens) {
+                if (!applied_slots.insert(token.id_slot).second || token.id_slot < 0 ||
+                        token.id_slot >= static_cast<int32_t>(slots.size())) {
+                    continue;
+                }
+                if (slots[token.id_slot].cvec) {
+                    slots[token.id_slot].flydelta_overlay_applied = true;
+                }
+            }
+        }
 
         if (ret != 0) {
             {
@@ -5047,7 +5279,7 @@ private:
             }
 
             if (slot.state == SLOT_STATE_DONE_PROMPT) {
-                capture_prompt_boundary(slot);
+                capture_prompt_boundary(slot, batch.view, slot.i_batch - off);
                 if (slot.task->type == SERVER_TASK_TYPE_EMBEDDING) {
                     // prompt evaluated for embedding
                     send_embedding(slot, batch.view);
@@ -5463,8 +5695,16 @@ bool server_context::per_sequence_cvec_batch_enabled() const {
     return impl->per_sequence_cvec_batch_enabled();
 }
 
+bool server_context::per_sequence_factorized_cvec_batch_enabled() const {
+    return impl->per_sequence_factorized_cvec_batch_enabled();
+}
+
 void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
     impl->set_per_sequence_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+    impl->set_per_sequence_factorized_cvec_batch_enabled(enabled);
 }
 
 void server_context::set_agent_trace_enabled(const bool enabled) {

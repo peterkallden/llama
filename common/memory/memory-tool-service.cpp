@@ -52,7 +52,7 @@ bool common_memory_parse_tool_search_arguments_value(
         return false;
     }
     for (const auto & item : arguments.items()) {
-        if (item.key() != "query" && item.key() != "limit") {
+        if (item.key() != "query" && item.key() != "limit" && item.key() != "as_of" && item.key() != "history") {
             error = "unsupported argument: " + item.key();
             return false;
         }
@@ -74,6 +74,14 @@ bool common_memory_parse_tool_search_arguments_value(
             return false;
         }
         contract.limit = static_cast<size_t>(requested_limit);
+    }
+    if (arguments.contains("as_of")) {
+        if (!arguments.at("as_of").is_number_integer()) { error = "as_of must be a Unix timestamp integer"; return false; }
+        contract.as_of = arguments.at("as_of").get<int64_t>();
+    }
+    if (arguments.contains("history")) {
+        if (!arguments.at("history").is_boolean()) { error = "history must be boolean"; return false; }
+        contract.history = arguments.at("history").get<bool>();
     }
 
     error.clear();
@@ -172,6 +180,8 @@ bool common_memory_tool_service::search(
 
     common_memory_query query = context.query_defaults;
     query.text = result.query;
+    query.as_of = contract.as_of;
+    query.include_history = contract.history;
 
     size_t limit = std::clamp(query.limit, size_t(1), context.max_search_limit);
     if (contract.limit.has_value()) {

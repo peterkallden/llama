@@ -39,6 +39,7 @@ bool common_learning_observation_qualifies(const common_learning_observation & o
             case common_learning_signal_type::research_verification:
             case common_learning_signal_type::procedure_verification:
             case common_learning_signal_type::blueprint_verification:
+            case common_learning_signal_type::semi_oracle_preference:
                 return true;
         }
     }

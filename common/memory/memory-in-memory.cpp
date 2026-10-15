@@ -6,6 +6,7 @@
 #include <limits>
 #include <set>
 #include <sstream>
+#include <ctime>
 
 static std::string lowercase(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char) std::tolower(c); });
@@ -138,6 +139,8 @@ bool common_memory_in_memory_store::put(const common_memory_record & record, std
         error = "memory id must not be empty";
         return false;
     }
+    common_memory_temporal_fields temporal;
+    if (!common_memory_temporal_fields_read(record, temporal, error)) return false;
     records[record.id] = record;
     error.clear();
     return true;
@@ -243,15 +246,35 @@ bool common_memory_in_memory_store::relate(const std::string & from, const std::
         error = "relation must not be empty";
         return false;
     }
+    if (!common_memory_validate_relation(*this, from, relation, to, error)) return false;
     edges.erase(std::remove_if(edges.begin(), edges.end(), [&](const edge & e) {
         return e.from == from && e.relation == relation && e.to == to;
     }), edges.end());
-    edges.push_back(edge{from, relation, to, weight, 0});
+    edges.push_back(edge{from, relation, to, weight, static_cast<int64_t>(std::time(nullptr))});
     std::sort(edges.begin(), edges.end(), [](const edge & a, const edge & b) {
         return std::tie(a.from, a.relation, a.to) < std::tie(b.from, b.relation, b.to);
     });
     error.clear();
     return true;
+}
+
+std::vector<common_memory_relation> common_memory_in_memory_store::list_relations(
+        const std::string & id, const std::string & relation, bool outgoing,
+        const common_memory_query & scope, std::string & error) {
+    if (!opened) { error = "memory store is not open"; return {}; }
+    std::vector<common_memory_relation> result;
+    for (const auto & edge : edges) {
+        if ((!relation.empty() && edge.relation != relation) || (outgoing ? edge.from != id : edge.to != id)) continue;
+        std::string endpoint_error;
+        const auto from = get(edge.from, endpoint_error);
+        if (!endpoint_error.empty()) { error = endpoint_error; return {}; }
+        const auto to = get(edge.to, endpoint_error);
+        if (!endpoint_error.empty()) { error = endpoint_error; return {}; }
+        if (!from || !to || !common_memory_scope_matches(*from, scope) || !common_memory_scope_matches(*to, scope)) continue;
+        result.push_back({edge.from, edge.relation, edge.to, edge.weight, edge.created_at});
+    }
+    error.clear();
+    return result;
 }
 
 bool common_memory_in_memory_store::erase(const std::string & id, std::string & error) {

@@ -1,4 +1,5 @@
 #include "agent/agent-runtime.h"
+#include "agent/context/observation-projection.h"
 #include "agent/agent-runtime-context.h"
 #include "agent/context-pressure.h"
 #include "agent/learning/memory-learning.h"
@@ -310,31 +311,8 @@ static std::string tool_observation_payload(const common_tool_execution_result &
 static json bounded_tool_observation_json(
         const json & value, size_t depth, size_t max_depth,
         size_t max_object_fields, size_t max_array_items, size_t max_string_chars) {
-    if (value.is_string()) {
-        auto text = value.get<std::string>();
-        if (text.size() > max_string_chars) text.resize(max_string_chars);
-        return text;
-    }
-    if (value.is_primitive() || value.is_null()) return value;
-    if (depth >= max_depth) return value.is_array() ? json::array() : json::object();
-    if (value.is_array()) {
-        json out = json::array();
-        size_t count = 0;
-        for (const auto & item : value) {
-            if (count++ >= max_array_items) break;
-            out.push_back(bounded_tool_observation_json(item, depth + 1, max_depth,
-                max_object_fields, max_array_items, max_string_chars));
-        }
-        return out;
-    }
-    json out = json::object();
-    size_t count = 0;
-    for (const auto & item : value.items()) {
-        if (count++ >= max_object_fields) break;
-        out[item.key()] = bounded_tool_observation_json(item.value(), depth + 1, max_depth,
-            max_object_fields, max_array_items, max_string_chars);
-    }
-    return out;
+    return common_agent_project_observation_json(value, depth, max_depth,
+        max_object_fields, max_array_items, max_string_chars);
 }
 
 static std::string bounded_tool_observation_payload(std::string payload, size_t char_budget) {
@@ -1514,6 +1492,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             std::string tool_result = bounded_tool_observation_payload(
                 tool_observation_payload(execution), context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
+            for (auto signal : execution.learning_signals) {
+                signal.plan_id = plan.id;
+                signal.step_id = tool_step_id;
+                signal.tool_name = tool_call->name;
+                signal.evidence_id = tool_observation_id;
+                if (signal.tool_family.empty()) add_tool_learning_metadata(signal, tools, tool_call->name);
+                result.learning_signals.push_back(std::move(signal));
+            }
             common_plan_operation observed;
             observed.kind = common_plan_operation_kind::record_observation;
             observed.plan_id = plan.id;

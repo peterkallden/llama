@@ -39,12 +39,11 @@ if [[ "$suite" != /* ]]; then suite="${repo_root}/${suite}"; fi
 work_dir=$(agent_smoke_prepare_workdir flydelta-dataset-question-repair-model)
 
 smoke_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-dataset-question-repair-model-smoke)
+agent_smoke_build_if_requested llama-agent-flydelta-dataset-question-repair-model-smoke
 
 agent_smoke_require_file "$model" "chat model"
 agent_smoke_require_file "$suite" "FlyDelta dataset question suite"
 agent_smoke_require_executable "$smoke_bin" "FlyDelta dataset question repair model smoke"
-
-agent_smoke_build_if_requested
 
 args=(
     --model "$model"

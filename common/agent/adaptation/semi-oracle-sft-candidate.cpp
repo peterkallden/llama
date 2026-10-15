@@ -59,8 +59,15 @@ bool common_semi_oracle_make_sft_candidate(
         common_training_candidate & candidate,
         std::string & error) {
     error.clear();
+    candidate = {};
+    const bool learning_authorized = std::all_of(
+        ruleset.assertions.begin(), ruleset.assertions.end(),
+        [](const common_semi_oracle_rule_assertion & assertion) {
+            return assertion.authority != common_semi_oracle_rule_authority::inferred;
+        });
     if (!common_semi_oracle_validate_ruleset(ruleset, error) ||
             ruleset.domain != common_semi_oracle_domain::placement_game ||
+            !learning_authorized ||
             !action_proof_matches(ruleset, preferred) ||
             preferred.value == common_semi_oracle_placement_value::unknown ||
             !preferred.ranking_complete || ruleset.scope != common_semi_oracle_scope::session ||
@@ -158,5 +165,92 @@ bool common_semi_oracle_make_sft_candidate(
     candidate.learning_domain = "placement_game";
     candidate.tool_family = "semi-oracle";
     candidate.provider_kind = "native";
+    return true;
+}
+
+bool common_semi_oracle_make_dpo_candidate(
+        const common_semi_oracle_ruleset & ruleset,
+        const common_semi_oracle_placement_action_value & chosen,
+        const common_semi_oracle_placement_action_value & rejected,
+        const std::string & persisted_evaluation_payload_json,
+        const common_agent_scope & scope,
+        const std::string & approved_prompt,
+        const std::string & redaction_policy_id,
+        const std::string & redaction_method,
+        bool curator_approved,
+        common_training_candidate & candidate,
+        std::string & error) {
+    error.clear();
+    candidate = {};
+    if (chosen.ruleset_id != rejected.ruleset_id ||
+            chosen.ruleset_revision != rejected.ruleset_revision ||
+            chosen.evaluator_ref != rejected.evaluator_ref ||
+            chosen.evaluator_revision != rejected.evaluator_revision ||
+            chosen.state_fingerprint.empty() || chosen.state_fingerprint != rejected.state_fingerprint ||
+            chosen.player.empty() || chosen.player != rejected.player ||
+            (chosen.row == rejected.row && chosen.column == rejected.column) ||
+            chosen.value == common_semi_oracle_placement_value::unknown ||
+            rejected.value == common_semi_oracle_placement_value::unknown ||
+            static_cast<int>(chosen.value) <= static_cast<int>(rejected.value) ||
+            chosen.persisted_evaluation_ref.empty() ||
+            chosen.persisted_evaluation_ref != rejected.persisted_evaluation_ref ||
+            !chosen.ranking_complete || !rejected.ranking_complete ||
+            !action_proof_matches(ruleset, chosen) || !action_proof_matches(ruleset, rejected)) {
+        error = "offline DPO requires two proven, distinct actions from one complete ranking with strictly different outcomes";
+        return false;
+    }
+
+    if (!common_semi_oracle_make_sft_candidate(
+            ruleset, chosen, persisted_evaluation_payload_json, scope,
+            approved_prompt, redaction_policy_id, redaction_method,
+            curator_approved, candidate, error)) return false;
+
+    const auto evaluation = json::parse(persisted_evaluation_payload_json, nullptr, false);
+    const auto ranking = evaluation.is_object() && evaluation.contains("proof_json") &&
+        evaluation["proof_json"].is_string()
+        ? json::parse(evaluation["proof_json"].get<std::string>(), nullptr, false) : json();
+    if (!evaluation.is_object() || evaluation.value("ruleset_id", std::string()) != ruleset.id ||
+            evaluation.value("ruleset_revision", uint64_t(0)) != ruleset.revision ||
+            evaluation.value("verdict", std::string()) != "SATISFIED" ||
+            evaluation.value("evaluator_ref", std::string()) != chosen.evaluator_ref ||
+            evaluation.value("evaluator_revision", std::string()) != chosen.evaluator_revision ||
+            !ranking.is_object() || ranking.value("algorithm", std::string()) != "memoized_minimax_v1" ||
+            ranking.value("state_fingerprint", std::string()) != chosen.state_fingerprint ||
+            ranking.value("action_contract_fingerprint", std::string()) != ruleset.action_contract_fingerprint ||
+            !ranking.contains("actions") || !ranking["actions"].is_array()) {
+        error = "offline DPO requires the persisted complete minimax ranking for this RuleSet and state";
+        return false;
+    }
+    const auto in_ranking = [&](const common_semi_oracle_placement_action_value & action) {
+        return std::any_of(ranking["actions"].begin(), ranking["actions"].end(), [&](const auto & item) {
+            return item.is_object() && item.value("player", std::string()) == action.player &&
+                item.value("row", -1) == action.row && item.value("column", -1) == action.column &&
+                item.value("value", 99) == static_cast<int>(action.value) &&
+                item.value("proof_json", std::string()) == action.proof_json;
+        });
+    };
+    if (!in_ranking(chosen) || !in_ranking(rejected)) {
+        error = "offline DPO actions must both occur in the persisted complete minimax ranking";
+        candidate = {};
+        return false;
+    }
+
+    std::ostringstream rejected_text;
+    rejected_text << "player: " << rejected.player << "\nrow: " << rejected.row
+                  << "\ncolumn: " << rejected.column;
+    std::ostringstream contrast;
+    contrast << "minimax-v1:" << chosen.state_fingerprint << ":"
+             << chosen.player << "[" << chosen.row << "," << chosen.column << "]="
+             << static_cast<int>(chosen.value) << ">"
+             << rejected.player << "[" << rejected.row << "," << rejected.column << "]="
+             << static_cast<int>(rejected.value);
+    const std::string rejected_proof_ref = rejected.persisted_evaluation_ref +
+        "/action/" + std::to_string(rejected.row) + "/" + std::to_string(rejected.column);
+    candidate.id += "/dpo/" + std::to_string(rejected.row) + "/" + std::to_string(rejected.column);
+    candidate.learning_case_id = candidate.id;
+    candidate.rejected_target = rejected_text.str();
+    candidate.transaction_ids.push_back(rejected_proof_ref);
+    candidate.contrast_ref = contrast.str();
+    candidate.hypothesis = "Prefer the strictly better action proven by the same complete minimax ranking.";
     return true;
 }

@@ -215,6 +215,17 @@ using common_agent_user_taught_concept_relation_provider = std::function<bool(
         std::vector<common_flydelta_teaching_relation> & teaching_relations,
         std::string & error)>;
 
+// SemiOracle has a distinct evidence source and must not masquerade as an
+// explicit user-taught concept. The runtime routes these resolved relations
+// through the same evidence, teaching-material and FlyDelta capture path.
+using common_agent_semi_oracle_teaching_relation_provider = std::function<bool(
+        const common_agent_request & request,
+        const common_plan_state & plan,
+        const common_agent_result & result,
+        const common_learning_transaction & transaction,
+        std::vector<common_flydelta_teaching_relation> & teaching_relations,
+        std::string & error)>;
+
 common_agent_teaching_build_result
 common_agent_build_procedure_teaching_relation(
         const common_agent_procedure_teaching_request & request);

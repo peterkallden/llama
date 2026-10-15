@@ -38,6 +38,7 @@ enum class common_agent_generation_purpose {
     reflection,
     memory_learning,
     resource_chunk_extraction,
+    context_compaction,
 };
 
 inline const char * common_agent_generation_purpose_name(common_agent_generation_purpose purpose) {
@@ -56,6 +57,7 @@ inline const char * common_agent_generation_purpose_name(common_agent_generation
         case common_agent_generation_purpose::reflection:          return "reflection";
         case common_agent_generation_purpose::memory_learning:     return "memory_learning";
         case common_agent_generation_purpose::resource_chunk_extraction: return "resource_chunk_extraction";
+        case common_agent_generation_purpose::context_compaction: return "context_compaction";
     }
     return "draft";
 }
@@ -186,6 +188,19 @@ struct common_agent_generation_result {
         int32_t il_start = 1;
         int32_t il_end = 0;
         size_t data_bytes = 0;
+        uint64_t cvec_binding_us = 0;
+        size_t cvec_bound_bytes = 0;
+        size_t factorized_basis_bound_bytes = 0;
+        size_t factorized_basis_host_copy_bytes = 0;
+        size_t factorized_coefficients_bound_bytes = 0;
+        size_t factorized_overlay_resident_bytes = 0;
+        uint64_t factorized_composition_us = 0;
+        size_t factorized_basis_upload_count = 0;
+        bool factorized_basis_cache_hit = false;
+        bool factorized_overlay_cache_hit = false;
+        size_t physical_batch_size = 0;
+        bool factorized_binding = false;
+        std::string fallback_reason;
         std::string artifact_id;
         std::string content_hash;
     } flydelta_runtime;

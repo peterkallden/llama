@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-dose-controller.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -39,6 +40,7 @@ struct common_flydelta_scale_geometry {
     float progress = 0.0f;
     float leakage = 0.0f;
     float shift_norm = 0.0f;
+    uint32_t measurement_layer = 0;
 };
 
 struct common_flydelta_scale_trial {

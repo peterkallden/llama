@@ -390,6 +390,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
+        test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
         test-agent-loop.cpp
         test-agent-tool-failure.cpp
@@ -450,6 +451,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-flydelta-candidate-lifecycle.cpp
         test-agent-flydelta-runtime-observer.cpp
         test-agent-flydelta-server-binding.cpp
+        test-agent-flydelta-resource-scope.cpp
 test-agent-flydelta-layer-search.cpp
 test-agent-flydelta-scale-search.cpp
 test-agent-flydelta-alpha-response-search.cpp
@@ -470,6 +472,10 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-representation-augmentation.cpp
         test-agent-model-facing-tool-chain.cpp
         test-memory-policy.cpp
+        test-memory-store.cpp
+        test-memory-retrieval.cpp
+        test-memory-tool-service.cpp
+        test-memory-cozo.cpp
         test-plan-context.cpp
         test-plan-json.cpp
         test-plan-store.cpp
@@ -486,6 +492,8 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-native-crash-smoke.cpp
         test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
+        test-agent-factorized-cvec-config.cpp
+        test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-route-compiler.cpp
         test-agent-execution-envelope.cpp
@@ -494,6 +502,9 @@ test-agent-flydelta-alpha-response-search.cpp
         # The Cozo plan-store test references the optional implementation,
         # which is only compiled when the plan Cozo backend is enabled.
         if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
+            continue()
+        endif()
+        if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp" AND NOT LLAMA_MEMORY_COZO)
             continue()
         endif()
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
@@ -510,6 +521,21 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-factorized-cvec-config")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-context-management")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME MATCHES "^test-memory-(store|retrieval|tool-service|cozo)$")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-memory)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-daemon-seams")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-daemon-library)
         endif()
         if (TEST_NAME STREQUAL "test-agent-resource-chunker")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
@@ -560,6 +586,15 @@ test-agent-flydelta-alpha-response-search.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-inference.cpp)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-resource-scope")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/mtmd)
+            target_include_directories(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/daemon)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/resource-scope.cpp)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-sparse-cvec")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)

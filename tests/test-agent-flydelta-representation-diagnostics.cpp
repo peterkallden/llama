@@ -46,6 +46,29 @@ int main() {
     CHECK(std::fabs(diagnostics.progress - 1.0f) < 0.0001f);
     CHECK(std::fabs(diagnostics.leakage - 1.0f) < 0.0001f);
 
+    // WHERE captures the broad baseline once but only the requested rows for
+    // each overlay. Compare the same measurement layer at its own row offset.
+    auto narrow = capture({3.0f, 3.0f});
+    narrow.layer_indices = {4};
+    CHECK(common_flydelta_representation_diagnostics_from_captures(
+        capture({99.0f, -99.0f, 1.0f, 1.0f}), narrow,
+        delta(4, {2.0f, 0.0f}), 1024, diagnostics, error));
+    CHECK(std::fabs(diagnostics.progress - 1.0f) < 0.0001f);
+    CHECK(std::fabs(diagnostics.shift_norm - 2.8284271f) < 0.0001f);
+    narrow.layer_indices = {2};
+    CHECK(!common_flydelta_representation_diagnostics_from_captures(
+        capture({0.0f, 0.0f, 1.0f, 1.0f}), narrow,
+        delta(4, {2.0f, 0.0f}), 1024, diagnostics, error));
+    auto wrong_model = delta(4, {2.0f, 0.0f});
+    wrong_model.model_profile_fingerprint = "other:model";
+    CHECK(!common_flydelta_representation_diagnostics_from_captures(
+        capture({0.0f, 0.0f, 1.0f, 1.0f}), capture({0.0f, 0.0f, 3.0f, 3.0f}),
+        wrong_model, 1024, diagnostics, error));
+
+    CHECK(common_flydelta_representation_diagnostics_from_captures(
+        capture({0.0f, 0.0f, 1.0f, 1.0f}), capture({0.0f, 0.0f, 3.0f, 3.0f}),
+        delta(4, {2.0f, 0.0f}), 1024, diagnostics, error));
+
     common_flydelta_representation_diagnostics reduced;
     CHECK(common_flydelta_representation_diagnostics_from_reductions(
         4, 4.0, 8.0, 4.0, 4.0, reduced, error));

@@ -89,6 +89,8 @@ public:
     std::string & current_plan_id() { return resident_current_plan_id; }
     const common_agent_runtime_resident_host & runtime_host() const { return host; }
     common_agent_runtime_resident_host & runtime_host() { return host; }
+    common_agent_inference * inference();
+    common_agent_tool_output_format configured_tool_output_format() const;
 
 private:
     common_memory_store & memory_store;

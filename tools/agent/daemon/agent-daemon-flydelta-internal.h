@@ -66,6 +66,20 @@ namespace agent_daemon_flydelta_internal {
 
 using json = nlohmann::ordered_json;
 
+struct daemon_flydelta_factorized_direction {
+    std::shared_ptr<const common_flydelta_low_rank_basis> basis;
+    std::shared_ptr<const std::vector<float>> flattened_basis;
+    std::vector<float> normalized_coefficients;
+    std::string source_ref;
+    std::string basis_fingerprint;
+    std::string batch_id;
+    std::string wave_id;
+    std::string phase;
+    std::string strategy;
+    bool batch_eligible = false;
+    std::string batch_ineligible_reason;
+};
+
 struct daemon_flydelta_resource_provider {
     std::shared_ptr<common_agent_server_context_host> host;
     agent_resource_store * resources = nullptr;
@@ -90,6 +104,8 @@ struct daemon_flydelta_resource_provider {
     std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
     mutable std::mutex composed_direction_mutex;
     std::unordered_map<std::string, std::vector<common_flydelta_basis_direction>> composed_directions;
+    mutable std::mutex factorized_direction_mutex;
+    std::unordered_map<std::string, daemon_flydelta_factorized_direction> factorized_directions;
     // Optional host-owned materialization seams for the decision-margin
     // challenger. They remain empty for hosts that do not expose a verified
     // decision pair or output-head rows; the ordinary synthesis path is then
@@ -232,7 +248,8 @@ bool daemon_flydelta_parse_context(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
         common_agent_generation_request & request,
-        std::string & error);
+        std::string & error,
+        std::vector<common_chat_tool> * verification_tools = nullptr);
 
 bool daemon_flydelta_parse_directions(
         const daemon_flydelta_resource_provider & provider,
@@ -329,12 +346,17 @@ bool daemon_flydelta_verify_generation(
         std::string & observed_summary,
         std::string & expected_summary,
         std::string & verifier_reason,
+        std::string & violation_code,
         std::string & violation_kind,
         std::vector<std::string> & violation_dimensions,
         common_flydelta_semantic_progress_observation & progress_observation,
-        std::string & error);
+        std::string & error,
+        const std::vector<common_chat_tool> & model_tools = {});
 
 bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & result);
+
+common_flydelta_counterfactual_outcome daemon_flydelta_classify_arm_pair(
+    const common_flydelta_arm_result & baseline, const common_flydelta_arm_result & candidate);
 
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
@@ -454,6 +476,11 @@ bool daemon_flydelta_register_composed_direction(
         std::string & reference,
         std::string & error);
 
+inline bool daemon_flydelta_factorized_wave_eligible(
+        const common_flydelta_experiment_phase phase, const size_t arm_count) {
+    return phase == common_flydelta_experiment_phase::deep_controls && arm_count >= 2;
+}
+
 bool daemon_flydelta_run_coefficient_arm_batch(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_experiment_job & job,
@@ -467,7 +494,10 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         std::vector<bool> & geometry_available,
         std::string & error,
         const bool full_execution = true,
-        const std::string & wave_suffix = {});
+        const std::string & wave_suffix = {},
+        const common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap,
+        const common_flydelta_coefficient_search_strategy strategy =
+            common_flydelta_coefficient_search_strategy::coordinate);
 
 bool daemon_flydelta_resolve_evidence_direction_candidates(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

@@ -1,9 +1,12 @@
 #include "agent/adaptation/semi-oracle.h"
+#include "agent/adaptation/semi-oracle-search.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <map>
 #include <string>
+#include <tuple>
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
 
@@ -24,10 +27,20 @@ public:
     bool get_session_binding(const std::string & session,std::string & id,uint64_t & rev,bool & found,std::string &) const override {
         const auto it=bindings.find(session);found=it!=bindings.end();if(found){id=it->second.first;rev=it->second.second;}return true;
     }
+    bool get_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            std::string & state,bool & found,std::string &) const override {
+        const auto it=game_states.find({session,ruleset,revision});found=it!=game_states.end();
+        if(found)state=it->second;else state.clear();return true;
+    }
+    bool put_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            const std::string & state,std::string &) override {
+        game_states[{session,ruleset,revision}]=state;return true;
+    }
     bool append_evaluation(const std::string &,const common_semi_oracle_result & r,std::string &) override {evaluations.push_back(r);return true;}
     std::vector<std::string> list_host_rulesets(std::string &) const override {return host;}
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
+    std::map<std::tuple<std::string,std::string,uint64_t>,std::string> game_states;
     std::vector<std::string> host;
     std::vector<common_semi_oracle_result> evaluations;
 };
@@ -187,6 +200,26 @@ int main() {
     aq.level=common_semi_oracle_level::bounded;aq.goal="solve:x";aq.action_dsl="open! algebra.rewrite_equation\nlhs: 2x+6\nrhs: 10\n";
     CHECK(common_semi_oracle_evaluate(algebra,aq,result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&result.proof_json.find("solution")!=std::string::npos);
+    const auto algebra_proof=nlohmann::ordered_json::parse(result.proof_json);
+    CHECK(algebra_proof.value("algorithm",std::string())=="bounded_astar_v1");
+    CHECK(algebra_proof.value("optimality_proven",false));
+    CHECK(algebra_proof.contains("path")&&algebra_proof["path"].size()==4);
+    CHECK(algebra_proof["path"][1].value("action",std::string())=="simplify lhs");
+    CHECK(algebra_proof["path"][2].value("action",std::string())=="move constants to the right");
+    CHECK(algebra_proof["path"][3].value("action",std::string())=="divide both sides by the non-zero coefficient");
+    CHECK(result.evaluator_revision=="linear_astar_v1");
+    auto bounded_algebra=aq;bounded_algebra.budget.max_depth=1;
+    CHECK(common_semi_oracle_evaluate(algebra,bounded_algebra,result,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::unknown);
+    auto guided_algebra=aq;guided_algebra.level=common_semi_oracle_level::guided;
+    guided_algebra.guidance={"move constants to the right","simplify lhs"};
+    CHECK(common_semi_oracle_evaluate(algebra,guided_algebra,result,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied);
+    CHECK(common_semi_oracle_learning_authorized(algebra,result));
+    CHECK(common_semi_oracle_validate_state(algebra,
+        R"json({"lhs":"2(x+3)","rhs":"10"})json", error));
+    CHECK(!common_semi_oracle_validate_state(algebra,
+        R"json({"lhs":"x*x","rhs":"10"})json", error));
 
     const auto encoded=common_semi_oracle_ruleset_to_json(game);
     common_semi_oracle_ruleset roundtrip;
@@ -202,6 +235,21 @@ int main() {
         "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",common_semi_oracle_level::local,"",
         common_semi_oracle_budget{}, {},result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&store.evaluations.size()==2);
+    common_semi_oracle_tool_service algebra_service(store,"host-test","session-algebra");
+    common_semi_oracle_ruleset managed_algebra;
+    CHECK(algebra_service.define_ruleset("name: Tool algebra\ndescription: session equation\ndomain: linear_algebra\nvariable: x\n",common_semi_oracle_rule_authority::declared,managed_algebra,error));
+    CHECK(algebra_service.initialize_active_state(R"json({"lhs":"2(x+3)","rhs":"10"})json",false,error));
+    common_semi_oracle_result searched_algebra;
+    CHECK(algebra_service.search_active_algebra_goal(searched_algebra,error));
+    CHECK(searched_algebra.verdict==common_semi_oracle_verdict::satisfied&&
+        searched_algebra.evaluator_revision=="linear_astar_v1"&&
+        searched_algebra.proof_json.find("bounded_astar_v1")!=std::string::npos);
+    std::string state_before,state_after;
+    CHECK(algebra_service.verify_active_action("open! algebra.rewrite_equation\nlhs: 2x+6\n",result,state_before,state_after,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&
+        state_before.find("2(x+3)")!=std::string::npos&&state_after.find("2x+6")!=std::string::npos);
+    CHECK(algebra_service.verify_active_action("lhs: 2x+3\n",result,state_before,state_after,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::violated&&state_after.empty());
     common_semi_oracle_ruleset revised;
     CHECK(service.define_ruleset("name: Tool game corrected\ndescription: session game\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",common_semi_oracle_rule_authority::declared,revised,error));
     CHECK(revised.id==managed.id&&revised.revision==2&&revised.parent_revision==1);

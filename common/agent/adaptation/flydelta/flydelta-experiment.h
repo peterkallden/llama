@@ -41,6 +41,8 @@ bool common_flydelta_experiment_fixture_validate(
 // A trial contains host-verifier evidence, never a model self-claim of
 // correctness. Unknown verification is deliberately preserved as UNKNOWN.
 struct common_flydelta_counterfactual_trial {
+    std::string arm_id;
+    std::string intervention_ref;
     bool executed = false;
     // The host ran the requested evaluation/generation path. This is
     // intentionally independent from verifier_known: an attempted host
@@ -51,6 +53,8 @@ struct common_flydelta_counterfactual_trial {
     bool passed = false;
     float quality = 0.0f;
     bool overlay_applied = false;
+    bool device_batch = false;
+    bool backend_batch = false;
     size_t intervention_count = 0;
     // Compact host-verifier observation for operator-facing traces. These
     // fields explain a known outcome; they do not grant evidence or

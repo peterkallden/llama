@@ -606,14 +606,40 @@ private:
                 apply_server_layer_reduction(*final_response, request, result);
                 apply_server_residual_patch_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
+                result.flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;
+                result.flydelta_runtime.cvec_bound_bytes = final_response->flydelta_cvec_bound_bytes;
+                result.flydelta_runtime.factorized_basis_bound_bytes =
+                    final_response->flydelta_cvec_basis_bound_bytes;
+                result.flydelta_runtime.factorized_basis_host_copy_bytes =
+                    final_response->flydelta_cvec_basis_host_copy_bytes;
+                result.flydelta_runtime.factorized_coefficients_bound_bytes =
+                    final_response->flydelta_cvec_coefficients_bound_bytes;
+                result.flydelta_runtime.factorized_overlay_resident_bytes =
+                    final_response->flydelta_cvec_overlay_resident_bytes;
+                result.flydelta_runtime.factorized_composition_us =
+                    final_response->flydelta_cvec_composition_us;
+                result.flydelta_runtime.factorized_basis_upload_count =
+                    final_response->flydelta_cvec_basis_upload_count;
+                result.flydelta_runtime.factorized_basis_cache_hit =
+                    final_response->flydelta_cvec_basis_cache_hit;
+                result.flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
+                result.flydelta_runtime.physical_batch_size =
+                    final_response->flydelta_cvec_physical_batch_size;
+                result.flydelta_runtime.factorized_binding =
+                    final_response->flydelta_cvec_factorized_binding;
+                result.flydelta_runtime.fallback_reason =
+                    final_response->flydelta_cvec_fallback_reason;
                 result.flydelta_runtime.requested = request.flydelta_activation &&
-                    request.flydelta_activation->overlay.enabled;
+                    (request.flydelta_activation->overlay.enabled ||
+                     request.flydelta_activation->factorized_overlay.enabled);
                 if (final_response->generation_params.cvec) {
                     const auto & cvec = *final_response->generation_params.cvec;
-                    result.flydelta_runtime.applied = true;
+                    result.flydelta_runtime.applied = final_response->flydelta_overlay_applied;
                     result.flydelta_runtime.sparse_device_binding =
                         final_response->flydelta_device_batch &&
-                        !cvec.sparse_layer_indices.empty();
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
                     result.flydelta_runtime.device_batch = final_response->flydelta_device_batch;
                     result.flydelta_runtime.cache_prompt =
                         final_response->generation_params.cache_prompt;
@@ -725,15 +751,41 @@ private:
                 apply_server_residual_patch_observation(
                     *final_response, requests[index], results[index]);
                 results[index].flydelta_device_batch = final_response->flydelta_device_batch;
+                results[index].flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;
+                results[index].flydelta_runtime.cvec_bound_bytes = final_response->flydelta_cvec_bound_bytes;
+                results[index].flydelta_runtime.factorized_basis_bound_bytes =
+                    final_response->flydelta_cvec_basis_bound_bytes;
+                results[index].flydelta_runtime.factorized_basis_host_copy_bytes =
+                    final_response->flydelta_cvec_basis_host_copy_bytes;
+                results[index].flydelta_runtime.factorized_coefficients_bound_bytes =
+                    final_response->flydelta_cvec_coefficients_bound_bytes;
+                results[index].flydelta_runtime.factorized_overlay_resident_bytes =
+                    final_response->flydelta_cvec_overlay_resident_bytes;
+                results[index].flydelta_runtime.factorized_composition_us =
+                    final_response->flydelta_cvec_composition_us;
+                results[index].flydelta_runtime.factorized_basis_upload_count =
+                    final_response->flydelta_cvec_basis_upload_count;
+                results[index].flydelta_runtime.factorized_basis_cache_hit =
+                    final_response->flydelta_cvec_basis_cache_hit;
+                results[index].flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
+                results[index].flydelta_runtime.physical_batch_size =
+                    final_response->flydelta_cvec_physical_batch_size;
+                results[index].flydelta_runtime.factorized_binding =
+                    final_response->flydelta_cvec_factorized_binding;
+                results[index].flydelta_runtime.fallback_reason =
+                    final_response->flydelta_cvec_fallback_reason;
                 results[index].flydelta_runtime.requested =
                     requests[index].flydelta_activation &&
-                    requests[index].flydelta_activation->overlay.enabled;
+                    (requests[index].flydelta_activation->overlay.enabled ||
+                     requests[index].flydelta_activation->factorized_overlay.enabled);
                 if (final_response->generation_params.cvec) {
                     const auto & cvec = *final_response->generation_params.cvec;
-                    results[index].flydelta_runtime.applied = true;
+                    results[index].flydelta_runtime.applied = final_response->flydelta_overlay_applied;
                     results[index].flydelta_runtime.sparse_device_binding =
                         final_response->flydelta_device_batch &&
-                        !cvec.sparse_layer_indices.empty();
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
                     results[index].flydelta_runtime.device_batch =
                         final_response->flydelta_device_batch;
                     results[index].flydelta_runtime.cache_prompt =

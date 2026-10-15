@@ -1,15 +1,55 @@
 #pragma once
 
 #include "agent-data-store-cozo.h"
+#include "agent/agent-inference.h"
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/registry/tool-registry.h"
+#include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <string>
+#include <vector>
+
+inline constexpr const char * agent_flydelta_dataset_dsl_prefix = "open!";
+
+// Same forced-context representation used by runtime teaching capture:
+// preserve the original task prefix and evaluate a host-owned continuation
+// without asking the model to generate or echo it again.
+inline common_agent_generation_request agent_flydelta_dataset_capture_context(
+        const common_agent_generation_request & prefix, const std::string & continuation) {
+    auto request = prefix;
+    request.options.n_predict = 0;
+    request.flydelta_activation.reset();
+    request.messages.push_back({"assistant", continuation});
+    return request;
+}
+
+inline bool agent_flydelta_dataset_dsl_contrast(
+        common_agent_teacher_forced_choice_request & request,
+        const std::string & positive, const std::string & negative,
+        std::string & error) {
+    const std::string prefix = "open! ";
+    if (positive.compare(0, prefix.size(), prefix) != 0 ||
+            negative.compare(0, prefix.size(), prefix) != 0 ||
+            positive.find_first_not_of(" \t\r\n", prefix.size()) == std::string::npos ||
+            negative.find_first_not_of(" \t\r\n", prefix.size()) == std::string::npos) {
+        error = "dataset repair scoring requires two complete compact DSL calls";
+        return false;
+    }
+    // A trailing space merges with the next word in BPE tokenizers. Keep
+    // it in the targets so the forced prefix ends at a stable token boundary.
+    request.choice_prefix = agent_flydelta_dataset_dsl_prefix;
+    request.positive_continuation = positive.substr(request.choice_prefix.size());
+    request.negative_continuation = negative.substr(request.choice_prefix.size());
+    return common_agent_teacher_forced_contrast_is_valid(
+        request.choice_prefix, request.positive_continuation,
+        request.negative_continuation, error);
+}
 
 // Small host fixture shared by the dataset repair contract and model smokes.
 // It deliberately uses the real native data adapters over a Cozo store: the
@@ -35,8 +75,13 @@ public:
         common_native_tool_bindings bindings;
         bindings.data_store = &store_;
         common_tool_adapter_result adapters;
-        return common_register_native_tool_adapters(
-            catalog_, "analysis", bindings, registry_, adapters, error);
+        if (!common_register_native_tool_adapters(
+                catalog_, "analysis", bindings, registry_, adapters, error)) return false;
+        std::vector<std::string> names;
+        for (const auto & definition : catalog_.load_profile("analysis", error)) {
+            if (registry_.contains(definition.name)) names.push_back(definition.name);
+        }
+        return error.empty() && select_model_tools(names, error);
     }
 
     void close() {
@@ -112,6 +157,66 @@ public:
 
     bool has_tool(const std::string & name) const { return registry_.contains(name); }
 
+    bool select_model_tools(const std::vector<std::string> & names, std::string & error) {
+        model_tools_.clear();
+        for (const auto & name : names) {
+            const auto * definition = catalog_.find_definition(name);
+            if (!definition || !registry_.contains(name)) {
+                error = "dataset repair model tool is not registered: " + name;
+                return false;
+            }
+            model_tools_.push_back({definition->name, definition->description,
+                common_tool_model_input_schema(*definition), common_tool_model_result_schema(*definition)});
+        }
+        error.clear();
+        return true;
+    }
+
+    bool parse_model_call(const std::string & text, common_agent_tool_call & call,
+            std::string & error) const {
+        return common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+            text, model_tools_, call, error);
+    }
+
+    std::string render_model_call(const std::string & name,
+            const nlohmann::ordered_json & arguments, std::string & error) const {
+        const auto * definition = catalog_.find_definition(name);
+        // An explicit rejected fixture may name an unknown tool. It still
+        // needs a flat textual target, but never gains execution authority.
+        const auto inferred_schema = [](const auto & self, const nlohmann::ordered_json & value)
+                -> nlohmann::ordered_json {
+            if (value.is_object()) {
+                nlohmann::ordered_json properties = nlohmann::ordered_json::object();
+                for (const auto & field : value.items()) properties[field.key()] = self(self, field.value());
+                return {{"type", "object"}, {"properties", properties}};
+            }
+            if (value.is_array()) {
+                nlohmann::ordered_json items = nlohmann::ordered_json::object();
+                for (const auto & item : value) {
+                    const auto next = self(self, item);
+                    if (items.empty()) items = next;
+                    else if (items.value("type", std::string{}) == "object" &&
+                            next.value("type", std::string{}) == "object") {
+                        items["properties"].update(next["properties"]);
+                    }
+                }
+                return {{"type", "array"}, {"items", items}};
+            }
+            if (value.is_string()) return {{"type", "string"}};
+            if (value.is_boolean()) return {{"type", "boolean"}};
+            if (value.is_number()) return {{"type", "number"}};
+            return nlohmann::ordered_json::object();
+        };
+        return common_render_flat_tool_call(name, definition
+                ? common_tool_model_input_schema(*definition)
+                : inferred_schema(inferred_schema, arguments).dump(),
+            arguments.dump(), error);
+    }
+
+    const std::vector<common_agent_dataset_descriptor> & available_datasets() const {
+        return runtime_request_.available_datasets;
+    }
+
 private:
     bool seed_sales(std::string & error) {
         const std::string dataset = "dataset://local/sales";
@@ -143,5 +248,6 @@ private:
     common_agent_cozo_data_store store_;
     common_tool_catalog catalog_;
     common_tool_registry registry_;
+    std::vector<common_chat_tool> model_tools_;
     common_agent_request runtime_request_;
 };

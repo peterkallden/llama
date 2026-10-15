@@ -80,6 +80,7 @@ struct common_agent_runtime_session_manager_config {
         const common_agent_runtime_session_host_turn_request & request,
         std::optional<common_agent_runtime_session_manager_pending_operation> & pending_operation,
         std::string & error)> pending_operation_resolver;
+    agent_resource_store * context_resource_store = nullptr;
 };
 
 struct common_agent_runtime_session_manager_build_config {
@@ -109,6 +110,8 @@ struct common_agent_runtime_session_manager_build_config {
         const common_agent_runtime_session_host_turn_request & request,
         common_flydelta_deployment_result & result,
         std::string & error)> flydelta_deployment_resolver;
+    agent_resource_store * context_resource_store = nullptr;
+    bool context_resource_store_persistent = false;
 };
 
 struct common_agent_runtime_active_turn_descriptor {
@@ -139,12 +142,15 @@ inline common_agent_runtime_session_manager_config make_agent_runtime_session_ma
         std::move(config.tooling_resolver),
         std::move(config.model_residency),
         std::move(config.flydelta_deployment_resolver),
+        config.context_resource_store,
+        config.context_resource_store_persistent,
     };
     return {
         make_agent_runtime_session_host_config(std::move(host_build_config)),
         std::move(config.inference_gate),
         std::move(config.inference_executor),
         std::move(config.pending_operation_resolver),
+        config.context_resource_store,
     };
 }
 

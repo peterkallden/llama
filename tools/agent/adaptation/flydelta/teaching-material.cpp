@@ -34,6 +34,12 @@ json daemon_flydelta_teaching_relation_json(
         {"conditioned_ref", relation.conditioned_ref},
         {"control_ref", relation.control_ref},
         {"verifier_ref", relation.verifier_ref},
+        {"applicability_scope_fingerprint", relation.applicability_scope_fingerprint},
+        {"model_profile_fingerprint", relation.model_profile_fingerprint},
+        {"tokenizer_fingerprint", relation.tokenizer_fingerprint},
+        {"template_fingerprint", relation.template_fingerprint},
+        {"capture_layout_revision", relation.capture_layout_revision},
+        {"oracle_revision", relation.oracle_revision},
         {"evidence_ref", relation.evidence_ref},
         {"contrast_ref", relation.contrast_ref},
         {"procedure_ref", relation.procedure_ref},
@@ -115,6 +121,12 @@ bool daemon_flydelta_parse_teaching_relation(
         relation.conditioned_ref = value.value("conditioned_ref", "");
         relation.control_ref = value.value("control_ref", "");
         relation.verifier_ref = value.value("verifier_ref", "");
+        relation.applicability_scope_fingerprint = value.value("applicability_scope_fingerprint", "");
+        relation.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
+        relation.tokenizer_fingerprint = value.value("tokenizer_fingerprint", "");
+        relation.template_fingerprint = value.value("template_fingerprint", "");
+        relation.capture_layout_revision = value.value("capture_layout_revision", "");
+        relation.oracle_revision = value.value("oracle_revision", "");
         relation.evidence_ref = value.value("evidence_ref", "");
         relation.contrast_ref = value.value("contrast_ref", "");
         relation.procedure_ref = value.value("procedure_ref", "");

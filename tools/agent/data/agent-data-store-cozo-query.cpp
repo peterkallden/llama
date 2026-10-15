@@ -11,6 +11,8 @@ bool agent_cozo_match_condition(const agent_cozo_json & row, const agent_cozo_js
     if (!row.contains(field)) return false;
     const auto & value = row[field];
     const auto expected = condition.value("value", agent_cozo_json());
+    if (op == "in") return expected.is_array() &&
+        std::find(expected.begin(), expected.end(), value) != expected.end();
     if (op == "=") return value == expected;
     if (op == "!=") return value != expected;
     if ((op == ">" || op == ">=" || op == "<" || op == "<=") && value.is_number() && expected.is_number()) {

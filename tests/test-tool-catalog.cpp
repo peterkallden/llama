@@ -78,6 +78,13 @@ int main() {
     assert(data_query_model["properties"].contains("dataset"));
     assert(!data_query_model["properties"].contains("max_scan_rows"));
     assert(!data_query_model["properties"].contains("materialize"));
+    for (const auto * operation : {"data.query", "data.filter"}) {
+        const auto * definition = catalog.find_definition(operation);
+        const auto model_schema = nlohmann::json::parse(definition->model_input_schema_json);
+        const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
+        const auto & operators = model_schema["properties"][key]["items"]["properties"]["operator"]["enum"];
+        assert(std::find(operators.begin(), operators.end(), "in") != operators.end());
+    }
     for (const auto * operation : {"data.query", "data.filter", "data.aggregate",
             "data.join", "data.transform"}) {
         const auto * definition = catalog.find_definition(operation);
@@ -277,7 +284,8 @@ int main() {
     assert(compact_error.empty());
     assert(filter_compact.find("conditions (required, object list)") != std::string::npos);
     assert(filter_compact.find("conditions[0].field: string") != std::string::npos);
-    assert(filter_compact.find("Comparison operator. Null checks do not need value.") != std::string::npos);
+    assert(filter_compact.find("in requires a non-empty list value") != std::string::npos);
+    assert(filter_compact.find("<=|in|is_null|not_null") != std::string::npos);
     assert(filter_compact.find("example:\nopen! data.filter\ndataset: $orders.dataset\nconditions[0].field: status") != std::string::npos);
     const auto join_compact = common_render_compact_tool_description(
         data_join->name,

@@ -21,6 +21,7 @@ enum class common_adaptation_evidence_source {
     procedure_blueprint,
     user_correction,
     user_taught_concept,
+    semi_oracle_preference,
 };
 
 const char * common_adaptation_evidence_source_name(

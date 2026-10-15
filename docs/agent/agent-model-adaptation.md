@@ -722,7 +722,12 @@ recovery counts at zero; the ordinary observed-behavior path retains its
 existing minimum counts. Symmetry-canonical game positions supply
 `split_group_key`, keeping rotated/reflected versions together. This is a
 curated SFT source through the same corpus and trainer-job contracts, not an
-automatic FlyDelta capture or adapter activation path. See
+automatic FlyDelta capture or adapter activation path. A strictly worse
+action from the same complete minimax ranking can also form a DPO pair through
+the same candidate and trainer-job contracts; ties are not turned into
+preferences. Host-verified DPO pairs are rejected by default and require the
+offline-only `allow_host_verified_dpo_pairs` corpus-policy opt-in. That setting
+does not alter nearline qualification. See
 [`agent-semi-oracle.md`](agent-semi-oracle.md) for the game-specific proof
 and scope rules.
 

@@ -20,6 +20,28 @@ struct common_flydelta_activation_request {
     int32_t il_end = 0;
     std::vector<common_flydelta_basis_direction> directions;
     std::vector<float> coefficients;
+    // A host capability decision for one transient coefficient wave. When it
+    // is true and the directions have one shared layer layout, activation may
+    // retain B and c instead of composing sparse/dense compatibility data.
+    bool allow_factorized_overlay = false;
+    // Optional pre-flattened immutable [rank][n_embd] basis shared by every
+    // request in one coefficient wave. When absent, activation can flatten
+    // `directions` for standalone callers and tests.
+    std::shared_ptr<const std::vector<float>> factorized_basis;
+    int32_t factorized_rank = 0;
+    int32_t factorized_layer_index = -1;
+    // Transient execution provenance for tracing coefficient waves through
+    // the resident server. These fields never affect the activation gate.
+    std::string execution_batch_id;
+    std::string execution_wave_id;
+    std::string execution_phase;
+    std::string execution_strategy;
+    std::string execution_arm_id;
+    std::string factorized_basis_fingerprint;
+    // Diagnostic-only reason supplied by the runtime when a factorized
+    // coefficient wave was eligible in principle but cannot use its native
+    // binding on this physical request.
+    std::string factorized_fallback_reason;
     common_flydelta_gate_request gate_request;
 };
 
@@ -29,6 +51,14 @@ struct common_flydelta_activation_result {
     // overlay remains alongside it as the current scalar cvec bridge.
     common_flydelta_sparse_overlay sparse_overlay;
     common_flydelta_static_overlay overlay;
+    common_flydelta_factorized_overlay factorized_overlay;
+    std::string factorized_fallback_reason;
+    std::string execution_batch_id;
+    std::string execution_wave_id;
+    std::string execution_phase;
+    std::string execution_strategy;
+    std::string execution_arm_id;
+    std::string factorized_basis_fingerprint;
 };
 
 // Applies the host-owned order of operations: decide the no-op gate first,

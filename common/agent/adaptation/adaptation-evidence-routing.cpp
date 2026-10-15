@@ -119,6 +119,17 @@ common_adaptation_evidence_sources_for_turn(
         matches.push_back(std::move(match));
     }
 
+    if (has_signal(result, common_learning_signal_type::semi_oracle_preference)) {
+        common_adaptation_evidence_source_match match;
+        match.source = common_adaptation_evidence_source::semi_oracle_preference;
+        match.evidence_refs = signal_evidence(result, common_learning_signal_type::semi_oracle_preference);
+        // The verdict and ranking are durable host evidence, but activation
+        // capture/relation construction must still complete before FlyDelta
+        // may treat this observation as a candidate.
+        match.candidate_ready = false;
+        matches.push_back(std::move(match));
+    }
+
     if (has_materialized_data(plan)) {
         common_adaptation_evidence_source_match match;
         match.source = common_adaptation_evidence_source::dataset_resource;

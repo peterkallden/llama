@@ -7,6 +7,7 @@
 #include "log.h"
 #include "common.h"
 #include "server-context.h"
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -85,6 +86,7 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
         make_agent_server_context_context_key(options),
         LOG_LEVEL_WARN,
         options.per_sequence_cvec_batch,
+        options.per_sequence_factorized_cvec_batch,
         options.agent_trace,
     };
 }
@@ -96,6 +98,11 @@ common_params make_agent_server_context_params(
     params.mmproj.path = config.context_key.load_key.mmproj;
     params.n_predict = -1;
     params.fit_params = config.context_key.load_key.fit_params;
+    // Programmatic hosts bypass common_params_parse(), which normally pads
+    // this writable buffer for common_fit_params(). Keep the same contract.
+    if (params.fit_params) {
+        params.tensor_buft_overrides.resize(llama_max_tensor_buft_overrides(), {nullptr, nullptr});
+    }
     params.n_gpu_layers = config.context_key.load_key.n_gpu_layers;
     // The project historically used 99 in agent configs as an "all layers"
     // convenience value.  That is unsafe for resident FlyDelta contexts:
@@ -151,6 +158,32 @@ bool common_agent_server_context_host::start(
     stop();
     initialize_server_context_host_once();
 
+    // Device indices are backend-local and can change when visibility is
+    // masked. Record the resolved descriptions rather than inferring a GPU
+    // vendor from GGML_VK_VISIBLE_DEVICES or the requested offload count.
+    const char * expected_gpu = std::getenv("LLAMA_AGENT_EXPECTED_GPU");
+    size_t visible_gpus = 0;
+    size_t matching_gpus = 0;
+    for (size_t index = 0; index < ggml_backend_dev_count(); ++index) {
+        const auto device = ggml_backend_dev_get(index);
+        const auto type = ggml_backend_dev_type(device);
+        if (type != GGML_BACKEND_DEVICE_TYPE_GPU && type != GGML_BACKEND_DEVICE_TYPE_IGPU) continue;
+        ++visible_gpus;
+        const std::string description = ggml_backend_dev_description(device);
+        if (expected_gpu && description.find(expected_gpu) != std::string::npos) ++matching_gpus;
+        if (server_context_host_trace_enabled()) {
+            size_t free_bytes = 0, total_bytes = 0;
+            ggml_backend_dev_memory(device, &free_bytes, &total_bytes);
+            std::fprintf(stderr, "agent server_context host trace: event=visible-device name=%s description=%s free_bytes=%zu total_bytes=%zu\n",
+                ggml_backend_dev_name(device), description.c_str(), free_bytes, total_bytes);
+        }
+    }
+    if (expected_gpu && expected_gpu[0] && (visible_gpus != 1 || matching_gpus != 1)) {
+        error = "GPU preflight requires exactly one visible GPU matching " + std::string(expected_gpu) +
+            "; visible=" + std::to_string(visible_gpus) + " matching=" + std::to_string(matching_gpus);
+        return false;
+    }
+
     if (config.context_key.load_key.model.empty()) {
         error = "resident server_context model path is empty";
         return false;
@@ -187,6 +220,8 @@ bool common_agent_server_context_host::start(
     instance->server = std::make_unique<server_context>();
     instance->server->set_per_sequence_cvec_batch_enabled(
         config.per_sequence_cvec_batch);
+    instance->server->set_per_sequence_factorized_cvec_batch_enabled(
+        config.per_sequence_factorized_cvec_batch);
     instance->server->set_agent_trace_enabled(config.agent_trace);
     instance->params = make_agent_server_context_params(config);
 
@@ -344,6 +379,7 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         const common_flydelta_arm_batch_request & request,
         common_flydelta_arm_batch_result & result,
         std::string & error) {
+    const auto wall_start = std::chrono::steady_clock::now();
     error.clear();
     result = {};
     if (!host || !binding.prepare_arm || !binding.finalize_arm) {
@@ -362,6 +398,7 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
 
     std::vector<common_agent_generation_request> generation_requests;
     generation_requests.reserve(request.arms.size());
+    const auto prepare_start = std::chrono::steady_clock::now();
     for (const auto & arm : request.arms) {
         common_agent_generation_request generation_request;
         if (!binding.prepare_arm(arm, generation_request, error)) {
@@ -378,6 +415,8 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
             arm, generation_request);
         generation_requests.push_back(std::move(generation_request));
     }
+    const float prepare_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - prepare_start).count());
 
     const auto generation_start = std::chrono::steady_clock::now();
     std::vector<common_agent_generation_result> generation_results;
@@ -428,11 +467,23 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
 
     result.schema_version = request.schema_version;
     result.execution_stats.logical_arm_count = request.arms.size();
-    result.execution_stats.physical_batch_count = 1;
-    result.execution_stats.largest_physical_batch = request.arms.size();
+    const size_t resident_parallelism = static_cast<size_t>(std::max(
+        1, host->context_key().n_parallel));
     result.execution_stats.native_batch_used = native_batch && request.arms.size() > 1;
+    if (result.execution_stats.native_batch_used) {
+        result.execution_stats.physical_batch_count =
+            (request.arms.size() + resident_parallelism - 1) / resident_parallelism;
+        result.execution_stats.largest_physical_batch = std::min(
+            request.arms.size(), resident_parallelism);
+    } else {
+        result.execution_stats.physical_batch_count = request.arms.size();
+        result.execution_stats.largest_physical_batch = request.arms.empty() ? 0 : 1;
+    }
     result.execution_stats.model_ms = generation_ms;
+    result.execution_stats.host_prepare_ms = prepare_ms;
+    result.execution_stats.teacher_forced_ms = teacher_forced_ms;
     result.arms.reserve(request.arms.size());
+    const auto finalize_start = std::chrono::steady_clock::now();
     for (size_t index = 0; index < request.arms.size(); ++index) {
         common_flydelta_arm_result arm_result;
         if (!binding.finalize_arm(
@@ -457,23 +508,96 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
         arm_result.execution_metrics.request_generation = request.arms[index].request_generation;
         arm_result.execution_metrics.request_host_verification =
             request.arms[index].request_host_verification;
-        arm_result.execution_metrics.model_ms = request.arms[index].request_generation
-            ? generation_ms : 0.0f;
-        arm_result.execution_metrics.generation_ms = request.arms[index].request_generation
-            ? generation_ms : 0.0f;
-        arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
+        // These are measured wall-times for shared physical work. Attribute
+        // each batch total once; summing per-arm records must not multiply it.
+        if (index == 0) {
+            arm_result.execution_metrics.model_ms = generation_ms;
+            arm_result.execution_metrics.generation_ms = generation_ms;
+            arm_result.execution_metrics.teacher_forced_ms = teacher_forced_ms;
+        }
         arm_result.execution_metrics.execution_class =
             request.arms[index].request_generation ? "full" : "diagnostic";
         arm_result.execution_metrics.batched_execution_used =
             request.arms.size() > 1 && native_batch;
         const bool device_batch = generation_results[index].flydelta_device_batch;
         arm_result.execution_metrics.sparse_device_binding_used = device_batch;
-        if (generation_requests[index].flydelta_activation &&
-                generation_requests[index].flydelta_activation->sparse_overlay.enabled) {
-            const auto & sparse = generation_requests[index].flydelta_activation->sparse_overlay;
-            arm_result.execution_metrics.overlay_bytes_to_device =
-                sparse.layer_indices.size() * sizeof(uint32_t) +
-                sparse.data.size() * sizeof(float);
+        arm_result.execution_metrics.device_resident = device_batch;
+        // These counters describe one physical backend binding, shared by all
+        // logical arms in the batch. Attribute its cost once so aggregating
+        // per-arm results does not multiply the same bind operation.
+        if (index == 0) {
+            arm_result.execution_metrics.basis_bytes_bound =
+                generation_results[index].flydelta_runtime.factorized_basis_bound_bytes;
+            arm_result.execution_metrics.basis_host_copy_bytes =
+                generation_results[index].flydelta_runtime.factorized_basis_host_copy_bytes;
+            arm_result.execution_metrics.coefficient_bytes_bound =
+                generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
+            arm_result.execution_metrics.composed_overlay_resident_bytes =
+                generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes;
+            arm_result.execution_metrics.overlay_composition_us =
+                generation_results[index].flydelta_runtime.factorized_composition_us;
+            arm_result.execution_metrics.basis_upload_count =
+                generation_results[index].flydelta_runtime.factorized_basis_upload_count;
+            arm_result.execution_metrics.basis_cache_hit =
+                generation_results[index].flydelta_runtime.factorized_basis_cache_hit;
+            arm_result.execution_metrics.overlay_cache_hit =
+                generation_results[index].flydelta_runtime.factorized_overlay_cache_hit;
+            arm_result.execution_metrics.overlay_bytes_bound =
+                generation_results[index].flydelta_runtime.factorized_binding
+                    ? generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes
+                    : generation_results[index].flydelta_runtime.cvec_bound_bytes;
+            arm_result.execution_metrics.overlay_binding_ms =
+                static_cast<float>(generation_results[index].flydelta_runtime.cvec_binding_us) / 1000.0f;
+        }
+        arm_result.execution_metrics.physical_batch_size =
+            generation_results[index].flydelta_runtime.physical_batch_size;
+        arm_result.execution_metrics.factorized_binding_used =
+            generation_results[index].flydelta_runtime.factorized_binding;
+        if (!generation_results[index].flydelta_runtime.fallback_reason.empty()) {
+            arm_result.execution_metrics.fallback_reason =
+                generation_results[index].flydelta_runtime.fallback_reason;
+        }
+        if (generation_requests[index].flydelta_activation) {
+            const auto & activation = *generation_requests[index].flydelta_activation;
+            if (!activation.factorized_fallback_reason.empty()) {
+                arm_result.execution_metrics.fallback_reason = activation.factorized_fallback_reason;
+            }
+            if (activation.factorized_overlay.enabled) {
+                arm_result.execution_metrics.overlay_representation =
+                    generation_results[index].flydelta_runtime.factorized_binding
+                        ? "factorized" : "sparse_fallback";
+                if (index == 0) {
+                    arm_result.execution_metrics.basis_bytes_to_device =
+                        generation_results[index].flydelta_runtime.factorized_basis_host_copy_bytes;
+                    arm_result.execution_metrics.coefficient_bytes_to_device =
+                        generation_results[index].flydelta_runtime.factorized_coefficients_bound_bytes;
+                    arm_result.execution_metrics.overlay_bytes_to_device =
+                        generation_results[index].flydelta_runtime.factorized_binding
+                            ? 0
+                            : generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                }
+                if (generation_results[index].flydelta_runtime.factorized_binding) {
+                    arm_result.execution_metrics.materialized_overlay_bytes =
+                        generation_results[index].flydelta_runtime.factorized_overlay_resident_bytes;
+                } else {
+                    arm_result.execution_metrics.materialized_overlay_bytes =
+                        generation_results[index].flydelta_runtime.cvec_bound_bytes;
+                }
+            } else if (activation.sparse_overlay.enabled) {
+                const auto & sparse = activation.sparse_overlay;
+                arm_result.execution_metrics.overlay_representation = "sparse";
+                arm_result.execution_metrics.materialized_overlay_bytes =
+                    sparse.data.size() * sizeof(float);
+                arm_result.execution_metrics.overlay_bytes_to_device =
+                    sparse.layer_indices.size() * sizeof(uint32_t) +
+                    arm_result.execution_metrics.materialized_overlay_bytes;
+            } else if (activation.overlay.enabled) {
+                arm_result.execution_metrics.overlay_representation = "dense";
+                arm_result.execution_metrics.materialized_overlay_bytes =
+                    activation.overlay.data.size() * sizeof(float);
+                arm_result.execution_metrics.overlay_bytes_to_device =
+                    arm_result.execution_metrics.materialized_overlay_bytes;
+            }
         }
         if (generation_results[index].flydelta_capture) {
             arm_result.execution_metrics.capture_bytes_to_host =
@@ -489,13 +613,18 @@ bool common_agent_server_context_host_run_flydelta_arm_batch(
                     : request.arms.size() > 1
                         ? common_flydelta_arm_execution_metrics::path::scalar_fallback
                         : common_flydelta_arm_execution_metrics::path::scalar;
-            if (request.arms.size() > 1 && !native_batch) {
+            if (request.arms.size() > 1 && !native_batch &&
+                    arm_result.execution_metrics.fallback_reason.empty()) {
                 arm_result.execution_metrics.fallback_reason =
                     "per_sequence_cvec_batch_not_enabled";
             }
         }
         result.arms.push_back(std::move(arm_result));
     }
+    result.execution_stats.finalize_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - finalize_start).count());
+    result.execution_stats.wall_ms = static_cast<float>(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - wall_start).count());
     return common_flydelta_arm_batch_result_validate(result, request, error);
 }
 

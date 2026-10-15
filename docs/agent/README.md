@@ -169,7 +169,8 @@ remote MCP providers, status/readiness, and Docker usage.
   [Agent configuration fragments](agent-config-fragments.md).
 - **Memory, plans, and resources** — persistent Cozo-backed stores and a
   resource boundary for turn inputs, generated artifacts, and resource
-  references.
+  references. Temporal memory semantics and history/current retrieval are
+  documented in [Agent Memory](agent-memory.md).
 - **Model adaptation (in progress)** — a host-supervised path from qualified
   turn evidence to reproducible training corpora, an external QLoRA worker,
   and evaluated LoRA adapters. See

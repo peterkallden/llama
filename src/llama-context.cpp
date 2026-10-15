@@ -14,6 +14,7 @@
 #include "llama-sampler.h"
 #include "llama.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
@@ -1845,6 +1846,7 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
 }
 
 int llama_context::decode(const llama_batch_ext & batch_inp) {
+    embd_layer_inp_rows.clear();
     if (!memory) {
         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
         return encode(batch_inp);
@@ -2145,7 +2147,7 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
 
         // [TAG_EXTRACT_TARGET_EMBEDDINGS]
-        bool extract_all_idxs = extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
+        bool extract_all_idxs = extract_layer_inputs(res, n_tokens_prev, ubatch);
 
         // extract nextn embeddings before
         // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
@@ -2410,8 +2412,19 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     return n_outputs_max;
 }
 
-bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
+bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, const llama_ubatch & ubatch) {
+    const size_t n_tokens = ubatch.n_tokens;
     bool extracted = false;
+    if (std::any_of(embd_layer_inp.begin(), embd_layer_inp.end(), [](const buffer_view<float> & view) {
+            return view.has_data();
+        })) {
+        embd_layer_inp_rows.resize(token_offset + n_tokens);
+        for (size_t i = 0; i < n_tokens; ++i) {
+            auto & row = embd_layer_inp_rows[token_offset + i];
+            row.pos = ubatch.pos[i];
+            row.seq_ids.assign(ubatch.seq_id[i], ubatch.seq_id[i] + ubatch.n_seq_id[i]);
+        }
+    }
     for (uint32_t il = 0; il < cparams.embeddings_layer_inp.size(); ++il) {
         if (!cparams.embeddings_layer_inp[il]) {
             continue;
@@ -2454,9 +2467,13 @@ bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
 }
 
 void llama_context::extract_layer_reductions(const llm_graph_result * res) {
-    if (layer_reductions == nullptr) {
+    if (layer_reductions == nullptr || res->layer_reduction_outputs.empty()) {
         return;
     }
+    // The graph is submitted asynchronously. Buffer-level scalar reads do
+    // not wait for its producing backend, so finish the diagnostic graph
+    // before reading these four reductions. Ordinary decode is unaffected.
+    ggml_backend_sched_synchronize(sched.get());
     for (const auto & output : res->layer_reduction_outputs) {
         if (output.entry == nullptr || output.dot_shift_delta == nullptr ||
                 output.shift_squared == nullptr || output.delta_squared == nullptr ||
@@ -2530,6 +2547,18 @@ void llama_context::output_reorder() {
             }
         }
 
+        if (embd_layer_inp.size() > 0) {
+            if (i0 < embd_layer_inp_rows.size() && i1 < embd_layer_inp_rows.size()) {
+                std::swap(embd_layer_inp_rows[i0], embd_layer_inp_rows[i1]);
+            }
+            for (int lid = 0; lid < (int) embd_layer_inp.size(); ++lid) {
+                if (embd_layer_inp[lid].size > 0) {
+                    for (uint64_t k = 0; k < n_embd; ++k) {
+                        std::swap(embd_layer_inp[lid].data[i0*n_embd + k], embd_layer_inp[lid].data[i1*n_embd + k]);
+                    }
+                }
+            }
+        }
         if (!sampling.samplers.empty()) {
             assert(sampling.logits.size > 0);
             assert(sampling.probs.size > 0);
@@ -4376,6 +4405,27 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+float * llama_context::get_embeddings_layer_inp_row(uint32_t lid, llama_seq_id seq_id, llama_pos pos) {
+    float * values = get_embeddings_layer_inp(lid);
+    if (!values) {
+        return nullptr;
+    }
+    const size_t width = model.hparams.n_embd;
+    for (size_t i = 0; i < embd_layer_inp_rows.size(); ++i) {
+        const auto & row = embd_layer_inp_rows[i];
+        if (row.pos == pos && std::find(row.seq_ids.begin(), row.seq_ids.end(), seq_id) != row.seq_ids.end() &&
+                (i + 1) * width <= embd_layer_inp[lid].size) {
+            return values + i * width;
+        }
+    }
+    return nullptr;
+}
+
+float * llama_get_embeddings_layer_inp_row(llama_context * ctx, uint32_t lid, llama_seq_id seq_id, llama_pos pos) {
+    ctx->synchronize();
+    return ctx->get_embeddings_layer_inp_row(lid, seq_id, pos);
 }
 
 void llama_set_residual_patch(llama_context * ctx, const llama_residual_patch_ref * ref) {

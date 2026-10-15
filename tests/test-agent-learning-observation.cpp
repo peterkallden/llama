@@ -30,6 +30,14 @@ int main() {
     assert(error.empty());
     assert(common_learning_observation_hash(observation) == common_learning_observation_hash(observation));
 
+    auto semi_oracle = base_observation();
+    semi_oracle.signals = {{common_learning_signal_type::semi_oracle_preference,
+        "plan-a", "step-a", "oracle.action.verify", "oracle://evaluation/1",
+        "host minimax proved a strictly better move"}};
+    semi_oracle.verification = common_learning_verification::host_verified;
+    assert(common_learning_observation_qualifies(semi_oracle));
+    assert(common_learning_observation_validate(semi_oracle, 4, error));
+
     auto ordinary = observation;
     ordinary.signals.clear();
     assert(!common_learning_observation_qualifies(ordinary));

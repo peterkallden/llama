@@ -85,10 +85,32 @@ struct common_flydelta_arm_execution_metrics {
     float model_ms = 0.0f;
     float teacher_forced_ms = 0.0f;
     float generation_ms = 0.0f;
+    // Representation and logical-transfer accounting are diagnostic only.
+    // They intentionally never participate in utility or promotion policy.
+    std::string overlay_representation;
+    size_t basis_bytes_to_device = 0;
+    size_t coefficient_bytes_to_device = 0;
+    size_t materialized_overlay_bytes = 0;
     size_t overlay_bytes_to_device = 0;
+    // Logical backend tensor payload/allocation accounting and elapsed host-
+    // side composition/binding time from the server. These are not measured
+    // PCIe transfer counters and do not imply that the backend is a GPU.
+    size_t basis_bytes_bound = 0;
+    size_t basis_host_copy_bytes = 0;
+    size_t coefficient_bytes_bound = 0;
+    size_t overlay_bytes_bound = 0;
+    size_t composed_overlay_resident_bytes = 0;
+    uint64_t overlay_composition_us = 0;
+    size_t basis_upload_count = 0;
+    bool basis_cache_hit = false;
+    bool overlay_cache_hit = false;
+    float overlay_binding_ms = 0.0f;
+    size_t physical_batch_size = 0;
+    bool factorized_binding_used = false;
+    bool device_resident = false;
     size_t capture_bytes_to_host = 0;
     size_t diagnostics_bytes_to_host = 0;
-    // True when a sparse overlay, including a single-arm overlay, was bound
+    // True when a sparse or factorized overlay, including a single-arm overlay, was bound
     // through a non-CPU per-sequence device table. This is execution
     // provenance only: a one-arm request still has execution_path=scalar.
     bool sparse_device_binding_used = false;
@@ -114,6 +136,8 @@ struct common_flydelta_arm_result {
     int schema_version = 1;
     // Must echo the request arm_id when a host executes the arm.
     std::string arm_id;
+    std::string intervention_ref;
+    bool overlay_applied = false;
     bool executed = false;
     float requested_alpha = 0.0f;
     float executed_alpha = 0.0f;
@@ -202,6 +226,10 @@ struct common_flydelta_arm_batch_execution_stats {
     size_t scalar_fallback_arm_count = 0;
     bool native_batch_used = false;
     float model_ms = 0.0f;
+    float teacher_forced_ms = 0.0f;
+    float finalize_ms = 0.0f;
+    float host_prepare_ms = 0.0f;
+    float wall_ms = 0.0f;
 };
 
 struct common_flydelta_arm_batch_result {

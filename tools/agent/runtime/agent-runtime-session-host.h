@@ -8,6 +8,8 @@
 #include "agent/contracts/agent-result.h"
 #include "agent-model-residency.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "agent/context/conversation-context.h"
 
 #include <functional>
 #include <memory>
@@ -17,6 +19,7 @@
 
 class common_agent_runtime_resident_runtime;
 class agent_openapi_dynamic_registry;
+class agent_session_context_store;
 
 struct common_agent_runtime_session_host_runtime_key {
     std::string session_id;
@@ -96,6 +99,8 @@ struct common_agent_runtime_session_host_turn_result {
     size_t trace_count = 0;
     size_t memory_learning_related_count = 0;
     std::string memory_learning_summary;
+    common_agent_context_composition context_composition;
+    size_t context_compaction_calls = 0;
     // Host-owned deployment resolution evidence. This is an audit projection
     // of the request-scoped FlyDelta factory result; runtime generation still
     // consumes only the immutable activation snapshot.
@@ -135,6 +140,8 @@ struct common_agent_runtime_session_host_config {
         const common_agent_runtime_session_host_turn_request & request,
         common_flydelta_deployment_result & result,
         std::string & error)> flydelta_deployment_resolver;
+    agent_resource_store * context_resource_store = nullptr;
+    bool context_resource_store_persistent = false;
 };
 
 struct common_agent_runtime_session_host_build_config {
@@ -158,6 +165,8 @@ struct common_agent_runtime_session_host_build_config {
         const common_agent_runtime_session_host_turn_request & request,
         common_flydelta_deployment_result & result,
         std::string & error)> flydelta_deployment_resolver;
+    agent_resource_store * context_resource_store = nullptr;
+    bool context_resource_store_persistent = false;
 };
 
 common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
@@ -177,7 +186,7 @@ public:
         const common_agent_runtime_session_host_turn_request & request,
         std::string & error);
 
-    void reset();
+    void reset(bool begin_new_conversation_epoch = false);
 
     const common_agent_runtime_session * session() const;
     common_agent_runtime_session * session();
@@ -216,5 +225,8 @@ private:
     std::optional<common_memory_policy_pack> active_policy_pack;
     std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
     uint64_t generated_turn_counter = 0;
+    std::unique_ptr<agent_session_context_store> conversation_context_store;
+    std::string context_store_namespace;
+    std::string context_store_session;
     std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
 };

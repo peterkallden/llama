@@ -226,3 +226,12 @@ void common_agent_runtime_resident_runtime::reset() {
     resident_model_handle = {};
     resident_current_plan_id.clear();
 }
+
+common_agent_inference * common_agent_runtime_resident_runtime::inference() {
+    auto * session = host.session().active_inference_session();
+    return session != nullptr ? session->inference.get() : nullptr;
+}
+
+common_agent_tool_output_format common_agent_runtime_resident_runtime::configured_tool_output_format() const {
+    return base_turn_request.request.tool_output_format;
+}

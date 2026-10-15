@@ -84,7 +84,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
                 !common_flydelta_representation_diagnostics_validate(full_geometries[rank], error)) {
             return false;
         }
-        common_flydelta_coefficient_trial full_trial;
+        common_flydelta_coefficient_trial full_trial = diagnostic;
         full_trial.coefficients = diagnostic.coefficients;
         full_trial.requested_coefficients = diagnostic.requested_coefficients;
         full_trial.requested_strength = diagnostic.requested_strength;
@@ -93,10 +93,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         full_trial.margin_comparison.available = baseline_margin.available && full_margins[rank].available;
         full_trial.margin_comparison.baseline = baseline_margin;
         full_trial.margin_comparison.candidate = full_margins[rank];
-        full_trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
-        full_trial.quality_delta = candidate.quality - baseline.quality;
-        full_trial.executed = candidate.executed;
-        full_trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+        common_flydelta_coefficient_trial_set_observation(full_trial, baseline, candidate);
         full_trial.geometry_available = full_geometry_available[rank];
         full_trial.geometry = full_geometries[rank];
         full_trial.iteration = diagnostic.iteration;

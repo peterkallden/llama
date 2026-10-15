@@ -76,6 +76,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-session-context-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-event-projector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-turn-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-inference-executor.cpp
@@ -127,6 +128,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-session-context-store.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-turn-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-inference-executor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-manager.cpp
@@ -333,6 +335,8 @@ endif()
 # to the other host-side stores. This prevents the common contract library
 # from acquiring backend-specific dependencies.
 add_library(llama-agent-adaptation-storage
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-factory.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/semi-oracle-store-factory.h
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-transaction-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/agent-learning-lifecycle-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta-teaching-material-store.cpp

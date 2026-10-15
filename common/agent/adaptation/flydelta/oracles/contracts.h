@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 
 #include <cstddef>
 #include <functional>
@@ -97,6 +98,10 @@ struct common_flydelta_oracle_request {
     bool applicable = true;
     bool expected_decision_available = false;
     common_flydelta_semantic_decision expected_decision;
+    // Transient host-owned contracts; never inferred from model output.
+    std::vector<common_chat_tool> model_tools;
+    bool expected_tool_call_available = false;
+    common_agent_tool_call expected_tool_call;
 };
 
 struct common_flydelta_oracle_result {

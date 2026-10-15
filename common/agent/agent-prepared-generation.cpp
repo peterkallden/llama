@@ -14,7 +14,17 @@ bool common_agent_prepare_chat_generation(
     chat_inputs.parallel_tool_calls = false;
     chat_inputs.add_generation_prompt = true;
 
-    const common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    common_chat_params generated_chat_params = common_chat_templates_apply(chat_templates, chat_inputs);
+    if (request.tools.empty() && request.json_schema.empty()) {
+        // The template's native response parser describes its tool-call
+        // syntax. A tool-free response (plain text or a host-owned DSL) is
+        // content, even when the selected model template advertises a
+        // peg-native tool parser. Keeping that parser here makes the server
+        // reject valid content before the owning caller can parse its DSL.
+        generated_chat_params.format = COMMON_CHAT_FORMAT_CONTENT_ONLY;
+        generated_chat_params.parser = {};
+        generated_chat_params.generation_prompt.clear();
+    }
     if (chat_params != nullptr) {
         *chat_params = generated_chat_params;
     }

@@ -3615,11 +3615,70 @@ The current chunking path is deliberately bounded and text-oriented:
    missing index. Typed daemon events expose planning and processing progress,
    while the plan remains the durable progress record.
 
-This is not full context management. General compaction of conversation
-history, arbitrary tool output, and model responses remains a separate future
-activity. The current resource path only ensures that large text resources can
-be processed in bounded, resumable slices without creating a second scheduler
-or source of truth.
+Conversation compaction is implemented separately from resource chunking. The
+session host stores immutable user/assistant turn records and checkpoint
+revisions through the existing scoped resource store. At each generation it
+prioritizes exact user instructions, checkpoint state, recent turns, and
+evidence references. If older turns exceed the configured pressure threshold,
+the host may make one bounded, tool-free `context_compaction` generation. The
+pressure check measures the rendered projection plus its framing and current
+request, and also triggers when deterministic composition would omit source
+turns; it does not estimate from raw message bytes alone. The model receives
+short per-call source handles (`S1`, `S2`, ...) rather than
+resource URIs; the host validates exact handle coverage and binds those handles
+back to immutable source records. An invalid proposal leaves the prior
+checkpoint authoritative. Original turns are retained and are not replaced by
+the model summary.
+
+`runtime.context_management` defaults to enabled, persistent when the resource
+backend supports persistence, semantic compaction enabled, two recent turns,
+512 summary tokens, at most one summary call per turn, and a 32 KiB history
+character budget. The setting names and defaults are shown in
+[`agent-context-management.json`](../examples/agent-context-management.json),
+and the complete daemon configuration example includes the same block in
+[`agent-config.example.json`](../examples/agent-config.example.json).
+
+The controls have distinct effects:
+
+| Setting | Default | Effect |
+| --- | ---: | --- |
+| `enabled` | `true` | Enables conversation-turn recording, restoration, composition, and semantic compaction. `false` disables this conversation-context subsystem. |
+| `persist_session` | `true` | Requests durable turn/checkpoint records. Effective only when the configured resource blob and metadata backends are persistent; otherwise the host reports transient storage. |
+| `semantic_compaction` | `true` | Allows one bounded model summary when history pressure requires it. `false` keeps deterministic selection only; if that cannot fit, the turn fails rather than silently discarding uncovered turns. |
+| `recent_turns` | `2` | Number of recent turns prioritized verbatim (valid range 1–32). |
+| `summary_max_tokens` | `512` | Generation limit for the tool-free checkpoint summary (valid range 16–4096). |
+| `max_summary_calls_per_turn` | `1` | Upper bound on compaction generations per incoming turn (valid range 0–1). Set to `0` to prohibit summary generation while keeping deterministic composition enabled. |
+| `max_history_chars` | `32768` | Maximum rendered conversation-history characters (valid range 256–1,048,576). This is a character budget, not a token count. |
+
+For example, to disable only model-generated summaries while retaining
+history and deterministic context selection, set `semantic_compaction` to
+`false` (or `max_summary_calls_per_turn` to `0`). To disable the whole
+conversation-context feature, set `enabled` to `false`; the full example is
+[`agent-context-management-disabled.json`](../examples/agent-context-management-disabled.json).
+This switch does not disable the separate plan working-state compaction used
+by bounded continuations, nor resource chunking. In-memory resource backends
+preserve the active session only while that backend instance remains alive.
+Internal `agent.context.*` records are excluded from ordinary model-visible
+resource candidates. When deterministic composition cannot fit or would omit
+source turns without a validated checkpoint, the host fails before the next
+model generation rather than silently dropping them.
+
+Tool execution and typed binding continue to use the complete host-owned
+provider result. The persisted/model-facing plan observation uses a valid,
+bounded JSON projection that prioritizes status, errors, resource/dataset
+references, and summaries, and marks omitted fields when space permits.
+Research claims and chunk findings remain owned by the existing
+research/evidence workspace; conversation turns retain references to those
+records rather than copying their full source text. Composition results expose
+included and omitted turn references, selected sections, and an explicitly
+heuristic token estimate when tokenizer measurement is unavailable.
+
+`LLAMA_AGENT_RESIDENT_TRACE=1` reports compaction counts, accepted/rejected
+proposals, included sections, omitted turn references, and estimated prompt
+size. Raw compaction prompt/output content is disabled by default because it
+may contain user data. Set `LLAMA_AGENT_CONTEXT_TRACE_CONTENT=1` together with
+resident tracing only for a controlled local smoke when exact model input and
+output must be retained.
 
 The first context-pressure contract is also deliberately separate from the
 resource chunker. A host-owned budget evaluator can classify a measured input
@@ -4093,6 +4152,21 @@ That queue is separate from the corpus/QLoRA worker queue: it stores only the
 typed experiment envelope and never changes the active turn, model profile or
 sideband. Basis building, counterfactual evaluation, DeltaMemory updates and
 promotion remain explicit offline host operations.
+
+FlyDelta experiment arms use the daemon's existing resource-backed prepare,
+resident execution and finalize bindings. Full-generation arms inherit the
+finite host/context token limit rather than an implicit 64-token cap; a limit
+stop is inconclusive. Compact DSL and JSON tool outputs are normalized against
+the context's host-owned schemas before verification. Textual contexts use
+verification-only `model_tools`; native contexts use `tools` with an explicit
+`tool_choice`. Programmatic resident hosts prepare the same writable tensor
+override buffer as the argument parser, so GPU auto-fit can actually run.
+Runtime confirmation
+must identify the applied arm, and coefficient-to-region transfer preserves
+the actual dose and host-verification flags. Selected coefficient mixtures
+are retained through the existing composed-direction resource seam. See
+[production arm verification and state transfer](agent-flydelta.md#production-arm-verification-and-state-transfer)
+for diagnostics, compatibility and the production-binding smoke options.
 
 In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 
@@ -4631,14 +4705,13 @@ and an inference slice may reacquire the existing inference-capacity lease.
 This preserves queue capacity accounting, per-session ordering, cancellation,
 and the existing terminal-event contract.
 
-This contract does not yet claim full automatic context compaction. Rendered
-memory overlays and policy packs already have bounded compaction, and research
-workspace state can now be checkpointed without leaving the session lane, but
-full conversation/tool-result compaction still needs controller integration
-and resource-reference recovery. It also does not structurally repair arbitrary
-JSON or apply the continuation loop to chat-driver output. If the bounded
-slice budget is exhausted, the result remains incomplete and carries a
-validated checkpoint rather than being reported as a successful final answer.
+The plan-continuation contract above and the session conversation-compaction
+path described in the context-management section are separate mechanisms: the
+former resumes one bounded execution operation, while the latter composes
+history across accepted turns. Neither structurally repairs arbitrary JSON or
+turns an incomplete generation into a successful answer. If the bounded slice
+budget is exhausted, the result remains incomplete and carries a validated
+checkpoint rather than being reported as a successful final answer.
 
 The chat-driver boundary is now explicit as well. If a conversation generation
 ends with the backend's length/limit stop reason, the partial text remains in

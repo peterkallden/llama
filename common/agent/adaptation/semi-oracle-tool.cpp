@@ -42,7 +42,24 @@ bool common_semi_oracle_tool_service::define_ruleset(const std::string & dsl,
         if(!found){error="active session RuleSet binding points to a missing revision";return false;}
         if(!common_semi_oracle_revise_ruleset(current,dsl,authority,session_id_,active,error))return false;
     }
-    if(!store_.put_revision(active,error)||!store_.bind_session(session_id_,active.id,active.revision,error))return false;
+    if(!store_.put_revision(active,error))return false;
+    if (active.domain == common_semi_oracle_domain::placement_game) {
+        const auto spec = json::parse(active.spec_json, nullptr, false);
+        const auto players = spec.is_object()
+            ? spec.value("players", std::vector<std::string>{}) : std::vector<std::string>{};
+        const int rows = spec.is_object() ? spec.value("rows", 0) : 0;
+        const int columns = spec.is_object() ? spec.value("columns", 0) : 0;
+        if (players.size() != 2 || rows < 1 || columns < 1 || rows > 8 || columns > 8) {
+            error = "validated placement_game RuleSet has invalid initial-state dimensions";
+            return false;
+        }
+        json cells = json::array();
+        for (int i = 0; i < rows * columns; ++i) cells.push_back(nullptr);
+        const auto initial_state = json{{"cells", std::move(cells)}, {"turn", players[0]}}.dump();
+        if (!store_.put_session_state(session_id_, active.id, active.revision,
+                initial_state, error)) return false;
+    }
+    if(!store_.bind_session(session_id_,active.id,active.revision,error))return false;
     return true;
 }
 
@@ -63,6 +80,20 @@ bool common_semi_oracle_tool_service::action_contract(std::string & contract,std
     contract=common_semi_oracle_action_contract(ruleset);return true;
 }
 
+bool common_semi_oracle_tool_service::initialize_active_state(
+        const std::string & state_json, bool replace, std::string & error) {
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (!common_semi_oracle_validate_state(ruleset, state_json, error)) return false;
+    std::string existing;
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
+            existing, found, error)) return false;
+    if (found && !replace) return true;
+    return store_.put_session_state(session_id_, ruleset.id, ruleset.revision,
+        state_json, error);
+}
+
 bool common_semi_oracle_tool_service::verify_action(const std::string & state_json,
         const std::string & action_dsl,common_semi_oracle_level level,
         const std::string & goal,common_semi_oracle_budget budget,
@@ -78,6 +109,77 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     if(!common_semi_oracle_evaluate(ruleset,query,result,error))return false;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
     return store_.append_evaluation(evaluation_id,result,error);
+}
+
+bool common_semi_oracle_tool_service::verify_active_placement_action(
+        const std::string & action_dsl, common_semi_oracle_result & result,
+        std::string & state_before, std::string & state_after, std::string & error) {
+    state_before.clear(); state_after.clear();
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (ruleset.domain != common_semi_oracle_domain::placement_game) {
+        error = "the active RuleSet is not a placement_game; this runtime action path requires host-owned game state";
+        return false;
+    }
+    return verify_active_action(action_dsl, result, state_before, state_after, error);
+}
+
+bool common_semi_oracle_tool_service::verify_active_action(
+        const std::string & action_dsl, common_semi_oracle_result & result,
+        std::string & state_before, std::string & state_after, std::string & error) {
+    state_before.clear(); state_after.clear();
+    common_semi_oracle_ruleset ruleset; bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active semi-oracle RuleSet is bound to this session"; return false; }
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
+            state_before, found, error)) return false;
+    if (!found) {
+        error = "the active " + std::string(common_semi_oracle_domain_name(ruleset.domain)) +
+            " RuleSet has no host-owned session state";
+        return false;
+    }
+    if (!verify_action(state_before, action_dsl, common_semi_oracle_level::local,
+            {}, {1, 1}, {}, result, error)) return false;
+    if (result.verdict != common_semi_oracle_verdict::satisfied) return true;
+    const auto proof = json::parse(result.proof_json, nullptr, false);
+    if (!proof.is_object() || !proof.contains("next_state") || !proof["next_state"].is_object()) {
+        error = "verified active-domain action did not return a host-verifiable next state";
+        return false;
+    }
+    state_after = proof["next_state"].dump();
+    if (!common_semi_oracle_validate_state(ruleset, state_after, error)) return false;
+    return store_.put_session_state(session_id_, ruleset.id, ruleset.revision,
+        state_after, error);
+}
+
+bool common_semi_oracle_tool_service::search_active_algebra_goal(
+        common_semi_oracle_result & result, std::string & error) {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found || ruleset.domain != common_semi_oracle_domain::linear_algebra) {
+        error = "goal search requires an active linear_algebra RuleSet";
+        return false;
+    }
+    std::string state;
+    if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
+            state, found, error)) return false;
+    if (!found) {
+        error = "goal search requires host-owned active equation state";
+        return false;
+    }
+    const auto parsed = json::parse(state, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("lhs") || !parsed["lhs"].is_string()) {
+        error = "active algebra state is not a supported equation";
+        return false;
+    }
+    common_semi_oracle_budget budget;
+    budget.max_expansions = 2048;
+    budget.max_depth = 16;
+    return verify_action(state,
+        "open! algebra.rewrite_equation\nlhs: " + parsed["lhs"].get<std::string>() + "\n",
+        common_semi_oracle_level::bounded, "solve:x", budget, {}, result, error);
 }
 
 bool common_semi_oracle_tool_service::rank_placements(const std::string & state_json,
@@ -138,6 +240,35 @@ bool common_semi_oracle_tool_service::make_sft_candidate(
     scope.session_id = session_id_;
     return common_semi_oracle_make_sft_candidate(ruleset, preferred, payload, scope,
         approved_prompt, redaction_policy_id, redaction_method, curator_approved, candidate, error);
+}
+
+bool common_semi_oracle_tool_service::make_dpo_candidate(
+        const common_semi_oracle_placement_action_value & chosen,
+        const common_semi_oracle_placement_action_value & rejected,
+        const std::string & approved_prompt, const std::string & redaction_policy_id,
+        const std::string & redaction_method, bool curator_approved,
+        common_training_candidate & candidate, std::string & error) const {
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!active_ruleset(ruleset, found, error)) return false;
+    if (!found) { error = "no active session RuleSet is bound to this session"; return false; }
+    if (chosen.ruleset_id != ruleset.id || chosen.ruleset_revision != ruleset.revision ||
+            rejected.ruleset_id != ruleset.id || rejected.ruleset_revision != ruleset.revision) {
+        error = "DPO actions do not belong to the active session RuleSet revision";
+        return false;
+    }
+    std::string payload;
+    if (!store_.get_evaluation_payload(chosen.persisted_evaluation_ref, payload, found, error)) return false;
+    if (!found || chosen.persisted_evaluation_ref != rejected.persisted_evaluation_ref) {
+        error = "DPO actions do not share a persisted evaluation in the configured semi-oracle store";
+        return false;
+    }
+    common_agent_scope scope;
+    scope.namespace_id = host_namespace_;
+    scope.session_id = session_id_;
+    return common_semi_oracle_make_dpo_candidate(ruleset, chosen, rejected, payload, scope,
+        approved_prompt, redaction_policy_id, redaction_method, curator_approved,
+        candidate, error);
 }
 
 bool common_semi_oracle_tool_service::promote_active_ruleset_to_host(std::string & error) {

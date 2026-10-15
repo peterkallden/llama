@@ -6,6 +6,7 @@
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "agent/context/context-management.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
@@ -14,6 +15,7 @@
 #include "../runtime/agent-runtime-execution.h"
 #include "../runtime/agent-runtime-resident.h"
 #include "agent-daemon-service.h"
+#include "agent/adaptation/semi-oracle-store.h"
 #include "../host/agent-diagnostics-config.h"
 #include "../../../common/agent/protocol/agent-jsonl.h"
 
@@ -53,6 +55,7 @@ struct daemon_options {
     int n_threads = 2;
     int context_size = 3072;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string memory_learn = "off";
@@ -93,6 +96,7 @@ struct daemon_options {
     std::string adaptation_flydelta_queue_path;
     std::string adaptation_flydelta_batch_mode = "auto";
     size_t adaptation_flydelta_batch_parallelism = 2;
+    bool adaptation_flydelta_factorized_cvec_batch = false;
     bool adaptation_flydelta_capture_candidates = false;
     std::string adaptation_flydelta_lifecycle_backend = "auto";
     std::string adaptation_flydelta_lifecycle_path;
@@ -183,7 +187,8 @@ bool resolve_agent_daemon_tooling(
     common_agent_runtime_tooling & tooling,
     std::string & error,
     common_agent_data_store * data_store = nullptr,
-    std::optional<bool> allow_policy_gated_writes = std::nullopt);
+    std::optional<bool> allow_policy_gated_writes = std::nullopt,
+    common_semi_oracle_store * semi_oracle_store = nullptr);
 
 bool parse_agent_daemon_command(
     const nlohmann::ordered_json & parsed,

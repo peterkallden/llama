@@ -28,6 +28,8 @@ int main() {
         "plan", "step", "dataset.inspect", "evidence:repaired", "repaired"});
     result.learning_signals.push_back({common_learning_signal_type::reflection_hint,
         "plan", "", "", "evidence:reflection", "alternative"});
+    result.learning_signals.push_back({common_learning_signal_type::semi_oracle_preference,
+        "plan", "step", "oracle.action.verify", "evidence:oracle", "verified suboptimal move"});
     result.reflected = true;
     const auto matches = common_adaptation_evidence_sources_for_turn(request, plan, result);
 
@@ -36,7 +38,9 @@ int main() {
     if (!ready) return 1;
     CHECK(has_source(matches, common_adaptation_evidence_source::reflection_alternative, &ready));
     if (ready) return 1;
-    CHECK(matches.size() == 2);
+    CHECK(has_source(matches, common_adaptation_evidence_source::semi_oracle_preference, &ready));
+    if (ready) return 1;
+    CHECK(matches.size() == 3);
 
     common_plan_observation observation;
     observation.id = "resource:1";

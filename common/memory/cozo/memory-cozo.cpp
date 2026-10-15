@@ -184,6 +184,8 @@ void common_memory_cozo_store::close() {
 }
 
 bool common_memory_cozo_store::put(const common_memory_record & record, std::string & error) {
+    common_memory_temporal_fields temporal;
+    if (!common_memory_temporal_fields_read(record, temporal, error)) return false;
     if (record.id.empty()) {
         error = "memory id must not be empty";
         return false;
@@ -272,12 +274,42 @@ std::vector<common_memory_hit> common_memory_cozo_store::search(const common_mem
 }
 
 bool common_memory_cozo_store::relate(const std::string & from, const std::string & relation, const std::string & to, float weight, std::string & error) {
+    if (!common_memory_validate_relation(*this, from, relation, to, error)) return false;
     const json params = {
         {"rows", json::array({json::array({from, relation, to, weight, (int64_t) std::time(nullptr)})})},
     };
     std::string result;
     return run("?[from, relation, to, weight, created_at] <- $rows :put memory_edge { from, relation, to => weight, created_at }",
         params.dump(), result, error);
+}
+
+std::vector<common_memory_relation> common_memory_cozo_store::list_relations(
+        const std::string & id, const std::string & relation, bool outgoing,
+        const common_memory_query & scope, std::string & error) {
+    const json params = {{"id", id}};
+    std::string result;
+    if (!run("?[from, relation, to, weight, created_at] := *memory_edge[from, relation, to, weight, created_at], (from == $id || to == $id)",
+            params.dump(), result, error)) return {};
+    const auto parsed = json::parse(result, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || !parsed["rows"].is_array()) {
+        error = "Cozo returned malformed memory relation rows";
+        return {};
+    }
+    std::vector<common_memory_relation> out;
+    for (const auto & row : parsed["rows"]) {
+        if (!row.is_array() || row.size() < 5) continue;
+        common_memory_relation edge{row[0].get<std::string>(), row[1].get<std::string>(), row[2].get<std::string>(),
+            row[3].get<float>(), row[4].get<int64_t>()};
+        if ((!relation.empty() && edge.relation != relation) || (outgoing ? edge.from != id : edge.to != id)) continue;
+        auto from = get(edge.from, error);
+        if (!error.empty()) return {};
+        auto to = get(edge.to, error);
+        if (!error.empty()) return {};
+        if (!from || !to || !common_memory_scope_matches(*from, scope) || !common_memory_scope_matches(*to, scope)) continue;
+        out.push_back(std::move(edge));
+    }
+    error.clear();
+    return out;
 }
 
 bool common_memory_cozo_store::erase(const std::string & id, std::string & error) {

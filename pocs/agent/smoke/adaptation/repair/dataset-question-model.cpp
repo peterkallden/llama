@@ -19,24 +19,32 @@
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/server/server-context.h"
+#include "tools/agent/daemon/agent-daemon-flydelta-internal.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "common.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
+using json = nlohmann::ordered_json;
 using ordered_json = nlohmann::ordered_json;
 
 struct options {
@@ -46,12 +54,19 @@ struct options {
     std::string learning_ledger;
     bool force_deep = false;
     bool force_tfo_lite = false;
+    bool low_rank_rank_sweep = false;
+    bool disable_factorized_cvec_batch = false;
+    bool production_bindings = false;
+    bool production_where = false;
     bool adaptive_alpha_search = false;
-    int n_predict = 128;
+    int n_predict = 512;
     int n_threads = 3;
     int n_gpu_layers = 0;
+    int n_parallel = 2;
+    int n_ctx_per_sequence = 6144;
     std::string backend = "server";
     std::string scenario_id;
+    std::string behavior_key;
     size_t max_scenarios = 0;
 };
 
@@ -77,11 +92,20 @@ bool parse_args(int argc, char ** argv, options & value) {
         value.force_tfo_lite = std::string(force_tfo) == "1" || std::string(force_tfo) == "true";
         value.force_deep = value.force_deep || value.force_tfo_lite;
     }
+    if (const char * rank_sweep = std::getenv("LLAMA_AGENT_LOW_RANK_RANK_SWEEP")) {
+        value.low_rank_rank_sweep = std::string(rank_sweep) == "1" ||
+            std::string(rank_sweep) == "true";
+        value.force_deep = value.force_deep || value.low_rank_rank_sweep;
+    }
     if (const char * adaptive_alpha = std::getenv("LLAMA_AGENT_ADAPTIVE_ALPHA_SEARCH")) {
         value.adaptive_alpha_search = std::string(adaptive_alpha) == "1" ||
             std::string(adaptive_alpha) == "true";
     }
     if (const char * threads = std::getenv("LLAMA_AGENT_THREADS")) value.n_threads = std::stoi(threads);
+    if (const char * parallel = std::getenv("LLAMA_AGENT_N_PARALLEL")) value.n_parallel = std::stoi(parallel);
+    if (const char * per_sequence_ctx = std::getenv("LLAMA_AGENT_N_CTX_PER_SEQUENCE")) {
+        value.n_ctx_per_sequence = std::stoi(per_sequence_ctx);
+    }
     if (const char * scenario_id = std::getenv("LLAMA_AGENT_SCENARIO_ID")) value.scenario_id = scenario_id;
     if (const char * max_scenarios = std::getenv("LLAMA_AGENT_MAX_SCENARIOS")) value.max_scenarios = std::stoul(max_scenarios);
     for (int index = 1; index < argc; ++index) {
@@ -96,12 +120,22 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--learning-ledger") { const auto v = next("--learning-ledger"); if (!v) return false; value.learning_ledger = v; }
         else if (argument == "--force-deep") value.force_deep = true;
         else if (argument == "--force-tfo-lite") { value.force_tfo_lite = true; value.force_deep = true; }
+        else if (argument == "--low-rank-rank-sweep") {
+            value.low_rank_rank_sweep = true;
+            value.force_deep = true;
+        }
+        else if (argument == "--disable-factorized-cvec-batch") value.disable_factorized_cvec_batch = true;
         else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
+        else if (argument == "--production-bindings") value.production_bindings = true;
+        else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
+        else if (argument == "--n-parallel") { const auto v = next("--n-parallel"); if (!v) return false; value.n_parallel = std::stoi(v); }
+        else if (argument == "--n-ctx-per-sequence") { const auto v = next("--n-ctx-per-sequence"); if (!v) return false; value.n_ctx_per_sequence = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
         else if (argument == "--backend") { const auto v = next("--backend"); if (!v) return false; value.backend = v; }
         else if (argument == "--scenario-id") { const auto v = next("--scenario-id"); if (!v) return false; value.scenario_id = v; }
+        else if (argument == "--behavior-key") { const auto v = next("--behavior-key"); if (!v) return false; value.behavior_key = v; }
         else if (argument == "--max-scenarios") { const auto v = next("--max-scenarios"); if (!v) return false; value.max_scenarios = std::stoul(v); }
         else if (argument == "--help" || argument == "-h") return false;
         else { std::cerr << "unknown argument: " << argument << '\n'; return false; }
@@ -206,61 +240,66 @@ std::string preview(const common_agent_generation_result & result) {
     return output;
 }
 
-bool parse_model_tool_call(const common_agent_generation_result & result, ordered_json & parsed) {
-    if (!common_agent_generation_succeeded(result)) return false;
-    common_agent_tool_call call;
-    std::string error;
-    if (!common_parse_model_tool_call(
-            common_agent_tool_output_format::compact_dsl, result.content, call, error)) {
+std::string deep_arm_trace_id(const std::string & fixture_id, int32_t layer,
+        const std::vector<float> & coefficients, bool full_execution) {
+    return fixture_id + "/deep/" + (full_execution ? "full/" : "diagnostic/") +
+        "layer-" + std::to_string(layer) + "/" + json(coefficients).dump();
+}
+
+void trace_model_exchange(const std::string & phase, const std::string & id,
+        const common_agent_generation_request & request,
+        const common_agent_generation_result & result) {
+    json messages = json::array();
+    for (const auto & message : request.messages) {
+        messages.push_back({{"role", message.role}, {"content", message.content}});
+    }
+    const json exchange = {{"phase", phase}, {"id", id},
+        {"messages", messages}, {"n_predict", request.options.n_predict},
+        {"budget", {{"phase", phase}, {"token_limit", request.options.n_predict},
+            {"decoded_tokens", result.decoded_tokens},
+            {"exhausted", request.options.n_predict > 0 && result.stop_reason == common_agent_generation_stop_reason::limit},
+            {"diagnostic_only", request.options.n_predict == 0}}},
+        {"content", result.content}, {"decoded_tokens", result.decoded_tokens},
+        {"stop_reason", common_agent_generation_stop_reason_name(result.stop_reason)},
+        {"overlay_requested", result.flydelta_runtime.requested},
+        {"overlay_applied", result.flydelta_runtime.applied},
+        {"factorized_binding", result.flydelta_runtime.factorized_binding},
+        {"fallback_reason", result.flydelta_runtime.fallback_reason},
+        {"error", result.error_message}};
+    // Share stderr's FILE lock with resident diagnostics so a server log
+    // cannot splice into the middle of a machine-readable event.
+    std::fprintf(stderr, "flydelta_model_exchange %s\n", exchange.dump().c_str());
+}
+
+bool parse_model_tool_call(const common_agent_generation_result & result,
+        const agent_flydelta_dataset_repair_host & host, ordered_json & parsed, std::string & error) {
+    if (!common_agent_generation_succeeded(result)) {
+        error = result.error_message;
         return false;
     }
+    common_agent_tool_call call;
+    if (!host.parse_model_call(result.content, call, error)) return false;
     const ordered_json arguments = ordered_json::parse(call.arguments_json, nullptr, false);
-    if (!arguments.is_object()) return false;
+    if (!arguments.is_object()) {
+        error = "parsed tool arguments are not an object";
+        return false;
+    }
     parsed = {{"name", call.name}, {"arguments", arguments}};
     return true;
 }
 
-std::string compact_dsl_value(const ordered_json & value) {
-    if (value.is_string()) return value.dump();
-    if (value.is_primitive()) return value.dump();
-    if (value.is_array()) {
-        std::string rendered = "[";
-        for (size_t index = 0; index < value.size(); ++index) {
-            if (index != 0) rendered += ",";
-            rendered += compact_dsl_value(value[index]);
-        }
-        return rendered + "]";
-    }
-    if (value.is_object()) {
-        std::string rendered = "{";
-        bool first = true;
-        for (const auto & entry : value.items()) {
-            if (!first) rendered += ";";
-            first = false;
-            rendered += entry.key() + "=" + compact_dsl_value(entry.value());
-        }
-        return rendered + "}";
-    }
-    return "null";
+std::string tool_call_continuation(const std::string & tool, const ordered_json & arguments,
+        const agent_flydelta_dataset_repair_host & host) {
+    std::string error;
+    return host.render_model_call(tool, arguments, error);
 }
 
-std::string compact_dsl_tool_call(const std::string & tool, const ordered_json & arguments) {
-    if (tool.empty() || !arguments.is_object()) return {};
-    std::string rendered = "open! " + tool;
-    for (const auto & argument : arguments.items()) {
-        rendered += " " + argument.key() + "=" + compact_dsl_value(argument.value());
-    }
-    return rendered;
-}
-
-std::string tool_call_continuation(const std::string & tool, const ordered_json & arguments) {
-    return compact_dsl_tool_call(tool, arguments);
-}
-
-std::string parsed_tool_call_continuation(const common_agent_generation_result & result) {
+std::string parsed_tool_call_continuation(const common_agent_generation_result & result,
+        const agent_flydelta_dataset_repair_host & host) {
     ordered_json parsed;
-    if (!parse_model_tool_call(result, parsed)) return {};
-    return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"]);
+    std::string error;
+    if (!parse_model_tool_call(result, host, parsed, error)) return {};
+    return tool_call_continuation(parsed["name"].get<std::string>(), parsed["arguments"], host);
 }
 
 bool result_oracle_matches(
@@ -285,9 +324,16 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         verdict.diagnostic = "model generation failed";
         return verdict;
     }
+    if (result.stop_reason == common_agent_generation_stop_reason::limit) {
+        verdict.value = host_verdict::kind::unresolved_alternative;
+        verdict.diagnostic = "generation_token_budget_exhausted: decoded_tokens=" +
+            std::to_string(result.decoded_tokens) + "; tool-call verifier not run";
+        return verdict;
+    }
     ordered_json parsed;
-    if (!parse_model_tool_call(result, parsed)) {
-        verdict.diagnostic = "host rejected a non-canonical tool-call object";
+    std::string parse_error;
+    if (!parse_model_tool_call(result, host, parsed, parse_error)) {
+        verdict.diagnostic = "host rejected tool-call syntax: " + parse_error;
         return verdict;
     }
     verdict.selected_tool = parsed["name"].get<std::string>();
@@ -370,9 +416,11 @@ common_agent_generation_request make_request(const options & value, const std::s
     request.purpose = common_agent_generation_purpose::tool_followup;
     request.options.n_predict = value.n_predict;
     request.options.n_threads = value.n_threads;
+    request.options.generation_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
     request.messages = {{"system",
-        "You are a host-controlled dataset tool selector. Return exactly one compact DSL call in the form "
-        "open! TOOL_NAME argument=value. Do not return JSON, native tool-call wrappers, markdown, or explanation.\n" +
+        "Choose the best tool for the request. Return one compact DSL action:\n"
+        "open! TOOL_NAME\nfield: value\n"
+        "Use one field per line. Omit unset or host-resolved fields.\n" +
         contract}, {"user", user}};
     request.flydelta_capture = capture;
     request.flydelta_activation = std::move(activation);
@@ -387,10 +435,12 @@ int main(int argc, char ** argv) {
                   << " --model MODEL --suite SUITE_JSON [--config AGENT_CONFIG]"
                   << " [--backend server]"
                   << " [--scenario-id ID]"
+                  << " [--behavior-key KEY]"
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
-                  << " [--force-deep|--force-tfo-lite] [--adaptive-alpha-search]"
-                  << " [--threads N] [--n-gpu-layers N]\n";
+                  << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep] [--adaptive-alpha-search]"
+                  << " [--threads N] [--n-gpu-layers N] [--n-parallel N]"
+                  << " [--n-ctx-per-sequence N]\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -398,7 +448,10 @@ int main(int argc, char ** argv) {
         return 77;
     }
     if (value.suite.empty() || !std::filesystem::is_regular_file(value.suite) ||
-            value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0) return 2;
+            value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0 ||
+            value.n_parallel <= 0 || value.n_parallel > 16 || value.n_ctx_per_sequence <= 0 ||
+            static_cast<int64_t>(value.n_parallel) * value.n_ctx_per_sequence >
+                std::numeric_limits<int32_t>::max()) return 2;
 
     ordered_json suite;
     std::string error;
@@ -423,23 +476,43 @@ int main(int argc, char ** argv) {
     common_tool_bootstrap_result bootstrap;
     if (!catalog.bootstrap("analysis", bootstrap, error)) { host.close(); std::cerr << error << '\n'; return 1; }
     std::string contract = "Available read-only tools:\n";
+    std::vector<std::string> described_tools;
     size_t selected_scenarios = 0;
+    size_t considered_scenarios = 0;
     for (const auto & scenario : suite["scenarios"]) {
+        const auto id = scenario.value("id", "unnamed");
+        if (!value.scenario_id.empty() && id != value.scenario_id) continue;
+        if (!value.behavior_key.empty() && scenario.value("behavior_key", "") != value.behavior_key) continue;
+        if (value.max_scenarios != 0 && considered_scenarios >= value.max_scenarios) break;
+        ++considered_scenarios;
         const auto expected = scenario.value("expected_tool", "");
         if (!policy_allows_tool_family(host_config ? &*host_config : nullptr, expected)) continue;
         ++selected_scenarios;
         const auto * definition = catalog.find_definition(expected);
         if (!definition) { host.close(); std::cerr << "unknown expected tool: " << expected << '\n'; return 1; }
+        if (std::find(described_tools.begin(), described_tools.end(), expected) != described_tools.end()) continue;
+        described_tools.push_back(expected);
         std::string compact_error;
         const auto description = common_render_compact_tool_description(definition->name, definition->description,
             common_tool_model_input_schema(*definition), common_tool_model_result_schema(*definition), compact_error);
         if (!compact_error.empty()) { host.close(); std::cerr << compact_error << '\n'; return 1; }
-        if (contract.find("\n- " + expected + "\n") == std::string::npos) contract += "- " + description + "\n";
+        contract += "- " + description + "\n";
     }
     if (selected_scenarios == 0) {
         host.close();
         std::cerr << "no scenarios enabled by agent learning policy\n";
         return 2;
+    }
+    contract += "\nAvailable datasets (host-registered):\n";
+    if (!host.select_model_tools(described_tools, error)) {
+        host.close(); std::cerr << error << '\n'; return 1;
+    }
+    for (const auto & dataset : host.available_datasets()) {
+        contract += dataset.ref.uri + "\n";
+        for (const auto & column : dataset.columns) {
+            contract += "  " + column.name + " (" +
+                common_agent_dataset_column_type_name(column.type) + ")\n";
+        }
     }
 
     std::shared_ptr<common_agent_server_context_host> server_host;
@@ -455,13 +528,20 @@ int main(int argc, char ** argv) {
         // The model-backed repair smoke uses the production server-host
         // binding when requested. Keep two resident sequences so FlyDelta
         // waves can use the same per-sequence overlay/batch path as runtime.
-        server_config.context_key.n_parallel = 2;
-        server_config.context_key.n_sequences = 2;
+        server_config.context_key.n_parallel = value.n_parallel;
+        server_config.context_key.n_sequences = value.n_parallel;
         // Repair must see the complete model-facing tool contract and the
-        // host repair context in one resident server request.
-        server_config.context_key.n_ctx = 4096;
+        // host repair context in one resident server request. With two
+        // parallel slots, 8192 total tokens left only 4096 per request; the
+        // replay suite's full compact tool contracts need more room.
+        server_config.context_key.n_ctx = value.n_parallel * value.n_ctx_per_sequence;
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
+        server_config.per_sequence_factorized_cvec_batch =
+            value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch;
+        std::cout << "flydelta_smoke_factorized_cvec_enabled="
+                  << (server_config.per_sequence_factorized_cvec_batch ? "yes" : "no") << '\n';
+        server_config.agent_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
         if (!server_host->start(server_config, error)) {
             host.close();
             std::cerr << "could not start server backend: " << error << '\n';
@@ -482,8 +562,27 @@ int main(int argc, char ** argv) {
         }
         n_embd = static_cast<size_t>(llama_model_n_embd(llama_get_model(context)));
         n_layers = static_cast<size_t>(llama_model_n_layer(llama_get_model(context)));
+        std::cout << "flydelta_smoke_context requested_parallel=" << value.n_parallel
+                  << " requested_ctx_per_sequence=" << value.n_ctx_per_sequence
+                  << " requested_total_ctx=" << server_config.context_key.n_ctx
+                  << " actual_total_ctx=" << llama_n_ctx(context)
+                  << " actual_ctx_per_sequence=" << llama_n_ctx(context) / value.n_parallel
+                  << " actual_parallel=" << value.n_parallel << '\n';
     }
     if (n_embd == 0 || n_layers <= 2) { host.close(); return 1; }
+    // Reject an unstable forced-token prefix before buying any model probes.
+    const auto * context = server_host->server().get_llama_context();
+    const std::string forced_prefix = agent_flydelta_dataset_dsl_prefix;
+    const auto prefix_tokens = common_tokenize(context, forced_prefix, false, true);
+    for (const auto & name : described_tools) {
+        const auto complete_tokens = common_tokenize(context, forced_prefix + " " + name, false, true);
+        if (prefix_tokens.empty() || complete_tokens.size() < prefix_tokens.size() ||
+                !std::equal(prefix_tokens.begin(), prefix_tokens.end(), complete_tokens.begin())) {
+            host.close(); std::cerr << "DSL teacher prefix crosses a token boundary for " << name << '\n'; return 1;
+        }
+    }
+    std::cout << "flydelta_teacher_prefix prefix=" << std::quoted(forced_prefix)
+              << " stable=yes tokens=" << prefix_tokens.size() << std::endl;
 
     auto capture = std::make_shared<common_flydelta_hidden_state_capture_request>();
     capture->enabled = true;
@@ -525,6 +624,7 @@ int main(int argc, char ** argv) {
     for (const auto & scenario : suite["scenarios"]) {
         const auto id = scenario.value("id", "unnamed");
         if (!value.scenario_id.empty() && id != value.scenario_id) continue;
+        if (!value.behavior_key.empty() && scenario.value("behavior_key", "") != value.behavior_key) continue;
         if (value.max_scenarios != 0 && processed_scenarios >= value.max_scenarios) break;
         ++processed_scenarios;
         const auto expected = scenario.value("expected_tool", "");
@@ -546,20 +646,45 @@ int main(int argc, char ** argv) {
             std::cerr << "scenario has invalid verification_mode: " << id << '\n';
             return 1;
         }
+        std::cout << "flydelta_fixture " << json({{"id", id}, {"expected", canonical_repair},
+            {"canonical_output", canonical_execution.output}, {"verification_mode", verification_mode}}).dump()
+                  << std::endl;
 
         common_agent_generation_result failed_result;
-        const bool generated = inference->generate(make_request(value, contract, scenario.value("question", ""), capture), failed_result);
+        const auto failed_request = make_request(value, contract, scenario.value("question", ""), capture);
+        const bool generated = inference->generate(failed_request, failed_result);
+        trace_model_exchange("baseline", id, failed_request, failed_result);
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
+        std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "baseline"},
+            {"selected_tool", failed_verdict.selected_tool}, {"diagnostic", failed_verdict.diagnostic},
+            {"passed", failed_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         std::string decision_failed_tool = failed_verdict.selected_tool;
-        std::string decision_failed_continuation = parsed_tool_call_continuation(failed_result);
+        std::string decision_failed_continuation = parsed_tool_call_continuation(failed_result, host);
+        std::string decision_contrast_source = "parsed_model_call";
+        // Scoring an invalid DSL answer is still a valid teacher-forced
+        // comparison. Preserve the observed continuation instead of replacing
+        // the argument error with a fixture's unrelated invented tool.
+        common_agent_teacher_forced_choice_request observed_contrast;
+        std::string observed_contrast_error;
+        if (agent_flydelta_dataset_dsl_contrast(observed_contrast,
+                tool_call_continuation(expected, canonical_repair["arguments"], host),
+                failed_result.content, observed_contrast_error)) {
+            decision_failed_continuation = failed_result.content;
+            decision_contrast_source = "observed_output";
+            if (decision_failed_tool.empty()) {
+                std::istringstream observed_header(failed_result.content);
+                std::string marker;
+                observed_header >> marker >> decision_failed_tool;
+            }
+        }
         // Replay fixtures deliberately carry a host-constructed negative call.
         // Use it only when Qwen's failed output cannot be parsed into a
         // model-facing choice pair; this keeps experimental margin scoring
         // available without turning the synthetic fixture into learning
         // credit.
-        if (replay_mode && (decision_failed_tool.empty() || decision_failed_continuation.empty()) &&
+        if (replay_mode && decision_failed_continuation.empty() &&
                 scenario.contains("failed_output") && scenario["failed_output"].is_object()) {
             const auto & failed_fixture = scenario["failed_output"];
             const auto fixture_tool = failed_fixture.value("name", "");
@@ -568,9 +693,13 @@ int main(int argc, char ** argv) {
             else if (failed_fixture.contains("args")) fixture_arguments = &failed_fixture["args"];
             if (!fixture_tool.empty() && fixture_arguments != nullptr && fixture_arguments->is_object()) {
                 decision_failed_tool = fixture_tool;
-                decision_failed_continuation = tool_call_continuation(fixture_tool, *fixture_arguments);
+                decision_failed_continuation = tool_call_continuation(fixture_tool, *fixture_arguments, host);
+                decision_contrast_source = "synthetic_fixture_fallback";
             }
         }
+        std::cout << "flydelta_decision_contrast fixture=" << id
+                  << " negative_source=" << decision_contrast_source
+                  << " positive_source=host_canonical learning_credit=none\n";
         if (generated && failed_verdict.value == host_verdict::kind::passed) {
             ++passed;
             std::cout << "scenario=" << id << " host_outcome=passed selected=" << failed_verdict.selected_tool
@@ -584,15 +713,12 @@ int main(int argc, char ** argv) {
             continue;
         }
         ++failures;
-        const std::string canonical_dsl_call = compact_dsl_tool_call(
-            expected, canonical_repair["arguments"]);
+        const std::string canonical_dsl_call = tool_call_continuation(
+            expected, canonical_repair["arguments"], host);
         common_agent_tool_call parsed_canonical_dsl_call;
         std::string canonical_dsl_error;
-        const bool canonical_dsl_parsed = common_parse_model_tool_call(
-            common_agent_tool_output_format::compact_dsl,
-            canonical_dsl_call,
-            parsed_canonical_dsl_call,
-            canonical_dsl_error);
+        const bool canonical_dsl_parsed = host.parse_model_call(
+            canonical_dsl_call, parsed_canonical_dsl_call, canonical_dsl_error);
         ordered_json parsed_canonical_arguments = ordered_json::value_t::discarded;
         if (canonical_dsl_parsed) {
             parsed_canonical_arguments = ordered_json::parse(
@@ -612,19 +738,30 @@ int main(int argc, char ** argv) {
             "Return this single compact DSL call unchanged. Do not return JSON, markdown, or explanation: " +
             canonical_dsl_call;
         common_agent_generation_result repaired_result;
-        const bool repair_generated = inference->generate(make_request(value, contract, repair_request, capture), repaired_result);
-        const auto repaired_verdict = verify_model_call(
-            repaired_result, expected, canonical_repair["arguments"], verification_mode,
-            &canonical_execution, host);
+        const auto repaired_request = make_request(value, contract, repair_request, capture);
+        // Replay already owns an executed canonical repair. Capture that
+        // continuation directly; a free echo adds cost and can corrupt the
+        // target without providing any model-recovery evidence.
+        const bool repair_generated = !replay_mode && inference->generate(repaired_request, repaired_result);
+        host_verdict repaired_verdict;
+        if (!replay_mode) {
+            trace_model_exchange("repair", id, repaired_request, repaired_result);
+            repaired_verdict = verify_model_call(repaired_result, expected,
+                canonical_repair["arguments"], verification_mode, &canonical_execution, host);
+            std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "repair"},
+                {"selected_tool", repaired_verdict.selected_tool}, {"diagnostic", repaired_verdict.diagnostic},
+                {"passed", repaired_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
+        } else {
+            std::cout << "flydelta_host_repair " << json({{"id", id}, {"canonical_call", canonical_dsl_call},
+                {"model_generation", false}, {"source", "host_canonical"}, {"learning_credit", false}}).dump() << std::endl;
+        }
         const bool capture_pair = failed_result.flydelta_capture && repaired_result.flydelta_capture &&
             failed_result.flydelta_capture->captured && repaired_result.flydelta_capture->captured;
-        // Replay fixtures are deliberately allowed to contribute experimental
-        // model captures when the model produced a repair-shaped response and
-        // both sides were captured. The replay ledger supplies the canonical
-        // host repair, while the host verdict remains authoritative for
-        // learning credit. This keeps half-synthetic algorithm evaluation
-        // useful without turning it into HELPED evidence.
-        const bool synthetic_repair = replay_mode && repair_generated && capture_pair;
+        // Replay captures an observed baseline and a host-canonical target.
+        // These are experimental model representations, not observed recovery
+        // or HELPED evidence.
+        const bool synthetic_repair = replay_mode && generated && failed_result.flydelta_capture &&
+            failed_result.flydelta_capture->captured;
         if ((!repair_generated || repaired_verdict.value != host_verdict::kind::passed || !capture_pair) &&
                 !synthetic_repair) {
             const auto echo_evidence_id = "evidence:dataset-repair:" + id + ":repair-echo-failure";
@@ -685,8 +822,28 @@ int main(int argc, char ** argv) {
         if (synthetic_repair) {
             // The replay log supplies a host-constructed canonical repair, but
             // this branch deliberately does not claim host-certified learning
-            // evidence. It only turns the real Qwen baseline/repair captures
-            // into experimental material for layer discovery and search.
+            // evidence. The matched captures provide experimental WHAT.
+            // Baseline and repair generation used different user prompts.
+            // Their boundary delta would measure the added repair instruction,
+            // rather than representations of bad/good continuations of one
+            // task. Replay both continuations under the original prefix.
+            const std::vector<common_agent_generation_request> capture_requests = {
+                agent_flydelta_dataset_capture_context(failed_request, failed_result.content),
+                agent_flydelta_dataset_capture_context(failed_request, canonical_dsl_call),
+            };
+            std::vector<common_agent_generation_result> capture_results;
+            if (!inference->generate_batch(capture_requests, capture_results) || capture_results.size() != 2 ||
+                    !capture_results[0].flydelta_capture || !capture_results[1].flydelta_capture ||
+                    !capture_results[0].flydelta_capture->captured || !capture_results[1].flydelta_capture->captured) {
+                host.close(); std::cerr << "matched replay capture failed for " << id << '\n'; return 1;
+            }
+            trace_model_exchange("replay_forced_baseline", id, capture_requests[0], capture_results[0]);
+            trace_model_exchange("replay_forced_preferred", id, capture_requests[1], capture_results[1]);
+            std::cout << "flydelta_replay_capture fixture=" << id
+                      << " mode=host.forced_context.v1 common_prefix=original_task"
+                      << " baseline=observed_output preferred=host_canonical learning_credit=none\n";
+            const auto & baseline_capture = *capture_results[0].flydelta_capture;
+            const auto & preferred_capture = *capture_results[1].flydelta_capture;
             common_flydelta_capture_manifest manifest;
             manifest.id = "flydelta://capture/dataset-repair-replay/" + id;
             manifest.observation_id = "learning://observation/repair-echo-failure/" + id;
@@ -699,8 +856,8 @@ int main(int argc, char ** argv) {
             manifest.capture_layout_revision = capture->capture_layout_revision;
             manifest.evidence_hash = "sha256:dataset-repair-replay:" + id;
             manifest.redaction_attested = true;
-            manifest.captured_bytes = (failed_result.flydelta_capture->values.size() +
-                repaired_result.flydelta_capture->values.size()) * sizeof(float);
+            manifest.captured_bytes = (baseline_capture.values.size() +
+                preferred_capture.values.size()) * sizeof(float);
             if (!common_flydelta_capture_manifest_validate(
                     manifest, 64U * 1024U * 1024U, error)) {
                 host.close();
@@ -709,7 +866,7 @@ int main(int argc, char ** argv) {
             }
             std::vector<common_flydelta_behavior_delta> replay_deltas;
             if (!common_flydelta_behavior_deltas_from_captures(
-                    manifest, *failed_result.flydelta_capture, *repaired_result.flydelta_capture,
+                    manifest, baseline_capture, preferred_capture,
                     "evidence:dataset-repair-replay:" + id,
                     64U * 1024U * 1024U, 64U * 1024U * 1024U, replay_deltas, error)) {
                 host.close();
@@ -734,9 +891,9 @@ int main(int argc, char ** argv) {
             }
             ++synthetic_repairs;
             std::cout << "scenario=" << id << " host_outcome=synthetic_repair_observation"
-                      << " selected=" << repaired_verdict.selected_tool
+                      << " selected=" << expected << " preferred_source=host_canonical"
                       << " failed_output=" << preview(failed_result)
-                      << " repaired_output=" << preview(repaired_result) << '\n';
+                      << " preferred_output=" << json(canonical_dsl_call).dump() << '\n';
             continue;
         }
 
@@ -810,6 +967,7 @@ int main(int argc, char ** argv) {
     size_t deep_diagnostic_trials = 0;
     size_t deep_full_generation_trials = 0;
     size_t direction_candidates = 0;
+    bool bootstrap_overlay_evaluated = false;
     const auto worker_root = std::filesystem::temp_directory_path() /
         "llama-agent-flydelta-dataset-question-bootstrap-worker";
     std::error_code ignored;
@@ -879,9 +1037,16 @@ int main(int argc, char ** argv) {
         layer2_samples += evidence_depth.compatible_samples;
         if (evidence_depth.deep_ready) ++deep_groups;
         direction_candidates += directions.size();
+        const size_t learning_eligible_samples = static_cast<size_t>(std::count_if(
+            entry.second.begin(), entry.second.end(), [](const auto & sample) {
+                return sample.credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+                    sample.credit.eligible_for_learning;
+            }));
         std::cout << "flydelta_partition group=" << entry.first
                   << " observations=" << entry.second.size()
                   << " compatible=" << evidence_depth.compatible_samples
+                  << " learning_eligible=" << learning_eligible_samples
+                  << " experimental=" << evidence_depth.experimental_samples
                   << " rejected=" << evidence_depth.incompatible_samples
                   << " depth=" << common_flydelta_search_depth_name(evidence_depth.depth)
                   << " shallow_ready=" << (evidence_depth.shallow_ready ? "yes" : "no")
@@ -890,11 +1055,70 @@ int main(int argc, char ** argv) {
                   << " stable_rank=" << evidence_depth.stable_rank
                   << " median_alignment=" << evidence_depth.median_alignment
                   << " condition_number=" << evidence_depth.condition_number
+                  << " retained_explained_energy=" << evidence_depth.retained_explained_energy
+                  << " smallest_retained_singular_value="
+                  << evidence_depth.smallest_retained_singular_value
+                  << " pairwise_cosines=";
+        for (size_t index = 0; index < evidence_depth.pairwise_cosines.size(); ++index) {
+            if (index != 0) std::cout << ',';
+            std::cout << evidence_depth.pairwise_cosines[index];
+        }
+        std::cout
                   << " geometry_stable=" << (evidence_depth.geometry_stable ? "yes" : "no")
+                  << " forced_deep_requested=" << (value.force_deep ? "yes" : "no")
+                  << " forced_deep_override=" << (value.force_deep &&
+                        evidence_depth.depth != common_flydelta_search_depth::deep ? "yes" : "no")
+                  << " forced_deep_override_reason=" << (value.force_deep &&
+                        evidence_depth.depth != common_flydelta_search_depth::deep
+                            ? "smoke_only_evidence_depth_bypass" : "none")
                   << " region_budget=" << search_budget.max_region_trials
                   << " coefficient_budget=" << search_budget.max_coefficient_trials
                   << " tfo_lite=" << (search_budget.allow_tfo_lite ? "yes" : "no")
                   << " direction_candidates=" << directions.size() << '\n';
+        for (const auto outcome : {common_flydelta_counterfactual_outcome::helped,
+                common_flydelta_counterfactual_outcome::harmed,
+                common_flydelta_counterfactual_outcome::neutral,
+                common_flydelta_counterfactual_outcome::unknown}) {
+            const size_t count = static_cast<size_t>(std::count_if(entry.second.begin(), entry.second.end(),
+                [&](const auto & sample) { return sample.credit.outcome == outcome; }));
+            if (count == 0) continue;
+            const size_t eligible_count = static_cast<size_t>(std::count_if(
+                entry.second.begin(), entry.second.end(), [&](const auto & sample) {
+                    return sample.credit.outcome == outcome && sample.credit.eligible_for_learning;
+                }));
+            std::cout << "flydelta_learning_credit group=" << entry.first
+                      << " source=" << (replay_mode ? "synthetic_replay" : "host_verified_repair")
+                      << " sample_outcome=" << common_flydelta_counterfactual_outcome_name(outcome)
+                      << " samples=" << count
+                      << " eligible=" << eligible_count
+                      << " denied=" << (count - eligible_count)
+                      << " decision_reason=" << (eligible_count > 0
+                            ? "host_verified_helped_credit_explicit"
+                            : replay_mode ? "synthetic_replay_is_diagnostic_only"
+                            : outcome == common_flydelta_counterfactual_outcome::helped
+                                ? "credit_flag_not_set"
+                                : "outcome_is_not_helped")
+                      << '\n';
+        }
+        for (const auto & sample : entry.second) {
+            const bool eligible = sample.credit.outcome == common_flydelta_counterfactual_outcome::helped &&
+                sample.credit.eligible_for_learning;
+            const char * denial_reason = eligible ? "none"
+                : replay_mode ? "synthetic_replay_is_diagnostic_only"
+                : sample.credit.outcome != common_flydelta_counterfactual_outcome::helped
+                    ? "outcome_is_not_helped"
+                    : "learning_eligibility_flag_not_set";
+            const json credit_event = {
+                {"group", entry.first}, {"sample_id", sample.delta.id},
+                {"fixture_id", sample.credit.fixture_id},
+                {"source", replay_mode ? "synthetic_replay" : "host_verified_repair"},
+                {"outcome", common_flydelta_counterfactual_outcome_name(sample.credit.outcome)},
+                {"quality_delta", sample.credit.quality_delta},
+                {"eligible_for_learning", eligible}, {"denial_reason", denial_reason},
+                {"layer", sample.delta.layer_index}, {"host_evidence_ref", sample.delta.host_evidence_ref},
+            };
+            std::fprintf(stderr, "flydelta_learning_credit_sample %s\n", credit_event.dump().c_str());
+        }
         for (const auto & direction : directions) {
             std::cout << "flydelta_direction group=" << entry.first
                       << " kind=" << common_flydelta_direction_kind_name(direction.kind)
@@ -948,16 +1172,17 @@ int main(int argc, char ** argv) {
             common_flydelta_deep_search_config deep_config;
             deep_config.max_rank = 2;
             deep_config.max_directions = 4;
-            deep_config.full_generation_top_k = 3;
+            deep_config.full_generation_top_k = value.low_rank_rank_sweep ? 1 : 3;
             deep_config.coefficients.strategy = value.force_tfo_lite
                 ? common_flydelta_coefficient_search_strategy::tfo_lite
                 : common_flydelta_coefficient_search_strategy::coordinate;
             deep_config.coefficients.step = 0.05f;
-            deep_config.coefficients.max_candidates = 8;
+            deep_config.coefficients.max_candidates = value.low_rank_rank_sweep ? 4 : 8;
             // Exercise the same bounded wave semantics used by a production
             // coefficient host. The smoke still permits scalar fallback, but
             // TFO must not bypass the batch runner or exceed this wave size.
-            deep_config.coefficients.max_batch_arms = 2;
+            deep_config.coefficients.max_batch_arms = static_cast<size_t>(
+                std::max(1, value.n_parallel - 1));
             deep_config.coefficients.max_l2_norm = 0.32f;
             deep_config.coefficients.norm_penalty = 0.05f;
             deep_config.coefficients.leakage_penalty = 0.10f;
@@ -966,18 +1191,120 @@ int main(int argc, char ** argv) {
             for (const auto & direction : directions) {
                 deep_directions.push_back({direction, false, 0.0f});
             }
-            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_diagnostic_baseline_capture;
+            std::shared_ptr<const common_flydelta_hidden_state_capture> deep_full_baseline_capture;
             std::optional<common_flydelta_decision_margin> deep_baseline_choice_margin;
             std::string deep_margin_error;
-            auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
+            std::shared_ptr<const std::vector<float>> deep_factorized_basis;
+            agent_catalogued_resource_store production_resources(std::make_shared<agent_in_memory_blob_store>(),
+                std::make_unique<agent_in_memory_resource_catalog>());
+            std::shared_ptr<agent_daemon_flydelta_internal::daemon_flydelta_resource_provider> production_provider;
+            common_flydelta_experiment_job production_job;
+            if (value.production_bindings) {
+                using namespace agent_daemon_flydelta_internal;
+                daemon_options daemon_config;
+                daemon_config.model = value.model;
+                daemon_config.n_predict = value.n_predict;
+                daemon_config.n_threads = value.n_threads;
+                daemon_config.adaptation_flydelta_model_profile_fingerprint = capture->model_profile_fingerprint;
+                daemon_config.adaptation_flydelta_capture_layout_revision = capture->capture_layout_revision;
+                production_provider = daemon_flydelta_make_resource_provider(daemon_config, server_host,
+                    &production_resources, {}, std::make_shared<common_learning_in_memory_lifecycle_store>(), error);
+                if (!production_provider) { host.close(); std::cerr << error << '\n'; return 1; }
+                const auto put = [&](const json & data, std::string & uri) {
+                    agent_resource_put_request request;
+                    request.name = "flydelta-production-smoke.json";
+                    request.mime_type = "application/json";
+                    request.text = data.dump();
+                    request.scope = common_runtime_resource_scope::session;
+                    request.namespace_id = production_provider->authority.namespace_id;
+                    request.session_id = production_provider->authority.session_id;
+                    agent_resource_descriptor descriptor;
+                    if (!production_resources.put_text(request, descriptor, error)) return false;
+                    uri = descriptor.uri;
+                    return true;
+                };
+                production_job.id = "flydelta-production-smoke:" + deep_case.id;
+                production_job.seed.candidate_ref = "flydelta://experimental/repair-replay";
+                production_job.seed.behavior_key = entry.first;
+                production_job.seed.evidence_ref = deep_case_deltas.front().host_evidence_ref;
+                production_job.capture_manifest_ids = {deep_case.capture_manifest_id};
+                production_job.seed.model_profile_fingerprint = capture->model_profile_fingerprint;
+                production_job.seed.task_fingerprint = deep_fixture.task_fingerprint;
+                production_job.seed.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
+                production_job.seed.template_fingerprint = deep_fixture.template_fingerprint;
+                production_job.seed.execution_context_fingerprint = deep_fixture.execution_context_fingerprint;
+                json tools = json::array();
+                for (const auto & name : described_tools) {
+                    const auto * definition = catalog.find_definition(name);
+                    if (!definition) { host.close(); return 1; }
+                    tools.push_back({{"name", name}, {"description", definition->description},
+                        {"parameters", json::parse(common_tool_model_input_schema(*definition))}});
+                }
+                const auto context = make_request(value, contract, deep_case.question, {});
+                json messages = json::array();
+                for (const auto & message : context.messages) messages.push_back({{"role", message.role}, {"content", message.content}});
+                json fixture_data = {{"verification_mode", "normalized_call"},
+                    {"expected_decision", {{"name", deep_case.expected_tool}, {"arguments", deep_case.canonical_arguments}}}};
+                common_agent_teacher_forced_choice_request contrast;
+                std::string contrast_error;
+                if (agent_flydelta_dataset_dsl_contrast(contrast,
+                        tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                        deep_case.failed_continuation, contrast_error)) {
+                    fixture_data["choice_prefix"] = contrast.choice_prefix;
+                    fixture_data["positive_continuation"] = contrast.positive_continuation;
+                    fixture_data["negative_continuation"] = contrast.negative_continuation;
+                }
+                if (!put({{"messages", messages}, {"model_tools", tools}, {"n_predict", value.n_predict}},
+                        production_job.seed.baseline_ref) || !put(fixture_data,
+                        production_job.seed.verifier_ref)) { host.close(); std::cerr << error << '\n'; return 1; }
+                deep_fixture.id = production_job.seed.verifier_ref;
+                std::cout << "flydelta_production_bindings group=" << entry.first
+                          << " active=yes learning_credit=disabled source=experimental_replay\n";
+                if (value.production_where) {
+                    std::vector<common_flydelta_basis_direction> source;
+                    for (const auto & delta : deep_case_deltas) source.push_back({delta.layer_index, delta.values});
+                    if (!daemon_flydelta_register_composed_directions(production_provider,
+                            production_job.seed.candidate_ref, std::move(source), "flydelta:experimental-where-replay",
+                            production_job.seed.candidate_ref, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+                    common_flydelta_search_pipeline_config where_config;
+                    where_config.dimension = n_embd;
+                    where_config.max_directions = 1;
+                    where_config.whirlpool_max_rounds = 1;
+                    where_config.whirlpool_max_trials = where_config.region_max_trials = 4;
+                    where_config.whirlpool_probes_per_round = 4;
+                    common_flydelta_search_pipeline_result where_result;
+                    if (!daemon_flydelta_run_search_pipeline(production_provider, production_job,
+                            where_config, where_result, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+                    common_flydelta_search_continuation continuation;
+                    if (!common_flydelta_select_search_continuation(where_result, continuation, error) ||
+                            continuation.region.layer_indices.empty()) {
+                        std::cout << "flydelta_low_rank_rank_sweep_skipped group=" << entry.first
+                                  << " reason=no_safe_production_where_continuation\n";
+                        continue;
+                    }
+                    const auto layer = continuation.region.anchor_layer_index;
+                    const auto selected_delta = std::find_if(deep_case_deltas.begin(), deep_case_deltas.end(),
+                        [&](const auto & delta) { return delta.layer_index == static_cast<int32_t>(layer); });
+                    if (selected_delta == deep_case_deltas.end()) { host.close(); return 1; }
+                    auto selected_direction = deep_directions.front();
+                    selected_direction.direction.layer_index = layer;
+                    selected_direction.direction.values = selected_delta->values;
+                    selected_direction.direction.kind = common_flydelta_direction_kind::raw_repair;
+                    selected_direction.direction.extraction_id = selected_delta->id;
+                    selected_direction.direction.origin = "production_where_raw_repair";
+                    selected_direction.direction.source_samples = 1;
+                    selected_direction.direction.retained_samples = 1;
+                    deep_directions = {std::move(selected_direction)};
+                    std::cout << "flydelta_production_where group=" << entry.first << " layer=" << layer
+                              << " host_helped=" << (continuation.host_helped ? "yes" : "no")
+                              << " continuation=reference_only learning_credit=disabled\n";
+                }
+            }
+            auto prepare_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay,
-                    common_flydelta_counterfactual_trial & trial,
-                    common_flydelta_decision_margin & margin,
-                    common_flydelta_representation_diagnostics & geometry,
-                    bool & geometry_available, std::string & runner_error) {
-                common_agent_generation_result generated_result;
-                geometry = {};
-                geometry_available = false;
+                    bool allow_factorized_overlay,
+                    common_agent_generation_request & request, std::string & runner_error) {
                 std::shared_ptr<const common_flydelta_activation_result> activation_ptr;
                 if (apply_overlay) {
                     common_flydelta_gate_request gate_request;
@@ -999,11 +1326,25 @@ int main(int argc, char ** argv) {
                     activation_request.model_n_layers = n_layers;
                     activation_request.il_start = 1;
                     activation_request.il_end = static_cast<int32_t>(n_layers - 1);
-                    for (const auto & vector : basis.vectors) {
-                        activation_request.directions.push_back({basis.layer_index, vector});
-                    }
                     activation_request.coefficients = coefficients;
-                    gate_request.requested_scale = 1.0f;
+                    activation_request.allow_factorized_overlay =
+                        value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch &&
+                        allow_factorized_overlay;
+                    if (activation_request.allow_factorized_overlay) {
+                        if (!deep_factorized_basis) {
+                            auto shared = std::make_shared<std::vector<float>>();
+                            shared->reserve(n_embd * basis.vectors.size());
+                            for (const auto & vector : basis.vectors) shared->insert(shared->end(), vector.begin(), vector.end());
+                            deep_factorized_basis = std::move(shared);
+                        }
+                        activation_request.factorized_basis = deep_factorized_basis;
+                        activation_request.factorized_rank = static_cast<int32_t>(basis.vectors.size());
+                        activation_request.factorized_layer_index = basis.layer_index;
+                    } else {
+                        for (const auto & vector : basis.vectors) {
+                            activation_request.directions.push_back({basis.layer_index, vector});
+                        }
+                    }
                     activation_request.gate_request = gate_request;
                     common_flydelta_gate_config gate_config;
                     gate_config.enabled = true;
@@ -1015,37 +1356,80 @@ int main(int argc, char ** argv) {
                     activation_ptr = std::make_shared<const common_flydelta_activation_result>(
                         std::move(activation));
                 }
+                request = make_request(value, contract, deep_case.question, capture, activation_ptr);
+                return true;
+            };
+            auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
+                    const std::vector<float> & coefficients, bool apply_overlay, bool full_execution,
+                    common_flydelta_counterfactual_trial & trial,
+                    common_flydelta_decision_margin & margin,
+                    common_flydelta_representation_diagnostics & geometry,
+                    bool & geometry_available, std::string & runner_error) {
+                if (production_provider) {
+                    std::vector<common_flydelta_counterfactual_trial> trials;
+                    std::vector<common_flydelta_decision_margin> margins;
+                    std::vector<common_flydelta_representation_diagnostics> geometries;
+                    std::vector<bool> flags;
+                    if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
+                            production_provider, production_job, deep_fixture, basis, {coefficients}, apply_overlay,
+                            trials, margins, geometries, flags, runner_error, full_execution,
+                            full_execution ? "smoke-full" : "smoke-diagnostic",
+                            common_flydelta_experiment_phase::deep_controls)) return false;
+                    trial = trials.front(); margin = margins.front(); geometry = geometries.front();
+                    geometry_available = flags.front();
+                    return true;
+                }
+                common_agent_generation_result generated_result;
+                geometry = {};
+                geometry_available = false;
+                common_agent_generation_request generation_request;
+                if (!prepare_deep_arm(basis, coefficients, apply_overlay, false,
+                        generation_request, runner_error)) return false;
+                if (!full_execution) generation_request.options.n_predict = 0;
                 generated_result = {};
-                const bool generated = inference->generate(make_request(
-                    value, contract, deep_case.question, capture, activation_ptr), generated_result);
-                const auto verdict = verify_model_call(
+                const bool generated = inference->generate(generation_request, generated_result);
+                trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                    deep_arm_trace_id(deep_case.id, basis.layer_index, coefficients, full_execution),
+                    generation_request, generated_result);
+                if (generated && apply_overlay && !generated_result.flydelta_runtime.applied) {
+                    runner_error = "Deep overlay was requested but runtime did not confirm graph application";
+                    return false;
+                }
+                const auto verdict = full_execution ? verify_model_call(
                     generated_result, deep_case.expected_tool, deep_case.canonical_arguments,
-                    deep_case.verification_mode, &deep_case.canonical_execution, host);
+                    deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                 trial = {};
                 trial.executed = generated;
-                trial.verifier_known = generated &&
+                trial.arm_id = deep_arm_trace_id(deep_case.id, basis.layer_index,
+                    coefficients, full_execution);
+                trial.host_evaluated = full_execution && generated;
+                trial.verifier_known = full_execution && generated &&
                     verdict.value != host_verdict::kind::unresolved_alternative;
-                trial.passed = generated && verdict.value == host_verdict::kind::passed;
+                trial.passed = full_execution && generated && verdict.value == host_verdict::kind::passed;
                 trial.quality = trial.passed ? 1.0f : 0.0f;
-                trial.overlay_applied = apply_overlay;
+                trial.overlay_applied = generated_result.flydelta_runtime.applied;
                 trial.intervention_count = apply_overlay ? basis.vectors.size() : 0;
                 trial.evidence_ref = apply_overlay
                     ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
+                trial.expected_decision_summary = deep_case.expected_tool + " " +
+                    deep_case.canonical_arguments.dump();
+                trial.observed_decision_summary = preview(generated_result);
+                trial.verifier_reason = full_execution
+                    ? (generated ? verdict.diagnostic : generated_result.error_message)
+                    : "diagnostic_only_host_verifier_not_run";
                 margin = {};
                 deep_margin_error.clear();
                 if (!deep_case.failed_tool.empty() || !deep_case.failed_continuation.empty()) {
                     common_agent_teacher_forced_choice_request score_request;
-                    score_request.context = make_request(
-                        value, contract, deep_case.question, capture, activation_ptr);
+                    score_request.context = generation_request;
                     score_request.context.flydelta_capture.reset();
-                    score_request.choice_prefix = "{\"name\":\"";
                     score_request.positive_choice = deep_case.expected_tool;
                     score_request.negative_choice = deep_case.failed_tool;
-                    score_request.positive_continuation = tool_call_continuation(
-                        deep_case.expected_tool, deep_case.canonical_arguments);
-                    score_request.negative_continuation = deep_case.failed_continuation;
+                    const bool contrast_valid = agent_flydelta_dataset_dsl_contrast(score_request,
+                        tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                        deep_case.failed_continuation, deep_margin_error);
                     common_agent_teacher_forced_choice_result score_result;
-                    if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                    if (contrast_valid && inference->score_teacher_forced_choice(score_request, score_result) &&
                             score_result.available) {
                         margin.available = true;
                         margin.positive_total_logprob = score_result.positive_total_logprob;
@@ -1053,7 +1437,7 @@ int main(int argc, char ** argv) {
                         margin.positive_token_count = score_result.positive_token_count;
                         margin.negative_token_count = score_result.negative_token_count;
                     } else {
-                        deep_margin_error = score_result.error_message.empty()
+                        if (deep_margin_error.empty()) deep_margin_error = score_result.error_message.empty()
                             ? "teacher-forced choice margin unavailable"
                             : score_result.error_message;
                     }
@@ -1061,6 +1445,8 @@ int main(int argc, char ** argv) {
                     deep_margin_error = "fixture has no distinct failed tool for decision pair";
                 }
                 if (!apply_overlay && margin.available) deep_baseline_choice_margin = margin;
+                auto & deep_baseline_capture = full_execution
+                    ? deep_full_baseline_capture : deep_diagnostic_baseline_capture;
                 if (!apply_overlay && generated_result.flydelta_capture &&
                         generated_result.flydelta_capture->captured) {
                     deep_baseline_capture = generated_result.flydelta_capture;
@@ -1090,8 +1476,14 @@ int main(int argc, char ** argv) {
                     geometry_available = true;
                 }
                 std::cout << "flydelta_deep_model_output group=" << entry.first
+                          << " phase=" << (full_execution ? "full" : "diagnostic")
                           << " overlay=" << (apply_overlay ? "yes" : "no")
-                          << " output=" << preview(generated_result) << '\n';
+                          << " response=" << json({{"content", generated_result.content},
+                              {"decoded_tokens", generated_result.decoded_tokens},
+                              {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
+                              {"verifier_known", trial.verifier_known},
+                              {"verifier_diagnostic", full_execution ? verdict.diagnostic : "not_evaluated"}}).dump()
+                          << '\n';
                 if (!generated && !generated_result.error_message.empty()) {
                     runner_error = generated_result.error_message;
                 }
@@ -1106,7 +1498,7 @@ int main(int argc, char ** argv) {
                             common_flydelta_decision_margin & margin,
                             common_flydelta_representation_diagnostics & geometry,
                             bool & geometry_available, std::string & runner_error) {
-                        const bool executed = run_deep_arm(basis, coefficients, apply_overlay,
+                        const bool executed = run_deep_arm(basis, coefficients, apply_overlay, false,
                             trial, margin, geometry, geometry_available, runner_error);
                         if (apply_overlay) {
                             std::cout << "flydelta_deep_diagnostic group=" << entry.first
@@ -1148,12 +1540,13 @@ int main(int argc, char ** argv) {
                             common_flydelta_decision_margin & margin,
                             common_flydelta_representation_diagnostics & geometry,
                             bool & geometry_available, std::string & runner_error) {
-                        return run_deep_arm(basis, coefficients, apply_overlay, trial, margin,
+                        return run_deep_arm(basis, coefficients, apply_overlay, true, trial, margin,
                             geometry, geometry_available, runner_error);
                     };
-            const auto make_deep_batch_runner = [](
-                    const common_flydelta_coefficient_search_runner & scalar_runner) {
-                return [scalar_runner](
+            bool deep_device_batch_used = false;
+            bool deep_backend_batch_used = false;
+            const auto make_deep_batch_runner = [&](const bool full_execution) {
+                return [&, full_execution](
                         const common_flydelta_experiment_fixture & fixture,
                         const common_flydelta_low_rank_basis & basis,
                         const std::vector<std::vector<float>> & coefficients,
@@ -1166,17 +1559,189 @@ int main(int argc, char ** argv) {
                     margins.clear();
                     geometries.clear();
                     geometry_available.clear();
+                    if (coefficients.empty()) {
+                        runner_error = "forced Deep batch has no coefficient arms";
+                        return false;
+                    }
+                    if (production_provider) {
+                        const size_t resident_parallelism = production_provider->host
+                            ? production_provider->host->context_key().n_parallel : 0;
+                        const size_t candidate_capacity = full_execution
+                            ? std::max<size_t>(1, resident_parallelism)
+                            : (resident_parallelism > 1 ? resident_parallelism - 1 : 1);
+                        for (size_t begin = 0, part = 0; begin < coefficients.size(); ++part) {
+                            const size_t count = std::min(candidate_capacity,
+                                coefficients.size() - begin);
+                            std::vector<std::vector<float>> chunk(
+                                coefficients.begin() + static_cast<std::ptrdiff_t>(begin),
+                                coefficients.begin() + static_cast<std::ptrdiff_t>(begin + count));
+                            std::vector<common_flydelta_counterfactual_trial> part_trials;
+                            std::vector<common_flydelta_decision_margin> part_margins;
+                            std::vector<common_flydelta_representation_diagnostics> part_geometries;
+                            std::vector<bool> part_geometry_available;
+                            const std::string wave = std::string(full_execution
+                                ? "smoke-full-part-" : "smoke-diagnostic-part-") +
+                                std::to_string(part);
+                            if (!agent_daemon_flydelta_internal::daemon_flydelta_run_coefficient_arm_batch(
+                                    production_provider, production_job, deep_fixture, basis, chunk, true,
+                                    part_trials, part_margins, part_geometries,
+                                    part_geometry_available, runner_error, full_execution, wave,
+                                    common_flydelta_experiment_phase::deep_controls,
+                                    deep_config.coefficients.strategy)) return false;
+                            trials.insert(trials.end(),
+                                std::make_move_iterator(part_trials.begin()),
+                                std::make_move_iterator(part_trials.end()));
+                            margins.insert(margins.end(),
+                                std::make_move_iterator(part_margins.begin()),
+                                std::make_move_iterator(part_margins.end()));
+                            geometries.insert(geometries.end(),
+                                std::make_move_iterator(part_geometries.begin()),
+                                std::make_move_iterator(part_geometries.end()));
+                            geometry_available.insert(geometry_available.end(),
+                                part_geometry_available.begin(), part_geometry_available.end());
+                            begin += count;
+                        }
+                        if (trials.size() != coefficients.size() ||
+                                margins.size() != coefficients.size() ||
+                                geometries.size() != coefficients.size() ||
+                                geometry_available.size() != coefficients.size()) {
+                            runner_error = "forced Deep segmented batch returned incomplete results";
+                            return false;
+                        }
+                        deep_device_batch_used = deep_device_batch_used || std::any_of(trials.begin(), trials.end(),
+                            [](const auto & trial) { return trial.device_batch; });
+                        deep_backend_batch_used = deep_backend_batch_used || std::any_of(trials.begin(), trials.end(),
+                            [](const auto & trial) { return trial.backend_batch; });
+                        return true;
+                    }
+                    std::vector<common_agent_generation_request> generation_requests;
+                    generation_requests.reserve(coefficients.size());
+                    for (const auto & values : coefficients) {
+                        common_agent_generation_request request;
+                        if (!prepare_deep_arm(basis, values, true,
+                                coefficients.size() >= 2, request, runner_error)) return false;
+                        if (!full_execution) request.options.n_predict = 0;
+                        generation_requests.push_back(std::move(request));
+                    }
+                    std::vector<common_agent_generation_result> generated_results;
+                    if (!inference->generate_batch(generation_requests, generated_results) ||
+                            generated_results.size() != coefficients.size()) {
+                        runner_error = "forced Deep native batch generation returned incomplete results";
+                        return false;
+                    }
+                    for (const auto & result : generated_results) {
+                        if (!result.flydelta_runtime.applied) {
+                            runner_error = "Deep batch overlay was not confirmed by the decode graph";
+                            return false;
+                        }
+                    }
+                    bool wave_device = false;
+                    bool wave_backend = false;
+                    for (const auto & result : generated_results) {
+                        // A physical wave can fragment after one sequence
+                        // finishes. Record whether any fragment actually
+                        // contained the multi-sequence batch; requiring every
+                        // final result to report the original size would
+                        // misclassify a valid singleton tail as scalar-only.
+                        wave_device = wave_device || result.flydelta_device_batch;
+                        wave_backend = wave_backend ||
+                            result.flydelta_runtime.physical_batch_size >= 2;
+                    }
+                    deep_device_batch_used = deep_device_batch_used || wave_device;
+                    deep_backend_batch_used = deep_backend_batch_used || wave_backend;
+                    if (coefficients.size() > 1 && !wave_backend) {
+                        runner_error = "forced Deep batch did not receive per-arm backend batch execution";
+                        return false;
+                    }
+                    common_agent_teacher_forced_choice_batch_request score_batch;
+                    score_batch.choices.reserve(coefficients.size());
+                    for (size_t index = 0; index < coefficients.size(); ++index) {
+                        common_agent_teacher_forced_choice_request score_request;
+                        score_request.sequence_id = "deep-" + std::to_string(index);
+                        score_request.context = generation_requests[index];
+                        score_request.context.flydelta_capture.reset();
+                        score_request.positive_choice = deep_case.expected_tool;
+                        score_request.negative_choice = deep_case.failed_tool;
+                        if (!agent_flydelta_dataset_dsl_contrast(score_request,
+                                tool_call_continuation(deep_case.expected_tool, deep_case.canonical_arguments, host),
+                                deep_case.failed_continuation, runner_error)) return false;
+                        score_batch.choices.push_back(std::move(score_request));
+                    }
+                    common_agent_teacher_forced_choice_batch_result score_results;
+                    if (!inference->score_teacher_forced_choice_batch(score_batch, score_results) ||
+                            score_results.choices.size() != coefficients.size()) {
+                        runner_error = score_results.error_message.empty()
+                            ? "forced Deep batch teacher scoring returned incomplete results"
+                            : score_results.error_message;
+                        return false;
+                    }
                     trials.reserve(coefficients.size());
                     margins.reserve(coefficients.size());
                     geometries.reserve(coefficients.size());
                     geometry_available.reserve(coefficients.size());
-                    for (const auto & values : coefficients) {
+                    for (size_t index = 0; index < coefficients.size(); ++index) {
+                        const auto & generated_result = generated_results[index];
+                        const std::string arm_trace_id = deep_arm_trace_id(deep_case.id,
+                            basis.layer_index, coefficients[index], full_execution);
+                        trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                            arm_trace_id,
+                            generation_requests[index], generated_result);
+                        const auto verdict = full_execution ? verify_model_call(generated_result,
+                            deep_case.expected_tool, deep_case.canonical_arguments,
+                            deep_case.verification_mode, &deep_case.canonical_execution, host) : host_verdict{};
                         common_flydelta_counterfactual_trial trial;
+                        trial.executed = common_agent_generation_succeeded(generated_result);
+                        trial.arm_id = arm_trace_id;
+                        trial.host_evaluated = full_execution && trial.executed;
+                        trial.verifier_known = full_execution && trial.executed &&
+                            verdict.value != host_verdict::kind::unresolved_alternative;
+                        trial.passed = full_execution && trial.executed && verdict.value == host_verdict::kind::passed;
+                        trial.quality = trial.passed ? 1.0f : 0.0f;
+                        trial.overlay_applied = generated_result.flydelta_runtime.applied;
+                        trial.intervention_count = basis.vectors.size();
+                        trial.evidence_ref = "evidence:flydelta-deep-overlay";
+                        trial.expected_decision_summary = deep_case.expected_tool + " " +
+                            deep_case.canonical_arguments.dump();
+                        trial.observed_decision_summary = preview(generated_result);
+                        trial.verifier_reason = full_execution
+                            ? (trial.executed ? verdict.diagnostic : generated_result.error_message)
+                            : "diagnostic_only_host_verifier_not_run";
                         common_flydelta_decision_margin margin;
+                        const auto & scored = score_results.choices[index];
+                        margin.available = scored.available;
+                        margin.positive_total_logprob = scored.positive_total_logprob;
+                        margin.negative_total_logprob = scored.negative_total_logprob;
+                        margin.positive_token_count = scored.positive_token_count;
+                        margin.negative_token_count = scored.negative_token_count;
                         common_flydelta_representation_diagnostics geometry;
                         bool has_geometry = false;
-                        if (!scalar_runner(fixture, basis, values, true, trial, margin,
-                                geometry, has_geometry, runner_error)) return false;
+                        const auto & deep_baseline_capture = full_execution
+                            ? deep_full_baseline_capture : deep_diagnostic_baseline_capture;
+                        if (generated_result.flydelta_capture && generated_result.flydelta_capture->captured &&
+                                deep_baseline_capture) {
+                            const auto measurement_it = std::find_if(deep_case_deltas.begin(),
+                                deep_case_deltas.end(), [&](const auto & delta) {
+                                    return delta.layer_index > basis.layer_index;
+                                });
+                            if (measurement_it == deep_case_deltas.end() ||
+                                    !common_flydelta_representation_diagnostics_from_captures(
+                                        *deep_baseline_capture, *generated_result.flydelta_capture,
+                                        *measurement_it, 64U * 1024U * 1024U,
+                                        geometry, runner_error)) {
+                                if (runner_error.empty()) runner_error = "forced Deep batch geometry unavailable";
+                                return false;
+                            }
+                            has_geometry = true;
+                        }
+                        std::cout << "flydelta_deep_batch_response group=" << entry.first
+                                  << " phase=" << (full_execution ? "full" : "diagnostic")
+                                  << " arm=" << index << " response="
+                                  << json({{"content", generated_result.content},
+                                      {"decoded_tokens", generated_result.decoded_tokens},
+                                      {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
+                                      {"verifier_known", trial.verifier_known},
+                                      {"verifier_diagnostic", full_execution ? verdict.diagnostic : "not_evaluated"}}).dump()
+                                  << '\n';
                         trials.push_back(std::move(trial));
                         margins.push_back(std::move(margin));
                         geometries.push_back(std::move(geometry));
@@ -1185,60 +1750,201 @@ int main(int argc, char ** argv) {
                     return true;
                 };
             };
-            const auto deep_diagnostic_batch_runner = make_deep_batch_runner(
-                deep_diagnostic_runner);
-            const auto deep_full_batch_runner = make_deep_batch_runner(deep_full_runner);
-            common_flydelta_deep_search_result deep_result;
-            const auto deep_started = std::chrono::steady_clock::now();
-            if (!common_flydelta_run_deep_search_batched(
-                    deep_fixture, deep_config, deep_directions,
-                    deep_diagnostic_runner, deep_diagnostic_batch_runner,
-                    deep_full_runner, deep_full_batch_runner, deep_result, error)) {
-                host.close();
-                std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n';
-                return 1;
+            const auto deep_diagnostic_batch_runner = make_deep_batch_runner(false);
+            const auto deep_full_batch_runner = make_deep_batch_runner(true);
+            // A rank sweep reuses the ordinary bounded Deep/TFO seam.  It is
+            // deliberately report-only: the host still owns outcomes and a
+            // higher rank is never treated as an improvement merely because
+            // its diagnostic score changed.
+            std::vector<size_t> requested_ranks;
+            if (value.low_rank_rank_sweep) {
+                // Experimental rank is geometry, not learning authority.
+                // Use distinct observed capture pairs at the selected layer;
+                // derived trimmed/whitened variants cannot manufacture rank.
+                std::vector<common_flydelta_deep_search_direction> observed_directions;
+                std::vector<common_flydelta_direction_candidate> observed_candidates;
+                std::set<std::string> capture_pairs;
+                for (const auto & sample : aggregation_snapshot_for_deep.retained_samples) {
+                    if (!capture_pairs.insert(sample.delta.capture_manifest_id).second) continue;
+                    const auto source_case = bootstrap_cases_by_delta.find(sample.delta.id);
+                    if (source_case == bootstrap_cases_by_delta.end()) continue;
+                    const auto source_deltas = deltas_by_case.find(source_case->second.id);
+                    if (source_deltas == deltas_by_case.end()) continue;
+                    const auto source_delta = std::find_if(source_deltas->second.begin(), source_deltas->second.end(),
+                        [&](const auto & delta) { return delta.layer_index == deep_directions.front().direction.layer_index; });
+                    if (source_delta == source_deltas->second.end()) continue;
+                    auto observed = deep_directions.front().direction;
+                    observed.kind = common_flydelta_direction_kind::raw_repair;
+                    observed.values = source_delta->values;
+                    observed.source_samples = observed.retained_samples = 1;
+                    observed.median_alignment = 1.0f;
+                    observed.experimental_only = true;
+                    observed.extraction_id = source_delta->id;
+                    observed.origin = "observed_capture_pair_rank_probe";
+                    observed_candidates.push_back(observed);
+                    observed_directions.push_back({std::move(observed), false, 0.0f});
+                    if (observed_directions.size() == deep_config.max_directions) break;
+                }
+                common_flydelta_low_rank_basis observed_basis;
+                if (!common_flydelta_build_low_rank_basis(n_embd, 4, observed_candidates, observed_basis, error)) {
+                    host.close(); std::cerr << "experimental capture-pair rank failed: " << error << '\n'; return 1;
+                }
+                const size_t observed_rank = observed_basis.vectors.size();
+                deep_directions.clear();
+                for (size_t component = 0; component < observed_rank; ++component) {
+                    auto observed = observed_directions.front().direction;
+                    observed.values = observed_basis.vectors[component];
+                    observed.source_samples = observed.retained_samples = observed_candidates.size();
+                    observed.origin = "observed_capture_pair_subspace";
+                    observed.extraction_id = "experimental-subspace:" + deep_case.id + ":" + std::to_string(component);
+                    deep_directions.push_back({std::move(observed), false, 0.0f});
+                }
+                std::cout << "flydelta_experimental_rank group=" << entry.first
+                          << " capture_pairs=" << observed_candidates.size()
+                          << " effective_rank=" << observed_rank
+                          << " learning_effective_rank=" << evidence_depth.effective_rank
+                          << " learning_credit=none\n";
+                requested_ranks.push_back(1);
+                for (const size_t requested_rank : {size_t{2}, size_t{4}}) {
+                    if (observed_rank >= requested_rank &&
+                            deep_directions.size() >= requested_rank) {
+                        requested_ranks.push_back(requested_rank);
+                    } else {
+                        std::cout << "flydelta_low_rank_rank_unavailable group=" << entry.first
+                                  << " requested_rank=" << requested_rank
+                                  << " evidence_effective_rank=" << evidence_depth.effective_rank
+                                  << " observed_capture_rank=" << observed_rank
+                                  << " direction_candidates=" << deep_directions.size()
+                                  << " reason=insufficient_independent_evidence\n";
+                    }
+                }
+            } else {
+                requested_ranks.push_back(deep_config.max_rank);
             }
-            ++deep_search_executed;
-            size_t deep_group_full_generation_trials = 0;
-            for (const auto & trial : deep_result.coefficient_trials) {
-                if (trial.mutation_kind == "full_generation_top_arm") {
-                    ++deep_group_full_generation_trials;
-                    ++deep_full_generation_trials;
+            for (const size_t requested_rank : requested_ranks) {
+                deep_factorized_basis.reset();
+                deep_device_batch_used = false;
+                deep_backend_batch_used = false;
+                common_flydelta_deep_search_config rank_config = deep_config;
+                rank_config.max_rank = requested_rank;
+                common_flydelta_deep_search_result deep_result;
+                const auto deep_started = std::chrono::steady_clock::now();
+                if (!common_flydelta_run_deep_search_batched(
+                        deep_fixture, rank_config, deep_directions,
+                        deep_diagnostic_runner, deep_diagnostic_batch_runner,
+                        deep_full_runner, deep_full_batch_runner, deep_result, error)) {
+                    host.close();
+                    std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n';
+                    return 1;
+                }
+                ++deep_search_executed;
+                size_t deep_group_full_generation_trials = 0;
+                for (const auto & trial : deep_result.coefficient_trials) {
+                    if (trial.mutation_kind == "full_generation_top_arm") {
+                        ++deep_group_full_generation_trials;
+                        ++deep_full_generation_trials;
+                    }
+                }
+                const size_t deep_group_diagnostic_trials =
+                    deep_result.coefficient_trials.size() - deep_group_full_generation_trials;
+                deep_diagnostic_trials += deep_group_diagnostic_trials;
+                const size_t arm_count = deep_result.coefficient_trials.size();
+                const size_t effective_rank = deep_result.basis.vectors.size();
+                const size_t flattened_bytes = arm_count * n_embd * sizeof(float);
+                const size_t shared_basis_bytes =
+                    (n_embd * effective_rank + arm_count * effective_rank) * sizeof(float);
+                std::cout << "flydelta_low_rank_rank_sweep group=" << entry.first
+                          << " requested_rank=" << requested_rank
+                          << " effective_rank=" << effective_rank
+                          << " evidence_effective_rank=" << evidence_depth.effective_rank
+                          << " retained_explained_energy=" << evidence_depth.retained_explained_energy
+                          << " smallest_retained_singular_value="
+                          << evidence_depth.smallest_retained_singular_value
+                          << " condition_number=" << evidence_depth.condition_number
+                          << " strategy="
+                          << common_flydelta_coefficient_search_strategy_name(
+                              rank_config.coefficients.strategy)
+                          << " diagnostic_trials=" << deep_group_diagnostic_trials
+                          << " full_generation_trials=" << deep_group_full_generation_trials
+                          << " max_batch_arms=" << rank_config.coefficients.max_batch_arms
+                          << " execution_batch=" << (deep_device_batch_used
+                                ? "device_batch" : deep_backend_batch_used
+                                ? "backend_batch" : "none")
+                          << " flattened_overlay_bytes=" << flattened_bytes
+                          << " shared_basis_model_bytes=" << shared_basis_bytes
+                          << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
+                          << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - deep_started).count() << '\n';
+                for (size_t trial_index = 0;
+                        trial_index < deep_result.coefficient_trials.size(); ++trial_index) {
+                    const auto & trial = deep_result.coefficient_trials[trial_index];
+                    const bool full_generation = trial.mutation_kind == "full_generation_top_arm";
+                    const bool learning_credit = full_generation && trial.executed &&
+                        trial.host_evaluated && trial.verifier_known &&
+                        trial.outcome == common_flydelta_counterfactual_outcome::helped;
+                    const char * credit_reason = !full_generation
+                        ? "diagnostic_only_no_full_generation_oracle_result"
+                        : !trial.executed ? "candidate_generation_failed"
+                        : !trial.host_evaluated ? "host_verifier_not_run"
+                        : !trial.verifier_known ? "host_verifier_unknown"
+                        : trial.outcome == common_flydelta_counterfactual_outcome::helped
+                            ? "baseline_failed_candidate_passed"
+                            : trial.outcome == common_flydelta_counterfactual_outcome::harmed
+                                ? "baseline_passed_candidate_failed"
+                                : trial.outcome == common_flydelta_counterfactual_outcome::neutral
+                                    ? "baseline_and_candidate_passed"
+                                    : "baseline_and_candidate_did_not_establish_helped";
+                    json arm = {
+                        {"group", entry.first}, {"fixture_id", deep_fixture.id},
+                        {"task", deep_case.question}, {"arm_id", trial.arm_id},
+                        {"raw_output_trace_id", trial.arm_id},
+                        {"requested_rank", requested_rank}, {"trial_index", trial_index},
+                        {"coefficients", trial.coefficients}, {"layer", deep_result.layer_index},
+                        {"mutation", trial.mutation_kind},
+                        {"executed", trial.executed}, {"host_evaluated", trial.host_evaluated},
+                        {"verifier_known", trial.verifier_known},
+                        {"verifier_passed", full_generation && trial.verifier_known &&
+                            trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+                            trial.outcome != common_flydelta_counterfactual_outcome::unknown},
+                        {"outcome", common_flydelta_counterfactual_outcome_name(trial.outcome)},
+                        {"counterfactual_credit_eligible", learning_credit},
+                        {"counterfactual_credit_reason", credit_reason},
+                        {"learning_credit_granted", false},
+                        {"learning_credit_grant_reason", "rank_smoke_does_not_persist_learning_credit"},
+                        {"expected_tool", deep_case.expected_tool},
+                        {"expected_arguments", deep_case.canonical_arguments},
+                        {"expected_decision", trial.expected_decision_summary},
+                        {"observed_decision", trial.observed_decision_summary},
+                        {"verifier_reason", trial.verifier_reason},
+                        {"evidence_ref", trial.evidence_ref},
+                        {"search_fitness", trial.search_fitness},
+                    };
+                    if (trial.margin.available) {
+                        arm["margin_normalized"] = trial.margin.normalized_delta();
+                    }
+                    if (trial.geometry_available) {
+                        arm["geometry"] = {{"cosine", trial.geometry.cosine},
+                            {"progress", trial.geometry.progress},
+                            {"leakage", trial.geometry.leakage},
+                            {"shift_norm", trial.geometry.shift_norm}};
+                    }
+                    std::fprintf(stderr, "flydelta_low_rank_arm %s\n", arm.dump().c_str());
                 }
             }
-            const size_t deep_group_diagnostic_trials =
-                deep_result.coefficient_trials.size() - deep_group_full_generation_trials;
-            deep_diagnostic_trials += deep_group_diagnostic_trials;
-            std::cout << "flydelta_deep_search group=" << entry.first
-                      << " forced=yes strategy="
-                      << common_flydelta_coefficient_search_strategy_name(
-                          deep_config.coefficients.strategy)
-                      << " basis_rank=" << deep_result.basis.vectors.size()
-                      << " diagnostic_trials=" << deep_group_diagnostic_trials
-                      << " full_generation_trials=" << deep_group_full_generation_trials
-                      << " max_batch_arms=" << deep_config.coefficients.max_batch_arms
-                      << " batch_runner=enabled_scalar_fallback"
-                      << " selected=" << (deep_result.coefficient_selection.selected ? "yes" : "no")
-                      << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - deep_started).count() << '\n';
-            for (const auto & trial : deep_result.coefficient_trials) {
-                std::cout << "flydelta_deep_arm group=" << entry.first << " coefficients=";
-                for (size_t index = 0; index < trial.coefficients.size(); ++index) {
-                    if (index != 0) std::cout << ',';
-                    std::cout << trial.coefficients[index];
-                }
-                std::cout << " mutation=" << trial.mutation_kind
-                          << " outcome=" << common_flydelta_counterfactual_outcome_name(trial.outcome)
-                          << " host_verified=" << (trial.verifier_known ? "yes" : "no")
-                          << " search_fitness=" << trial.search_fitness;
-                if (trial.geometry_available) {
-                    std::cout << " cosine=" << trial.geometry.cosine
-                              << " progress=" << trial.geometry.progress
-                              << " leakage=" << trial.geometry.leakage
-                              << " shift_norm=" << trial.geometry.shift_norm;
-                }
-                std::cout << '\n';
+        }
+
+        // The rank smoke is intentionally scoped to the Deep rank comparison.
+        // Running the ordinary Whirlpool region pipeline as well repeats
+        // expensive model calls without contributing to the rank measurement.
+        // Groups without two compatible directions cannot support comparison.
+        if (value.low_rank_rank_sweep) {
+            if (entry.second.size() < 2 || directions.size() < 2) {
+                std::cout << "flydelta_low_rank_rank_sweep_skipped group=" << entry.first
+                          << " reason=insufficient_compatible_directions"
+                          << " observations=" << entry.second.size()
+                          << " direction_candidates=" << directions.size() << '\n';
             }
+            continue;
         }
 
         // The normal model-facing smoke goes through the same bounded
@@ -1558,12 +2264,11 @@ int main(int argc, char ** argv) {
                         // keeps the semantic arm->context mapping here.
                         if (!prepare_arm(arms[index], score_request.context, score_error)) return false;
                         score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
                         score_request.positive_choice = bootstrap_case.expected_tool;
                         score_request.negative_choice = bootstrap_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        if (!agent_flydelta_dataset_dsl_contrast(score_request,
+                                tool_call_continuation(bootstrap_case.expected_tool, bootstrap_case.canonical_arguments, host),
+                                bootstrap_case.failed_continuation, score_error)) return false;
                         score_batch.choices.push_back(std::move(score_request));
                         score_indices.push_back(index);
                     }
@@ -1686,6 +2391,7 @@ int main(int argc, char ** argv) {
                 common_flydelta_experiment_worker_run_evaluator_once(
                     worker_root, {}, evaluator_config, evaluator_callbacks,
                     worker_report, error);
+            bootstrap_overlay_evaluated = bootstrap_overlay_evaluated || worker_executed;
             if (!enqueued && error.empty()) {
                 error = "search-pipeline worker could not enqueue job";
             } else if (!worker_executed && error.empty()) {
@@ -1843,14 +2549,13 @@ int main(int argc, char ** argv) {
                         score_request.context = make_request(
                             value, contract, bootstrap_case.question, capture, activation_ptr);
                         score_request.context.flydelta_capture.reset();
-                        score_request.choice_prefix = "{\"name\":\"";
                         score_request.positive_choice = bootstrap_case.expected_tool;
                         score_request.negative_choice = bootstrap_case.failed_tool;
-                        score_request.positive_continuation = tool_call_continuation(
-                            bootstrap_case.expected_tool, bootstrap_case.canonical_arguments);
-                        score_request.negative_continuation = bootstrap_case.failed_continuation;
+                        const bool contrast_valid = agent_flydelta_dataset_dsl_contrast(score_request,
+                            tool_call_continuation(bootstrap_case.expected_tool, bootstrap_case.canonical_arguments, host),
+                            bootstrap_case.failed_continuation, margin_error);
                         common_agent_teacher_forced_choice_result score_result;
-                        if (inference->score_teacher_forced_choice(score_request, score_result) &&
+                        if (contrast_valid && inference->score_teacher_forced_choice(score_request, score_result) &&
                                 score_result.available) {
                             margin.available = true;
                             margin.positive_total_logprob = score_result.positive_total_logprob;
@@ -1858,7 +2563,7 @@ int main(int argc, char ** argv) {
                             margin.positive_token_count = score_result.positive_token_count;
                             margin.negative_token_count = score_result.negative_token_count;
                         } else {
-                            margin_error = score_result.error_message.empty()
+                            if (margin_error.empty()) margin_error = score_result.error_message.empty()
                                 ? "teacher-forced choice margin unavailable"
                                 : score_result.error_message;
                         }
@@ -2074,10 +2779,15 @@ int main(int argc, char ** argv) {
               << " forced_deep_searches=" << deep_search_executed
               << " forced_deep_full_generation_trials=" << deep_full_generation_trials
               << " forced_tfo_lite=" << (value.force_tfo_lite ? "yes" : "no")
-              << " bootstrap_overlay_evaluated=yes"
+              << " bootstrap_overlay_evaluated=" << (bootstrap_overlay_evaluated ? "yes" : "no")
               << " deep_search_executed=" << (deep_search_executed != 0 ? "yes" : "no")
               << " repair_echo_persisted=" << persisted_echo_failures
               << " learning_ledger=" << learning_ledger_path << '\n';
+    if (value.force_deep && deep_search_executed == 0) {
+        std::cout << "flydelta_low_rank_rank_sweep_skipped reason=no_eligible_baseline_capture_pairs"
+                  << " phase=baseline unresolved=" << unresolved
+                  << " evaluation_status=unavailable learning_credit=none\n";
+    }
     if (remove_learning_ledger) {
         std::error_code ledger_remove_error;
         std::filesystem::remove(learning_ledger_path, ledger_remove_error);

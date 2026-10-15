@@ -182,13 +182,12 @@ bool common_flydelta_run_deep_search_batched(
         const bool geometry_available = full_geometry_available[rank];
         if (!common_flydelta_counterfactual_trial_validate(candidate, error) ||
                 !common_flydelta_decision_margin_validate(margin, error)) return false;
-        common_flydelta_coefficient_trial trial;
-        trial.coefficients = diagnostic.coefficients;
+        common_flydelta_coefficient_trial trial = diagnostic;
         trial.margin = margin;
-        trial.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
-        trial.quality_delta = candidate.quality - baseline.quality;
-        trial.executed = candidate.executed;
-        trial.verifier_known = baseline.verifier_known && candidate.verifier_known;
+        trial.margin_comparison.available = baseline_margin.available && margin.available;
+        trial.margin_comparison.baseline = baseline_margin;
+        trial.margin_comparison.candidate = margin;
+        common_flydelta_coefficient_trial_set_observation(trial, baseline, candidate);
         trial.geometry_available = geometry_available;
         if (geometry_available &&
                 !common_flydelta_representation_diagnostics_validate(geometry, error)) {

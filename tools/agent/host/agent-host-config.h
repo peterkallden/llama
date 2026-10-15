@@ -14,6 +14,7 @@
 #include "agent/adaptation/flydelta/flydelta-worker-budget.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "agent/runtime/model-catalog.h"
+#include "agent/context/context-management.h"
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
@@ -46,6 +47,7 @@ struct agent_host_config {
     int n_predict = 256;
     int n_threads = 2;
     common_agent_context_budget_config context_budgets;
+    common_agent_context_management_config context_management;
     size_t max_continuations = 2;
     int n_gpu_layers = 0;
     std::string default_mode = "chat";
@@ -80,6 +82,10 @@ struct agent_host_config {
     // host reports and uses the scalar fallback.
     std::string adaptation_flydelta_batch_mode = "auto";
     size_t adaptation_flydelta_batch_parallelism = 2;
+    // Factorized cvec waves are used automatically when the selected
+    // server-context profile and Deep/TFO batch path support them. This flag
+    // is the explicit opt-out; unsupported configurations keep the sparse path.
+    bool adaptation_flydelta_disable_factorized_cvec_batch = false;
     // Optional durable FlyDelta capture/lifecycle wiring.  These values are
     // metadata and storage selection only; they do not grant learning credit.
     bool adaptation_flydelta_capture_candidates = false;

@@ -478,6 +478,17 @@ bool parse_agent_host_config_json(
         read_optional(runtime, "context_size", config.runtime_context_size);
         read_optional(runtime, "n_predict", config.n_predict);
         read_optional(runtime, "n_threads", config.n_threads);
+        if (runtime.contains("context_management")) {
+            const auto & managed = runtime["context_management"];
+            if (!managed.is_object()) { error = "runtime.context_management must be an object"; return false; }
+            read_optional(managed, "enabled", config.context_management.enabled);
+            read_optional(managed, "persist_session", config.context_management.persist_session);
+            read_optional(managed, "semantic_compaction", config.context_management.semantic_compaction);
+            read_optional(managed, "recent_turns", config.context_management.recent_turns);
+            read_optional(managed, "summary_max_tokens", config.context_management.summary_max_tokens);
+            read_optional(managed, "max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn);
+            read_optional(managed, "max_history_chars", config.context_management.max_history_chars);
+        }
         if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
             const auto & budgets = runtime["context_budgets"];
             read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
@@ -540,6 +551,21 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
                 read_optional(flydelta, "batch_mode", config.adaptation_flydelta_batch_mode);
                 read_optional(flydelta, "batch_parallelism", config.adaptation_flydelta_batch_parallelism);
+                if (flydelta.contains("disable_factorized_cvec_batch") &&
+                        flydelta.contains("factorized_cvec_batch")) {
+                    error = "runtime.adaptation.flydelta must not set both disable_factorized_cvec_batch and legacy factorized_cvec_batch";
+                    return false;
+                }
+                if (flydelta.contains("disable_factorized_cvec_batch")) {
+                    read_optional(flydelta, "disable_factorized_cvec_batch",
+                        config.adaptation_flydelta_disable_factorized_cvec_batch);
+                } else if (flydelta.contains("factorized_cvec_batch")) {
+                    // Preserve old configs: the legacy positive option is
+                    // translated once into the new negative opt-out setting.
+                    bool legacy_enabled = true;
+                    read_optional(flydelta, "factorized_cvec_batch", legacy_enabled);
+                    config.adaptation_flydelta_disable_factorized_cvec_batch = !legacy_enabled;
+                }
                 read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
                 read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
                 read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
@@ -1266,6 +1292,15 @@ nlohmann::ordered_json agent_host_config_to_json(
         }},
         {"runtime", {
             {"context_size", config.runtime_context_size},
+            {"context_management", {
+                {"enabled", config.context_management.enabled},
+                {"persist_session", config.context_management.persist_session},
+                {"semantic_compaction", config.context_management.semantic_compaction},
+                {"recent_turns", config.context_management.recent_turns},
+                {"summary_max_tokens", config.context_management.summary_max_tokens},
+                {"max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn},
+                {"max_history_chars", config.context_management.max_history_chars},
+            }},
             {"n_predict", config.n_predict},
             {"context_budgets", {
                 {"plan_chars", config.context_budgets.plan_chars},
@@ -1320,6 +1355,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"queue_path", config.adaptation_flydelta_queue_path},
                     {"batch_mode", config.adaptation_flydelta_batch_mode},
                     {"batch_parallelism", config.adaptation_flydelta_batch_parallelism},
+                    {"disable_factorized_cvec_batch", config.adaptation_flydelta_disable_factorized_cvec_batch},
                     {"capture_candidates", config.adaptation_flydelta_capture_candidates},
                     {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
                     {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
@@ -1614,6 +1650,13 @@ bool validate_agent_host_config(
     }
     if (config.n_threads < 1) {
         error = "runtime.n_threads must be greater than zero";
+        return false;
+    }
+    if (config.context_management.recent_turns == 0 || config.context_management.recent_turns > 32 ||
+            config.context_management.summary_max_tokens < 16 || config.context_management.summary_max_tokens > 4096 ||
+            config.context_management.max_summary_calls_per_turn > 1 ||
+            config.context_management.max_history_chars < 256 || config.context_management.max_history_chars > 1024 * 1024) {
+        error = "runtime.context_management limits are outside supported bounds";
         return false;
     }
     const auto & budgets = config.context_budgets;
@@ -2060,6 +2103,7 @@ void apply_agent_host_config_to_daemon_options(
     options.context_size = config.runtime_context_size;
     options.n_threads = config.n_threads;
     options.context_budgets = config.context_budgets;
+    options.context_management = config.context_management;
     options.max_continuations = config.max_continuations;
     options.n_gpu_layers = config.n_gpu_layers;
     options.memory_learn = config.memory_learn;
@@ -2102,6 +2146,21 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
     options.adaptation_flydelta_batch_mode = config.adaptation_flydelta_batch_mode;
     options.adaptation_flydelta_batch_parallelism = config.adaptation_flydelta_batch_parallelism;
+    const std::string profile_id = config.model_profile.empty()
+        ? config.model_catalog.default_profile : config.model_profile;
+    const auto profile = config.model_catalog.profiles.find(profile_id);
+    const auto base = profile == config.model_catalog.profiles.end()
+        ? config.model_catalog.bases.end()
+        : config.model_catalog.bases.find(profile->second.base_model_id);
+    options.adaptation_flydelta_factorized_cvec_batch =
+        !config.adaptation_flydelta_disable_factorized_cvec_batch &&
+        config.adaptation_flydelta_enabled &&
+        config.model_backend == "server-context" &&
+        config.adaptation_flydelta_batch_mode != "disabled" &&
+        config.adaptation_flydelta_batch_parallelism >= 2 &&
+        profile != config.model_catalog.profiles.end() &&
+        base != config.model_catalog.bases.end() &&
+        base->second.backend == "server-context";
     options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
     options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
     options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;

@@ -2,6 +2,33 @@
 
 ## Status and purpose
 
+Resident model traces record resolved visible GPU descriptions. For a
+hardware-specific smoke, set `LLAMA_AGENT_EXPECTED_GPU` to a description
+substring and expose exactly one matching GPU; a mismatch fails before model
+loading. Vulkan indices depend on enumeration and masking, so an index alone
+does not prove NVIDIA execution. See `bugs.md` for the local device mapping.
+
+Model exchanges and arm traces carry phase-local token budget details.
+Exhausted full generation skips the host verifier and records
+`generation_token_budget_exhausted`, with `host_evaluated=false`.
+Diagnostic zero-token requests remain intentional capture/scoring work.
+Missing baseline capture pairs produce an explicit unavailable rank-sweep
+record; process timeouts produce an incomplete wall-clock budget record.
+
+The explicit experimental rank sweep measures independent raw capture pairs
+with the existing basis builder. `flydelta_experimental_rank` reports this
+geometry separately from learning-eligible evidence rank. Synthetic replay
+can exercise a rank-N diagnostic experiment but cannot earn learning credit
+or bypass production evidence-depth admission. Derived variants of the same
+capture are not independent evidence for the rank sweep.
+
+Replay WHAT captures use the original system/user prefix for both sides,
+with the observed assistant output and host-validated canonical continuation
+evaluated as forced contexts (`n_predict=0`). The canonical target is logged
+as a host repair; replay does not run a free model echo. This reuses the
+runtime forced-context method and keeps source
+provenance experimental; it does not manufacture a successful model repair.
+
 ### Internal causal residual-patch seam
 
 `layer_input_residual` patching is a bounded causal-experiment seam, not a
@@ -1296,22 +1323,69 @@ The current v3 supplement uses keys such as
 `tool_use/dataset/data_query` and
 `tool_use/dataset/statistics_describe`.
 
-For each group the smoke reports observation count, compatible and rejected
-samples, effective/stable rank, pairwise alignment, condition number,
-geometry stability, the selected search depth and its bounded search budget.
-Depth is incremental: Bootstrap starts with one compatible sample, Shallow
-requires a small geometrically independent set, and Deep additionally
-requires enough stable evidence for aggregate direction builders and
-TFO-lite. Sample count alone is never sufficient; a near-collinear group
-remains shallow.
+For each group the smoke reports total observations, learning-eligible,
+experimental and incompatible samples, effective/stable rank, alignment,
+geometry, depth and search budgets. `experimental` means the sample passed
+structural validation and may seed an explicitly forced smoke experiment, but
+it is not admitted to evidence depth. The `forced_deep_override` fields make
+this distinction visible when the smoke deliberately runs Deep before the
+production gate is ready.
 
-This report is an aggregation/depth test, not a claim that deep model search
-has run. The dataset repair smoke currently ends after producing retained
-direction candidates and prints `deep_search_executed=no`. A later worker
-stage can consume a Deep-ready group's retained samples and run margin,
-coefficient and full-generation searches without changing the partition or
-promotion rules. Only a host-verified improvement may leave the experimental
-state.
+`flydelta_learning_credit_sample` logs the decision per retained capture delta:
+sample/fixture/evidence IDs, source lane, original paired outcome, quality
+delta, eligibility and a denial reason. The group summary is only an aggregate;
+use this per-sample record to see exactly why a capture was experimental or
+incompatible.
+
+Each `flydelta_low_rank_arm` JSON record includes the fixture and task,
+stable arm ID, coefficients/layer, expected tool and canonical arguments,
+observed decision, verifier reason, evidence reference, outcome and an
+explicit counterfactual-eligibility decision. The rank smoke also states
+`learning_credit_granted=false`: this harness records/evaluates arms but does
+not persist a new learning-credit report. `raw_output_trace_id` joins it to the
+`flydelta_daemon_arm` record (which carries the exact messages and raw model
+content) or to the corresponding `flydelta_model_exchange` record in the
+non-daemon runner. Diagnostic arms are teacher-scored with `n_predict=0`; the
+host verifier is intentionally not run, so their margin/search fitness is
+search guidance only.
+
+### Learning-credit decision
+
+Learning credit is not inferred from a positive teacher-forced margin,
+`search_fitness`, semantic progress, a selected arm, or a successful
+generation. The paired counterfactual classifier first requires that both
+baseline and candidate executed and both have a known host-verifier result.
+It then classifies:
+
+| Baseline | Candidate | Paired outcome | Learning credit |
+|---|---|---|---|
+| failed | passed | `HELPED` | eligible |
+| passed | failed | `HARMED` | ineligible |
+| passed | passed | `NEUTRAL` | ineligible |
+| failed | failed | `UNKNOWN` | ineligible |
+| either not executed or verifier unknown | any | `UNKNOWN` | ineligible |
+
+`common_flydelta_intervention_credit_from_report()` copies the validated
+paired outcome and sets `eligible_for_learning` only for `HELPED`; the credit
+contract rejects `eligible_for_learning=true` for every other outcome. The
+evidence-depth gate applies a further identity check (source, behavior key,
+model profile, execution context, capture layout and layer). Only a matching
+`HELPED` credit contributes to compatible evidence/rank. Valid non-`HELPED`
+samples are counted as experimental, while identity mismatches and `HARMED`
+are counted as incompatible/rejected. Training/promotion remain later,
+separate gates.
+
+This repair smoke has two intentionally different input lanes. A real
+host-certified repair is created only after the failed model call is observed,
+the repair call is host-verified against the canonical fixture, and the
+baseline/candidate captures form a validated repair transition; that lane
+sets `HELPED`, quality delta `1`, and learning eligibility. Synthetic replay
+fixtures instead preserve model captures for diagnostics but explicitly set
+`UNKNOWN`, quality delta `0`, and `eligible_for_learning=false`. Such replay
+samples may be used only in experimental direction search and cannot open the
+production Shallow/Deep evidence gate, create learning credit, or promote an
+artifact. Thus a forced Deep smoke run is a test override, not evidence that
+production would currently admit those samples.
 
 `--strict` makes a non-matching model selection return failure; without it,
 the smoke completes and reports mismatches so they can be inspected and fed
@@ -1870,9 +1944,11 @@ Shallow/Deep or TFO; hosts without the opt-in capability retain the scalar
 fallback.
 
 The common batch seam is consumed by the bounded Whirlpool region probes and
-by rank-N coordinate/TFO coefficient populations. The baseline remains a
-scalar reference; safety backoffs are submitted as a separate bounded batch,
-and TFO iterations remain sequential CPU control-plane steps. Every affected
+by rank-N coordinate/TFO coefficient populations. The baseline remains the
+zero-overlay semantic reference; diagnostic coefficient waves include it as
+an explicit paired row when the comparison requires a simultaneous forward.
+Safety backoffs are submitted as a separate bounded batch, and TFO iterations
+remain sequential CPU control-plane steps. Every affected
 phase has separate diagnostic and full-generation execution classes: the
 diagnostic wave requests prompt evaluation, capture and teacher-forced
 margin/geometry only, while the pruned top-K frontier explicitly requests full
@@ -2011,6 +2087,63 @@ typed setting before model load. The production model host must bind both the
 bounded-arm callback and the explicit `bounded_arm_batch` capability before the common
 FlyDelta adapter can use the batch path; otherwise the common scalar fallback
 is retained.
+
+The daemon JSON opt-out
+`runtime.adaptation.flydelta.disable_factorized_cvec_batch` defaults to
+`false`. Thus factorized `B × c` (batched as `B × Cᵀ`) is used automatically
+for eligible Deep coefficient waves (including TFO-lite in `deep_controls`),
+sending one shared FP32 basis plus one coefficient row per sequence to the
+resident server-context backend. Shallow, Bootstrap,
+AdaptiveAlpha, orthogonal search, WHERE and augmentation continue to use the
+existing sparse/dense path. The coefficient binding defaults to Bootstrap;
+callers must supply the Deep phase to use factorization. Eligibility requires
+FlyDelta, batch mode other than `disabled`, `batch_parallelism >= 2`, and a
+compatible `server-context` model profile. Unsupported profiles and batches
+continue through the existing fallback. Set `disable_factorized_cvec_batch`
+to `true` to force sparse/dense materialization. Legacy configs using the
+positive `factorized_cvec_batch` key are accepted and translated; newly
+serialized configs use the negative opt-out key. The feature changes only
+overlay materialization, not Whirlpool, ranking, verification, or promotion. A single-row tail, incompatible
+basis, unsupported backend, or pre-graph allocation failure uses the existing
+sparse path; a graph-callback failure aborts the batch. `applied` is reported
+only after a successful decode graph actually included the overlay. Backend
+batching and device residency are reported separately; backend batching alone
+is not GPU evidence. Byte counts are payload accounting unless telemetry
+explicitly identifies measured backend-bound bytes.
+
+The current Deep/TFO coefficient-wave binding keeps one compatible basis and
+one composed overlay table resident per model context. Their identities include
+the basis fingerprint, rank, embedding width, layer layout, FP32 format and
+backend buffer/device identity; the overlay key also includes the exact
+coefficient rows. Before the first model graph for a new coefficient set, the
+model context's backend scheduler composes `B × Cᵀ` into a retained row table
+with one row per distinct coefficient row plus a zero row. `clear_binding()`
+detaches the graph callback and clears per-graph sequence mapping, but does not
+release that table. Later decode graphs, scoring calls, or physical subsets
+whose coefficient rows are already present update only the sequence-to-row
+mapping and reuse the same table (`composition count=0`, `overlay_cache=hit`).
+A genuinely different coefficient set replaces the single cached table after
+backend synchronization; it is composed once for that set. Thus separate
+bounded coefficient waves may still require separate compositions. The model
+callback does only sequence-row selection and addition; it does not multiply
+`B × c` for each token. The resident basis uses `O(d r)` storage and the wave
+table uses `O(A d)` for `A` distinct rows; coefficients use `O(A r)`. Context
+teardown releases both caches. A failed pre-graph composition falls back to
+sparse materialization; an error after the table enters model execution
+remains fail-closed.
+
+Wave and physical-binding traces include job/phase/strategy/batch/wave IDs,
+requested and returned arms, physical rows, cache hit/miss, basis uploads,
+coefficient payload, composed-overlay bytes, composition/binding/model time,
+and fallback reason. Cache hits report zero new composition, coefficient
+transfer and table-allocation work; basis-upload counters are likewise zero
+after a basis hit. Byte counts are logical payload/accounting, not measured
+PCIe transfer rates. `device_batch` is reported only when the composed table
+is on a non-CPU backend; otherwise the trace says `backend_batch`. The smoke
+driver can force each control-plane strategy with
+`LLAMA_AGENT_LOW_RANK_TFO_LITE=1` (TFO-lite) or leave it unset (coordinate),
+and compare enabled/disabled with `LLAMA_AGENT_LOW_RANK_DISABLE_FACTORIZED=1`
+(`LLAMA_AGENT_LOW_RANK_FACTORIZED=0` remains a compatibility alias).
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
@@ -2586,6 +2719,399 @@ direction candidates
         -> bounded full generation for top candidates
         -> host verification
         -> experimental lifecycle / HELPED review
+```
+
+### Production arm verification and state transfer
+
+Production coefficient waves use the same daemon context/resource binding for
+diagnostics and full-generation finalists. Diagnostic arms use zero decoded
+tokens and no host verdict. Full arms inherit the finite host/context token
+budget (or an explicitly smaller arm budget); there is no implicit 64-token
+ceiling. Budget exhaustion is an evaluated but inconclusive `UNKNOWN`, not a
+verified invalid continuation. Quality is strict verifier quality, never the
+decoded-token count.
+
+Diagnostic observations remain in search state and trace. They are not appended
+as host-evaluated lifecycle events; only full, host-evaluated trials enter that
+journal. This preserves the existing lifecycle authority contract.
+
+An overlay generation must confirm both graph application and the requested
+arm's artifact identity. Request flags alone cannot establish application.
+Bootstrap/frontier comparisons use the ordinary paired classifier, just like
+Deep: fail/pass is `HELPED`, pass/fail is `HARMED`, pass/pass is `NEUTRAL`, and
+fail/fail or unknown verification is `UNKNOWN`.
+
+Schema-aware compact DSL and JSON decode to the same model-facing call. The
+daemon passes the immutable context's tool schemas to Oracle dispatch. A
+textual context stores verification-only schemas in `model_tools`; these do not
+enable native tool calling or JSON grammar. Native contexts retain `tools` and
+an explicit non-none `tool_choice`. Mixing both schema roles is rejected. A
+`normalized_call` fixture whose `expected_decision` is a `{name, arguments}`
+call checks the complete normalized argument object, including multiple
+measures, predicates and sort keys. Legacy semantic-decision fixtures retain
+their narrower declared properties. Missing schemas do not invent authority.
+The tool-contract Oracle uses the same schema-aware flat-DSL parser; schema
+validity alone is not a paired behavioral improvement.
+
+Coefficient results preserve host-evaluation flags, requested/executed dose,
+baseline margin comparison, arm identity and verifier reasons. One typed
+coefficient-to-region mapper is shared by the daemon and contract tests.
+Deep finalists retain the diagnostic arm's executed coefficients and dose;
+they do not reset the selected scale to zero. A selected mixed direction is
+materialized through the existing composed-direction resource seam, and its
+reference and coefficients are retained separately from the original source.
+Negative controls place the sign in coefficients while scale stays positive.
+
+Capture and compact reduction measure the first available layer input after
+the last intervention layer. Interventions at the last exposed layer have no
+downstream capture: geometry is unavailable rather than a fabricated zero
+effect. The CPU fallback can resolve transient factorized basis material;
+it does not treat a factorized reference as a durable direction URI.
+Broad baseline captures and narrow probe captures may contain different layer
+lists. Geometry compares the same requested measurement layer at each capture's
+own row offset, with matching model, layout revision, width and semantic
+position. A missing measurement layer or mismatched model remains an error.
+
+The rank smoke script defaults to daemon bindings. Set
+`LLAMA_AGENT_LOW_RANK_PRODUCTION_BINDINGS=0` only for an explicitly labelled
+legacy-callback comparison. `--production-bindings` selects the daemon
+coefficient runner; `--production-where` additionally runs bounded production
+Whirlpool and requires a safe continuation before the rank sweep. The script
+exposes this as `LLAMA_AGENT_LOW_RANK_PRODUCTION_WHERE=1` (default off to retain
+the smaller WHAT-only experiment). No safe WHERE continuation is reported as
+unavailable, not a failed rank measurement. Replay material remains experimental
+and receives no learning credit in either mode.
+
+With the existing explicit trace opt-in, daemon arm logs include logical
+messages, response, actual artifact identity, coefficients, basis fingerprint,
+phase, stop reason and verifier result. Generation tracing also retains the
+template-expanded prompt. A model-free daemon-seams test injects controlled
+backend observations to prove a verified `HELPED` can survive conversion and
+resource roundtrip; it is explicitly not model-quality or GPU proof.
+
+The arm-seam correction pass was validated with 61 relevant model-free CTests
+(FlyDelta, daemon seams, tool catalog/codec, Cozo data store and replay contract),
+all passing. Live-model evidence is recorded separately; deterministic success
+does not establish a behavioral gain.
+
+The separate Qwen2.5-1.5B-Instruct Q4_K_M rank-one cvec comparison used NVIDIA
+Vulkan with two physical sequences and confirmed `device_batch` and device
+residency. Sparse and factorized runs both generated `PASS`; their teacher
+margins matched exactly (8.0214386; delta 0). Reported batch model time was
+890.142578 ms sparse versus 892.346863 ms factorized, with binding time
+0.554000 ms versus 0.564000 ms. These single-run timings are wiring/cost
+observations, not a speedup or behavioral-capacity claim. The factorized run
+bound one 6144-byte basis and 8 coefficient bytes. The accompanying WHERE run
+initially stopped on missing source-evidence metadata in the smoke job;
+that result is incomplete, not a negative rank result. The smoke now preserves
+the actual capture source reference, and WHERE preflight rejects a missing
+reference before running any model probes.
+
+After these corrections, the broader model-free agent pass ran 177 registered
+cases: 176 passed and one model-backed runtime fixture was skipped. The separate
+beta pack passed 18 suites but retained one unrelated MCP HTTP vertical-smoke
+failure: its fake runtime only admits legacy `resource_read`/`memory_get`, while
+research requests an unsupported tool. This is recorded separately, not hidden
+as a FlyDelta success or repaired by weakening research/tool validation.
+
+The corrected full-trace production-binding smoke completed successfully on
+the same Qwen model/backend (`production-arm-seams-where-v4`). Whirlpool probed
+layers 12, 13, 14 and 16 at scale 0.02, then ran a fresh baseline and three
+full-generation frontier arms. All four full answers ended at EOS after 189
+tokens; verification was known but failed on the same invalid DSL. Layer 12
+continued reference-only, without learning credit.
+
+The rank-one coefficient wave then ran two diagnostics and one full-generation
+finalist through the daemon binding. Measured post-overlay shift was 0.05 for
+both signed arms; normalized teacher margins differed:
+
+| Arm | Teacher margin | Measured shift norm | Full generation |
+| --- | ---: | ---: | --- |
+| +0.05 | 0.910755 | 0.05 | Known failed verdict; same invalid answer as baseline |
+| -0.05 | 0.909809 | 0.05 | Not requested by the one-finalist budget |
+
+Native factorized execution included a two-sequence batch and its one-sequence
+physical remainder. Compact-geometry availability required the existing CPU
+capture fallback; this remained Vulkan model execution, not a claim that all
+geometry was device-reduced. The full finalist used the ordinary sparse
+fallback, preserving the same signed coefficient and actual application.
+The coefficient stage took 783206 ms, including repeated model/teacher work
+and capture fallback; it is not an algebra-only timing.
+
+No `HELPED` or candidate selection was established. The diagnostic arms remain
+unverified observations; the full baseline/finalist pair is `UNKNOWN` because
+both failed, not because host evaluation was missing. Requested ranks 2 and 4
+were `unavailable`: the evidence gate admitted no verified independent repair
+material, and the WHERE smoke supplied one experimental raw direction. The
+replay repair generations themselves failed verification, so these results
+prove application, state transfer and measurable logit effects, not successful
+learning or a negative rank-capacity result. In the concise arm log,
+`host_verified=yes` means the verifier was known; the full daemon trace's
+`verifier_passed` is the actual pass/fail field.
+
+Raw prompts (including the rendered template), replies, arm identities and
+verdicts are retained under
+`/home/prbm/llama-agent-smokes/factorized-20261013/production-arm-seams-where-v4/`:
+`low-rank-rank-sweep.log`, `native-cvec-batch.log`, `sparse-cvec-batch.log` and
+`learning-ledger.jsonl`. The driver reported `rank_comparison=completed` and
+Q1 output equality with teacher-margin delta zero. Factorized execution remains
+experimental, enabled by default only on eligible Deep/TFO waves, and can be
+disabled in config; neither behavioral gain nor speedup was established.
+
+### Low-rank rank-sweep model smoke
+
+`scripts/test-agent-flydelta-low-rank-model-smoke.sh` is an opt-in Qwen
+Instruct experiment over the existing host-constructed dataset-repair replay
+material. The default four records include two `data.query` examples so the
+same behavior group can supply multiple captured directions. Replay repairs
+are experimental and cannot receive learning credit. The smoke runs the
+existing bounded Deep/coefficient contract at requested ranks 1, 2 and 4,
+retaining only the rank that compatible captured directions actually span.
+In rank-sweep mode it skips the ordinary Whirlpool region pipeline so its
+model-call budget is spent on the rank comparison; the Deep sweep uses at most
+four coefficient proposals and one full-generation finalist per rank. Its
+default generation limit is 512 tokens (override with
+`LLAMA_AGENT_N_PREDICT`). Groups without two compatible captured directions
+are logged as skipped, not reported as rank results.
+The final matched native-factorized versus sparse cvec check defaults to four
+short paired runs (`LLAMA_AGENT_CVEC_REPEAT_COUNT` changes the count); each
+requires identical generated output and teacher-margin delta at most `1e-4`.
+On 2026-10-14, the Qwen2.5-1.5B Instruct/Vulkan run passed this check with
+identical output and zero teacher-margin delta for both Deep and TFO-lite
+production bindings. Direct native cvec comparisons also passed at ranks 1, 2,
+and 4: both arms produced the same output and exact teacher margins through
+sparse and factorized binding. These rank-shape checks establish overlay
+equivalence, not rank-2/4 behavioral utility.
+
+The matched Deep rank sweep completed with factorized batching enabled and
+disabled.
+Both selected the same rank-1 coefficients and reported the same diagnostic
+margins; rank 2 and 4 were correctly `unavailable` because the replay evidence
+had effective rank zero, and no candidate was selected or host-verified as
+HELPED. The TFO-lite sweep over the full four-scenario fixture exceeded its
+30-minute process timeout in both representations. A bounded two-query TFO-lite
+run with factorized opt-in completed: four diagnostic trials plus one
+full-generation finalist, rank 1 only, `device_batch`, and no selected/HELPED
+candidate; higher ranks were unavailable. The matched opt-out run used the same
+two `data.query` scenarios, four diagnostic trials, one finalist, rank-1
+coefficients, and `device_batch`. Both runs had evidence effective-rank zero,
+rank 2/4 unavailable, no selected candidate, and UNKNOWN counterfactual
+outcomes. Reported rank-sweep elapsed times were 941,259 ms (factorized) and
+938,174 ms (sparse); a single pair at this scale is not a performance claim.
+These are runtime and equivalence checks,
+not evidence of a behavioral improvement or end-to-end latency win.
+
+#### Cache-lifetime and NVIDIA parallelism check (2026-10-14)
+
+After the cache-lifetime correction, Qwen2.5-1.5B-Instruct Q4_K_M was measured
+on the GeForce 920MX (2 GiB) through Vulkan device 1. Every run requested 99 GPU
+layers with host auto-fit, retained 6,144 tokens per sequence, used four
+logical candidate arms, one warmup and four measured repetitions (`n_predict=8`)
+for both sparse and factorized overlays. All six variants reported
+`device_batch`; total context was 12,288 / 24,576 / 36,864 for parallelism 2 /
+4 / 6. The p=2 wave used two physical batches of two arms, p=4 one batch of
+four, and p=6 had only four logical candidate arms (so its candidate wave also
+bound four rows; teacher-scoring traces separately reached six physical rows).
+The device showed roughly 1.16–1.28 GiB used during these runs. Backend logs
+reported the same auto-fit request/resolution for each variant; exact per-layer
+CPU/GPU placement was not separately enumerated, so no stronger placement
+claim is made.
+
+| Parallelism | Representation | Median wave wall | Median generation | Median teacher scoring | Candidate throughput | Physical candidate batches |
+|---:|---|---:|---:|---:|---:|---:|
+| 2 | sparse | 5.192 s | 1.925 s | 3.268 s | 0.770 arms/s | 2 × 2 |
+| 2 | factorized | 5.169 s | 1.905 s | 3.245 s | 0.774 arms/s | 2 × 2 |
+| 4 | sparse | 15.344 s | 5.289 s | 10.047 s | 0.261 arms/s | 1 × 4 |
+| 4 | factorized | 15.303 s | 5.275 s | 10.030 s | 0.261 arms/s | 1 × 4 |
+| 6 | sparse | 16.249 s | 5.395 s | 10.854 s | 0.246 arms/s | 1 × 4 |
+| 6 | factorized | 16.201 s | 5.380 s | 10.825 s | 0.247 arms/s | 1 × 4 |
+
+Medians are from the four per-run measurements; throughput is four logical
+candidate arms divided by median wave wall time. Factorized versus sparse
+median wall differences were about 0.44%, 0.27% and 0.30% at p=2/4/6,
+respectively—too small to claim a speedup. Increasing concurrency from 2 to 4
+or 6 reduced candidate throughput substantially on this GPU. This is evidence
+that larger physical batches do not scale for this small model/device pair,
+not that Deep/TFO universally benefit from p=2. The model-forward and
+teacher-scoring work dominates the overlay bookkeeping.
+
+The table-lifetime trace behaved as intended: at p=4 and p=6 the warmup
+created one coefficient table and later same-wave/repeated requests were cache
+hits with zero recomposition; p=2 used two distinct two-arm coefficient
+subwaves, so the single-entry cache alternated between those different row
+sets. Across all variants the per-sequence context stayed at 6,144 and
+auto-fit did not reduce it. Full traces are under
+`/home/prbm/llama-agent-smokes/factorized-20261014/deep-tfo-batch-matrix/`.
+
+The subsequent full-trace two-fixture Deep and TFO-lite runs each completed for
+factorized batching enabled and disabled at p=2. All four runs had the same two groups,
+each with only one compatible direction (`observations=1`,
+`direction_candidates=1`), so both rank-2/4 comparison and actual Deep
+coefficient search were `unavailable` (`deep_search_executed=no`); these are
+not negative rank results. The paired cvec Q1 checks passed in every wrapper:
+identical generated output, teacher-margin delta `0`, and `device_batch`.
+Consequently these model smokes verify ordinary-path non-regression and the
+runtime overlay seam, but do not establish behavioral utility or exercise a
+rank>1 Deep/TFO candidate. Logs are under
+`/home/prbm/llama-agent-smokes/factorized-20261014/{deep-on,deep-off,tfo-on,tfo-off}/`.
+
+In the completed factorized TFO waves, a rank-1 basis for `d=1536` occupied
+6,144 resident bytes and was uploaded once; compatible later waves were cache
+hits with zero basis host-copy bytes. A two-row physical batch sent 8
+coefficient bytes and retained an 18,432-byte overlay table including its
+inactive zero row. The earlier trace reported composition and binding around
+0.5–1.5 ms per decode because it recomposed during each binding; that timing is
+historical and superseded by the cache-hit traces above. Sparse and factorized
+variants both used the Vulkan device batch, so these measurements isolate the
+cvec representation work; they do not show an inference speedup, since model
+scoring/generation dominates the smoke.
+
+Teacher scoring uses the same compact DSL as generation: `open!` is the
+common prefix and the targets begin with the following space and remaining
+call text. Keeping whitespace in the target avoids a BPE merge across the
+forced prefix boundary. Diagnostic
+arms generate no answer and receive no tool verdict. Their captures are
+compared with a separate zero-generation baseline; full-generation captures
+use the full-generation baseline. Response traces include the complete output,
+decoded token count, stop reason and verifier diagnostic so exhausted token
+budgets can be distinguished from complete invalid calls. Earlier 32-token
+runs with a JSON scoring prefix do not establish behavioral equivalence or
+absence of regression.
+The smoke parses generation with the same schema-aware DSL overload used by
+runtime, scoped to the exact tools described in the prompt. The schema-less
+overload cannot admit flat calls. Canonical repairs and teacher targets reuse
+the tool-example field/directive renderer. Scalar lists inside predicate values
+accept both indexed fields and bracketed lists; their full field path is
+resolved against the selected tool schema. Fixture outputs and parse/verifier diagnostics are
+logged alongside the complete model exchanges.
+Coefficient waves share one immutable flattened basis per rank; separate
+copies per arm are not compatible with the native factorized batch binding.
+For a focused sweep over the two query records, set
+`LLAMA_AGENT_LOW_RANK_BEHAVIOR_KEY=tool_use/dataset/data_query` and
+`LLAMA_AGENT_LOW_RANK_MAX_SCENARIOS=2`. This scopes both
+the fixture selection and the described/parsed tool catalog to that group;
+keep the same scope when comparing configurations.
+Deep smoke arms require runtime confirmation that the requested overlay reached
+the decode graph. An absent confirmation fails the probe; the trace records
+requested/applied flags, factorized binding and any fallback reason.
+Layer-input captures resolve the sequence and absolute token position in the
+latest decode's microbatch row map. A prompt-relative token ordinal is not a
+physical capture-buffer row, particularly with multiple sequences or cached
+prefill. Requested positions absent from the latest decode fail closed rather
+than returning another sequence's activation or a stale buffer row.
+The prompt includes the fixture host's registered dataset references and column
+types. Tool examples alone are not dataset bindings; inventing a placeholder
+reference must not be necessary to answer a fixture question.
+The cvec equivalence smoke uses identical model-facing text for the zero and
+nonzero arms. Arm identities stay in host telemetry; they cannot introduce
+prompt differences into the overlay control comparison.
+Its device-diagnostics mode compares the active arm with the zero arm at the
+first downstream layer and requires a nonzero shift. Diagnostic scalar reads
+wait for the asynchronous graph to finish; they cannot report uninitialized
+GPU buffer contents as an available measurement.
+It also captures both sequence-specific downstream rows and checks their host
+reference shift against the requested 0.0002 perturbation (tolerance 1e-6).
+This independently checks the capture row mapping against the device reduction;
+a successful factorized binding alone is not sufficient evidence.
+The replay fixtures use membership predicates such as `region in [north, east]`.
+The model schemas expose `in`, and Cozo/SQLite row filtering implements typed
+list membership. Contract tests check actual nonempty fixture results, so a
+successful tool call returning an incorrectly empty dataset cannot serve as
+the repair oracle's expected result.
+Its trace records each arm's coefficients, teacher-forced margin, geometry,
+host verdict, elapsed time, and two storage figures:
+
+```text
+flattened overlay model = arms * n_embd * sizeof(float)
+shared basis model      = (n_embd * rank + arms * rank) * sizeof(float)
+```
+
+Correction validation (2026-10-14, Qwen2.5-1.5B-Instruct Q4_K_M,
+Vulkan/NVIDIA, full trace, two query fixtures): 55 FlyDelta CTests and five
+tool/data/configuration contract CTests passed. The independent two-sequence
+capture/device check measured 0.000199974 for a requested 0.0002 shift.
+Sparse/factorized Q1 produced the same `PASS` output and teacher margin
+(difference zero). Rank-1 diagnostic coefficients +0.05/-0.05 both measured
+shift norm 0.05, with progress +0.004088/-0.004088 and normalized margins
+0.911141/0.909922. The full-generation finalist retained the baseline's invalid
+call: no verified behavioral improvement, no selected candidate, no learning
+credit. Evidence effective rank was zero; ranks 2/4 were unavailable, and the
+rank-1 host-repair replay remains experimental rather than admitted evidence.
+Single-run binding times were 0.616 ms sparse versus 0.541 ms factorized;
+model times were 888.44/882.10 ms. These are observations, not a speedup claim.
+Earlier mismatched-row geometry (approximately 28) is invalid diagnostic data,
+not an observed adverse intervention of that size.
+
+The shared figure is a representation-size model. Eligible coefficient waves
+use a transient native factorized cvec batch by default:
+
+```text
+B[layer][rank][n_embd]  (one shared FP32 basis)
+c[sequence][rank]      (one FP32 coefficient row per arm)
+        -> graph-local B * c at the ordinary cvec intervention point
+```
+
+The factorized flag is separate from `per_sequence_cvec_batch` and is enabled
+by default for eligible Deep/TFO waves; the daemon config's
+`disable_factorized_cvec_batch` is the opt-out. It requires at least two
+compatible parallel sequences, one common basis/layer layout and backend
+support. Otherwise the established sparse/dense cvec fallback remains in use and emits a concrete
+`factorized_requires_parallel_coefficient_wave`, `factorized_not_enabled` or
+`factorized_requires_parallel_sequences` diagnostic. Persistent or active
+artifacts never use this form; it is request-scoped and released with the
+physical batch.
+
+The arm trace records `overlay_representation` (`dense`, `sparse` or
+`factorized`) plus basis, coefficient and materialized-overlay byte counts.
+They are systems diagnostics only and cannot alter Oracle truth, `HELPED`,
+lifecycle, evidence or promotion. Rank-1 equivalence is checked against the
+established composition contract before rank 2 or 4 is considered.
+
+Physical-batch binding bytes and binding time are attributed to the first arm
+only; these are batch totals, not per-arm copies. Logical payload estimates
+remain separate from bytes passed to backend binding calls. A `backend_batch`
+path or binding-call accounting does not prove device residency; only explicit
+`device_batch`/`device_resident` telemetry supports that claim. Each omitted
+requested rank must have its own rank-specific `unavailable` record.
+
+The canonical host basis is rank-major. For ggml's `mul_mat` K-dimension
+layout, the resident binding transposes that shared basis once into a host
+staging buffer before backend binding. `basis_host_copy_bytes` reports that
+measured staging payload; `basis_bytes_bound` reports the bytes passed to the
+backend tensor setter. Neither field measures transfer latency, which is
+reported separately as `overlay_binding_ms`.
+
+The rank result is report-only. A rank above one that does not improve the
+fixture is useful negative evidence, not a smoke failure; insufficient
+independent captured directions are reported as unavailable rather than
+silently treated as rank four.
+
+The script also runs the existing resident native cvec-batch smoke with the
+same model.  This keeps two claims separate: the dataset-repair rank sweep
+measures behavioral utility and current materialization cost, while the cvec
+smoke proves that the selected model/backend can physically execute distinct
+per-sequence overlays in a native batch. The factorized cvec experiment keeps
+`basis + coefficient-row` in the graph but deliberately does not share a
+prefix forward or KV state. A future branch-at-layer seam may be considered
+only if rank has behavioral value and repeated prefill dominates telemetry.
+The rank sweep itself requires native per-arm cvec batch telemetry and fails
+if a multi-arm wave silently falls back to scalar execution. Tool-free DSL
+responses are collected as content so the model's native tool-call parser
+cannot reject them before the smoke's compact-DSL verifier runs.
+The wrapper runs the independent cvec check even if the rank phase times out,
+then preserves the rank timeout as a non-zero final status. In the 2026-10-13
+Qwen2.5-1.5B Instruct Q4 run, all four replay generations failed host
+verification and earned no learning credit. The `data.query` group did yield
+three compatible direction candidates, but rank 1 produced `effective_rank=1`,
+`selected=no`, and `outcome=unknown`; its Deep pass took 1,160,070 ms. The
+30-minute process limit expired before ranks 2 and 4 reported, so this run is
+not evidence for a rank comparison or a behavioral improvement.
+
+Run it explicitly with a local model:
+
+```sh
+LLAMA_AGENT_MODEL=/path/to/Qwen-Instruct.gguf \
+  bash scripts/test-agent-flydelta-low-rank-model-smoke.sh
 ```
 
 For small rank and a narrow grid, coordinate search remains the preferred

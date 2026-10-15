@@ -128,9 +128,15 @@ void flatten_example_fields(
                     flatten_example_fields(field_schema.value("items", json::object()), field[index],
                         path + "[" + std::to_string(index) + "]", lines);
                 } else {
-                    lines.push_back(path + ": " + flat_scalar(field[index]));
+                    lines.push_back(path + (prefix.empty() ? std::string{} : "[" + std::to_string(index) + "]") +
+                        ": " + flat_scalar(field[index]));
                 }
             }
+        } else if (field.is_array()) {
+            // Untyped JSON value slots can hold scalar lists, for example
+            // membership predicate values. The schema-aware parser resolves
+            // the entire path when admitting this bracketed representation.
+            lines.push_back(path + ": " + flat_scalar(field));
         } else {
             lines.push_back(path + ": " + flat_scalar(field));
         }
@@ -379,6 +385,23 @@ std::string compact_tool_purpose(
 }
 
 } // namespace
+
+std::string common_render_flat_tool_call(
+        const std::string & name, const std::string & input_schema_json,
+        const std::string & arguments_json, std::string & error) {
+    error.clear();
+    const auto schema = json::parse(input_schema_json, nullptr, false);
+    const auto arguments = json::parse(arguments_json, nullptr, false);
+    if (name.empty() || !schema.is_object() || !arguments.is_object()) {
+        error = "flat tool call requires a tool name, object schema and object arguments";
+        return {};
+    }
+    std::vector<std::string> lines;
+    flatten_example_fields(schema, arguments, {}, lines);
+    std::string rendered = "open! " + name;
+    for (const auto & line : lines) rendered += "\n" + line;
+    return rendered;
+}
 
 std::string common_render_compact_tool_schema(
         const std::string & schema_json,

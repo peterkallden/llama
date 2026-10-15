@@ -127,6 +127,8 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
 // mirrors:
 // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
 LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
+// Returns only a row captured by the latest decode, identified by sequence and position.
+LLAMA_API float * llama_get_embeddings_layer_inp_row(struct llama_context * ctx, uint32_t lid, llama_seq_id seq_id, llama_pos pos);
 LLAMA_API void llama_set_residual_patch(
         struct llama_context * ctx,
         const struct llama_residual_patch_ref * ref);

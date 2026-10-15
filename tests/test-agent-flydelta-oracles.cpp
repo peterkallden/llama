@@ -8,6 +8,8 @@
 #include "agent/adaptation/flydelta/oracles/workflow-proposal.h"
 #include "agent/adaptation/flydelta/oracles/blueprint-workflow.h"
 #include "agent-openapi-flydelta-oracle.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <nlohmann/json.hpp>
 
@@ -45,6 +47,44 @@ common_flydelta_oracle_request aggregate_request(bool applicable = true) {
 
 int main() {
     std::string error;
+    {
+        common_tool_catalog catalog;
+        common_tool_bootstrap_result bootstrap;
+        CHECK(catalog.bootstrap("analysis", bootstrap, error));
+        for (const auto & name : {"data.aggregate", "data.query"}) {
+            const auto * definition = catalog.find_definition(name);
+            CHECK(definition != nullptr);
+            const std::string schema = common_tool_model_input_schema(*definition);
+            const std::string arguments = std::string(name) == "data.aggregate"
+                ? R"({"dataset":"dataset://local/sales","group_by":["region"],"measures":[{"function":"sum","column":"amount","as":"total"},{"function":"avg","column":"amount","as":"average"}]})"
+                : R"({"dataset":"dataset://local/sales","select":["region","amount"],"where":[{"field":"region","operator":"in","value":["north","east"]}],"order_by":[{"field":"amount","direction":"desc"},{"field":"region","direction":"asc"}],"limit":4})";
+            common_flydelta_oracle_request typed;
+            typed.semantic_kind = "dataset_operation";
+            typed.expected_tool_call_available = true;
+            typed.expected_tool_call = {name, arguments};
+            typed.model_tools = {{name, definition->description, schema, {}}};
+            const auto flat = common_render_flat_tool_call(name, schema, arguments, error);
+            CHECK(error.empty() && !flat.empty());
+            common_flydelta_oracle_result actual;
+            CHECK(common_flydelta_dataset_operation_oracle(typed, flat, actual, error));
+            CHECK(actual.known && actual.verdict == common_flydelta_oracle_verdict::satisfied);
+            const auto canonical = nlohmann::ordered_json{{"name", name},
+                {"arguments", nlohmann::ordered_json::parse(arguments)}}.dump();
+            CHECK(common_flydelta_dataset_operation_oracle(typed, canonical, actual, error));
+            CHECK(actual.known && actual.verdict == common_flydelta_oracle_verdict::satisfied);
+            common_flydelta_model_tool_contract contract;
+            contract.exposed_tool_name = name;
+            contract.model_input_schema_json = schema;
+            CHECK(common_flydelta_validate_model_tool_text(contract,
+                common_agent_tool_output_format::compact_dsl, flat, actual, error));
+            CHECK(actual.known && actual.verdict == common_flydelta_oracle_verdict::satisfied);
+            CHECK(common_flydelta_dataset_operation_oracle(typed, "open! missing.tool", actual, error));
+            CHECK(actual.known && actual.verdict == common_flydelta_oracle_verdict::violated);
+            typed.model_tools.clear();
+            CHECK(common_flydelta_dataset_operation_oracle(typed, flat, actual, error));
+            CHECK(!actual.known && actual.verdict == common_flydelta_oracle_verdict::unknown);
+        }
+    }
     const auto request = aggregate_request();
     common_flydelta_oracle_result result;
     CHECK(common_flydelta_dataset_operation_oracle(

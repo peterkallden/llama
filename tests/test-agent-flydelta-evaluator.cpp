@@ -751,6 +751,7 @@ int main() {
         bounded_arm_called = request.apply_overlay;
         arm_result.arm_id = request.arm_id;
         arm_result.executed = true;
+        arm_result.overlay_applied = request.apply_overlay;
         arm_result.requested_alpha = request.alpha;
         arm_result.executed_alpha = request.alpha;
         arm_result.generation_available = request.request_generation;

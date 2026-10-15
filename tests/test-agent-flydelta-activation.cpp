@@ -1,5 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 
+#include <cmath>
+
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 int main() {
@@ -40,6 +42,43 @@ int main() {
     auto inconsistent = result;
     inconsistent.sparse_overlay.data.front() += 0.25f;
     CHECK(!common_flydelta_activation_result_validate(inconsistent, 2, 4, 1024, error));
+
+    request.allow_factorized_overlay = true;
+    request.coefficients = {0.5f};
+    CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, result, error));
+    CHECK(result.gate.apply && result.factorized_overlay.enabled);
+    CHECK(!result.sparse_overlay.enabled && !result.overlay.enabled);
+    CHECK(result.factorized_overlay.rank == 1);
+    CHECK(result.factorized_overlay.coefficients == std::vector<float>{0.25f});
+    CHECK(common_flydelta_activation_result_validate(result, 2, 4, 1024, error));
+
+    // Q1, without a model: a rank-2 factorized B*c must reconstruct the
+    // exact sparse composition under the same gate and layer layout.
+    common_flydelta_basis_direction direction_two;
+    direction_two.layer_index = 2;
+    direction_two.values = {3.0f, -1.0f};
+    request.directions = {direction, direction_two};
+    request.coefficients = {0.5f, -0.25f};
+    request.allow_factorized_overlay = false;
+    common_flydelta_activation_result sparse_rank_two;
+    CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, sparse_rank_two, error));
+    CHECK(sparse_rank_two.sparse_overlay.enabled);
+    request.allow_factorized_overlay = true;
+    common_flydelta_activation_result factorized_rank_two;
+    CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, factorized_rank_two, error));
+    CHECK(factorized_rank_two.factorized_overlay.enabled);
+    std::vector<float> reconstructed(2, 0.0f);
+    for (size_t rank = 0; rank < 2; ++rank) {
+        for (size_t value = 0; value < reconstructed.size(); ++value) {
+            reconstructed[value] += factorized_rank_two.factorized_overlay.coefficients[rank] *
+                (*factorized_rank_two.factorized_overlay.basis)[rank * reconstructed.size() + value];
+        }
+    }
+    for (size_t value = 0; value < reconstructed.size(); ++value) {
+        CHECK(std::fabs(reconstructed[value] - sparse_rank_two.sparse_overlay.data[value]) <= 1.0e-6f);
+    }
+    request.directions = {direction};
+    request.allow_factorized_overlay = false;
 
     request.gate_request.explicit_opt_in = false;
     CHECK(common_flydelta_prepare_activation(gate_config, request, 1024, result, error));

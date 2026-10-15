@@ -17,6 +17,20 @@ bool daemon_flydelta_negative_violation_allowed(const std::string & kind) {
         kind == "wrong_measure_function";
 }
 
+// A SemiOracle relation already carries a host-proved rejected/preferred
+// contrast.  Its three context resources end with the corresponding
+// continuation, so capturing their prompt state with n_predict=0 is a
+// deterministic, teacher-forced representation capture.  Do not sample the
+// model again and accidentally turn a verified relation into a different
+// interaction.  Other evidence sources retain the established free-generation
+// and verifier path.
+bool daemon_flydelta_uses_forced_context_capture(
+        const common_flydelta_teaching_relation & relation) {
+    return relation.source == common_adaptation_evidence_source::semi_oracle_preference &&
+        relation.host_approved &&
+        relation.conditioned_origin == common_flydelta_teaching_origin::host_derived;
+}
+
 } // namespace
 
 bool daemon_flydelta_run_concept_capture(
@@ -91,6 +105,8 @@ bool daemon_flydelta_run_concept_capture(
         ? job.seed.verifier_ref : job.seed.candidate_ref;
     for (size_t index = 0; index < materials.size(); ++index) {
         const auto & material = materials[index];
+        const bool forced_context_capture =
+            daemon_flydelta_uses_forced_context_capture(material.relation);
         capture_binding binding;
         binding.material_index = index;
         const std::array<std::string, 3> contexts = {
@@ -112,8 +128,8 @@ bool daemon_flydelta_run_concept_capture(
             arm.apply_overlay = false;
             arm.fresh_context = true;
             arm.request_capture = true;
-            arm.request_generation = true;
-            arm.request_host_verification = true;
+            arm.request_generation = !forced_context_capture;
+            arm.request_host_verification = !forced_context_capture;
             arm.max_capture_bytes = 4U * 1024U * 1024U;
             arm.max_generated_tokens = std::max<size_t>(
                 64U, provider->n_predict > 0 ? provider->n_predict : 64U);
@@ -146,9 +162,12 @@ bool daemon_flydelta_run_concept_capture(
             error = "FlyDelta concept capture contains an unexecuted arm";
             return false;
         }
-        if (!conditioned_result.host_evaluated ||
-                !conditioned_result.verifier_known ||
-                !conditioned_result.verifier_passed) {
+        const bool forced_context_capture =
+            daemon_flydelta_uses_forced_context_capture(material.relation);
+        const bool conditioned_verified = forced_context_capture ||
+            (conditioned_result.host_evaluated &&
+                conditioned_result.verifier_known && conditioned_result.verifier_passed);
+        if (!conditioned_verified) {
             error = "FlyDelta concept capture conditioned arm is not host verified";
             return false;
         }
@@ -176,9 +195,7 @@ bool daemon_flydelta_run_concept_capture(
                 provider, material, job.teaching_material_group_ref, job.id,
                 baseline_result.capture_ref, conditioned_result.capture_ref,
                 control_result.capture_ref, *baseline, *conditioned, *control,
-                conditioned_result.host_evaluated &&
-                    conditioned_result.verifier_known &&
-                    conditioned_result.verifier_passed,
+                conditioned_verified,
                 baseline_result.host_evaluated &&
                     baseline_result.verifier_known &&
                     !baseline_result.verifier_passed &&

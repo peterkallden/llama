@@ -130,6 +130,12 @@ bool common_flydelta_coefficient_search_config_validate(
         std::string & error);
 
 struct common_flydelta_coefficient_trial {
+    std::string arm_id;
+    std::string intervention_ref;
+    std::string verifier_reason;
+    std::string observed_decision_summary;
+    std::string expected_decision_summary;
+    std::string evidence_ref;
     std::vector<float> coefficients;
     std::vector<float> requested_coefficients;
     float requested_strength = 0.0f;
@@ -148,6 +154,7 @@ struct common_flydelta_coefficient_trial {
     bool geometry_available = false;
     common_flydelta_representation_diagnostics geometry;
     bool executed = false;
+    bool host_evaluated = false;
     bool verifier_known = false;
     size_t iteration = 0;
     size_t parent_trial_index = static_cast<size_t>(-1);
@@ -159,6 +166,19 @@ struct common_flydelta_coefficient_selection {
     size_t trial_index = 0;
     float score = 0.0f;
 };
+
+struct common_flydelta_intervention_region_trial;
+
+void common_flydelta_coefficient_trial_set_observation(
+    common_flydelta_coefficient_trial & target,
+    const common_flydelta_counterfactual_trial & baseline,
+    const common_flydelta_counterfactual_trial & candidate);
+
+bool common_flydelta_coefficient_trial_to_region(
+    const common_flydelta_coefficient_trial & source,
+    const common_flydelta_low_rank_basis & basis,
+    common_flydelta_intervention_region_trial & target,
+    std::string & error);
 
 // Generates a no-op plus a bounded +/- coordinate stencil. The caller may
 // use the margins to choose which proposals deserve full generation. This

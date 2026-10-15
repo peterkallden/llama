@@ -39,6 +39,33 @@ int fail(const std::string & reason) {
 } // namespace
 
 int main() {
+    common_flydelta_oracle_request registered_request;
+    registered_request.oracle_ref = "flydelta://oracle/dataset-operation";
+    registered_request.oracle_revision = "dataset-operation:v1";
+    registered_request.policy_revision = "dataset-operation-policy:v1";
+    registered_request.semantic_kind = "dataset_operation";
+    registered_request.expected_contract_kind = "semantic_decision";
+    registered_request.expected_contract_ref = "flydelta://contract/dataset-operation";
+    registered_request.expected_contract_revision = "v1";
+    registered_request.expected_decision_available = true;
+    registered_request.expected_decision.operation = "aggregate";
+    registered_request.expected_decision.dataset = "dataset://local/sales";
+    registered_request.expected_decision.group_by = {"region"};
+    registered_request.expected_decision.aggregate_function = "sum";
+    registered_request.expected_decision.aggregate_field = "amount";
+    common_flydelta_oracle_result registered_result;
+    std::string registered_error;
+    const auto default_registry = common_flydelta_make_default_oracle_registry();
+    const bool registered_selected = common_flydelta_oracle_evaluate(
+        default_registry, registered_request,
+        R"json({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","group_by":["region"],"measures":[{"function":"sum","column":"amount"}]}})json",
+        registered_result, registered_error);
+    if (!registered_selected || !registered_result.known ||
+            registered_result.verdict != common_flydelta_oracle_verdict::satisfied) {
+        return fail("default evaluator selection must not confuse oracle and evaluator revisions: " +
+            registered_error + (registered_result.reason.empty() ? "" : " " + registered_result.reason));
+    }
+
     agent_flydelta_dataset_repair_host host;
     std::string error;
     if (!host.open("oracle", error)) return fail("host fixture: " + error);

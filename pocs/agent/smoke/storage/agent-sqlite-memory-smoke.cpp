@@ -19,6 +19,9 @@ int main() {
     record.namespace_id = "smoke";
     record.session_id = "session-1";
     record.metadata["source"] = "ctest";
+    record.metadata["agent.temporal.v1.observed_at"] = "1710000000";
+    record.metadata["agent.temporal.v1.valid_from"] = "1710000000";
+    record.metadata["agent.temporal.v1.valid_to"] = "1810000000";
 
     std::string error;
     {
@@ -29,6 +32,7 @@ int main() {
         assert(loaded.has_value());
         assert(loaded->content == record.content);
         assert(loaded->metadata.at("source") == "ctest");
+        assert(loaded->metadata.at("agent.temporal.v1.observed_at") == "1710000000");
 
         common_memory_query query;
         query.text = "persistence";
@@ -45,6 +49,17 @@ int main() {
         other.content = "A second record";
         assert(store.put(other, error));
         assert(store.relate(record.id, "supports", other.id, 0.75f, error));
+        common_memory_record replacement = record;
+        replacement.id = "memory-new";
+        replacement.content = "Replacement memory record";
+        assert(store.put(replacement, error));
+        assert(store.relate(replacement.id, "supersedes", record.id, 1.0f, error));
+        common_memory_query scope;
+        scope.scope = common_memory_scope::session;
+        scope.namespace_id = "smoke";
+        scope.session_id = "session-1";
+        const auto edges = store.list_relations(record.id, "supersedes", false, scope, error);
+        assert(error.empty() && edges.size() == 1 && edges.front().from == replacement.id);
     }
 
     {
@@ -53,6 +68,7 @@ int main() {
         const auto loaded = store.get(record.id, error);
         assert(loaded.has_value());
         assert(loaded->embedding == record.embedding);
+        assert(loaded->metadata.at("agent.temporal.v1.valid_to") == "1810000000");
         assert(store.erase(record.id, error));
         assert(!store.get(record.id, error).has_value());
     }

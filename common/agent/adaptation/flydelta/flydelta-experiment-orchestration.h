@@ -19,6 +19,7 @@ struct common_flydelta_search_continuation {
     common_flydelta_intervention_region_candidate region;
     float search_score = 0.0f;
     bool host_helped = false;
+    std::string intervention_ref;
 };
 
 enum class common_flydelta_experiment_phase {

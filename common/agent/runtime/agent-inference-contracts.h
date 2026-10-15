@@ -36,6 +36,12 @@ struct common_agent_inference_options {
     // resident model is loaded; it does not consult process environment for
     // agent runtime behavior.
     bool per_sequence_cvec_batch = false;
+    // Experimental refinement of the per-sequence cvec batch.  When the
+    // physical batch has a common low-rank basis, keep that basis factorized
+    // until the model graph instead of flattening one d-vector per sequence.
+    // This is deliberately separate from the general batch opt-in: existing
+    // requests retain the established sparse/dense behavior by default.
+    bool per_sequence_factorized_cvec_batch = false;
     // Explicitly carries --agent-trace into the resident context.
     bool agent_trace = false;
     std::string mmproj;

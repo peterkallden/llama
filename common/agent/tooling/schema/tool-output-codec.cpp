@@ -308,6 +308,23 @@ bool split_flat_path(const std::string & path, std::vector<std::variant<std::str
     return !parts.empty();
 }
 
+const json * flat_path_schema(
+        const json & schema, const std::vector<std::variant<std::string, size_t>> & parts) {
+    const json * current = &schema;
+    for (const auto & part : parts) {
+        if (!current->is_object()) return nullptr;
+        if (const auto * key = std::get_if<std::string>(&part)) {
+            if (!current->contains("properties") || !(*current)["properties"].is_object() ||
+                    !(*current)["properties"].contains(*key)) return nullptr;
+            current = &(*current)["properties"][*key];
+        } else {
+            if (current->value("type", std::string{}) != "array" || !current->contains("items")) return nullptr;
+            current = &(*current)["items"];
+        }
+    }
+    return current;
+}
+
 bool assign_flat_path(
         json & target,
         const std::vector<std::variant<std::string, size_t>> & parts,
@@ -597,12 +614,25 @@ bool parse_flat_compact(
         }
 
         json value;
-        if (!parse_flat_value(source, value, error)) return false;
+        std::vector<std::variant<std::string, size_t>> value_path;
+        const auto * declared_value = split_flat_path(field, value_path)
+            ? flat_path_schema(schema, value_path) : nullptr;
+        const bool declared_string_enum = declared_value && declared_value->is_object() &&
+            declared_value->contains("enum") && (*declared_value)["enum"].is_array() &&
+            std::any_of((*declared_value)["enum"].begin(), (*declared_value)["enum"].end(),
+                [&](const json & item) { return item.is_string() && item.get<std::string>() == source; });
+        if (declared_string_enum) {
+            // Exact host-declared enum values such as >= need no quoting.
+            // Other unquoted punctuation still follows the strict codec.
+            value = source;
+        } else if (!parse_flat_value(source, value, error)) return false;
         if (value.is_array()) {
-            const auto properties = schema.value("properties", json::object());
-            if (!properties.is_object() || !properties.contains(field) ||
-                    !properties[field].is_object() ||
-                    properties[field].value("type", std::string{}) != "array") {
+            std::vector<std::variant<std::string, size_t>> array_path;
+            const auto * field_schema = split_flat_path(field, array_path)
+                ? flat_path_schema(schema, array_path) : nullptr;
+            if (field_schema == nullptr || !field_schema->is_object() ||
+                    (!field_schema->value("type", std::string{}).empty() &&
+                     field_schema->value("type", std::string{}) != "array")) {
                 error = "flat DSL bracketed lists are valid only for array fields";
                 return false;
             }
@@ -612,12 +642,12 @@ bool parse_flat_compact(
                     return false;
                 }
             }
-            if (arguments.contains(field)) {
+            if (arguments.contains(field) || bracketed_array_fields.count(field)) {
                 error = "flat DSL cannot mix a bracketed list with repeated lines for field: " + field;
                 return false;
             }
             bracketed_array_fields.insert(field);
-            arguments[field] = std::move(value);
+            if (!assign_flat_path(arguments, array_path, 0, value, error)) return false;
             continue;
         }
         std::vector<std::variant<std::string, size_t>> path;

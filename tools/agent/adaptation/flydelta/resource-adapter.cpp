@@ -6,10 +6,12 @@ bool daemon_flydelta_parse_context(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
         common_agent_generation_request & request,
-        std::string & error) {
+        std::string & error,
+        std::vector<common_chat_tool> * verification_tools) {
     json parsed;
     if (!daemon_flydelta_read_json(provider, reference, parsed, error)) return false;
     request = {};
+    if (verification_tools) verification_tools->clear();
     request.purpose = common_agent_generation_purpose::draft;
     request.options.n_predict = provider.n_predict;
     request.options.n_threads = provider.n_threads;
@@ -18,7 +20,8 @@ bool daemon_flydelta_parse_context(
             error = "FlyDelta context n_predict must be positive";
             return false;
         }
-        request.options.n_predict = std::min(provider.n_predict, parsed["n_predict"].get<int>());
+        const int requested = parsed["n_predict"].get<int>();
+        request.options.n_predict = provider.n_predict > 0 ? std::min(provider.n_predict, requested) : requested;
     }
     try {
         if (parsed.contains("messages")) {
@@ -46,8 +49,12 @@ bool daemon_flydelta_parse_context(
     // schema from prose.  Accept the OpenAI-compatible shape emitted by the
     // catalog/provider and retain the optional result contract for host-side
     // consumers.
-    if (parsed.contains("tools")) {
-        const auto & tools = parsed.at("tools");
+    if (parsed.contains("tools") && parsed.contains("model_tools")) {
+        error = "FlyDelta context must not mix native tools and verification-only model_tools";
+        return false;
+    }
+    if (parsed.contains("tools") || parsed.contains("model_tools")) {
+        const auto & tools = parsed.contains("tools") ? parsed.at("tools") : parsed.at("model_tools");
         if (!tools.is_array() || tools.empty() || tools.size() > 128) {
             error = "FlyDelta context tools must be a bounded non-empty array";
             return false;
@@ -121,6 +128,10 @@ bool daemon_flydelta_parse_context(
             return false;
         }
     }
+    if (verification_tools) *verification_tools = request.tools;
+    // Textual contracts already carry their rendered tool view in messages.
+    // Retain schemas for verification without forcing a native tool grammar.
+    if (parsed.contains("model_tools")) request.tools.clear();
     if (parsed.contains("tool_choice")) {
         if (!parsed.at("tool_choice").is_string()) {
             error = "FlyDelta context tool_choice must be a string";
@@ -160,6 +171,34 @@ bool daemon_flydelta_parse_directions(
         const std::string & reference,
         std::vector<common_flydelta_basis_direction> & directions,
         std::string & error) {
+    {
+        std::lock_guard<std::mutex> lock(provider.factorized_direction_mutex);
+        const auto found = provider.factorized_directions.find(reference);
+        if (found != provider.factorized_directions.end()) {
+            const auto & material = found->second;
+            if (!material.basis || material.basis->vectors.size() != material.normalized_coefficients.size()) {
+                error = "FlyDelta factorized diagnostic direction has invalid shape";
+                return false;
+            }
+            if (!common_flydelta_low_rank_basis_validate(*material.basis, 16, error)) return false;
+            for (const auto coefficient : material.normalized_coefficients) {
+                if (!std::isfinite(coefficient)) {
+                    error = "FlyDelta factorized diagnostic coefficients are not finite";
+                    return false;
+                }
+            }
+            common_flydelta_basis_direction direction;
+            direction.layer_index = material.basis->layer_index;
+            direction.values.assign(material.basis->dimension, 0.0f);
+            for (size_t rank = 0; rank < material.basis->vectors.size(); ++rank) {
+                for (size_t i = 0; i < direction.values.size(); ++i) {
+                    direction.values[i] += material.basis->vectors[rank][i] * material.normalized_coefficients[rank];
+                }
+            }
+            directions = {std::move(direction)};
+            return true;
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(provider.composed_direction_mutex);
         const auto composed = provider.composed_directions.find(reference);
@@ -339,6 +378,7 @@ bool daemon_flydelta_parse_behavior_delta(
         else if (source == "procedure_blueprint") delta.source = common_adaptation_evidence_source::procedure_blueprint;
         else if (source == "user_correction") delta.source = common_adaptation_evidence_source::user_correction;
         else if (source == "user_taught_concept") delta.source = common_adaptation_evidence_source::user_taught_concept;
+        else if (source == "semi_oracle_preference") delta.source = common_adaptation_evidence_source::semi_oracle_preference;
         else {
             error = "FlyDelta behavior-delta source is unsupported";
             return false;
@@ -643,6 +683,7 @@ bool daemon_flydelta_register_composed_directions(
         std::string & reference,
         std::string & error) {
     error.clear();
+    const std::string parent_ref = source_ref; // output may alias the source argument
     if (directions.empty() || directions.size() > 64 || derivation.empty()) {
         error = "FlyDelta composed direction artifact is invalid";
         return false;
@@ -655,7 +696,7 @@ bool daemon_flydelta_register_composed_directions(
         serialized["composition_kind"] = "paired_prefer_avoid";
         serialized["allow_duplicate_layers"] = true;
     }
-    std::string identity = source_ref + "\n" + derivation;
+    std::string identity = parent_ref + "\n" + derivation;
     for (const auto & direction : directions) {
         if (direction.layer_index < 1 || direction.values.size() != provider->model_n_embd) {
             error = "FlyDelta composed direction artifact has an invalid layer or dimension";
@@ -665,9 +706,8 @@ bool daemon_flydelta_register_composed_directions(
             {"layer_index", static_cast<uint32_t>(direction.layer_index)},
             {"values", direction.values},
         });
-        identity += "\n" + std::to_string(direction.layer_index);
-        for (const float value : direction.values) identity += ":" + std::to_string(value);
     }
+    identity += "\n" + serialized.dump();
     reference = "flydelta://runtime/composed/" +
         hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
     if (provider->resources != nullptr) {
@@ -687,7 +727,7 @@ bool daemon_flydelta_register_composed_directions(
         request.metadata.content_summary =
             "Durable normalized composed FlyDelta direction for a resumed bounded slice.";
         request.metadata.processing_cache_key = reference;
-        request.lineage.parent_uri = source_ref;
+        request.lineage.parent_uri = parent_ref;
         request.lineage.chunk_count = 1;
         request.lineage.chunk_index = 0;
         request.lineage.derivation = derivation;
@@ -728,11 +768,11 @@ bool daemon_flydelta_register_composed_direction(
             error = "FlyDelta composed coefficient direction contains invalid values";
             return false;
         }
-        identity += "\n" + std::to_string(coefficients[index]);
         for (size_t value = 0; value < basis.dimension; ++value) {
             values[value] += coefficients[index] * basis.vectors[index][value];
         }
     }
+    identity += "\n" + json(coefficients).dump();
     for (const float value : values) squared += static_cast<double>(value) * value;
     if (!std::isfinite(squared) || squared <= 0.0) {
         error = "FlyDelta composed coefficient direction has zero norm";

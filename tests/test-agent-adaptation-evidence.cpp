@@ -36,6 +36,9 @@ int main() {
     assert(common_adaptation_evidence_source_for_signal(
         common_learning_signal_type::research_verification).value() ==
         common_adaptation_evidence_source::research_alternative);
+    assert(common_adaptation_evidence_source_for_signal(
+        common_learning_signal_type::semi_oracle_preference).value() ==
+        common_adaptation_evidence_source::semi_oracle_preference);
     assert(decoded.cause == common_learning_cause::model_behavior);
     assert(decoded.transaction_ids.size() == 2);
     auto missing_key = encoded;

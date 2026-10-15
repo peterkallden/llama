@@ -254,6 +254,27 @@ void test_flat_paths_and_multiline_plan() {
     assert(nested_args["operations"][0]["column"] == "amount");
 }
 
+void test_nested_scalar_lists() {
+    const common_chat_tool tool{"nested.lists", "Nested lists.",
+        R"json({"type":"object","properties":{"operations":{"type":"array","items":{"type":"object","properties":{"values":{"type":"array","items":{"type":"string"}},"value":{},"column":{"type":"string"}}}}}})json",
+        "{}"};
+    const std::vector<common_chat_tool> tools{tool};
+    common_agent_tool_call call;
+    std::string error;
+    assert(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! nested.lists\noperations[0].values: [north, east]\noperations[0].value: [10, 11]",
+        tools, call, error));
+    const auto arguments = nlohmann::json::parse(call.arguments_json);
+    assert(arguments["operations"][0]["values"] == nlohmann::json::array({"north", "east"}));
+    assert(arguments["operations"][0]["value"] == nlohmann::json::array({10, 11}));
+    assert(!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! nested.lists\noperations[0].column: [amount]", tools, call, error));
+    assert(!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! nested.lists\noperations[0].missing: [amount]", tools, call, error));
+    assert(!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! nested.lists\noperations[0].value: [10]\noperations[0].value: [11]", tools, call, error));
+}
+
 void test_nested_arguments_and_multistep_plan() {
     const std::string call_text =
         R"(open! data.aggregate dataset=$inspect.dataset measures=[{function=sum; field="amount"}, {function=count; field="region"}] filter={field=region; op=eq; value="north"})";
@@ -357,6 +378,7 @@ int main() {
     test_v1_schema_boundary_and_rendering();
     test_schema_aware_flat_dsl_and_named_slots();
     test_flat_paths_and_multiline_plan();
+    test_nested_scalar_lists();
     test_nested_arguments_and_multistep_plan();
     test_invalid_compact_output();
     test_compact_single_workflow_action();

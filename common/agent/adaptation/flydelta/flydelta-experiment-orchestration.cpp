@@ -118,6 +118,7 @@ bool common_flydelta_select_search_continuation(
                 continuation.region = trial.candidate;
                 continuation.search_score = trial.search_score;
                 continuation.host_helped = helped;
+                continuation.intervention_ref = direction.intervention_ref;
             }
         }
     }
@@ -140,7 +141,7 @@ bool common_flydelta_plan_search_continuation(
         std::string & error) {
     error.clear();
     plan = {};
-    if (continuation.schema_version != 1 || continuation.region.layer_indices.empty() ||
+    if (continuation.schema_version != 1 || continuation.intervention_ref.size() > 512 || continuation.region.layer_indices.empty() ||
             continuation.region.anchor_layer_index == 0 || !finite(continuation.search_score) ||
             !valid_depth(evidence_depth)) {
         error = "FlyDelta continuation or evidence depth is invalid";

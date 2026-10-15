@@ -21,6 +21,7 @@ std::optional<common_adaptation_evidence_source> parse_source(const std::string 
         common_adaptation_evidence_source::procedure_blueprint,
         common_adaptation_evidence_source::user_correction,
         common_adaptation_evidence_source::user_taught_concept,
+        common_adaptation_evidence_source::semi_oracle_preference,
     };
     for (const auto source : sources) {
         if (value == common_adaptation_evidence_source_name(source)) return source;
@@ -51,6 +52,7 @@ const char * common_adaptation_evidence_source_name(
         case common_adaptation_evidence_source::procedure_blueprint: return "procedure_blueprint";
         case common_adaptation_evidence_source::user_correction: return "user_correction";
         case common_adaptation_evidence_source::user_taught_concept: return "user_taught_concept";
+        case common_adaptation_evidence_source::semi_oracle_preference: return "semi_oracle_preference";
     }
     return "tool_repair";
 }
@@ -82,6 +84,8 @@ common_adaptation_evidence_source_for_signal(
         case common_learning_signal_type::procedure_verification:
         case common_learning_signal_type::blueprint_verification:
             return common_adaptation_evidence_source::procedure_blueprint;
+        case common_learning_signal_type::semi_oracle_preference:
+            return common_adaptation_evidence_source::semi_oracle_preference;
     }
     return std::nullopt;
 }

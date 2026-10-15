@@ -266,7 +266,8 @@ bool selected_candidate_from_pipeline(
     descriptor.strategy_revision = synthesis.strategy_revision;
     descriptor.direction_kind = direction.direction.kind;
     descriptor.layer_index = layer_index;
-    descriptor.direction_ref = job.seed.candidate_ref;
+    descriptor.direction_ref = direction.intervention_ref.empty()
+        ? job.seed.candidate_ref : direction.intervention_ref;
     descriptor.source_material_ref = direction.direction.extraction_id.empty()
         ? (direction.direction.origin.empty()
             ? job.seed.evidence_ref : direction.direction.origin)

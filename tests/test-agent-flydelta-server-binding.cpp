@@ -24,6 +24,10 @@ int main() {
     options.fit_params = true;
     options.reserve_flydelta_workspace = true;
     CHECK(make_agent_server_context_params(options).n_gpu_layers == -1);
+    const auto fitted_params = make_agent_server_context_params(options);
+    CHECK(fitted_params.tensor_buft_overrides.size() >= llama_max_tensor_buft_overrides());
+    CHECK(fitted_params.tensor_buft_overrides.back().pattern == nullptr);
+    CHECK(fitted_params.tensor_buft_overrides.back().buft == nullptr);
 
     // An explicit smaller layer count remains an explicit caller choice.
     options.n_gpu_layers = 20;

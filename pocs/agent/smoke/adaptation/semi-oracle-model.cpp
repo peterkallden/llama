@@ -1,6 +1,7 @@
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-store.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/trainer-protocol.h"
 #include "agent/agent-inference.h"
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
@@ -19,6 +20,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -48,13 +50,47 @@ public:
     bool get_session_binding(const std::string & session,std::string & id,uint64_t & revision,bool & found,std::string &) const override {
         auto it=bindings.find(session);found=it!=bindings.end();if(found){id=it->second.first;revision=it->second.second;}return true;
     }
-    bool append_evaluation(const std::string &,const common_semi_oracle_result & value,std::string &) override {evaluations.push_back(value);return true;}
+    bool get_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            std::string & state,bool & found,std::string &) const override {
+        const auto it=game_states.find({session,ruleset,revision});found=it!=game_states.end();
+        if(found)state=it->second;else state.clear();return true;
+    }
+    bool put_session_game_state(const std::string & session,const std::string & ruleset,uint64_t revision,
+            const std::string & state,std::string &) override {
+        game_states[{session,ruleset,revision}]=state;return true;
+    }
+    bool append_evaluation(const std::string & id,const common_semi_oracle_result & value,std::string & error) override {
+        if (id.empty()) { error = "evaluation id is empty"; return false; }
+        evaluation_payloads[id] = ordered_json{
+            {"ruleset_id", value.ruleset_id},
+            {"ruleset_revision", value.ruleset_revision},
+            {"verdict", common_semi_oracle_verdict_name(value.verdict)},
+            {"level", common_semi_oracle_level_name(value.level)},
+            {"evaluator_ref", value.evaluator_ref},
+            {"evaluator_revision", value.evaluator_revision},
+            {"expansions", value.expansions},
+            {"depth_reached", value.depth_reached},
+            {"proof_json", value.proof_json},
+            {"counterexample_json", value.counterexample_json},
+            {"reason", value.reason},
+            {"guidance_ref", value.guidance_ref},
+        }.dump();
+        return true;
+    }
+    bool get_evaluation_payload(const std::string & id,std::string & payload,bool & found,std::string & error) const override {
+        const auto it = evaluation_payloads.find(id);
+        found = it != evaluation_payloads.end();
+        payload = found ? it->second : std::string();
+        if (!found) error = "evaluation payload not found";
+        return true;
+    }
     std::vector<std::string> list_host_rulesets(std::string &) const override {return hosts;}
 private:
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
+    std::map<std::tuple<std::string,std::string,uint64_t>,std::string> game_states;
     std::vector<std::string> hosts;
-    std::vector<common_semi_oracle_result> evaluations;
+    std::map<std::string,std::string> evaluation_payloads;
 };
 
 bool parse_args(int argc, char ** argv, options & out) {
@@ -169,14 +205,45 @@ bool run_case(common_agent_inference & inference, const options & config,
             if(!args.contains("action_dsl")||!args["action_dsl"].is_string())return common_tool_execution_result::failure("oracle.action.invalid",common_tool_failure_class::validation,false,"Action DSL is required.","missing action_dsl");
             common_semi_oracle_budget host_budget;host_budget.max_depth=8;host_budget.max_expansions=2000;
             std::string tool_error;
-            if(!oracle_tools.verify_action(current_state,args["action_dsl"].get<std::string>(),level,goal,host_budget,{},last_result,tool_error))return common_tool_execution_result::failure("oracle.action.failed",common_tool_failure_class::validation,false,"Action could not be verified.",tool_error);
-            const auto proof=ordered_json::parse(last_result.proof_json,nullptr,false);const auto counterexample=ordered_json::parse(last_result.counterexample_json,nullptr,false);
-            return common_tool_execution_result::success(ordered_json{{"verdict",common_semi_oracle_verdict_name(last_result.verdict)},{"ruleset_id",last_result.ruleset_id},{"revision",last_result.ruleset_revision},{"evaluator",last_result.evaluator_ref+"@"+last_result.evaluator_revision},{"level",common_semi_oracle_level_name(last_result.level)},{"proof",proof.is_object()?proof:ordered_json::object()},{"counterexample",counterexample.is_object()?counterexample:ordered_json::object()},{"reason",last_result.reason}}.dump());
+            const auto action_dsl = args["action_dsl"].get<std::string>();
+            std::string state_before, state_after;
+            if (!oracle_tools.verify_active_action(action_dsl, last_result,
+                    state_before, state_after, tool_error)) {
+                return common_tool_execution_result::failure("oracle.action.failed",
+                    common_tool_failure_class::validation, false,
+                    "Action could not be verified.", tool_error);
+            }
+            current_state = state_before;
+            const auto proof=ordered_json::parse(last_result.proof_json,nullptr,false);
+            const auto counterexample=ordered_json::parse(last_result.counterexample_json,nullptr,false);
+            return common_tool_execution_result::success(ordered_json{
+                {"verdict",common_semi_oracle_verdict_name(last_result.verdict)},
+                {"ruleset_id",last_result.ruleset_id},
+                {"revision",last_result.ruleset_revision},
+                {"evaluator",last_result.evaluator_ref+"@"+last_result.evaluator_revision},
+                {"level",common_semi_oracle_level_name(last_result.level)},
+                {"proof",proof.is_object()?proof:ordered_json::object()},
+                {"counterexample",counterexample.is_object()?counterexample:ordered_json::object()},
+                {"reason",last_result.reason}}.dump());
+        }
+        if(tool_name=="oracle.goal.search") {
+            std::string tool_error;
+            if(!args.empty()||!oracle_tools.search_active_algebra_goal(last_result,tool_error))
+                return common_tool_execution_result::failure("oracle.goal.search_failed",
+                    common_tool_failure_class::validation,false,
+                    "Host-owned algebra goal search failed.",tool_error.empty()?"arguments must be empty":tool_error);
+            const auto proof=ordered_json::parse(last_result.proof_json,nullptr,false);
+            return common_tool_execution_result::success(ordered_json{{"verdict",common_semi_oracle_verdict_name(last_result.verdict)},
+                {"ruleset_id",last_result.ruleset_id},{"revision",last_result.ruleset_revision},
+                {"evaluator",last_result.evaluator_ref},{"evaluator_revision",last_result.evaluator_revision},
+                {"level",common_semi_oracle_level_name(last_result.level)},
+                {"expansions",last_result.expansions},{"depth_reached",last_result.depth_reached},
+                {"proof",proof.is_object()?proof:ordered_json::object()},{"reason",last_result.reason}}.dump());
         }
         return common_tool_execution_result::failure("oracle.unknown_operation",common_tool_failure_class::validation,false,"Unknown semi-oracle operation.",tool_name);
     };
     common_tool_registry registry;common_tool_adapter_result adapter_result;
-    if(!common_register_native_tool_adapters(catalog,"semi-oracle",bindings,registry,adapter_result,error)||adapter_result.registered.size()!=2){std::cout<<"TOOL REGISTRATION: "<<error<<"\n";return false;}
+    if(!common_register_native_tool_adapters(catalog,"semi-oracle",bindings,registry,adapter_result,error)||adapter_result.registered.size()!=3){std::cout<<"TOOL REGISTRATION: "<<error<<"\n";return false;}
     common_semi_oracle_ruleset ruleset;
     common_agent_tool_call define_call{"oracle.ruleset.define",ordered_json{{"ruleset_dsl",rules.content}}.dump()};
     const auto define_result=registry.execute(define_call);
@@ -186,6 +253,13 @@ bool run_case(common_agent_inference & inference, const options & config,
         return false;
     }
     bool found=false;if(!oracle_tools.active_ruleset(ruleset,found,error)||!found){std::cout<<"RULESET HOST WRAPPER: "<<error<<"\n";return false;}
+    {
+        // The fixture state is host-seeded; the model never supplies runtime state.
+        if (!oracle_tools.initialize_active_state(state_json, true, error)) {
+            std::cout << "HOST STATE FIXTURE: " << error << "\n";
+            return false;
+        }
+    }
     std::cout<<"ORACLE RULESET NATIVE TOOL RESULT="<<define_result.output<<"\n";
     std::cout << "RULESET HOST VALIDATION: active id=" << ruleset.id
               << " revision=" << ruleset.revision
@@ -281,6 +355,64 @@ bool run_case(common_agent_inference & inference, const options & config,
             {"evaluator", "memoized_minimax_v1"},
             {"budget_expansions", 100000},
         }.dump() << '\n';
+        if (static_cast<int>(best_value->value) > static_cast<int>(played_value->value)) {
+            common_training_candidate dpo_candidate;
+            common_learning_corpus_revision dpo_corpus;
+            common_learning_corpus_policy dpo_policy;
+            dpo_policy.objective = common_learning_objective::dpo;
+            dpo_policy.redaction_policy_id = "stub:semi-oracle-smoke";
+            dpo_policy.allow_host_verified_dpo_pairs = true;
+            const std::string approved_prompt = action_request + "\n" + model_state;
+            if (!oracle_tools.make_dpo_candidate(*best_value, *played_value,
+                    approved_prompt, dpo_policy.redaction_policy_id,
+                    "smoke fixture contains no user-provided content", true,
+                    dpo_candidate, error) ||
+                    !common_learning_build_corpus({dpo_candidate}, dpo_policy, dpo_corpus, error)) {
+                std::cout << "SEMI-ORACLE DPO PROJECTION=failed: " << error << '\n';
+                return false;
+            }
+            common_learning_training_job training_job;
+            if (!common_learning_make_training_job(dpo_corpus,
+                    "base:" + std::filesystem::path(config.model).filename().string(),
+                    "semi-oracle-dpo-smoke", "trainer-protocol-only", "smoke-v1",
+                    training_job, error)) {
+                std::cout << "SEMI-ORACLE DPO TRAINER CONTRACT=failed: " << error << '\n';
+                return false;
+            }
+            std::cout << "SEMI-ORACLE DPO PROJECTION=" << ordered_json{
+                {"source", "observed_qwen_move_vs_same_state_minimax"},
+                {"chosen", dpo_candidate.approved_target},
+                {"rejected", dpo_candidate.rejected_target},
+                {"ruleset_id", ruleset.id},
+                {"ruleset_revision", ruleset.revision},
+                {"split_group_key", dpo_candidate.split_group_key},
+                {"corpus_objective", common_learning_objective_name(dpo_corpus.objective)},
+                {"trainer_job_objective", common_learning_objective_name(training_job.objective)},
+                {"offline_only", true},
+                {"adapter_trained", false},
+            }.dump() << '\n';
+            std::cout.flush();
+        } else {
+            std::cout << "SEMI-ORACLE DPO PROJECTION=not-created: observed action is not strictly worse than minimax best\n";
+            std::cout.flush();
+        }
+    }
+    if(domain=="linear_algebra") {
+        const auto search_result=registry.execute({"oracle.goal.search","{}"});
+        if(!search_result.ok) {
+            error=search_result.raw_diagnostic.empty()?search_result.safe_summary:search_result.raw_diagnostic;
+            std::cout<<"ALGEBRA A* GOAL SEARCH: failed: "<<error<<"\n";
+            return false;
+        }
+        const auto search_output=ordered_json::parse(search_result.output,nullptr,false);
+        std::cout<<"ALGEBRA A* GOAL SEARCH RESULT="
+                 <<(search_output.is_object()?search_output.dump(2):search_result.output)<<"\n";
+        if(!search_output.is_object()||search_output.value("verdict",std::string())!="SATISFIED"||
+                !search_output.contains("proof")||!search_output["proof"].is_object()||
+                search_output["proof"].value("algorithm",std::string())!="bounded_astar_v1") {
+            std::cout<<"ALGEBRA A* GOAL SEARCH: missing verified path proof\n";
+            return false;
+        }
     }
     // A legal suboptimal game move is a useful baseline observation, not a
     // broken runtime flow. Preserve its mismatch/minimax trace for comparison;

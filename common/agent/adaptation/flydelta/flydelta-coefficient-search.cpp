@@ -1,4 +1,62 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
+#include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
+
+void common_flydelta_coefficient_trial_set_observation(
+        common_flydelta_coefficient_trial & target,
+        const common_flydelta_counterfactual_trial & baseline,
+        const common_flydelta_counterfactual_trial & candidate) {
+    target.arm_id = candidate.arm_id;
+    target.intervention_ref = candidate.intervention_ref;
+    target.verifier_reason = candidate.verifier_reason;
+    target.observed_decision_summary = candidate.observed_decision_summary;
+    target.expected_decision_summary = candidate.expected_decision_summary;
+    target.evidence_ref = candidate.evidence_ref;
+    target.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
+    target.quality_delta = candidate.quality - baseline.quality;
+    target.executed = candidate.executed;
+    target.host_evaluated = baseline.host_evaluated && candidate.host_evaluated;
+    target.verifier_known = baseline.verifier_known && candidate.verifier_known;
+}
+
+bool common_flydelta_coefficient_trial_to_region(
+        const common_flydelta_coefficient_trial & source,
+        const common_flydelta_low_rank_basis & basis,
+        common_flydelta_intervention_region_trial & target,
+        std::string & error) {
+    target = {};
+    target.arm_id = source.arm_id;
+    target.intervention_ref = source.intervention_ref;
+    target.coefficients = source.coefficients;
+    target.verifier_reason = source.verifier_reason;
+    target.observed_decision_summary = source.observed_decision_summary;
+    target.expected_decision_summary = source.expected_decision_summary;
+    target.evidence_ref = source.evidence_ref;
+    target.candidate.layer_indices = {static_cast<uint32_t>(basis.layer_index)};
+    target.candidate.anchor_layer_index = static_cast<uint32_t>(basis.layer_index);
+    target.candidate.total_scale = source.executed_strength;
+    target.candidate.per_layer_scale = source.executed_strength;
+    target.requested_total_scale = source.requested_strength;
+    target.executed_total_scale = source.executed_strength;
+    target.dose_action = source.dose_action;
+    target.relative_dose = source.relative_dose;
+    target.dose_evaluated = source.dose_evaluated;
+    target.dose_safety_limited = source.dose_safety_limited;
+    target.dose_reason = source.dose_reason;
+    target.outcome = source.outcome;
+    target.quality_delta = source.quality_delta;
+    target.margin = source.margin;
+    target.margin_comparison = source.margin_comparison;
+    target.executed = source.executed;
+    target.host_evaluated = source.host_evaluated;
+    target.verifier_known = source.verifier_known;
+    target.geometry_available = source.geometry_available;
+    target.geometry = source.geometry;
+    target.search_score = source.search_fitness;
+    target.promising = source.outcome == common_flydelta_counterfactual_outcome::helped || source.search_fitness > 0;
+    target.safe_to_continue = source.outcome != common_flydelta_counterfactual_outcome::harmed &&
+        (!source.geometry_available || (source.geometry.shift_norm <= 1 && source.geometry.leakage <= 1));
+    return common_flydelta_intervention_region_trial_validate(target, error);
+}
 
 bool common_flydelta_append_coefficient_search_lifecycle(
         common_learning_lifecycle_store & store,
@@ -22,7 +80,9 @@ bool common_flydelta_append_coefficient_search_lifecycle(
         common_flydelta_coefficient_search_strategy_name(config.strategy);
     for (size_t index = 0; index < trials.size(); ++index) {
         const auto & trial = trials[index];
-        if (!trial.executed) continue;
+        // Diagnostics remain in experiment state/trace, not the journal of
+        // host-evaluated lifecycle observations.
+        if (!trial.executed || !trial.host_evaluated) continue;
         common_flydelta_search_observation observation;
         observation.experiment_id = fixture.id;
         observation.candidate_id = experimental_artifact_id + "/coefficient/" +
@@ -32,7 +92,7 @@ bool common_flydelta_append_coefficient_search_lifecycle(
         observation.fixture_baseline_ref = fixture.id;
         observation.surface_parent_best_ref = experimental_artifact_id;
         observation.outcome = trial.outcome;
-        observation.host_evaluated = trial.executed;
+        observation.host_evaluated = trial.host_evaluated;
         observation.verifier_known = trial.verifier_known;
         observation.diagnostics_available = trial.geometry_available;
         if (trial.geometry_available) {

@@ -75,6 +75,7 @@ static bool signal_from_json(const json & value, common_learning_signal & signal
     else if (type == "research_verification") signal.type = common_learning_signal_type::research_verification;
     else if (type == "procedure_verification") signal.type = common_learning_signal_type::procedure_verification;
     else if (type == "blueprint_verification") signal.type = common_learning_signal_type::blueprint_verification;
+    else if (type == "semi_oracle_preference") signal.type = common_learning_signal_type::semi_oracle_preference;
     else { error = "learning transaction contains unknown signal type"; return false; }
     signal.plan_id = value.value("plan_id", "");
     signal.step_id = value.value("step_id", "");
@@ -359,6 +360,10 @@ bool common_learning_transaction_observer::observe(
     observation.recovery_of_signal_id = common_learning_recovery_reference(result);
     for (const auto & signal : observation.signals) {
         if (signal.type == common_learning_signal_type::successful_recovery) observation.verification = common_learning_verification::host_verified;
+        if (signal.type == common_learning_signal_type::semi_oracle_preference) {
+            observation.verification = common_learning_verification::host_verified;
+            observation.cause = common_learning_cause::model_behavior;
+        }
         if (signal.type == common_learning_signal_type::procedure_verification ||
                 signal.type == common_learning_signal_type::blueprint_verification) {
             observation.verification = common_learning_verification::host_verified;
