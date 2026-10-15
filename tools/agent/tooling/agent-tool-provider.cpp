@@ -892,7 +892,8 @@ private:
                 "MCP tool arguments do not satisfy the registered contract.",
                 error);
         }
-        if (!client.call_tool(execution_context, it->second, normalized_arguments, execution, error)) {
+        if (!client.call_agent_tool(execution_context, it->second, call,
+                normalized_arguments, execution, error)) {
             if (execution_context.execution_control.should_stop()) {
                 auto result = make_execution_control_failure_result(execution_context, call);
                 error = result.raw_diagnostic;

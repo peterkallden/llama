@@ -105,6 +105,18 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.candidate_json_pointer = source.value("candidates", std::string{});
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
+        if (source.contains("max_pages")) {
+            if (!source["max_pages"].is_number_integer()) {
+                error = "workflow transition max_pages must be an integer";
+                return false;
+            }
+            const int max_pages = source["max_pages"].get<int>();
+            if (max_pages < 2 || max_pages > 5) {
+                error = "workflow transition max_pages must be between 2 and 5";
+                return false;
+            }
+            transition.max_pages = static_cast<uint8_t>(max_pages);
+        }
         if (source.contains("choices")) {
             if (!source["choices"].is_array()) { error = "workflow transition choices must be an array"; return false; }
             for (const auto & choice_source : source["choices"]) {
@@ -217,6 +229,12 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 if (transition.kind == common_plan_workflow_transition_kind::tool &&
                         (!transition.choices.empty() || !transition.candidate_json_pointer.empty())) {
                     error = "tool transitions cannot declare model choices"; return false;
+                }
+                if (transition.max_pages > 0 &&
+                        (transition.kind != common_plan_workflow_transition_kind::tool ||
+                         transition.max_pages < 2 || transition.max_pages > 5)) {
+                    error = "workflow pagination requires a tool transition and a page limit from 2 to 5";
+                    return false;
                 }
                 std::set<std::string> choice_ids;
                 for (const auto & choice : transition.choices) {
@@ -401,6 +419,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                     }
                 }
                 if (transition.optional) item["optional"] = true;
+                if (transition.max_pages > 0) item["max_pages"] = transition.max_pages;
                 value["transitions"].push_back(std::move(item));
             }
         }

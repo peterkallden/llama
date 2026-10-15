@@ -33,6 +33,19 @@ public:
     }
 };
 
+class recording_page_runtime final : public test_tool_runtime_registry_adapter {
+public:
+    explicit recording_page_runtime(const common_tool_registry & registry)
+        : test_tool_runtime_registry_adapter(registry) {}
+
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        page_limits.push_back(call.workflow_page_limit);
+        return common_tool_execution_result::success(R"({"ok":true})");
+    }
+
+    mutable std::vector<uint8_t> page_limits;
+};
+
 class planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
@@ -82,6 +95,56 @@ public:
         proposal.plan.active_step_id = "lookup";
         proposal.plan.status = common_plan_status::active;
         return proposal;
+    }
+};
+
+class paginated_workflow_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "workflow-page-directive";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.selected_workflow = common_plan_workflow_binding{"workflow://test/search", "v1"};
+        common_plan_workflow_definition workflow;
+        workflow.workflow_ref = "workflow://test/search";
+        workflow.workflow_revision = "v1";
+        workflow.family = "test";
+        workflow.graph_revision = "v1";
+        workflow.start_state = "start";
+        workflow.terminal_states = {"done"};
+        common_plan_workflow_transition transition;
+        transition.id = "lookup-page";
+        transition.from_state = "start";
+        transition.to_state = "done";
+        transition.tool_name = "lookup";
+        transition.max_pages = 4;
+        workflow.transitions.push_back(transition);
+        proposal.plan.workflow_definition = workflow;
+        common_plan_step lookup{"lookup-step", "Lookup", "Use the bounded workflow collection"};
+        lookup.status = common_plan_step_status::active;
+        lookup.selected_tool = "lookup";
+        lookup.tool_call = common_plan_tool_call{"lookup", R"({"id":"first"})"};
+        lookup.semantic_alias = "workflow-transition:lookup-page";
+        common_plan_step answer{"answer", "Answer", "Return the result"};
+        answer.depends_on = {"lookup-step"};
+        proposal.plan.steps = {lookup, answer};
+        proposal.plan.active_step_id = "lookup-step";
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
+class single_observation_reflector final : public common_reflection_engine {
+public:
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
+            const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        return result;
     }
 };
 
@@ -151,6 +214,25 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+
+    // Pagination remains host-owned: only the matching workflow transition
+    // attaches its bounded page limit to the provider call.
+    common_plan_in_memory_store paginated_store;
+    assert(paginated_store.open("", error));
+    paginated_workflow_planner paginated_planner;
+    executor paginated_executor;
+    single_observation_reflector paginated_reflector;
+    recording_page_runtime paginated_runtime(registry);
+    common_agent_runtime paginated_agent_runtime(paginated_store, paginated_planner,
+        paginated_executor, paginated_reflector, &paginated_runtime);
+    common_agent_request paginated_request;
+    paginated_request.prompt = "search through the bounded OpenAlex workflow";
+    paginated_request.max_iterations = 2;
+    paginated_request.max_reflection_rounds = 2;
+    paginated_request.max_tool_batches = 2;
+    const auto paginated_result = paginated_agent_runtime.run(paginated_request);
+    assert(paginated_result.error.empty());
+    assert(paginated_runtime.page_limits == std::vector<uint8_t>{4});
 
     // A large structured result remains valid JSON when it crosses the
     // model-observation budget.  Raw byte truncation used to make this

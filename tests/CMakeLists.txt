@@ -482,6 +482,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-plan-cozo.cpp
         test-reflection-json.cpp
         test-tool-adapters.cpp
+        test-agent-openapi-provider.cpp
         test-tool-catalog.cpp
         test-tool-chat-bridge.cpp
         test-tool-registry.cpp
@@ -511,6 +512,10 @@ test-agent-flydelta-alpha-response-search.cpp
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_NAME STREQUAL "test-agent-openapi-provider")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support llama-agent-tool-provider)
+        endif()
         if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp")
             target_include_directories(${TEST_NAME} PRIVATE ${COZO_INCLUDE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE ${COZO_LIBRARY})

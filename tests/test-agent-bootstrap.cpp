@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v11");
+        checked_in_starter.version == "v12");
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));
@@ -258,9 +258,24 @@ int main() {
     assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
     assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
-    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v2");
+    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v3");
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
+    const auto roundtrip_search_workflow = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://openalex/work-search";
+        });
+    assert(roundtrip_search_workflow != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_search_workflow->definition.transitions.front().max_pages == 5);
+    auto over_budget_package_json = starter_file_text.str();
+    const auto page_limit_position = over_budget_package_json.find("\"max_pages\": 5");
+    assert(page_limit_position != std::string::npos);
+    over_budget_package_json.replace(page_limit_position,
+        std::string("\"max_pages\": 5").size(), "\"max_pages\": 6");
+    common_agent_bootstrap_package over_budget_package;
+    assert(!common_agent_package_parse_json(
+        over_budget_package_json, over_budget_package, error));
     assert(checked_in_starter.procedures.size() == 15 &&
         checked_in_starter.blueprints.size() == 13);
     assert(checked_in_starter.workflows.size() == 14);
@@ -297,7 +312,7 @@ int main() {
         depth_choice->choices[0].id == "answer_from_abstract" &&
         depth_choice->choices[1].id == "fetch_full_text" &&
         depth_choice->choices[1].required_observation_json_pointers ==
-            std::vector<std::string>({"/result/best_oa_location/pdf_url"}));
+            std::vector<std::string>({"/result/full_text_url"}));
     const auto fetch_transition = std::find_if(
         checked_in_openalex_full_text_workflow->definition.transitions.begin(),
         checked_in_openalex_full_text_workflow->definition.transitions.end(),
@@ -307,7 +322,7 @@ int main() {
         fetch_transition->argument_bindings.front().source_transition_id == "get-work" &&
         fetch_transition->argument_bindings.front().target_json_pointer == "/url" &&
         fetch_transition->argument_bindings.front().source_json_pointer ==
-            "/result/best_oa_location/pdf_url");
+            "/result/full_text_url");
     const auto checked_in_openalex_entity_workflow = std::find_if(
         checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
         [](const auto & workflow) {
@@ -400,7 +415,11 @@ int main() {
         std::vector<std::string>({"resource.read", "artifact.export"}));
     assert(openalex_search_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
-    assert(openalex_search_workflow->definition.workflow_revision == "v2");
+    assert(openalex_search_workflow->definition.workflow_revision == "v3");
+    assert(openalex_search_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    assert(openalex_search_workflow->definition.transitions.size() == 1 &&
+        openalex_search_workflow->definition.transitions.front().max_pages == 5);
     assert(openalex_search_workflow->definition.continuation_workflow_targets ==
         std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),

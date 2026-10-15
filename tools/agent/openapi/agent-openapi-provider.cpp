@@ -1,10 +1,14 @@
 #include "agent-openapi-provider.h"
+#include "agent-openapi-result-projection.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include <set>
 
 namespace {
+
+using json = nlohmann::ordered_json;
 
 // An OpenAPI document can declare a very wide response object.  The full
 // schema remains authoritative for host validation and result handling, but
@@ -99,6 +103,22 @@ public:
     bool call_tool(const agent_tool_context & context, const mcp_agent_tool_definition & tool,
                    const std::string & arguments_json, mcp_agent_tool_call_result & result,
                    std::string & error) override {
+        return call_operation(context, tool, arguments_json, 0, result, error);
+    }
+
+    bool call_agent_tool(const agent_tool_context & context,
+            const mcp_agent_tool_definition & tool, const agent_tool_call & call,
+            const std::string & normalized_arguments_json,
+            mcp_agent_tool_call_result & result, std::string & error) override {
+        return call_operation(context, tool, normalized_arguments_json,
+            call.workflow_page_limit, result, error);
+    }
+
+private:
+    bool call_operation(const agent_tool_context & context,
+            const mcp_agent_tool_definition & tool, const std::string & arguments_json,
+            uint8_t requested_page_limit, mcp_agent_tool_call_result & result,
+            std::string & error) {
         const auto it = std::find_if(catalog.operations.begin(), catalog.operations.end(),
             [&](const agent_openapi_operation & operation) { return operation.operation_id == tool.name; });
         if (it == catalog.operations.end()) {
@@ -106,8 +126,55 @@ public:
             return false;
         }
         agent_openapi_execution_result execution;
-        if (!executor || !executor(context, *it, arguments_json, execution, error)) return false;
+        auto arguments = json::parse(arguments_json, nullptr, false);
+        if (!executor || !arguments.is_object() ||
+                !executor(context, *it, arguments_json, execution, error)) return false;
+        if (execution.ok && requested_page_limit > 1 &&
+                it->paging.kind == agent_openapi_paging_kind::cursor &&
+                !it->paging.cursor_parameter.empty()) {
+            execution = collect_cursor_pages(context, *it, arguments,
+                std::min<uint8_t>(requested_page_limit, 5), std::move(execution));
+        }
         if (materializer && !materializer(context, *it, arguments_json, execution, error)) return false;
+        execution.structured_content_json = agent_openapi_project_model_result(
+            execution.structured_content_json, catalog.prefix == "openalex");
+        if (requested_page_limit > 1 && !execution.resource_refs.empty()) {
+            const auto body = json::parse(execution.structured_content_json, nullptr, false);
+            if (body.is_object() && body.contains("pagination") &&
+                    body["pagination"].is_object() && body.contains("results") &&
+                    body["results"].is_array()) {
+                json candidates = json::array();
+                const size_t preview_count = std::min<size_t>(10, body["results"].size());
+                for (size_t index = 0; index < preview_count; ++index) {
+                    const auto & item = body["results"][index];
+                    json candidate = json::object();
+                    for (const char * key : {"id", "display_name", "title", "publication_year", "doi",
+                            "full_text_url", "full_text_url_source"}) {
+                        if (item.is_object() && item.contains(key)) candidate[key] = item[key];
+                    }
+                    if (item.is_object() && item.contains("abstract_text") &&
+                            item["abstract_text"].is_string()) {
+                        const auto & abstract = item["abstract_text"].get_ref<const std::string &>();
+                        size_t preview_bytes = std::min<size_t>(1200, abstract.size());
+                        if (abstract.size() > preview_bytes) {
+                            while (preview_bytes > 0 &&
+                                    (static_cast<unsigned char>(abstract[preview_bytes]) & 0xc0) == 0x80) {
+                                --preview_bytes;
+                            }
+                        }
+                        candidate["abstract_text"] = abstract.substr(0, preview_bytes);
+                        if (abstract.size() > preview_bytes) candidate["abstract_truncated"] = true;
+                    }
+                    candidates.push_back(std::move(candidate));
+                }
+                execution.structured_content_json = json{
+                    {"pagination", body["pagination"]},
+                    {"result_count", body["results"].size()},
+                    {"candidates", std::move(candidates)},
+                    {"resource_ref", execution.resource_refs.front().uri},
+                }.dump();
+            }
+        }
         result.ok = execution.ok;
         result.structured_content_json = execution.structured_content_json;
         result.text_content = execution.text_content;
@@ -123,7 +190,103 @@ public:
         return true;
     }
 
-private:
+    agent_openapi_execution_result collect_cursor_pages(
+            const agent_tool_context & context,
+            const agent_openapi_operation & operation,
+            json arguments,
+            uint8_t page_limit,
+            agent_openapi_execution_result first) {
+        auto merged = json::parse(first.structured_content_json, nullptr, false);
+        if (!merged.is_object() || !merged.contains("results") || !merged["results"].is_array()) {
+            first.structured_content_json = partial_json(std::move(merged), 1, page_limit,
+                "cursor_response_missing_results");
+            return first;
+        }
+        size_t item_count = merged["results"].size();
+        uint8_t pages = 1;
+        std::set<std::string> seen_cursors;
+        json page_provenance = json::array();
+        page_provenance.push_back({{"page", 1},
+            {"cursor", arguments.contains(operation.paging.cursor_parameter)
+                ? arguments[operation.paging.cursor_parameter] : json(nullptr)},
+            {"http_status", first.http.status}, {"response_bytes", first.http.response_bytes}});
+        bool complete = false;
+        std::string stop_reason;
+        for (;;) {
+            const auto cursor = response_cursor(merged);
+            if (!cursor) { stop_reason = "cursor_unavailable"; break; }
+            if (cursor->empty()) { complete = true; break; }
+            if (pages >= page_limit) { stop_reason = "page_limit"; break; }
+            if (!seen_cursors.insert(*cursor).second) { stop_reason = "repeated_cursor"; break; }
+            arguments[operation.paging.cursor_parameter] = *cursor;
+            agent_openapi_execution_result page;
+            std::string page_error;
+            if (!executor(context, operation, arguments.dump(), page, page_error) || !page.ok) {
+                stop_reason = "page_request_failed";
+                first.http = page.http;
+                page_provenance.push_back({{"page", static_cast<unsigned>(pages + 1)},
+                    {"cursor", *cursor}, {"http_status", page.http.status},
+                    {"failure_code", page.failure_code}, {"retryable", page.retryable}});
+                const auto failure = json{{"http_status", page.http.status},
+                    {"failure_code", page.failure_code}, {"retryable", page.retryable},
+                    {"summary", page.safe_summary}};
+                merged["pagination"] = {{"pages_fetched", pages}, {"page_limit", page_limit},
+                    {"complete", false}, {"stop_reason", stop_reason},
+                    {"page_provenance", page_provenance}, {"page_error", failure}};
+                first.structured_content_json = merged.dump();
+                first.raw_diagnostic = page.raw_diagnostic.empty() ? page_error : page.raw_diagnostic;
+                // Keep already fetched evidence usable, but explicitly mark it
+                // partial and retain the failed HTTP status in the result.
+                first.ok = true;
+                return first;
+            }
+            auto page_json = json::parse(page.structured_content_json, nullptr, false);
+            if (!page_json.is_object() || !page_json.contains("results") ||
+                    !page_json["results"].is_array()) {
+                stop_reason = "cursor_response_missing_results";
+                break;
+            }
+            bool result_limit_reached = false;
+            for (auto & item : page_json["results"]) {
+                if (item_count >= 10000) { result_limit_reached = true; break; }
+                merged["results"].push_back(std::move(item));
+                ++item_count;
+            }
+            if (page_json.contains("meta")) merged["meta"] = page_json["meta"];
+            first.http = page.http;
+            ++pages;
+            page_provenance.push_back({{"page", pages}, {"cursor", *cursor},
+                {"http_status", page.http.status}, {"response_bytes", page.http.response_bytes}});
+            if (result_limit_reached) { stop_reason = "result_limit"; break; }
+        }
+        if (stop_reason.empty()) stop_reason = complete ? "exhausted" : "cursor_unavailable";
+        merged["pagination"] = {{"pages_fetched", pages}, {"page_limit", page_limit},
+            {"complete", complete}, {"stop_reason", stop_reason},
+            {"page_provenance", page_provenance}};
+        first.structured_content_json = merged.dump();
+        first.ok = true;
+        return first;
+    }
+
+    static std::optional<std::string> response_cursor(const json & value) {
+        const json * cursor = nullptr;
+        if (value.contains("meta") && value["meta"].is_object() &&
+                value["meta"].contains("next_cursor")) cursor = &value["meta"]["next_cursor"];
+        else if (value.contains("next_cursor")) cursor = &value["next_cursor"];
+        if (cursor == nullptr) return std::nullopt;
+        if (cursor->is_null()) return std::string{};
+        if (!cursor->is_string()) return std::nullopt;
+        return cursor->get<std::string>();
+    }
+
+    static std::string partial_json(json value, uint8_t pages, uint8_t limit,
+            const std::string & reason) {
+        if (!value.is_object()) value = json::object();
+        value["pagination"] = {{"pages_fetched", pages}, {"page_limit", limit},
+            {"complete", false}, {"stop_reason", reason}};
+        return value.dump();
+    }
+
     const agent_openapi_catalog & catalog;
     agent_openapi_executor executor;
     agent_openapi_result_materializer materializer;

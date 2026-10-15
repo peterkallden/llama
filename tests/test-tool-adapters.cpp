@@ -272,6 +272,7 @@ int main() {
 
     std::filesystem::create_directories(repository / "datasets");
     { std::ofstream file(repository / "datasets" / "sample.csv"); file << "name,value\nalpha,1\nbeta,2\n"; }
+    { std::ofstream file(repository / "datasets" / "duplicate-combo.csv"); file << "region,code,value\nnorth,A,1\nnorth,A,2\nnorth,B,3\n"; }
     common_tool_profile foundation_profile;
     foundation_profile.id = "developer-foundation";
     foundation_profile.members = {
@@ -442,6 +443,17 @@ int main() {
     result = foundation_registry.execute({"dataset.validate", std::string(R"({"path":"datasets/sample.csv","rules":)") + valid_rules + "}"});
     assert(result.ok && result.output.find("\"valid\":true") != std::string::npos &&
            result.output.find("\"rows_checked\":2") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"numeric_range","column":"value","min":1,"max":2},{"type":"allowed_values","column":"name","values":["alpha","beta"]},{"type":"unique_combination","columns":["name","value"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"numeric_range","column":"value","min":2}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("numeric_range:value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"allowed_values","column":"name","values":["alpha"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("allowed_values:name") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/duplicate-combo.csv","rules":[{"type":"unique_combination","columns":["region","code"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("unique_combination:region,code") != std::string::npos);
     result = foundation_registry.execute({"dataset.validate", std::string(R"({"dataset":"dataset://analysis/csv-sales","rules":)") + valid_rules + "}"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            result.output.find("\"valid\":true") != std::string::npos);
@@ -461,6 +473,16 @@ int main() {
     assert(!result.ok);
     result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"unique","column":"absent"}]})"});
     assert(!result.ok && result.failure_code == "tool.dataset.validate.invalid_rule");
+    for (const auto * invalid : {
+            R"({"type":"numeric_range","column":"value","min":3,"max":1})",
+            R"({"type":"allowed_values","column":"name","values":[]})",
+            R"({"type":"unique_combination","columns":["name","absent"]})",
+            R"({"type":"numeric_range","column":"value","min":1,"unexpected":true})"}) {
+        result = foundation_registry.execute({"dataset.validate",
+            std::string(R"({"path":"datasets/sample.csv","rules":[)") + invalid + "]}"});
+        assert(!result.ok && (result.failure_code == "tool.dataset.validate.invalid_rule" ||
+            result.failure_code == "tool.invalid_arguments"));
+    }
     common_registered_tool throwing_adapter;
     throwing_adapter.name = "throwing_adapter";
     throwing_adapter.version = 1;

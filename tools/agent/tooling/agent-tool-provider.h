@@ -82,6 +82,7 @@ struct agent_tool_call {
     std::string id;
     std::string name;
     std::string arguments_json = "{}";
+    uint8_t workflow_page_limit = 0;
 };
 
 struct agent_tool_result {
@@ -230,6 +231,19 @@ public:
         const std::string & arguments_json,
         mcp_agent_tool_call_result & result,
         std::string & error) = 0;
+
+    // Providers that understand host-only workflow directives can override
+    // this without exposing those directives in the model-facing schema.
+    virtual bool call_agent_tool(
+        const agent_tool_context & context,
+        const mcp_agent_tool_definition & tool,
+        const agent_tool_call & call,
+        const std::string & normalized_arguments_json,
+        mcp_agent_tool_call_result & result,
+        std::string & error) {
+        (void) call;
+        return call_tool(context, tool, normalized_arguments_json, result, error);
+    }
 };
 
 class mcp_agent_tool_provider : public agent_tool_provider {

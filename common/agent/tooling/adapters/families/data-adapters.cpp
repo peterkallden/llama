@@ -4,10 +4,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -101,10 +104,33 @@ bool dataset_file(const common_native_tool_bindings & bindings,
     return true;
 }
 
+struct prepared_dataset_rule {
+    std::string type;
+    std::vector<size_t> columns;
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+    std::set<std::string> allowed_values;
+};
+
+bool finite_number(const json & value, double & out) {
+    if (!value.is_number()) return false;
+    out = value.get<double>();
+    return std::isfinite(out);
+}
+
+bool parse_cell_number(const std::string & value, double & out) {
+    if (value.empty()) return false;
+    char * end = nullptr;
+    out = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || !std::isfinite(out)) return false;
+    while (*end != '\0' && std::isspace(static_cast<unsigned char>(*end))) ++end;
+    return *end == '\0';
+}
+
 bool prepare_dataset_validation_rules(
         const json & rules,
         const std::vector<std::string> & columns,
-        std::vector<std::pair<std::string, size_t>> & prepared,
+        std::vector<prepared_dataset_rule> & prepared,
         std::string & error) {
     if (!rules.is_array() || rules.empty() || rules.size() > 32) {
         error = "dataset.validate requires 1 to 32 rules";
@@ -112,16 +138,88 @@ bool prepare_dataset_validation_rules(
     }
     prepared.clear();
     for (const auto & rule : rules) {
-        if (!rule.is_object() || rule.size() != 2 ||
-                !rule.contains("type") || !rule["type"].is_string() ||
-                !rule.contains("column") || !rule["column"].is_string()) {
-            error = "each dataset.validate rule requires only type and column";
+        if (!rule.is_object() || !rule.contains("type") || !rule["type"].is_string()) {
+            error = "each dataset.validate rule requires a string type";
             return false;
         }
         const auto type = rule["type"].get<std::string>();
-        if (type != "not_null" && type != "unique") {
-            error = "dataset.validate rule type must be not_null or unique";
+        prepared_dataset_rule item;
+        item.type = type;
+        if (type == "unique_combination") {
+            if (rule.size() != 2 || !rule.contains("columns") ||
+                    !rule["columns"].is_array() || rule["columns"].size() < 2 ||
+                    rule["columns"].size() > 16) {
+                error = "unique_combination requires only a columns list with 2 to 16 columns";
+                return false;
+            }
+            std::set<size_t> seen_columns;
+            for (const auto & name : rule["columns"]) {
+                if (!name.is_string() || name.get<std::string>().empty() ||
+                        name.get<std::string>().size() > 128) {
+                    error = "unique_combination column names must be non-empty strings of at most 128 characters";
+                    return false;
+                }
+                const auto found = std::find(columns.begin(), columns.end(), name.get<std::string>());
+                if (found == columns.end()) {
+                    error = "dataset.validate column does not exist in the dataset schema: " + name.get<std::string>();
+                    return false;
+                }
+                const auto index = static_cast<size_t>(std::distance(columns.begin(), found));
+                if (!seen_columns.insert(index).second) {
+                    error = "unique_combination columns must be distinct";
+                    return false;
+                }
+                item.columns.push_back(index);
+            }
+            prepared.push_back(std::move(item));
+            continue;
+        }
+        if (type != "not_null" && type != "unique" &&
+                type != "numeric_range" && type != "allowed_values") {
+            error = "unsupported dataset.validate rule type";
             return false;
+        }
+        if (!rule.contains("column") || !rule["column"].is_string()) {
+            error = "dataset.validate rule requires a column";
+            return false;
+        }
+        if ((type == "not_null" || type == "unique") && rule.size() != 2) {
+            error = "not_null and unique rules accept only type and column";
+            return false;
+        }
+        if (type == "numeric_range") {
+            if (rule.size() < 3 || rule.size() > 4 ||
+                    (!rule.contains("min") && !rule.contains("max"))) {
+                error = "numeric_range requires min, max, or both, and no other fields";
+                return false;
+            }
+            double bound = 0.0;
+            if (rule.contains("min")) {
+                if (!finite_number(rule["min"], bound)) { error = "numeric_range min must be finite"; return false; }
+                item.minimum = bound;
+            }
+            if (rule.contains("max")) {
+                if (!finite_number(rule["max"], bound)) { error = "numeric_range max must be finite"; return false; }
+                item.maximum = bound;
+            }
+            if (item.minimum && item.maximum && *item.minimum > *item.maximum) {
+                error = "numeric_range min must not exceed max";
+                return false;
+            }
+        } else if (type == "allowed_values") {
+            if (rule.size() != 3 || !rule.contains("values") ||
+                    !rule["values"].is_array() || rule["values"].empty() ||
+                    rule["values"].size() > 64) {
+                error = "allowed_values requires a non-empty values list of at most 64 strings";
+                return false;
+            }
+            for (const auto & value : rule["values"]) {
+                if (!value.is_string() || value.get<std::string>().size() > 256 ||
+                        !item.allowed_values.insert(value.get<std::string>()).second) {
+                    error = "allowed_values entries must be unique strings of at most 256 characters";
+                    return false;
+                }
+            }
         }
         const auto column_name = rule["column"].get<std::string>();
         if (column_name.empty() || column_name.size() > 128) {
@@ -133,7 +231,8 @@ bool prepare_dataset_validation_rules(
             error = "dataset.validate column does not exist in the dataset schema: " + column_name;
             return false;
         }
-        prepared.emplace_back(type, static_cast<size_t>(std::distance(columns.begin(), column)));
+        item.columns.push_back(static_cast<size_t>(std::distance(columns.begin(), column)));
+        prepared.push_back(std::move(item));
     }
     return true;
 }
@@ -147,7 +246,7 @@ common_tool_execution_result evaluate_dataset_validation_rows(
         const std::vector<std::string> & columns,
         const std::vector<std::vector<std::string>> & rows,
         const json & rules) {
-    std::vector<std::pair<std::string, size_t>> prepared;
+    std::vector<prepared_dataset_rule> prepared;
     std::string error;
     if (!prepare_dataset_validation_rules(rules, columns, prepared, error)) {
         return common_adapter_validation_failure(
@@ -155,19 +254,40 @@ common_tool_execution_result evaluate_dataset_validation_rows(
     }
     json violations = json::array();
     for (size_t rule_index = 0; rule_index < prepared.size(); ++rule_index) {
-        const auto & [type, column] = prepared[rule_index];
+        const auto & rule = prepared[rule_index];
         size_t count = 0;
         std::set<std::string> seen;
         for (const auto & row : rows) {
-            const auto value = column < row.size() ? row[column] : std::string();
-            if ((type == "not_null" && value.empty()) ||
-                    (type == "unique" && !seen.insert(value).second)) {
-                ++count;
+            if (rule.type == "not_null" || rule.type == "unique") {
+                const auto value = rule.columns[0] < row.size() ? row[rule.columns[0]] : std::string();
+                if ((rule.type == "not_null" && value.empty()) ||
+                        (rule.type == "unique" && !seen.insert(value).second)) ++count;
+            } else if (rule.type == "numeric_range") {
+                const auto value = rule.columns[0] < row.size() ? row[rule.columns[0]] : std::string();
+                double number = 0.0;
+                if (!parse_cell_number(value, number) ||
+                        (rule.minimum && number < *rule.minimum) ||
+                        (rule.maximum && number > *rule.maximum)) ++count;
+            } else if (rule.type == "allowed_values") {
+                const auto value = rule.columns[0] < row.size() ? row[rule.columns[0]] : std::string();
+                if (!rule.allowed_values.count(value)) ++count;
+            } else if (rule.type == "unique_combination") {
+                std::string key;
+                for (const auto column : rule.columns) {
+                    const auto value = column < row.size() ? row[column] : std::string();
+                    key += std::to_string(value.size()) + ":" + value + ";";
+                }
+                if (!seen.insert(std::move(key)).second) ++count;
             }
         }
         if (count > 0) {
+            std::string label = rule.type + ":";
+            for (size_t i = 0; i < rule.columns.size(); ++i) {
+                if (i) label += ",";
+                label += columns[rule.columns[i]];
+            }
             violations.push_back({
-                {"rule", type + ":" + columns[column]},
+                {"rule", std::move(label)},
                 {"count", count},
             });
         }
@@ -188,7 +308,7 @@ common_tool_execution_result validate_csv_stream(
             "tool.dataset.validate.empty_file", "dataset.validate requires a CSV header row");
     }
     const auto columns = split_csv(line);
-    std::vector<std::pair<std::string, size_t>> prepared;
+    std::vector<prepared_dataset_rule> prepared;
     std::string error;
     if (!prepare_dataset_validation_rules(rules, columns, prepared, error)) {
         return common_adapter_validation_failure(

@@ -12,6 +12,9 @@
 struct common_agent_tool_call {
     std::string name;
     std::string arguments_json = "{}";
+    // Host-only workflow directive. Zero means a normal single tool call.
+    // It is never parsed from model-authored arguments.
+    uint8_t workflow_page_limit = 0;
 };
 
 // Safe transport facts collected by a host-owned HTTP connector. URLs are

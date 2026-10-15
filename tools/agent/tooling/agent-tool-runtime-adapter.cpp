@@ -128,7 +128,8 @@ public:
 
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         std::string error;
-        const auto result = tool_view.call({"", call.name, call.arguments_json}, error);
+        const auto result = tool_view.call({"", call.name, call.arguments_json,
+            call.workflow_page_limit}, error);
         if (result.ok) {
             auto execution = common_tool_execution_result::success(
                 result.content_json,
@@ -157,7 +158,7 @@ public:
             common_runtime_operation_ref & pending,
             std::string & error) const override {
         if (!tool_view.begin_call_async(
-                {"", call.name, call.arguments_json}, pending, error)) {
+                {"", call.name, call.arguments_json, call.workflow_page_limit}, pending, error)) {
             return false;
         }
         error.clear();

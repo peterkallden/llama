@@ -18,6 +18,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-event-collector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-host-config.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-result-projection.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-http.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-sandbox-assembly.cpp

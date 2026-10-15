@@ -202,9 +202,19 @@ That metadata is projected into the generated model-facing tool description:
 the model is told to bound each request, use a continuation cursor only when
 the response supplies one, and request only the fields needed for the task.
 The host still owns the endpoint, arguments validation, result-size limit and
-execution. Classification does not invent a cursor, silently issue follow-up
-requests, or turn an oversized result into a successful answer. Automatic
-pagination remains a future provider/runtime operation. A host may additionally
+execution. Classification alone does not invent a cursor or issue follow-up
+requests. A workflow transition may explicitly carry a host-owned `max_pages`
+directive, bounded to 2–5 pages; only that transition enables cursor
+collection. The provider follows only a cursor returned in `meta.next_cursor` or
+`next_cursor`, never accepts a model-authored cursor for continuation, and
+does not automatically retry failed HTTP requests. It combines the bounded
+pages, stores the full response as a host resource, and returns page count,
+completion state, stop reason and HTTP provenance. Page caps, missing or
+repeated cursors, result limits and later-page failures are explicitly marked
+partial. When a resource is available, the model receives a bounded candidate
+preview (including a short projected abstract and resolved full-text URL when
+present) and resource reference; the workflow's existing chunked reader handles
+the full materialized response. Direct tool calls remain single-request. A host may additionally
 set `limits.default_page_size` and `limits.max_page_size` for a provider. When
 both are positive, the HTTP executor supplies the declared page-size parameter
 when the model omits it and clamps an oversized supplied value. This is a
@@ -226,6 +236,13 @@ if one is missing, returns a retryable required-parameter result with repair
 context so the existing reflection path can revise the tool step. The host
 does not invent a search term or silently execute an unscoped collection
 request.
+
+OpenAPI HTTP status and rate-limit metadata survive the provider/MCP boundary:
+status, failure code/class, retryability, `Retry-After`/rate-limit delay,
+requested/final URL, content type, response size and duration. Common request,
+authorization, missing-resource, timeout, limit, rate-limit and server failures
+receive safe summaries. Retryability is advisory only; the runtime does not
+retry automatically, and raw connector diagnostics remain internal.
 
 For a workflow that already has concrete host-owned values, an operation policy
 may additionally set `bound_arguments` as a JSON object. These values are

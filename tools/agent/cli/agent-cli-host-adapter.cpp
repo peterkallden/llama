@@ -32,63 +32,12 @@
 #include <ctime>
 #include <filesystem>
 #include <memory>
-#include <map>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
 
 namespace {
-
-// Some public APIs legally expose an abstract as an inverted index rather than
-// plaintext. Add a bounded, deterministic model-facing view while retaining
-// the unmodified provider response in the materialized resource.
-bool add_inverted_index_text_views(json & value) {
-    bool changed = false;
-    if (value.is_array()) {
-        for (auto & item : value) changed = add_inverted_index_text_views(item) || changed;
-        return changed;
-    }
-    if (!value.is_object()) return false;
-    const auto abstract = value.find("abstract_inverted_index");
-    if (abstract != value.end() && abstract->is_object() && !value.contains("abstract_text")) {
-        std::map<size_t, std::string> words;
-        for (const auto & entry : abstract->items()) {
-            if (!entry.value().is_array() || entry.key().empty()) continue;
-            for (const auto & position : entry.value()) {
-                if (!position.is_number_integer() && !position.is_number_unsigned()) continue;
-                if (position.is_number_integer() && position.get<int64_t>() < 0) continue;
-                const auto index = position.is_number_unsigned()
-                    ? position.get<size_t>()
-                    : static_cast<size_t>(position.get<int64_t>());
-                if (index > 65535 || words.size() >= 16384) continue;
-                words.emplace(index, entry.key());
-            }
-        }
-        std::string text;
-        for (const auto & word : words) {
-            if (!text.empty()) text.push_back(' ');
-            if (text.size() + word.second.size() > 32768) break;
-            text += word.second;
-        }
-        if (!text.empty()) {
-            value["abstract_text"] = std::move(text);
-            changed = true;
-        }
-    }
-    for (auto & entry : value.items()) {
-        if (entry.key() != "abstract_inverted_index") {
-            changed = add_inverted_index_text_views(entry.value()) || changed;
-        }
-    }
-    return changed;
-}
-
-std::string model_facing_openapi_json(const std::string & raw) {
-    auto value = json::parse(raw, nullptr, false);
-    if (value.is_discarded() || !add_inverted_index_text_views(value)) return raw;
-    return value.dump();
-}
 
 class cli_agent_embedding_provider final : public agent_embedding_provider {
 public:
@@ -1021,7 +970,7 @@ bool resolve_agent_host_tool_selection(
             if (!stored) return false;
             descriptor.metadata.content_hash = descriptor.sha256;
             result.resource_refs.push_back(std::move(descriptor));
-            if (json_response) result.structured_content_json = model_facing_openapi_json(raw_response);
+            if (json_response) result.structured_content_json = raw_response;
             return true;
         };
         auto executor = make_agent_openapi_http_executor(provider_config);

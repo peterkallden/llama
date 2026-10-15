@@ -249,15 +249,26 @@ Work records expose up to three assigned `topics` plus `primary_topic`; use
 topic. The works `search` parameter searches title, abstract and other text,
 and `display_name` is the returned work title. The host bounds each request and
 the workflow reports that the resulting candidate set is not exhaustive.
+The broad work-search and literature-review workflows may follow the OpenAlex
+cursor for at most five pages. This host-only limit is attached to those
+workflow transitions; direct `openalex.listWorks` calls and narrower lookups
+remain single-request. The host uses the configured page size, records page and
+HTTP provenance, materializes the combined raw JSON as a resource, and sends it
+through the existing chunked-read path. A page cap, missing/repeated cursor, or
+later-page failure is marked `complete: false` with a stop reason. No request is
+retried automatically, and a bounded result is never described as exhaustive.
 
 The full-text workflow is deliberately layered. `openalex.getWork` supplies
-identity, bibliographic metadata, the OpenAlex abstract representation and
-declared open-access locations. A bounded host choice lets the model decide
+identity, bibliographic metadata and declared open-access locations. The host
+projects OpenAlex's inverted abstract index into bounded `abstract_text`; the
+stored provider response remains unchanged. A bounded host choice lets the model decide
 whether the abstract answers the request or whether the question requires
-methods, results, conclusions or limitations. The full-text choice is offered
-only when the returned record contains `best_oa_location.pdf_url`; the host
-binds that exact value to `web.fetch` rather than asking the model to repeat or
-invent a URL. Fetch, inspect and read are then workflow-materialized steps.
+methods, results, conclusions or limitations. When a returned record exposes an
+open-access file, the host projects `full_text_url`, preferring
+`best_oa_location.pdf_url` and falling back to `content_url`. It binds that
+exact returned value to `web.fetch`; the model does not repeat or invent a URL,
+and a `landing_page_url` is not treated as the content URL. Fetch, inspect and
+read are then workflow-materialized steps.
 `web.fetch` stores the authoritative fetched body as a typed host resource,
 rather than a text-preview wrapper. Text/HTML/XML can be read directly; a PDF
 can use the existing host text-representation processor through

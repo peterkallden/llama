@@ -602,7 +602,7 @@ do not select implementations or host paths.
 | `dataset.inspect` | Host-native | Accepts exactly one registered dataset, host-owned CSV resource or repository-relative path | Limited | Workbook/sheet metadata and richer lineage |
 | `dataset.schema` | Host-native | Returns a bounded typed column schema from exactly one approved source | Limited | Type confidence, constraints and backend parity |
 | `dataset.sample` | Host-native | Returns a bounded sample from exactly one approved source | Limited | Random/stratified sampling, seed handling and non-Cozo backends |
-| `dataset.validate` | Host-native | Validates CSV `not_null` and `unique` rules against registered datasets, host-owned CSV resources or repository-relative paths; incomplete scans fail instead of reporting valid | Limited | Range/type/regex rules, validation profiles and artifact reports |
+| `dataset.validate` | Host-native | Validates CSV `not_null`, `unique`, `numeric_range`, `allowed_values` and `unique_combination` rules against registered datasets, host-owned CSV resources or repository-relative paths; incomplete scans fail instead of reporting valid | Limited | Type inference, regex rules, validation profiles and artifact reports |
 | `data.query` | Store-backed | Executes a bounded backend-neutral structured query | Limited | Broader query language, materialized inputs and backend parity |
 | `data.filter` | Store-backed | Applies declarative predicates through the configured data store | Limited | More operators, typed values and derived dataset artifacts |
 | `data.aggregate` | Store-backed | Applies bounded grouping and aggregate operations | Limited | More aggregate functions, null semantics and provenance |
@@ -623,10 +623,13 @@ The four dataset source tools accept exactly one of `dataset` (`dataset://`),
 `resource` (a host-owned resource reference), or `path` (relative to the
 configured repository root). The host resolves and authorizes the source; a
 model-provided path is never interpreted relative to the process working
-directory. `dataset.validate` currently scans CSV only and supports exactly
-`not_null` and `unique`, each naming an existing schema column. Unknown or
-malformed rules are errors, and reaching the bounded scan limit is not reported
-as a successful validation.
+directory. `dataset.validate` scans CSV only and supports `not_null` and
+`unique` on one existing column, inclusive `numeric_range` with at least one
+finite bound, exact-string `allowed_values` (up to 64 values), and
+`unique_combination` over 2–16 distinct existing columns. Calls allow at most
+32 rules and scan at most 100,000 rows. Unknown fields/types, malformed bounds
+or lists, and missing columns are errors; blank or non-numeric cells violate a
+numeric range. An incomplete scan is never reported as successful validation.
 
 MCP `tools/list` publishes each tool's canonical result schema as
 `outputSchema`. It describes `structuredContent` directly; MCP's outer
@@ -1785,7 +1788,8 @@ operation in its schema unless its result semantics are implemented; unsupported
 operations should be rejected explicitly.
 
 The first diagnostic/data implementations are intentionally bounded. CSV
-validation currently supports `not_null` and `unique`, compiler diagnostics parse
+validation currently supports `not_null`, `unique`, `numeric_range`,
+`allowed_values` and `unique_combination`; compiler diagnostics parse
 existing output, formatter diagnostics inspect formatter output, and include-graph
 diagnostics consume normalized `source -> include` lines. Symbol and reference
 tools accept a host-owned semantic callback, for example clangd/LSP or a project

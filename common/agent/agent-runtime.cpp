@@ -1281,6 +1281,21 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::tool && !executed_step_ids.count(step.id)) {
                 if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
                 tool_call = common_agent_tool_call{step.tool_call->name, step.tool_call->arguments_json};
+                if (plan.workflow_definition && step.semantic_alias &&
+                        step.semantic_alias->rfind("workflow-transition:", 0) == 0) {
+                    const auto aliases = step.semantic_alias->substr(
+                        std::string("workflow-transition:").size());
+                    const auto separator = aliases.rfind(',');
+                    const auto transition_id = separator == std::string::npos
+                        ? aliases : aliases.substr(separator + 1);
+                    const auto transition = std::find_if(
+                        plan.workflow_definition->transitions.begin(),
+                        plan.workflow_definition->transitions.end(),
+                        [&](const auto & candidate) { return candidate.id == transition_id; });
+                    if (transition != plan.workflow_definition->transitions.end()) {
+                        tool_call->workflow_page_limit = transition->max_pages;
+                    }
+                }
                 const common_plan_tool_dataflow_contract_resolver dataflow_resolver =
                     tools ? [this](const std::string & tool_name,
                             common_plan_tool_dataflow_contract & contract,

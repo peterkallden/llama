@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v11",
+  "version": "v12",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -202,11 +202,12 @@
     },
     {
       "id": "openalex-work-search-path-v2",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v12",
       "workflow_ref": "workflow://openalex/work-search",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "openapi",
-      "graph_revision": "openalex-work-search-graph@v2",
+      "graph_revision": "openalex-work-search-graph@v3",
+      "resource_read_policy": "chunked",
       "required_capabilities": ["openapi.read"],
       "optional_capabilities": ["resource.read", "artifact.export"],
       "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
@@ -214,7 +215,7 @@
       "start_state": "search_pending",
       "terminal_states": ["works_retrieved"],
       "transitions": [
-        {"id": "search-works", "from": "search_pending", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+        {"id": "search-works", "from": "search_pending", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{}", "max_pages": 5}
       ]
     },
     {
@@ -235,11 +236,12 @@
     },
     {
       "id": "openalex-literature-review-path-v2",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v12",
       "workflow_ref": "workflow://openalex/literature-review",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "openapi",
-      "graph_revision": "openalex-literature-review-graph@v2",
+      "graph_revision": "openalex-literature-review-graph@v3",
+      "resource_read_policy": "chunked",
       "required_capabilities": ["openapi.read"],
       "optional_capabilities": ["resource.read", "artifact.export"],
       "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
@@ -247,7 +249,7 @@
       "start_state": "review_pending",
       "terminal_states": ["candidates_retrieved"],
       "transitions": [
-        {"id": "retrieve-candidates", "from": "review_pending", "to": "candidates_retrieved", "tool": "openalex.listWorks", "arguments": "{}"}
+        {"id": "retrieve-candidates", "from": "review_pending", "to": "candidates_retrieved", "tool": "openalex.listWorks", "arguments": "{}", "max_pages": 5}
       ]
     },
     {
@@ -277,11 +279,11 @@
     },
     {
       "id": "openalex-full-text-evidence-path-v2",
-      "source_revision": "agent-workflows-starter@v10",
+      "source_revision": "agent-workflows-starter@v12",
       "workflow_ref": "workflow://openalex/full-text-evidence",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "openapi",
-      "graph_revision": "openalex-full-text-evidence-graph@v2",
+      "graph_revision": "openalex-full-text-evidence-graph@v3",
       "resource_read_policy": "chunked",
       "required_capabilities": ["openapi.read", "web.fetch", "resource.inspect", "resource.read"],
       "optional_capabilities": ["artifact.export"],
@@ -292,10 +294,10 @@
         {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"},
         {"id": "choose-evidence-depth", "from": "work_retrieved", "to": "full_text_pending", "kind": "model_choice", "choices": [
           {"id": "answer_from_abstract", "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.", "to": "abstract_complete"},
-          {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract.", "to": "full_text_pending", "requires": ["/result/best_oa_location/pdf_url"]}
+          {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract. The host prefers the returned PDF URL and otherwise uses an available content URL.", "to": "full_text_pending", "requires": ["/result/full_text_url"]}
         ]},
         {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":10485760}", "bindings": [
-          {"target": "/url", "from": "get-work", "source": "/result/best_oa_location/pdf_url"}
+          {"target": "/url", "from": "get-work", "source": "/result/full_text_url"}
         ]},
         {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [
           {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
@@ -548,7 +550,7 @@
     },
     {
       "id": "openalex-work-search-v2",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v12",
       "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
       "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
       "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
@@ -557,7 +559,7 @@
       "workflow_policy": "required",
       "procedure_refs": ["scholarly-search-evidence-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openalex/work-search", "workflow_revision": "v2"}
+        {"workflow_ref": "workflow://openalex/work-search", "workflow_revision": "v3"}
       ],
       "next_action": "scope-search",
       "constraints": [
@@ -599,7 +601,7 @@
     },
     {
       "id": "openalex-literature-review-v2",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v12",
       "selection_description": "Build a bounded, reproducible literature-review candidate set from configured OpenAlex search.",
       "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
       "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
@@ -608,7 +610,7 @@
       "workflow_policy": "required",
       "procedure_refs": ["scholarly-search-evidence-v1", "literature-review-boundaries-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openalex/literature-review", "workflow_revision": "v2"}
+        {"workflow_ref": "workflow://openalex/literature-review", "workflow_revision": "v3"}
       ],
       "next_action": "define-review-scope",
       "constraints": [
@@ -649,7 +651,7 @@
     },
     {
       "id": "openalex-full-text-evidence-v2",
-      "source_revision": "agent-workflows-starter@v10",
+      "source_revision": "agent-workflows-starter@v12",
       "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
       "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
       "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
@@ -657,7 +659,7 @@
       "required_capabilities": ["tool.openapi", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["bibliographic-record-validation-v1", "openalex-full-text-evidence-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://openalex/full-text-evidence", "workflow_revision": "v2"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://openalex/full-text-evidence", "workflow_revision": "v3"}],
       "next_action": "resolve-work",
       "constraints": [
         {"id": "abstract-first", "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.", "hard": true},

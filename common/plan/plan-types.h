@@ -190,6 +190,9 @@ struct common_plan_workflow_transition {
     };
     std::vector<argument_binding> argument_bindings;
     bool optional = false;
+    // Host-controlled bounded collection pagination for this transition only.
+    // Zero keeps the ordinary single-request semantics.
+    uint8_t max_pages = 0;
 };
 
 // Workflow definitions describe a host-validated family of work. They never
