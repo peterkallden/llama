@@ -3270,6 +3270,17 @@ than the rendered-image output cap. OCR output is normalized to valid UTF-8
 before it is persisted, replacing malformed OCR byte sequences. The resource
 service and store remain authoritative for scope, reads and lineage.
 
+The generic sandbox command output default remains 64 KiB. The built-in PDF
+page-image and Tesseract OCR execution classes use a class-specific 4 MiB
+output default so a normal rendered page or OCR result is not rejected by the
+generic cap. A host may lower or raise either class through
+`sandbox.classes.<execution-class>.max_output_bytes` (bounded by the processor's
+64 MiB maximum). This output allowance does not grant filesystem access:
+`artifact_write` remains an explicit host policy choice. `web.fetch` defaults
+to 10 MiB in both its catalog/schema and adapter; callers may request a smaller
+`max_bytes`, while the research runtime leaves the field unset so the same
+catalog default applies.
+
 `resource.read` returns one caller-bounded range at a time (up to 32 KiB per
 call, subject to the runtime tool-result budget). The runtime's automatic
 resource-chunk continuation currently applies to large text resources attached

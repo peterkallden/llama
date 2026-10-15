@@ -5,6 +5,7 @@
 #include "agent/context/conversation-context.h"
 #include "agent/context/observation-projection.h"
 #include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "tools/agent/runtime/agent-session-context-store.h"
 
 #include <cassert>
@@ -113,6 +114,28 @@ int main() {
 
     agent_host_config config;
     assert(parse_agent_host_config_json(json::object(), config, error));
+    assert(config.sandbox.defaults.limits.max_output_bytes == 65536);
+    assert(agent_resource_processor_default_sandbox_output_bytes(
+        "resource.processor.pdf.page_image") == 4 * 1024 * 1024);
+    assert(agent_resource_processor_default_sandbox_output_bytes(
+        "resource.processor.ocr.tesseract") == 4 * 1024 * 1024);
+    assert(agent_resource_processor_default_sandbox_output_bytes("developer-build") == 0);
+
+    agent_host_config processor_config;
+    const json processor_limits = {
+        {"sandbox", {
+            {"workspace", {{"root", "workspaces"}}},
+            {"classes", {
+                {"resource.processor.pdf.page_image", {{"filesystem", "artifact_write"}}},
+                {"resource.processor.ocr.tesseract", {{"max_output_bytes", 2097152}}},
+            }},
+        }},
+    };
+    assert(parse_agent_host_config_json(processor_limits, processor_config, error));
+    assert(processor_config.sandbox.classes.at("resource.processor.pdf.page_image")
+        .limits.max_output_bytes == 4 * 1024 * 1024);
+    assert(processor_config.sandbox.classes.at("resource.processor.ocr.tesseract")
+        .limits.max_output_bytes == 2097152);
     const auto serialized = agent_host_config_to_json(config);
     const auto & management = serialized.at("runtime").at("context_management");
     assert(management.at("enabled") == true);

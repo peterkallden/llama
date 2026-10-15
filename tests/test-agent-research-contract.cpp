@@ -37,17 +37,18 @@ public:
             std::string & resolved,
             std::vector<std::string> & candidates) const override {
         candidates.clear();
-        if (requested != "resource.read") return false;
-        resolved = "resource.read";
+        if (requested != "resource.read" && requested != "web.fetch") return false;
+        resolved = requested;
         return true;
     }
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
         last_validated_name = call.name;
         error.clear();
-        return call.name == "resource.read";
+        return call.name == "resource.read" || call.name == "web.fetch";
     }
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         last_executed_name = call.name;
+        last_executed_arguments = call.arguments_json;
         return common_tool_execution_result::success(
             "bounded resource content", "the resource supports the research gap", {resource});
     }
@@ -55,6 +56,7 @@ public:
     common_runtime_resource_ref resource;
     mutable std::string last_validated_name;
     mutable std::string last_executed_name;
+    mutable std::string last_executed_arguments;
 };
 
 int main() {
@@ -196,6 +198,16 @@ int main() {
     assert(canonical_runtime.last_validated_name == "resource.read");
     assert(canonical_runtime.last_executed_name == "resource.read");
     assert(canonical_event.type == common_agent_research_event_type::task_completed);
+
+    canonical_action.task_id = "fetch-task";
+    canonical_action.instruction = "https://example.test/paper.pdf";
+    canonical_action.preferred_tools = {"web.fetch"};
+    assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
+    assert(canonical_runtime.last_validated_name == "web.fetch");
+    assert(canonical_runtime.last_executed_name == "web.fetch");
+    const auto research_fetch_arguments = nlohmann::json::parse(canonical_runtime.last_executed_arguments);
+    assert(research_fetch_arguments.at("url") == "https://example.test/paper.pdf");
+    assert(!research_fetch_arguments.contains("max_bytes"));
 
     factory_workspace.gaps.front().status = common_agent_research_gap_status::open;
     factory_workspace.tasks.clear();

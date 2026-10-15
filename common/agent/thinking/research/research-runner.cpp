@@ -49,7 +49,9 @@ bool build_call(
         return true;
     }
     if (tool_name == "web.fetch") {
-        call.arguments_json = json{{"url", instruction}, {"max_bytes", 32768}}.dump();
+        // Let the catalogued tool default (10 MiB) apply. Research must not
+        // silently narrow this to a small preview-sized fetch.
+        call.arguments_json = json{{"url", instruction}}.dump();
         return true;
     }
     return false;

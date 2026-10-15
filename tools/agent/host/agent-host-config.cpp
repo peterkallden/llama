@@ -1,4 +1,5 @@
 #include "agent-host-config.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "../daemon/agent-daemon-adapter.h"
 #include "agent/thinking/deliberation-policy.h"
 
@@ -780,6 +781,10 @@ bool parse_agent_host_config_json(
                 if (!it.value().is_object()) { error = "sandbox.classes entries must be objects"; return false; }
                 common_agent_sandbox_policy policy = config.sandbox.defaults;
                 policy.execution_class = it.key();
+                if (const size_t class_default = agent_resource_processor_default_sandbox_output_bytes(it.key());
+                        class_default != 0) {
+                    policy.limits.max_output_bytes = class_default;
+                }
                 const auto & value = it.value();
                 read_optional(value, "image", policy.image);
                 if (value.contains("timeout_ms")) read_optional(value, "timeout_ms", policy.limits.timeout_ms);

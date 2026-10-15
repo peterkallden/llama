@@ -170,7 +170,7 @@
       "resource.processor.pdf.page_image": {
         "timeout_ms": 120000,
         "cpu_count": 1,
-        "max_output_bytes": 67108864,
+        "max_output_bytes": 4194304,
         "memory_bytes": 2147483648,
         "network": "none",
         "filesystem": "artifact_write",
@@ -179,7 +179,7 @@
       "resource.processor.ocr.tesseract": {
         "timeout_ms": 120000,
         "cpu_count": 1,
-        "max_output_bytes": 67108864,
+        "max_output_bytes": 4194304,
         "network": "none",
         "filesystem": "artifact_write",
         "allow_artifacts": true

@@ -47,7 +47,12 @@ common_agent_sandbox_policy make_sandbox_policy(
         const std::string & image) {
     auto policy = assembly.sandbox_defaults;
     const auto it = assembly.sandbox_classes.find(execution_class);
-    if (it != assembly.sandbox_classes.end()) policy = it->second;
+    if (it != assembly.sandbox_classes.end()) {
+        policy = it->second;
+    } else if (const size_t class_default = agent_resource_processor_default_sandbox_output_bytes(execution_class);
+            class_default != 0) {
+        policy.limits.max_output_bytes = class_default;
+    }
     policy.execution_class = execution_class;
     if (!image.empty()) policy.image = image;
     return policy;

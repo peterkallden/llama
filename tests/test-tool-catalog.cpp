@@ -68,6 +68,8 @@ int main() {
     const auto web_fetch_schema = nlohmann::json::parse(web_fetch->input_schema_json);
     assert(web_fetch_schema["required"] == nlohmann::json::array({"url"}));
     assert(!web_fetch_schema["properties"].contains("extract"));
+    assert(web_fetch_schema["properties"]["max_bytes"]["default"] == 10485760);
+    assert(web_fetch_schema["properties"]["max_bytes"]["maximum"] == 10485760);
 
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
