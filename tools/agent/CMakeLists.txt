@@ -2,6 +2,7 @@
 # This file is buildable with LLAMA_AGENT_BUILD_POCS=OFF.
 
 find_package(Threads REQUIRED)
+find_package(LibXml2 REQUIRED)
 
 include_directories(${PROJECT_SOURCE_DIR})
 if (LLAMA_AGENT_TOOLS_CLANG)
@@ -316,7 +317,7 @@ target_include_directories(llama-agent-data PUBLIC
     ${PROJECT_SOURCE_DIR}/tools/agent/data
 )
 target_compile_features(llama-agent-data PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-data PUBLIC llama-agent-core)
+target_link_libraries(llama-agent-data PUBLIC llama-agent-core LibXml2::LibXml2)
 if (LLAMA_MEMORY_COZO)
     target_link_libraries(llama-agent-data PUBLIC llama-agent-storage-cozo)
 endif()
@@ -1035,6 +1036,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-model-catalog.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-eurostat.json
         ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-statistics-openapi.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-sdmx-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-openalex.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json

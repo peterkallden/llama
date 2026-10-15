@@ -1,11 +1,19 @@
 {
   "schema_version": 1,
-  "model": {"backend": "server-context", "path": "models/model.gguf"},
+  "model": {
+    "backend": "server-context",
+    "path": "models/model.gguf",
+    "embedding_model": "models/embedding.gguf"
+  },
+  "bootstrap": {"package": "docs/examples/agent-bootstrap-workflows-v1.json"},
   "tools": {
     "profile": "all-configured",
     "families": {
       "eurostat": {
-        "description": "Query Eurostat statistical datasets and JSON-stat data"
+        "description": "Discover Eurostat tables, validate codes from host-returned catalogues and analyse bounded JSON-stat datasets"
+      },
+      "eurostat_sdmx": {
+        "description": "Resolve Eurostat dataflows, dimensions, code lists and availability constraints from SDMX metadata"
       }
     },
     "providers": [
@@ -16,6 +24,16 @@
         "spec_path": "eurostat-statistics-openapi.json",
         "base_url": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
         "prefix": "eurostat",
+        "policy": {"access": "read_only", "exposure": "auto"},
+        "auth": {"type": "none"}
+      },
+      {
+        "type": "openapi",
+        "id": "eurostat-sdmx-structure",
+        "enabled": true,
+        "spec_path": "eurostat-sdmx-openapi.json",
+        "base_url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1",
+        "prefix": "eurostat_sdmx",
         "policy": {"access": "read_only", "exposure": "auto"},
         "auth": {"type": "none"}
       }

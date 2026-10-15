@@ -78,12 +78,43 @@ smokes need network access and are not registered as default CTests.
 ## Eurostat example
 
 Eurostat's public Statistics API is documented with WADL rather than OpenAPI.
-The repository therefore includes a deliberately small OpenAPI adapter and
-configuration in `docs/examples/eurostat-statistics-openapi.json` and
-`docs/examples/agent-host-config-eurostat.json`. The adapter describes the
-stable `/data/{datasetCode}` operation and leaves dataset codes and filters as
-normal tool arguments. It is an adapter for the generic provider, not a claim
-that the upstream WADL is an OpenAPI document.
+The repository therefore includes a deliberately small host-authored adapter
+for the Statistics API and a separate read-only adapter for SDMX structure
+queries in `docs/examples/eurostat-statistics-openapi.json`,
+`docs/examples/eurostat-sdmx-openapi.json` and
+`docs/examples/agent-host-config-eurostat.json`. These are contracts for the
+generic provider, not claims that Eurostat publishes these OpenAPI documents.
+The host config imports the shared starter JSON package into the host namespace
+at daemon startup. When using an installed package or running outside the
+repository root, set `bootstrap.package` to the installed/path-resolved copy;
+procedure import also requires a configured embedding model.
+
+The Statistics adapter models `geo` and `time` as repeated query parameters
+and exposes a host-declared `dimensions` map for dataset-specific dimensions.
+The HTTP executor honors the declared `form`, `spaceDelimited`,
+`pipeDelimited` and `deepObject` query encodings, including repeated form array
+keys. It bounds parameter counts and serialized query size, and validates
+dynamic dimension names and values before adding them to the fixed Eurostat
+base URL. This is not an arbitrary URL or header mechanism.
+
+Eurostat acquisition follows three distinct steps:
+
+1. Fetch the official catalogue TOC XML as a bounded resource and materialize
+   its table code, title, category path and coverage fields into a dataset.
+2. Use a catalogue-returned candidate with the SDMX structure provider to
+   inspect its dataflow/DSD, dimensions, code lists and content constraints.
+   Use only identifiers and codes present in those returned resources.
+3. Call the Statistics API with the validated dataset and dimension codes.
+   JSON-stat 2.0 responses are normalized to long-form dataset rows with
+   dimensions, optional labels, value and status; the derived dataset keeps
+   source-resource provenance and can continue through ordinary dataset
+   analysis or quality workflows.
+
+The shared dataset-from-resource path also accepts bounded JSON arrays of
+objects, JSON-stat 2.0, recognized Eurostat catalogue XML, SDMX structural XML
+and simple repeated-record XML. XML parsing disables network access and rejects
+DTD/entity declarations. Unsupported or over-limit structures fail
+explicitly; this is not a general-purpose XML-to-relational converter.
 
 The live integration smoke is opt-in because it requires external network
 access:
@@ -205,8 +236,9 @@ The host still owns the endpoint, arguments validation, result-size limit and
 execution. Classification alone does not invent a cursor or issue follow-up
 requests. A workflow transition may explicitly carry a host-owned `max_pages`
 directive, bounded to 2–5 pages; only that transition enables cursor
-collection. The provider follows only a cursor returned in `meta.next_cursor` or
-`next_cursor`, never accepts a model-authored cursor for continuation, and
+collection in **any** workflow; it is not tied to an OpenAlex blueprint or
+provider prefix. Only read-only cursor operations are collected automatically.
+The provider follows a cursor returned by the API, and
 does not automatically retry failed HTTP requests. It combines the bounded
 pages, stores the full response as a host resource, and returns page count,
 completion state, stop reason and HTTP provenance. Page caps, missing or
@@ -214,7 +246,48 @@ repeated cursors, result limits and later-page failures are explicitly marked
 partial. When a resource is available, the model receives a bounded candidate
 preview (including a short projected abstract and resolved full-text URL when
 present) and resource reference; the workflow's existing chunked reader handles
-the full materialized response. Direct tool calls remain single-request. A host may additionally
+the full materialized response. Direct tool calls remain single-request.
+
+For other APIs, the catalog recognizes response arrays named `results`,
+`items`, `data` or `records` in the declared response schema, plus cursor fields
+`meta.next_cursor`, `next_cursor`, `pagination.next_cursor`, `nextCursor` or
+`next_page_token`. Without a declared cursor response field, the existing
+`meta.next_cursor` / `next_cursor` convention remains supported. The request's
+cursor must be a declared query parameter; `page_token` and `continuation_token`
+are recognized in addition to the existing cursor names.
+
+An operation with a different response layout can declare the mapping in its
+OpenAPI document (response paths use JSON Pointer syntax):
+
+```json
+"x-agent-pagination": {
+  "cursor_parameter": "continuation",
+  "items_pointer": "/payload/entries",
+  "next_cursor_pointer": "/links/token"
+}
+```
+
+The optional `cursor_parameter` must name an existing query parameter. Unknown
+extension fields, invalid pointers and overlapping item/cursor paths are
+rejected. Collections cannot occupy `/pagination` or its children, which are
+reserved for coverage metadata. This metadata describes the API; the workflow's `max_pages` still
+controls whether collection runs. For example, another imported workflow may
+use `"tool": "library.listRecords", "max_pages": 3` on its tool transition.
+Page-number/offset/link pagination remains single-request and reports
+`unsupported_pagination_contract` if a workflow requests automatic collection.
+Missing cursors, repeated cursors (including the initially supplied cursor),
+10,000-item limits and the combined collection byte budget stop collection as
+partial. The item accumulation budget is 8 MiB; page/coverage metadata is
+additional. A first HTTP response exceeding that budget is kept as partial
+without fetching more pages; the executor's per-response limit still applies.
+
+The general materialized preview preserves the API's envelope and item fields,
+with at most ten items and 16 KiB of item payload. Its pagination metadata
+records omitted preview items and the full resource reference. OpenAlex alone
+uses the bibliographic candidate projection described above. Coverage records
+the fetched collection independently of how many items are displayed inline.
+
+A host may additionally
 set `limits.default_page_size` and `limits.max_page_size` for a provider. When
 both are positive, the HTTP executor supplies the declared page-size parameter
 when the model omits it and clamps an oversized supplied value. This is a

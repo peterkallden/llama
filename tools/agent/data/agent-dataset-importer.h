@@ -61,6 +61,24 @@ bool normalize_agent_csv_text(
         std::string & worksheet_json,
         std::string & error);
 
+// Converts bounded JSON objects/collections or JSON-stat 2.0 into the same
+// host-owned worksheet envelope used by CSV, workbook and document imports.
+bool normalize_agent_json_dataset(
+        const std::string & json_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error,
+        const common_agent_dataset_limits & limits = {});
+
+// Converts bounded, record-oriented XML into rows. Eurostat's TOC and SDMX
+// XML have dedicated projections so their hierarchy and references survive.
+bool normalize_agent_xml_dataset(
+        const std::string & xml_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error,
+        const common_agent_dataset_limits & limits = {});
+
 bool make_agent_document_table_catalog(
         const std::string & worksheet_json,
         common_agent_document_table_catalog & catalog,

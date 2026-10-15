@@ -5,11 +5,244 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <fstream>
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 using json = nlohmann::ordered_json;
 
+static json read_example_json(const std::string & relative_path) {
+    std::ifstream file(std::string(LLAMA_AGENT_SOURCE_DIR) + "/" + relative_path);
+    assert(file);
+    std::stringstream text;
+    text << file.rdbuf();
+    return json::parse(text.str());
+}
+
+static void test_checked_in_eurostat_provider_examples() {
+    const auto host = read_example_json("docs/examples/agent-host-config-eurostat.json");
+    const auto & providers = host.at("tools").at("providers");
+    assert(providers.size() == 2);
+    std::string error;
+    for (const auto & provider : providers) {
+        agent_host_openapi_provider_config config;
+        config.id = provider.at("id").get<std::string>();
+        config.base_url = provider.at("base_url").get<std::string>();
+        config.prefix = provider.at("prefix").get<std::string>();
+        config.access = "read_only";
+        config.exposure = "auto";
+        const auto spec = read_example_json("docs/examples/" +
+            provider.at("spec_path").get<std::string>());
+        agent_openapi_catalog catalog;
+        assert(build_agent_openapi_catalog(spec, config, catalog, error));
+        assert(catalog.operations.size() == 1);
+        assert(catalog.operations.front().read_only);
+        if (config.prefix == "eurostat") {
+            const auto & operation = catalog.operations.front();
+            assert(operation.operation_id == "getData");
+            assert(operation.query_parameter_map == "dimensions");
+            const auto input = json::parse(operation.input_schema_json);
+            assert(input["properties"]["geo"]["type"] == "array");
+            assert(input["properties"]["time"]["type"] == "array");
+            assert(input["properties"]["dimensions"]["type"] == "object");
+        } else {
+            assert(config.prefix == "eurostat_sdmx");
+            assert(catalog.operations.front().operation_id == "getStructure");
+            assert(catalog.operations.front().path_parameters.size() == 4);
+        }
+    }
+}
+
+static void test_generic_workflow_pagination() {
+    auto spec = json::parse(R"({
+        "openapi":"3.0.0","paths":{"/records":{"get":{
+            "operationId":"listRecords",
+            "parameters":[{"name":"continuation","in":"query","schema":{"type":"string"}}],
+            "x-agent-pagination":{"cursor_parameter":"continuation",
+                "items_pointer":"/payload/entries","next_cursor_pointer":"/links/token"},
+            "responses":{"200":{"description":"Records","content":{"application/json":{"schema":{
+                "type":"object","properties":{
+                    "payload":{"type":"object","properties":{"entries":{"type":"array","items":{"type":"object"}}}},
+                    "links":{"type":"object","properties":{"token":{"type":"string","nullable":true}}}
+                }
+            }}}}}
+        }}}}
+    )");
+    agent_host_openapi_provider_config config;
+    config.id = "library";
+    config.base_url = "https://library.example";
+    agent_openapi_catalog catalog;
+    std::string error;
+    assert(build_agent_openapi_catalog(spec, config, catalog, error));
+    assert(catalog.operations.size() == 1);
+    const auto operation = catalog.operations.front();
+    assert(operation.paging.cursor_parameter == "continuation");
+    assert(operation.paging.items_pointer == "/payload/entries");
+    assert(operation.paging.next_cursor_pointer == "/links/token");
+
+    agent_tool_context context;
+    context.request_id = "generic-pages";
+    context.allow_network = true;
+    context.max_calls = 20;
+    size_t calls = 0;
+    agent_openapi_tool_provider provider(catalog,
+        [&](const agent_tool_context &, const agent_openapi_operation &,
+                const std::string & arguments, agent_openapi_execution_result & page, std::string &) {
+            ++calls;
+            const auto args = json::parse(arguments);
+            if (calls > 1) assert(args.at("continuation") == "page-" + std::to_string(calls));
+            page.ok = true;
+            page.structured_content_json = json{
+                {"payload", {{"entries", json::array({{{"arbitrary_field", calls}}})}}},
+                {"links", {{"token", calls < 3 ? json("page-" + std::to_string(calls + 1)) : json(nullptr)}}},
+            }.dump();
+            return true;
+        },
+        [](const agent_tool_context &, const agent_openapi_operation &, const std::string &,
+                agent_openapi_execution_result & page, std::string &) {
+            const auto raw = json::parse(page.structured_content_json);
+            assert(raw["payload"]["entries"].size() == 3);
+            common_runtime_resource_ref resource;
+            resource.uri = "resource://turn/library-pages";
+            page.resource_refs.push_back(resource);
+            return true;
+        });
+    auto view = provider.resolve_tools(context, error);
+    assert(view);
+    const auto result = view->call({"generic", "library.listRecords", "{}", 5}, error);
+    assert(result.ok && calls == 3);
+    const auto body = json::parse(result.content_json).at("result");
+    assert(body["pagination"]["complete"] == true);
+    assert(body["payload"]["entries"][2]["arbitrary_field"] == 3);
+    assert(body["links"]["token"].is_null());
+    assert(body["pagination"]["preview_omitted_items"] == 0);
+    assert(!body.contains("candidates"));
+
+    // Conventional layouts are inferred from the schema without an extension.
+    auto & declared = spec["paths"]["/records"]["get"];
+    declared.erase("x-agent-pagination");
+    declared["parameters"][0]["name"] = "page_token";
+    declared["responses"]["200"]["content"]["application/json"]["schema"] = json::parse(
+        R"({"type":"object","properties":{"items":{"type":"array","items":{"type":"object"}},"nextCursor":{"type":"string","nullable":true}}})");
+    agent_openapi_catalog inferred;
+    assert(build_agent_openapi_catalog(spec, config, inferred, error));
+    assert(inferred.operations.front().paging.cursor_parameter == "page_token");
+    assert(inferred.operations.front().paging.items_pointer == "/items");
+    assert(inferred.operations.front().paging.next_cursor_pointer == "/nextCursor");
+
+    calls = 0;
+    agent_openapi_tool_provider top_level(inferred,
+        [&](const agent_tool_context &, const agent_openapi_operation &,
+                const std::string &, agent_openapi_execution_result & page, std::string &) {
+            ++calls;
+            page.ok = true;
+            page.structured_content_json = json{
+                {"items", json::array({{{"value", calls}}})},
+                {"nextCursor", calls < 3 ? json(std::to_string(calls)) : json(nullptr)},
+            }.dump();
+            return true;
+        });
+    auto top_view = top_level.resolve_tools(context, error);
+    assert(top_view);
+    const auto top = top_view->call({"top", "library.listRecords", "{}", 5}, error);
+    assert(top.ok && calls == 3);
+    const auto top_body = json::parse(top.content_json).at("result");
+    assert(top_body["items"].size() == 3 && top_body["pagination"]["complete"] == true);
+
+    // The initial request cursor belongs to the seen set too.
+    calls = 0;
+    agent_openapi_tool_provider repeated(inferred,
+        [&](const agent_tool_context &, const agent_openapi_operation &,
+                const std::string &, agent_openapi_execution_result & page, std::string &) {
+            ++calls;
+            page.ok = true;
+            page.structured_content_json = R"({"items":[],"nextCursor":"same"})";
+            return true;
+        });
+    auto repeated_view = repeated.resolve_tools(context, error);
+    const auto repeat = repeated_view->call({"repeat", "library.listRecords", R"({"page_token":"same"})", 5}, error);
+    assert(repeat.ok && calls == 1);
+    assert(json::parse(repeat.content_json)["result"]["pagination"]["stop_reason"] == "repeated_cursor");
+
+    // An unsupported paging method must not masquerade as complete collection.
+    inferred.operations.front().paging.kind = agent_openapi_paging_kind::page_number;
+    agent_openapi_tool_provider unsupported(inferred,
+        [](const agent_tool_context &, const agent_openapi_operation &, const std::string &,
+                agent_openapi_execution_result & page, std::string &) {
+            page.ok = true;
+            page.structured_content_json = R"({"items":[]})";
+            return true;
+        });
+    auto unsupported_view = unsupported.resolve_tools(context, error);
+    const auto partial = unsupported_view->call({"unsupported", "library.listRecords", "{}", 5}, error);
+    assert(partial.ok);
+    assert(json::parse(partial.content_json)["result"]["pagination"]["stop_reason"] ==
+        "unsupported_pagination_contract");
+
+    for (const auto * invalid : {
+            R"({"items_pointer":"/bad~2"})",
+            R"({"cursor_parameter":"undeclared"})",
+            R"({"items_pointer":"/items","next_cursor_pointer":"/items/token"})",
+            R"({"items_pointer":"/pagination"})",
+            R"({"unknown":"/value"})"}) {
+        declared["x-agent-pagination"] = json::parse(invalid);
+        error.clear();
+        assert(!build_agent_openapi_catalog(spec, config, inferred, error));
+        assert(!error.empty());
+    }
+}
+
+static void test_openapi_query_parameter_serialization_contract() {
+    const auto spec = json::parse(R"({
+        "openapi":"3.0.0","paths":{"/data/{code}":{"get":{
+            "operationId":"getData",
+            "x-agent-query-parameter-map":"dimensions",
+            "parameters":[
+                {"name":"code","in":"path","required":true,"schema":{"type":"string"}},
+                {"name":"geo","in":"query","style":"form","explode":true,
+                    "schema":{"type":"array","items":{"type":"string"}}},
+                {"name":"time","in":"query","style":"form","explode":false,
+                    "schema":{"type":"array","items":{"type":"string"}}}
+            ],
+            "responses":{"200":{"description":"data","content":{"application/json":{"schema":{"type":"object"}}}}}
+        }}}}
+    )");
+    agent_host_openapi_provider_config config;
+    config.id = "eurostat";
+    config.base_url = "https://example.test";
+    agent_openapi_catalog catalog;
+    std::string error;
+    assert(build_agent_openapi_catalog(spec, config, catalog, error));
+    assert(catalog.operations.size() == 1);
+    const auto & operation = catalog.operations.front();
+    assert(operation.query_parameter_map == "dimensions");
+    assert(operation.query_parameter_styles.at("geo") == "form");
+    assert(operation.query_parameter_explode.at("geo"));
+    const auto schema = json::parse(operation.input_schema_json);
+    assert(schema["properties"]["geo"]["type"] == "array");
+    assert(schema["properties"]["dimensions"]["type"] == "object");
+    agent_openapi_tool_provider provider(catalog,
+        [](const agent_tool_context &, const agent_openapi_operation &,
+                const std::string &, agent_openapi_execution_result & result, std::string &) {
+            result.ok = true;
+            result.structured_content_json = R"({"status":"ok"})";
+            return true;
+        });
+    agent_tool_context context;
+    context.request_id = "eurostat-schema";
+    context.allow_network = true;
+    context.max_calls = 4;
+    const auto view = provider.resolve_tools(context, error);
+    assert(view != nullptr);
+    const auto call = view->call({"eurostat-schema-call", "eurostat.getData",
+        R"({"code":"DEMO","geo":["SE","NO"],"time":["2020","2021"],"dimensions":{"unit":["P_KM2","P_M2"],"age":"TOTAL"}})"}, error);
+    assert(call.ok);
+}
+
 int main() {
+    test_checked_in_eurostat_provider_examples();
+    test_openapi_query_parameter_serialization_contract();
+    test_generic_workflow_pagination();
     agent_openapi_catalog catalog;
     catalog.provider_id = "openalex";
     catalog.prefix = "openalex";

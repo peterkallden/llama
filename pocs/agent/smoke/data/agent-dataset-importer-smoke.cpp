@@ -1,7 +1,11 @@
 #include "tools/agent/data/agent-dataset-importer.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -121,6 +125,84 @@ int main() {
            imported[0].columns[0].type == common_agent_dataset_column_type::string &&
            imported[0].columns[1].type == common_agent_dataset_column_type::integer &&
            imported[0].columns[2].type == common_agent_dataset_column_type::boolean);
+
+    const std::string json_stat = R"({
+      "class":"dataset","id":["geo","time"],"size":[2,2],
+      "dimension":{
+        "geo":{"category":{"index":{"SE":0,"NO":1},"label":{"SE":"Sweden","NO":"Norway"}}},
+        "time":{"category":{"index":{"2020":0,"2021":1},"label":{"2020":"2020","2021":"2021"}}}
+      },"value":[10,11,20,21],"status":["a","b","c","d"]
+    })";
+    std::string structured;
+    assert(normalize_agent_json_dataset(json_stat, "population", structured, error));
+    auto structured_root = nlohmann::json::parse(structured);
+    const auto & stat_rows = structured_root["worksheets"][0]["rows"];
+    assert(stat_rows.size() == 4);
+    assert(stat_rows[0]["geo"] == "SE" && stat_rows[0]["geo_label"] == "Sweden");
+    assert(stat_rows[2]["geo"] == "NO" && stat_rows[2]["time"] == "2020");
+    assert(stat_rows[3]["value"] == 21 && stat_rows[3]["status"] == "d");
+    const std::string sparse_json_stat = R"({
+      "class":"dataset","id":["geo","time"],"size":[2,2],
+      "dimension":{
+        "geo":{"category":{"index":["SE","NO"]}},
+        "time":{"category":{"index":["2020","2021"]}}
+      },"value":{"1":11,"3":21},"status":{"3":"e"}
+    })";
+    assert(normalize_agent_json_dataset(sparse_json_stat, "sparse", structured, error));
+    const auto sparse_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
+    assert(sparse_rows.size() == 2 && sparse_rows[0]["geo"] == "SE" &&
+        sparse_rows[0]["time"] == "2021" && sparse_rows[1]["geo"] == "NO" &&
+        sparse_rows[1]["status"] == "e");
+    assert(normalize_agent_json_dataset(
+        R"([{"code":"A","label":"Alpha"},{"code":"B","label":"Beta"}])",
+        "catalog", structured, error));
+    assert(nlohmann::json::parse(structured)["worksheets"][0]["rows"].size() == 2);
+    assert(!normalize_agent_json_dataset(R"([{"nested":{"x":1}}])", "nested", structured, error));
+    assert(!normalize_agent_json_dataset(R"([])", "empty", structured, error));
+
+    const std::string toc_xml = R"(<nt:tree xmlns:nt="urn:eu.europa.ec.eurostat.navtree">
+      <nt:branch><nt:title language="en">Economy</nt:title><nt:code>econ</nt:code><nt:children>
+        <nt:leaf type="table"><nt:title language="en">GDP by country</nt:title>
+          <nt:code>nama_10_gdp</nt:code><nt:lastUpdate>2026-01-01</nt:lastUpdate>
+          <nt:dataStart>1995</nt:dataStart><nt:dataEnd>2025</nt:dataEnd><nt:values>1200</nt:values>
+          <nt:metadata>https://example.invalid/metadata</nt:metadata>
+        </nt:leaf>
+      </nt:children></nt:branch></nt:tree>)";
+    assert(normalize_agent_xml_dataset(toc_xml, "Eurostat catalogue", structured, error));
+    auto toc_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
+    assert(toc_rows.size() == 1 && toc_rows[0]["dataset_code"] == "nama_10_gdp");
+    assert(toc_rows[0]["category_path"] == "Economy" && toc_rows[0]["values"] == 1200);
+
+    const std::string sdmx_xml = R"(<Structure xmlns="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/structure">
+      <Dataflows><Dataflow id="NAMA_10_GDP"><Name xml:lang="en">GDP</Name>
+        <Structure><Ref id="DSD_NAMA_10_GDP"/></Structure></Dataflow></Dataflows>
+      <DataStructures><DataStructure id="DSD_NAMA_10_GDP"><DataStructureComponents>
+        <DimensionList><Dimension id="geo" position="1"><Name xml:lang="en">Geopolitical entity</Name>
+          <LocalRepresentation><Enumeration><Ref id="CL_GEO"/></Enumeration></LocalRepresentation>
+        </Dimension></DimensionList>
+      </DataStructureComponents></DataStructure></DataStructures>
+      <Codelists><Codelist id="CL_GEO"><Code id="SE"><Name xml:lang="en">Sweden</Name></Code></Codelist></Codelists>
+    </Structure>)";
+    assert(normalize_agent_xml_dataset(sdmx_xml, "Eurostat metadata", structured, error));
+    auto sdmx_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
+    assert(sdmx_rows.size() >= 3);
+    bool found_code = false;
+    bool found_dimension = false;
+    for (const auto & row : sdmx_rows) {
+        if (row.value("artifact_kind", "") == "Code") found_code = row.value("code", "") == "SE";
+        if (row.value("artifact_kind", "") == "Dimension") {
+            found_dimension = row.value("dimension_id", "") == "geo" && row.value("codelist_id", "") == "CL_GEO";
+        }
+    }
+    assert(found_code && found_dimension);
+
+    const std::string record_xml = R"(<records><record id="1"><country>SE</country><value>42</value></record>
+      <record id="2"><country>NO</country><value>24</value></record></records>)";
+    assert(normalize_agent_xml_dataset(record_xml, "records", structured, error));
+    assert(nlohmann::json::parse(structured)["worksheets"][0]["rows"].size() == 2);
+    const std::string external_entity = R"(<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><records><record><value>&e;</value></record></records>)";
+    assert(!normalize_agent_xml_dataset(external_entity, "unsafe", structured, error));
+    assert(error.find("DTD") != std::string::npos || error.find("malformed") != std::string::npos);
 
     request.sheet_name = "Customers";
     request.limits.max_rows = 100;

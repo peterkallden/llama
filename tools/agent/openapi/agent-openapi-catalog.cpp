@@ -67,7 +67,7 @@ agent_openapi_paging_contract classify_paging_contract(
         paging.page_parameter = *parameter;
     }
     if (const auto * parameter = find_query_parameter(
-            query_parameters, {"cursor", "pagecursor", "nextcursor", "pageafter"})) {
+            query_parameters, {"cursor", "pagecursor", "nextcursor", "pageafter", "pagetoken", "continuationtoken"})) {
         paging.cursor_parameter = *parameter;
     }
     if (const auto * parameter = find_query_parameter(
@@ -83,6 +83,86 @@ agent_openapi_paging_contract classify_paging_contract(
     } else if (!paging.page_parameter.empty()) paging.kind = agent_openapi_paging_kind::page_number;
     else if (!paging.page_size_parameter.empty()) paging.kind = agent_openapi_paging_kind::bounded_collection;
     return paging;
+}
+
+bool configure_paging_response(const nlohmann::json & operation_spec,
+        agent_openapi_operation & operation, std::string & error) {
+    using json = nlohmann::json;
+    auto & paging = operation.paging;
+    const auto schema = json::parse(operation.result_schema_json, nullptr, false);
+    const auto properties = schema.is_object() ? schema.value("properties", json::object()) : json::object();
+    if (properties.is_object()) {
+        for (const char * key : {"results", "items", "data", "records"}) {
+            const auto found = properties.find(key);
+            if (found != properties.end() && found->is_object() && found->contains("type") && (*found)["type"] == "array") {
+                paging.items_pointer = std::string("/") + key;
+                break;
+            }
+        }
+        for (const char * pointer : {"/meta/next_cursor", "/next_cursor", "/pagination/next_cursor",
+                "/nextCursor", "/next_page_token"}) {
+            // Translate a response pointer into its schema property path.
+            std::string schema_path;
+            std::string token;
+            for (size_t index = 1; index <= std::string(pointer).size(); ++index) {
+                if (pointer[index] == '/' || pointer[index] == '\0') {
+                    schema_path += "/properties/" + token;
+                    token.clear();
+                } else token.push_back(pointer[index]);
+            }
+            if (schema.contains(json::json_pointer(schema_path))) {
+                paging.next_cursor_pointer = pointer;
+                break;
+            }
+        }
+    }
+    const auto declaration = operation_spec.find("x-agent-pagination");
+    if (declaration == operation_spec.end()) return true;
+    if (!declaration->is_object()) {
+        error = "OpenAPI x-agent-pagination must be an object";
+        return false;
+    }
+    for (const auto & field : declaration->items()) {
+        if (field.key() == "cursor_parameter") {
+            if (!field.value().is_string() ||
+                    std::find(operation.query_parameters.begin(), operation.query_parameters.end(),
+                        field.value().get<std::string>()) == operation.query_parameters.end()) {
+                error = "OpenAPI pagination cursor_parameter must name a declared query parameter";
+                return false;
+            }
+            paging.cursor_parameter = field.value().get<std::string>();
+            paging.kind = agent_openapi_paging_kind::cursor;
+            continue;
+        }
+        if (field.key() != "items_pointer" && field.key() != "next_cursor_pointer") {
+            error = "OpenAPI x-agent-pagination has an unsupported field";
+            return false;
+        }
+        if (!field.value().is_string() || field.value().get<std::string>().empty() ||
+                field.value().get_ref<const std::string &>().front() != '/') {
+            error = "OpenAPI pagination response paths must be nonempty JSON pointers";
+            return false;
+        }
+        try { const json::json_pointer pointer(field.value().get<std::string>()); (void) pointer; }
+        catch (const json::exception &) {
+            error = "OpenAPI pagination response path is not a valid JSON pointer";
+            return false;
+        }
+        if (field.key() == "items_pointer") paging.items_pointer = field.value().get<std::string>();
+        else paging.next_cursor_pointer = field.value().get<std::string>();
+    }
+    if (!paging.next_cursor_pointer.empty() &&
+            (paging.next_cursor_pointer == paging.items_pointer ||
+             paging.next_cursor_pointer.rfind(paging.items_pointer + "/", 0) == 0 ||
+             paging.items_pointer.rfind(paging.next_cursor_pointer + "/", 0) == 0)) {
+        error = "OpenAPI pagination items and cursor paths must not overlap";
+        return false;
+    }
+    if (paging.items_pointer == "/pagination" || paging.items_pointer.rfind("/pagination/", 0) == 0) {
+        error = "OpenAPI pagination items path conflicts with host coverage metadata";
+        return false;
+    }
+    return true;
 }
 
 bool policy_allows(
@@ -222,6 +302,9 @@ bool operation_input_schema(
         const nlohmann::json & operation,
         std::vector<std::string> & path_parameters,
         std::vector<std::string> & query_parameters,
+        std::map<std::string, std::string> & query_parameter_styles,
+        std::map<std::string, bool> & query_parameter_explode,
+        std::string & query_parameter_map,
         std::string & error,
         std::string & output) {
     nlohmann::json schema = {
@@ -246,6 +329,16 @@ bool operation_input_schema(
             const std::string location = parameter.value("in", "");
             if (location == "path" && std::find(path_parameters.begin(), path_parameters.end(), name) == path_parameters.end()) path_parameters.push_back(name);
             if (location == "query" && std::find(query_parameters.begin(), query_parameters.end(), name) == query_parameters.end()) query_parameters.push_back(name);
+            if (location == "query") {
+                const std::string style = parameter.value("style", "form");
+                if (style != "form" && style != "spaceDelimited" &&
+                        style != "pipeDelimited" && style != "deepObject") {
+                    error = "Unsupported OpenAPI query parameter style: " + style;
+                    return false;
+                }
+                query_parameter_styles[name] = style;
+                query_parameter_explode[name] = parameter.value("explode", style == "form");
+            }
             if (parameter_schemas.find(name) == parameter_schemas.end()) parameter_order.push_back(name);
             auto parameter_schema = parameter.value("schema", nlohmann::json({{"type", "string"}}));
             std::set<std::string> schema_refs;
@@ -259,6 +352,28 @@ bool operation_input_schema(
     };
     if (!collect_parameters(path_item.value("parameters", nlohmann::json::array())) ||
             !collect_parameters(operation.value("parameters", nlohmann::json::array()))) return false;
+    if (operation.contains("x-agent-query-parameter-map")) {
+        const auto & map_name = operation["x-agent-query-parameter-map"];
+        if (!map_name.is_string() || map_name.get<std::string>().empty()) {
+            error = "x-agent-query-parameter-map must name an argument";
+            return false;
+        }
+        query_parameter_map = map_name.get<std::string>();
+        if (std::find(query_parameters.begin(), query_parameters.end(), query_parameter_map) != query_parameters.end() ||
+                parameter_schemas.find(query_parameter_map) != parameter_schemas.end()) {
+            error = "OpenAPI query parameter map conflicts with a declared parameter";
+            return false;
+        }
+        schema["properties"][query_parameter_map] = {
+            {"type", "object"},
+            {"additionalProperties", {
+                {"oneOf", nlohmann::json::array({
+                    nlohmann::json{{"type", "string"}},
+                    nlohmann::json{{"type", "array"}, {"items", {{"type", "string"}}}}
+                })}
+            }}
+        };
+    }
     for (const auto & name : parameter_order) {
         schema["properties"][name] = parameter_schemas[name];
         if (!parameter_descriptions[name].empty()) {
@@ -587,11 +702,14 @@ bool build_agent_openapi_catalog(
                 }
             }
             if (!operation_input_schema(document, path_item, value, operation.path_parameters,
-                    operation.query_parameters, error, operation.input_schema_json) ||
+                    operation.query_parameters, operation.query_parameter_styles,
+                    operation.query_parameter_explode, operation.query_parameter_map,
+                    error, operation.input_schema_json) ||
                     !operation_result_schema(document, value, error, operation.result_schema_json)) {
                 return false;
             }
             operation.paging = classify_paging_contract(operation.query_parameters);
+            if (!configure_paging_response(value, operation, error)) return false;
 
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;

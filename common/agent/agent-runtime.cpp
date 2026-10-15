@@ -1292,7 +1292,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         plan.workflow_definition->transitions.begin(),
                         plan.workflow_definition->transitions.end(),
                         [&](const auto & candidate) { return candidate.id == transition_id; });
-                    if (transition != plan.workflow_definition->transitions.end()) {
+                    if (transition != plan.workflow_definition->transitions.end() &&
+                            transition->kind == common_plan_workflow_transition_kind::tool &&
+                            transition->tool_name == tool_call->name) {
                         tool_call->workflow_page_limit = transition->max_pages;
                     }
                 }

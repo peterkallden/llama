@@ -182,6 +182,12 @@ requirements generically. The starter library covers these host-tool domains:
 - Configured scholarly research through OpenAlex. A static provider is exposed
   at host startup; its workflows therefore require `context.openapi.available`
   and do not repeat dynamic API onboarding.
+- Eurostat statistics through a bounded chain: catalogue TOC XML discovery,
+  SDMX dataflow/DSD/code-list/constraint resolution, then Statistics API
+  retrieval. The JSON-stat response becomes an ordinary provenance-bearing
+  dataset and continues through the generic dataset analysis/quality workflows.
+  These starter procedures and blueprints are imported from the JSON package;
+  the host supplies generic safe XML/JSON normalization and query serialization.
 
 The starter blueprint, procedure and workflow for this path are imported from
 [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).
@@ -249,6 +255,13 @@ Work records expose up to three assigned `topics` plus `primary_topic`; use
 topic. The works `search` parameter searches title, abstract and other text,
 and `display_name` is the returned work title. The host bounds each request and
 the workflow reports that the resulting candidate set is not exhaustive.
+The `max_pages` transition directive is generic: any imported workflow can
+enable bounded cursor collection on a read-only OpenAPI tool transition. The
+OpenAPI catalog supplies the declared item/cursor response paths, optionally
+through the operation's `x-agent-pagination` metadata. No OpenAlex-specific
+workflow name or blueprint binding is required. Other pagination methods are
+reported as unsupported for automatic collection and remain single-request.
+
 The broad work-search and literature-review workflows may follow the OpenAlex
 cursor for at most five pages. This host-only limit is attached to those
 workflow transitions; direct `openalex.listWorks` calls and narrower lookups

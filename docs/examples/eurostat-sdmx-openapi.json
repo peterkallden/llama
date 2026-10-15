@@ -1,0 +1,39 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Eurostat SDMX structure API adapter",
+    "version": "1.0"
+  },
+  "paths": {
+    "/{artifactType}/{agencyID}/{resourceID}/{version}": {
+      "get": {
+        "operationId": "getStructure",
+        "summary": "Retrieve a Eurostat SDMX structural resource",
+        "description": "Read a dataflow, data structure definition, code list, or content constraint. Use only identifiers returned by Eurostat catalogue or metadata results.",
+        "parameters": [
+          {"name": "artifactType", "in": "path", "required": true,
+           "schema": {"type": "string", "enum": ["dataflow", "datastructure", "codelist", "contentconstraint"]}},
+          {"name": "agencyID", "in": "path", "required": true,
+           "schema": {"type": "string"}},
+          {"name": "resourceID", "in": "path", "required": true,
+           "schema": {"type": "string"}},
+          {"name": "version", "in": "path", "required": true,
+           "description": "Use a version returned by metadata, or all/latest only when the API explicitly supports it.",
+           "schema": {"type": "string"}},
+          {"name": "references", "in": "query",
+           "description": "Bounded SDMX reference expansion such as none or all.",
+           "schema": {"type": "string", "enum": ["none", "parents", "parentsandsiblings", "children", "descendants", "all"]}},
+          {"name": "detail", "in": "query", "schema": {"type": "string", "enum": ["full", "allstubs", "referencestubs", "referencepartial"]}},
+          {"name": "lang", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "SDMX-ML structural metadata",
+            "content": {"application/vnd.sdmx.structure+xml": {"schema": {"type": "string"}},
+              "application/xml": {"schema": {"type": "string"}}}
+          }
+        }
+      }
+    }
+  }
+}

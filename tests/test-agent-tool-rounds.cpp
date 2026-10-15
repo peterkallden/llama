@@ -226,7 +226,7 @@ int main() {
     common_agent_runtime paginated_agent_runtime(paginated_store, paginated_planner,
         paginated_executor, paginated_reflector, &paginated_runtime);
     common_agent_request paginated_request;
-    paginated_request.prompt = "search through the bounded OpenAlex workflow";
+    paginated_request.prompt = "search through the bounded generic lookup workflow";
     paginated_request.max_iterations = 2;
     paginated_request.max_reflection_rounds = 2;
     paginated_request.max_tool_batches = 2;

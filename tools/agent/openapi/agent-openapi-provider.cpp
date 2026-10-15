@@ -49,6 +49,12 @@ std::string paging_description(const agent_openapi_operation & operation) {
     return description;
 }
 
+void annotate_pagination(json & response, const json & facts) {
+    auto & pagination = response["pagination"];
+    if (!pagination.is_object()) pagination = json::object();
+    for (const auto & fact : facts.items()) pagination[fact.key()] = fact.value();
+}
+
 } // namespace
 
 class agent_openapi_tool_provider::client : public agent_mcp_tool_client {
@@ -129,16 +135,20 @@ private:
         auto arguments = json::parse(arguments_json, nullptr, false);
         if (!executor || !arguments.is_object() ||
                 !executor(context, *it, arguments_json, execution, error)) return false;
-        if (execution.ok && requested_page_limit > 1 &&
+        if (execution.ok && requested_page_limit > 1 && it->read_only &&
                 it->paging.kind == agent_openapi_paging_kind::cursor &&
                 !it->paging.cursor_parameter.empty()) {
             execution = collect_cursor_pages(context, *it, arguments,
                 std::min<uint8_t>(requested_page_limit, 5), std::move(execution));
+        } else if (execution.ok && requested_page_limit > 1) {
+            execution.structured_content_json = partial_json(
+                json::parse(execution.structured_content_json, nullptr, false), 1,
+                std::min<uint8_t>(requested_page_limit, 5), "unsupported_pagination_contract");
         }
         if (materializer && !materializer(context, *it, arguments_json, execution, error)) return false;
         execution.structured_content_json = agent_openapi_project_model_result(
             execution.structured_content_json, catalog.prefix == "openalex");
-        if (requested_page_limit > 1 && !execution.resource_refs.empty()) {
+        if (catalog.prefix == "openalex" && requested_page_limit > 1 && !execution.resource_refs.empty()) {
             const auto body = json::parse(execution.structured_content_json, nullptr, false);
             if (body.is_object() && body.contains("pagination") &&
                     body["pagination"].is_object() && body.contains("results") &&
@@ -174,6 +184,26 @@ private:
                     {"resource_ref", execution.resource_refs.front().uri},
                 }.dump();
             }
+        } else if (requested_page_limit > 1 && !execution.resource_refs.empty()) {
+            auto preview = json::parse(execution.structured_content_json, nullptr, false);
+            const json::json_pointer path(it->paging.items_pointer);
+            if (preview.is_object() && preview.contains("pagination") &&
+                    preview.contains(path) && preview[path].is_array()) {
+                const auto count = preview[path].size();
+                json selected = json::array();
+                size_t preview_bytes = 0;
+                for (const auto & item : preview[path]) {
+                    const size_t bytes = item.dump().size();
+                    if (selected.size() >= 10 || bytes > 16384 - preview_bytes) break;
+                    selected.push_back(item);
+                    preview_bytes += bytes;
+                }
+                const auto omitted = count - selected.size();
+                preview[path] = std::move(selected);
+                annotate_pagination(preview, {{"preview_omitted_items", omitted},
+                    {"resource_ref", execution.resource_refs.front().uri}});
+                execution.structured_content_json = preview.dump();
+            }
         }
         result.ok = execution.ok;
         result.structured_content_json = execution.structured_content_json;
@@ -197,14 +227,36 @@ private:
             uint8_t page_limit,
             agent_openapi_execution_result first) {
         auto merged = json::parse(first.structured_content_json, nullptr, false);
-        if (!merged.is_object() || !merged.contains("results") || !merged["results"].is_array()) {
+        const json::json_pointer items_path(operation.paging.items_pointer);
+        if (!merged.is_object() || !merged.contains(items_path) || !merged[items_path].is_array()) {
             first.structured_content_json = partial_json(std::move(merged), 1, page_limit,
                 "cursor_response_missing_results");
             return first;
         }
-        size_t item_count = merged["results"].size();
+        auto & items = merged[items_path];
+        // Bound the combined response as well as each HTTP response. This is
+        // independent of provider naming and of the page-size parameter.
+        constexpr size_t max_items = 10000;
+        constexpr size_t max_merged_bytes = 8 * 1024 * 1024;
+        if (items.size() > max_items) {
+            items.erase(items.begin() + max_items, items.end());
+            first.structured_content_json = partial_json(std::move(merged), 1, page_limit, "result_limit");
+            return first;
+        }
+        size_t merged_bytes = merged.dump().size();
+        if (merged_bytes > max_merged_bytes) {
+            // Preserve the bounded first HTTP response, but never grow it.
+            first.structured_content_json = partial_json(std::move(merged), 1, page_limit, "byte_limit");
+            return first;
+        }
+        auto pending_cursor = response_cursor(merged, operation.paging);
+        size_t item_count = items.size();
         uint8_t pages = 1;
         std::set<std::string> seen_cursors;
+        if (arguments.contains(operation.paging.cursor_parameter) &&
+                arguments[operation.paging.cursor_parameter].is_string()) {
+            seen_cursors.insert(arguments[operation.paging.cursor_parameter].get<std::string>());
+        }
         json page_provenance = json::array();
         page_provenance.push_back({{"page", 1},
             {"cursor", arguments.contains(operation.paging.cursor_parameter)
@@ -213,7 +265,7 @@ private:
         bool complete = false;
         std::string stop_reason;
         for (;;) {
-            const auto cursor = response_cursor(merged);
+            const auto cursor = pending_cursor;
             if (!cursor) { stop_reason = "cursor_unavailable"; break; }
             if (cursor->empty()) { complete = true; break; }
             if (pages >= page_limit) { stop_reason = "page_limit"; break; }
@@ -229,10 +281,11 @@ private:
                     {"failure_code", page.failure_code}, {"retryable", page.retryable}});
                 const auto failure = json{{"http_status", page.http.status},
                     {"failure_code", page.failure_code}, {"retryable", page.retryable},
+                    {"retry_after_seconds", page.http.retry_after_seconds},
                     {"summary", page.safe_summary}};
-                merged["pagination"] = {{"pages_fetched", pages}, {"page_limit", page_limit},
+                annotate_pagination(merged, {{"pages_fetched", pages}, {"page_limit", page_limit},
                     {"complete", false}, {"stop_reason", stop_reason},
-                    {"page_provenance", page_provenance}, {"page_error", failure}};
+                    {"page_provenance", page_provenance}, {"page_error", failure}});
                 first.structured_content_json = merged.dump();
                 first.raw_diagnostic = page.raw_diagnostic.empty() ? page_error : page.raw_diagnostic;
                 // Keep already fetched evidence usable, but explicitly mark it
@@ -241,36 +294,56 @@ private:
                 return first;
             }
             auto page_json = json::parse(page.structured_content_json, nullptr, false);
-            if (!page_json.is_object() || !page_json.contains("results") ||
-                    !page_json["results"].is_array()) {
+            if (!page_json.is_object() || !page_json.contains(items_path) ||
+                    !page_json[items_path].is_array()) {
                 stop_reason = "cursor_response_missing_results";
                 break;
             }
-            bool result_limit_reached = false;
-            for (auto & item : page_json["results"]) {
-                if (item_count >= 10000) { result_limit_reached = true; break; }
-                merged["results"].push_back(std::move(item));
+            // Keep the last response separate: a top-level continuation must
+            // advance too, rather than reading the first page's cursor again.
+            pending_cursor = response_cursor(page_json, operation.paging);
+            std::string limit_reason;
+            for (auto & item : page_json[items_path]) {
+                if (item_count >= max_items) { limit_reason = "result_limit"; break; }
+                const auto item_bytes = item.dump().size() + 1;
+                if (item_bytes > max_merged_bytes - merged_bytes) { limit_reason = "byte_limit"; break; }
+                merged[items_path].push_back(std::move(item));
+                merged_bytes += item_bytes;
                 ++item_count;
             }
-            if (page_json.contains("meta")) merged["meta"] = page_json["meta"];
+            // Update continuation fields without overwriting a provider's
+            // metadata object, which may itself contain the collected array.
+            if (!operation.paging.next_cursor_pointer.empty()) {
+                const json::json_pointer cursor_path(operation.paging.next_cursor_pointer);
+                if (page_json.contains(cursor_path)) merged[cursor_path] = page_json[cursor_path];
+            } else if (page_json.contains("meta") && page_json["meta"].is_object() &&
+                    page_json["meta"].contains("next_cursor")) {
+                merged["meta"]["next_cursor"] = page_json["meta"]["next_cursor"];
+            } else if (page_json.contains("next_cursor")) {
+                merged["next_cursor"] = page_json["next_cursor"];
+            }
             first.http = page.http;
             ++pages;
             page_provenance.push_back({{"page", pages}, {"cursor", *cursor},
                 {"http_status", page.http.status}, {"response_bytes", page.http.response_bytes}});
-            if (result_limit_reached) { stop_reason = "result_limit"; break; }
+            if (!limit_reason.empty()) { stop_reason = limit_reason; break; }
         }
         if (stop_reason.empty()) stop_reason = complete ? "exhausted" : "cursor_unavailable";
-        merged["pagination"] = {{"pages_fetched", pages}, {"page_limit", page_limit},
+        annotate_pagination(merged, {{"pages_fetched", pages}, {"page_limit", page_limit},
             {"complete", complete}, {"stop_reason", stop_reason},
-            {"page_provenance", page_provenance}};
+            {"page_provenance", page_provenance}});
         first.structured_content_json = merged.dump();
         first.ok = true;
         return first;
     }
 
-    static std::optional<std::string> response_cursor(const json & value) {
+    static std::optional<std::string> response_cursor(const json & value,
+            const agent_openapi_paging_contract & paging) {
         const json * cursor = nullptr;
-        if (value.contains("meta") && value["meta"].is_object() &&
+        if (!paging.next_cursor_pointer.empty()) {
+            const json::json_pointer path(paging.next_cursor_pointer);
+            if (value.contains(path)) cursor = &value[path];
+        } else if (value.contains("meta") && value["meta"].is_object() &&
                 value["meta"].contains("next_cursor")) cursor = &value["meta"]["next_cursor"];
         else if (value.contains("next_cursor")) cursor = &value["next_cursor"];
         if (cursor == nullptr) return std::nullopt;
@@ -281,9 +354,9 @@ private:
 
     static std::string partial_json(json value, uint8_t pages, uint8_t limit,
             const std::string & reason) {
-        if (!value.is_object()) value = json::object();
-        value["pagination"] = {{"pages_fetched", pages}, {"page_limit", limit},
-            {"complete", false}, {"stop_reason", reason}};
+        if (!value.is_object()) value = json{{"response", value.is_discarded() ? json(nullptr) : value}};
+        annotate_pagination(value, {{"pages_fetched", pages}, {"page_limit", limit},
+            {"complete", false}, {"stop_reason", reason}});
         return value.dump();
     }
 

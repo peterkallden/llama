@@ -13,9 +13,14 @@
           {"name": "datasetCode", "in": "path", "required": true,
            "schema": {"type": "string"}},
           {"name": "lang", "in": "query", "schema": {"type": "string"}},
-          {"name": "geo", "in": "query", "schema": {"type": "string"}},
-          {"name": "time", "in": "query", "schema": {"type": "string"}}
+          {"name": "geo", "in": "query", "style": "form", "explode": true,
+           "description": "Optional repeated geographic codes returned by Eurostat metadata.",
+           "schema": {"type": "array", "items": {"type": "string"}}},
+          {"name": "time", "in": "query", "style": "form", "explode": true,
+           "description": "Optional repeated time codes returned by Eurostat metadata.",
+           "schema": {"type": "array", "items": {"type": "string"}}}
         ],
+        "x-agent-query-parameter-map": "dimensions",
         "responses": {
           "200": {
             "description": "JSON-stat 2.0 dataset",

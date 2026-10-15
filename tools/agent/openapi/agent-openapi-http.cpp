@@ -17,6 +17,7 @@
 #include <limits>
 #include <iomanip>
 #include <ctime>
+#include <cctype>
 
 namespace {
 struct url_parts { std::string scheme, host, base_path; int port = 0; };
@@ -25,6 +26,110 @@ struct oauth_token_cache {
     std::string access_token;
     std::chrono::steady_clock::time_point expires_at{};
 };
+
+bool valid_query_map_key(const std::string & value) {
+    if (value.empty() || value.size() > 64 ||
+            !(std::isalpha(static_cast<unsigned char>(value.front())) || value.front() == '_')) return false;
+    return std::all_of(value.begin() + 1, value.end(), [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '-' || c == '.';
+    });
+}
+
+std::string query_scalar(const nlohmann::json & value) {
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_number() || value.is_boolean()) return value.dump();
+    return {};
+}
+
+bool append_array_query(
+        httplib::Params & query,
+        const std::string & name,
+        const nlohmann::json & value,
+        const std::string & style,
+        bool explode,
+        std::string & error) {
+    if (!value.is_array()) {
+        error = "OpenAPI array query argument must be an array: " + name;
+        return false;
+    }
+    if (value.size() > 64) {
+        error = "OpenAPI array query argument exceeds the per-parameter item limit: " + name;
+        return false;
+    }
+    std::vector<std::string> values;
+    values.reserve(value.size());
+    for (const auto & item : value) {
+        const auto scalar = query_scalar(item);
+        if (scalar.empty() || scalar.size() > 1024) {
+            error = "OpenAPI array query values must be non-empty scalars: " + name;
+            return false;
+        }
+        values.push_back(scalar);
+    }
+    if (explode && style == "form") {
+        for (const auto & item : values) query.emplace(name, item);
+        return true;
+    }
+    const char separator = style == "spaceDelimited" ? ' ' : style == "pipeDelimited" ? '|' : ',';
+    std::string joined;
+    for (const auto & item : values) {
+        if (!joined.empty()) joined.push_back(separator);
+        joined += item;
+    }
+    if (!joined.empty()) query.emplace(name, std::move(joined));
+    return true;
+}
+
+bool append_object_query(
+        httplib::Params & query,
+        const std::string & name,
+        const nlohmann::json & value,
+        const std::string & style,
+        bool explode,
+        std::string & error) {
+    if (!value.is_object() || value.size() > 64) {
+        error = "OpenAPI object query argument must be an object with at most 64 properties: " + name;
+        return false;
+    }
+    if (style == "deepObject") {
+        for (const auto & field : value.items()) {
+            const auto scalar = query_scalar(field.value());
+            if (!valid_query_map_key(field.key()) || scalar.empty() || scalar.size() > 1024) {
+                error = "OpenAPI deepObject query values must have bounded property names and scalar values: " + name;
+                return false;
+            }
+            query.emplace(name + "[" + field.key() + "]", scalar);
+        }
+        return true;
+    }
+    if (style != "form") {
+        error = "OpenAPI object query arguments require form or deepObject style: " + name;
+        return false;
+    }
+    if (explode) {
+        for (const auto & field : value.items()) {
+            const auto scalar = query_scalar(field.value());
+            if (!valid_query_map_key(field.key()) || scalar.empty() || scalar.size() > 1024) {
+                error = "OpenAPI exploded object properties must have bounded names and scalar values: " + name;
+                return false;
+            }
+            query.emplace(field.key(), scalar);
+        }
+        return true;
+    }
+    std::string joined;
+    for (const auto & field : value.items()) {
+        const auto scalar = query_scalar(field.value());
+        if (!valid_query_map_key(field.key()) || scalar.empty() || scalar.size() > 1024) {
+            error = "OpenAPI object properties must have bounded names and scalar values: " + name;
+            return false;
+        }
+        if (!joined.empty()) joined.push_back(',');
+        joined += field.key() + "," + scalar;
+    }
+    if (!joined.empty()) query.emplace(name, std::move(joined));
+    return true;
+}
 
 bool parse_retry_after_seconds(const std::string & value, int64_t & seconds) {
     if (value.empty()) return false;
@@ -467,7 +572,43 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         for (const auto & name : operation.query_parameters) {
             const auto it = arguments.find(name);
             if (it == arguments.end()) continue;
-            query.emplace(name, it->is_string() ? it->get<std::string>() : it->dump());
+            const auto style = operation.query_parameter_styles.count(name)
+                ? operation.query_parameter_styles.at(name) : "form";
+            const bool explode = operation.query_parameter_explode.count(name)
+                ? operation.query_parameter_explode.at(name) : style == "form";
+            if (it->is_array()) {
+                if (!append_array_query(query, name, *it, style, explode, error)) return false;
+            } else if (it->is_object()) {
+                if (!append_object_query(query, name, *it, style, explode, error)) return false;
+            } else {
+                const auto scalar = query_scalar(*it);
+                if (scalar.empty() || scalar.size() > 1024) { error = "OpenAPI query argument must be a bounded non-empty scalar or supported array: " + name; return false; }
+                query.emplace(name, scalar);
+            }
+        }
+        if (!operation.query_parameter_map.empty()) {
+            const auto found = arguments.find(operation.query_parameter_map);
+            if (found != arguments.end()) {
+                if (!found->is_object() || found->size() > 64) {
+                    error = "OpenAPI query parameter map must be an object with at most 64 entries";
+                    return false;
+                }
+                for (const auto & entry : found->items()) {
+                    if (!valid_query_map_key(entry.key()) ||
+                            std::find(operation.query_parameters.begin(), operation.query_parameters.end(), entry.key()) != operation.query_parameters.end()) {
+                        error = "OpenAPI query parameter map contains an invalid or conflicting key";
+                        return false;
+                    }
+                    if (entry.value().is_array()) {
+                        if (entry.value().size() > 64 ||
+                                !append_array_query(query, entry.key(), entry.value(), "form", true, error)) return false;
+                    } else {
+                        const auto scalar = query_scalar(entry.value());
+                        if (scalar.empty() || scalar.size() > 1024) { error = "OpenAPI query parameter map values must be bounded non-empty scalars or arrays"; return false; }
+                        query.emplace(entry.key(), scalar);
+                    }
+                }
+            }
         }
         httplib::Headers headers;
         std::string token;
@@ -512,6 +653,12 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         if (operation.auth_required && config.auth.type == "mutual_tls" &&
                 (security_scheme == nullptr || security_scheme->type != "mutualTLS")) {
             error = "OpenAPI mutual_tls auth does not match the selected security scheme"; return false;
+        }
+        size_t query_bytes = 0;
+        if (query.size() > 256) { error = "OpenAPI query contains too many serialized values"; return false; }
+        for (const auto & item : query) {
+            query_bytes += item.first.size() + item.second.size() + 2;
+            if (query_bytes > 16 * 1024) { error = "OpenAPI query exceeds the host URL-size bound"; return false; }
         }
         std::string request_path = join_path(url.base_path, path);
         request_path = httplib::append_query_params(request_path, query);

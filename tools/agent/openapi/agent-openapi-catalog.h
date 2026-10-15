@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -15,7 +16,7 @@ enum class agent_openapi_access {
 
 // Contract-derived navigation metadata. This only describes parameters
 // declared by the OpenAPI operation; it does not invent paging semantics or
-// issue follow-up requests on the model's behalf.
+// issue follow-up requests without an explicit workflow page budget.
 enum class agent_openapi_paging_kind {
     none,
     bounded_collection,
@@ -30,6 +31,10 @@ struct agent_openapi_paging_contract {
     std::string page_parameter;
     std::string cursor_parameter;
     std::string projection_parameter;
+    // JSON pointers into each response. Conventional envelopes are detected
+    // from the response schema; x-agent-pagination can declare other layouts.
+    std::string items_pointer = "/results";
+    std::string next_cursor_pointer;
 };
 
 struct agent_openapi_security_scheme {
@@ -51,6 +56,12 @@ struct agent_openapi_operation {
     std::string input_schema_json = R"({"type":"object"})";
     std::vector<std::string> path_parameters;
     std::vector<std::string> query_parameters;
+    // Optional host-declared object whose keys are emitted as query names.
+    // Used for APIs such as Eurostat where dimension names depend on the
+    // selected dataset's DSD rather than a fixed OpenAPI parameter list.
+    std::string query_parameter_map;
+    std::map<std::string, std::string> query_parameter_styles;
+    std::map<std::string, bool> query_parameter_explode;
     // Host-use policy, separate from the OpenAPI schema's required list.
     // These parameters are described to the model and checked immediately
     // before execution so the common contract validator can still surface a

@@ -1,9 +1,16 @@
 #include "agent-dataset-importer.h"
 
 #include <nlohmann/json.hpp>
+#include <libxml/parser.h>
+#include <libxml/tree.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <functional>
+#include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 
 using json = nlohmann::ordered_json;
@@ -122,6 +129,386 @@ std::string stable_source_key(const std::string & value) {
         hash *= 1099511628211ULL;
     }
     return std::to_string(hash);
+}
+
+common_agent_dataset_column_type json_type(const json & value) {
+    if (value.is_null()) return common_agent_dataset_column_type::null_;
+    if (value.is_boolean()) return common_agent_dataset_column_type::boolean;
+    if (value.is_number_integer() || value.is_number_unsigned()) return common_agent_dataset_column_type::integer;
+    if (value.is_number()) return common_agent_dataset_column_type::decimal;
+    if (value.is_string()) return common_agent_dataset_column_type::string;
+    return common_agent_dataset_column_type::unknown;
+}
+
+common_agent_dataset_column_type merge_type(
+        common_agent_dataset_column_type left,
+        common_agent_dataset_column_type right) {
+    if (left == common_agent_dataset_column_type::null_) return right;
+    if (right == common_agent_dataset_column_type::null_) return left;
+    if (left == right) return left;
+    if ((left == common_agent_dataset_column_type::integer || left == common_agent_dataset_column_type::decimal) &&
+            (right == common_agent_dataset_column_type::integer || right == common_agent_dataset_column_type::decimal)) {
+        return common_agent_dataset_column_type::decimal;
+    }
+    return common_agent_dataset_column_type::string;
+}
+
+bool make_json_worksheet(
+        const std::string & name,
+        const std::vector<json> & rows,
+        const common_agent_dataset_limits & limits,
+        std::string & worksheet_json,
+        std::string & error) {
+    if (rows.size() > limits.max_rows) {
+        error = "structured resource exceeds the host row limit";
+        return false;
+    }
+    std::vector<std::string> columns;
+    std::map<std::string, common_agent_dataset_column_type> types;
+    std::set<std::string> seen;
+    for (const auto & row : rows) {
+        if (!row.is_object()) {
+            error = "structured dataset rows must be objects";
+            return false;
+        }
+        for (const auto & field : row.items()) {
+            if (field.value().is_object() || field.value().is_array()) {
+                error = "structured dataset columns must contain scalar or null values";
+                return false;
+            }
+            if (seen.insert(field.key()).second) columns.push_back(field.key());
+            auto & type = types[field.key()];
+            type = merge_type(type, json_type(field.value()));
+        }
+        if (columns.size() > limits.max_columns) {
+            error = "structured resource exceeds the host column limit";
+            return false;
+        }
+    }
+    if (columns.empty() && !rows.empty()) {
+        error = "structured dataset has no scalar columns";
+        return false;
+    }
+    if (rows.empty()) {
+        error = "structured dataset has no records from which to infer columns";
+        return false;
+    }
+    json worksheet = {{"name", name.empty() ? "JSON" : name}, {"index", 0},
+        {"table_index", 0}, {"node_id", "resource-node://structured/0"},
+        {"header_mode", "explicit"}, {"header_confidence", 1.0},
+        {"header_reason", "Host parser identified structured records"},
+        {"columns", json::array()}, {"rows", json::array()}};
+    for (const auto & column : columns) {
+        const auto type = types[column];
+        worksheet["columns"].push_back({{"name", column},
+            {"type", common_agent_dataset_column_type_name(type)}, {"nullable", true}});
+    }
+    for (auto row : rows) {
+        for (const auto & column : columns) if (!row.contains(column)) row[column] = nullptr;
+        worksheet["rows"].push_back(std::move(row));
+    }
+    if (rows.size() > limits.max_cells / std::max<size_t>(size_t(1), columns.size())) {
+        error = "structured resource exceeds the host cell limit";
+        return false;
+    }
+    worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
+    error.clear();
+    return true;
+}
+
+std::string xml_local_name(const xmlNode * node) {
+    return node == nullptr || node->name == nullptr
+        ? std::string() : reinterpret_cast<const char *>(node->name);
+}
+
+std::string xml_content(const xmlNode * node) {
+    if (node == nullptr) return {};
+    xmlChar * content = xmlNodeGetContent(const_cast<xmlNode *>(node));
+    if (content == nullptr) return {};
+    std::string result(reinterpret_cast<const char *>(content));
+    xmlFree(content);
+    const auto first = result.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = result.find_last_not_of(" \t\r\n");
+    return result.substr(first, last - first + 1);
+}
+
+std::string xml_attribute(const xmlNode * node, const char * name) {
+    if (node == nullptr) return {};
+    xmlChar * value = xmlGetProp(const_cast<xmlNode *>(node), BAD_CAST name);
+    if (value == nullptr) return {};
+    std::string result(reinterpret_cast<const char *>(value));
+    xmlFree(value);
+    return result;
+}
+
+const xmlNode * xml_child(const xmlNode * node, const char * name) {
+    for (const auto * child = node == nullptr ? nullptr : node->children;
+            child != nullptr; child = child->next) {
+        if (child->type == XML_ELEMENT_NODE && xml_local_name(child) == name) return child;
+    }
+    return nullptr;
+}
+
+std::string xml_named_child_text(const xmlNode * node, const char * name) {
+    return xml_content(xml_child(node, name));
+}
+
+std::string xml_english_name(const xmlNode * node) {
+    for (const auto * child = node == nullptr ? nullptr : node->children;
+            child != nullptr; child = child->next) {
+        if (child->type != XML_ELEMENT_NODE || (xml_local_name(child) != "Name" &&
+                xml_local_name(child) != "title" && xml_local_name(child) != "Title")) continue;
+        xmlChar * xml_language = xmlGetNsProp(const_cast<xmlNode *>(child), BAD_CAST "lang",
+            BAD_CAST "http://www.w3.org/XML/1998/namespace");
+        std::string language = xml_language == nullptr ? std::string() :
+            reinterpret_cast<const char *>(xml_language);
+        if (xml_language != nullptr) xmlFree(xml_language);
+        if (language.empty()) language = xml_attribute(child, "lang");
+        if (language.empty()) language = xml_attribute(child, "language");
+        if (language.empty() || language == "en") return xml_content(child);
+    }
+    return {};
+}
+
+bool xml_tree_within_limits(const xmlNode * node, size_t depth, size_t & nodes,
+        const common_agent_dataset_limits & limits, std::string & error) {
+    if (depth > 64 || ++nodes > limits.max_cells + limits.max_rows * 8) {
+        error = "XML resource exceeds the host structure limits";
+        return false;
+    }
+    for (const auto * child = node->children; child != nullptr; child = child->next) {
+        if (child->type == XML_ELEMENT_NODE && !xml_tree_within_limits(child, depth + 1, nodes, limits, error)) return false;
+    }
+    return true;
+}
+
+bool normalize_eurostat_toc(
+        const xmlNode * root,
+        const std::string & dataset_name,
+        const common_agent_dataset_limits & limits,
+        std::string & worksheet_json,
+        std::string & error) {
+    std::vector<json> rows;
+    std::vector<std::string> category;
+    std::function<bool(const xmlNode *)> visit = [&](const xmlNode * node) {
+        for (const auto * child = node->children; child != nullptr; child = child->next) {
+            if (child->type != XML_ELEMENT_NODE) continue;
+            const auto kind = xml_local_name(child);
+            if (kind == "branch") {
+                const auto label = xml_english_name(child);
+                const auto code = xml_named_child_text(child, "code");
+                category.push_back(label.empty() ? code : label);
+                if (!visit(child)) return false;
+                category.pop_back();
+            } else if (kind == "children") {
+                if (!visit(child)) return false;
+            } else if (kind == "leaf" && xml_attribute(child, "type") == "table") {
+                const auto code = xml_named_child_text(child, "code");
+                const auto title = xml_english_name(child);
+                if (code.empty() || title.empty()) continue;
+                if (rows.size() >= limits.max_rows) {
+                    error = "Eurostat table of contents exceeds the host row limit";
+                    return false;
+                }
+                std::string path;
+                for (const auto & part : category) {
+                    if (part.empty()) continue;
+                    if (!path.empty()) path += " / ";
+                    path += part;
+                }
+                json row = {{"dataset_code", code}, {"title", title}, {"category_path", path}};
+                for (const auto & pair : {std::pair<const char *, const char *> {"last_update", "lastUpdate"},
+                        {"data_start", "dataStart"}, {"data_end", "dataEnd"}, {"values", "values"}}) {
+                    const auto value = xml_named_child_text(child, pair.second);
+                    if (value.empty()) continue;
+                    if (std::string(pair.first) == "values") {
+                        char * end = nullptr;
+                        const auto parsed = std::strtoull(value.c_str(), &end, 10);
+                        row[pair.first] = end != nullptr && *end == '\0' ? json(parsed) : json(value);
+                    } else row[pair.first] = value;
+                }
+                const auto metadata = xml_child(child, "metadata");
+                if (metadata != nullptr) row["metadata_url"] = xml_content(metadata);
+                rows.push_back(std::move(row));
+            }
+        }
+        return true;
+    };
+    if (!visit(root)) return false;
+    if (rows.empty()) {
+        error = "Eurostat table of contents contains no table entries";
+        return false;
+    }
+    return make_json_worksheet(dataset_name.empty() ? "Eurostat table of contents" : dataset_name,
+        rows, limits, worksheet_json, error);
+}
+
+bool normalize_sdmx_structure(
+        const xmlNode * root,
+        const std::string & dataset_name,
+        const common_agent_dataset_limits & limits,
+        std::string & worksheet_json,
+        std::string & error) {
+    std::vector<json> rows;
+    std::function<void(const xmlNode *, std::string, std::string, std::string, std::string)> visit =
+        [&](const xmlNode * node, std::string dataflow, std::string structure,
+                std::string codelist, std::string constraint) {
+            if (node == nullptr || !error.empty()) return;
+            const std::string name = xml_local_name(node);
+            std::string next_dataflow = dataflow;
+            std::string next_structure = structure;
+            std::string next_codelist = codelist;
+            std::string next_constraint = constraint;
+            if (name == "Dataflow") next_dataflow = xml_attribute(node, "id");
+            if (name == "DataStructure") next_structure = xml_attribute(node, "id");
+            if (name == "Codelist") next_codelist = xml_attribute(node, "id");
+            if (name == "ContentConstraint") next_constraint = xml_attribute(node, "id");
+            json row;
+            bool emit = false;
+            const auto id = xml_attribute(node, "id");
+            if (name == "Dataflow" || name == "DataStructure" || name == "Dimension" ||
+                    name == "TimeDimension" || name == "PrimaryMeasure" || name == "Attribute" ||
+                    name == "Code" || name == "ContentConstraint" || name == "KeyValue" || name == "Value") {
+                emit = true;
+                row["artifact_kind"] = name;
+                row["artifact_id"] = id;
+                row["dataflow_id"] = next_dataflow;
+                row["structure_id"] = next_structure;
+                row["codelist_id"] = next_codelist;
+                row["constraint_id"] = next_constraint;
+                const auto label = xml_english_name(node);
+                if (!label.empty()) row["label"] = label;
+                const auto agency = xml_attribute(node, "agencyID");
+                if (!agency.empty()) row["agency_id"] = agency;
+                const auto version = xml_attribute(node, "version");
+                if (!version.empty()) row["version"] = version;
+                const auto position = xml_attribute(node, "position");
+                if (!position.empty()) {
+                    char * end = nullptr;
+                    const auto value = std::strtoull(position.c_str(), &end, 10);
+                    row["position"] = end != nullptr && *end == '\0' ? json(value) : json(position);
+                }
+                if (name == "Dimension" || name == "TimeDimension" || name == "PrimaryMeasure" || name == "Attribute") {
+                    row["dimension_id"] = id;
+                    row["parent_id"] = next_structure;
+                    std::function<void(const xmlNode *)> find_ref = [&](const xmlNode * candidate) {
+                        if (candidate == nullptr || !row.value("codelist_id", std::string()).empty()) return;
+                        if (xml_local_name(candidate) == "Ref") {
+                            const auto ref = xml_attribute(candidate, "id");
+                            if (!ref.empty()) row["codelist_id"] = ref;
+                            return;
+                        }
+                        for (const auto * part = candidate->children; part != nullptr; part = part->next)
+                            if (part->type == XML_ELEMENT_NODE) find_ref(part);
+                    };
+                    find_ref(node);
+                } else if (name == "Code") {
+                    row["code"] = id;
+                    row["parent_id"] = next_codelist;
+                } else if (name == "KeyValue") {
+                    row["dimension_id"] = xml_attribute(node, "id");
+                    row["parent_id"] = next_constraint;
+                } else if (name == "Value") {
+                    row["code"] = xml_content(node);
+                    row["parent_id"] = next_constraint;
+                }
+                if (name == "Dataflow") {
+                    std::function<void(const xmlNode *)> find_ref = [&](const xmlNode * candidate) {
+                        if (candidate == nullptr || row.contains("structure_id_ref")) return;
+                        if (xml_local_name(candidate) == "Ref") {
+                            const auto ref = xml_attribute(candidate, "id");
+                            if (!ref.empty()) row["structure_id_ref"] = ref;
+                            return;
+                        }
+                        for (const auto * part = candidate->children; part != nullptr; part = part->next)
+                            if (part->type == XML_ELEMENT_NODE) find_ref(part);
+                    };
+                    find_ref(node);
+                }
+                if (rows.size() >= limits.max_rows) error = "SDMX structure exceeds the host row limit";
+                else rows.push_back(std::move(row));
+            }
+            for (const auto * child = node->children; child != nullptr; child = child->next)
+                if (child->type == XML_ELEMENT_NODE) visit(child, next_dataflow, next_structure,
+                    next_codelist, next_constraint);
+        };
+    visit(root, {}, {}, {}, {});
+    if (!error.empty()) return false;
+    if (rows.empty()) {
+        error = "SDMX XML contains no supported structural records";
+        return false;
+    }
+    return make_json_worksheet(dataset_name.empty() ? "SDMX structure" : dataset_name,
+        rows, limits, worksheet_json, error);
+}
+
+bool normalize_generic_xml_records(
+        const xmlNode * root,
+        const std::string & dataset_name,
+        const common_agent_dataset_limits & limits,
+        std::string & worksheet_json,
+        std::string & error) {
+    struct group { const xmlNode * parent = nullptr; std::string name; std::vector<const xmlNode *> nodes; size_t depth = 0; };
+    std::vector<group> groups;
+    std::function<void(const xmlNode *, size_t)> find_groups = [&](const xmlNode * parent, size_t depth) {
+        if (depth > 64) return;
+        for (const auto * child = parent->children; child != nullptr; child = child->next) {
+            if (child->type != XML_ELEMENT_NODE) continue;
+            auto found = std::find_if(groups.begin(), groups.end(), [&](const group & value) {
+                return value.parent == parent && value.name == xml_local_name(child);
+            });
+            if (found == groups.end()) groups.push_back({parent, xml_local_name(child), {child}, depth});
+            else found->nodes.push_back(child);
+            find_groups(child, depth + 1);
+        }
+    };
+    find_groups(root, 0);
+    std::vector<const group *> candidates;
+    size_t min_depth = std::numeric_limits<size_t>::max();
+    for (const auto & value : groups) if (value.nodes.size() >= 2) min_depth = std::min(min_depth, value.depth);
+    for (const auto & value : groups) if (value.nodes.size() >= 2 && value.depth == min_depth) candidates.push_back(&value);
+    if (candidates.size() != 1) {
+        error = candidates.empty() ? "XML contains no repeated record elements" :
+            "XML has multiple equally plausible repeated record groups";
+        return false;
+    }
+    const auto & records = candidates.front()->nodes;
+    if (records.size() > limits.max_rows) {
+        error = "XML record group exceeds the host row limit";
+        return false;
+    }
+    std::vector<json> rows;
+    rows.reserve(records.size());
+    for (const auto * record : records) {
+        json row = json::object();
+        for (const auto * attr = record->properties; attr != nullptr; attr = attr->next) {
+            xmlChar * content = xmlNodeListGetString(record->doc, attr->children, 1);
+            if (content != nullptr) {
+                row["@" + std::string(reinterpret_cast<const char *>(attr->name))] =
+                    reinterpret_cast<const char *>(content);
+                xmlFree(content);
+            }
+        }
+        std::set<std::string> child_names;
+        for (const auto * child = record->children; child != nullptr; child = child->next) {
+            if (child->type != XML_ELEMENT_NODE) continue;
+            const auto key = xml_local_name(child);
+            if (!child_names.insert(key).second) {
+                error = "XML record has repeated nested fields; use a format-specific projection";
+                return false;
+            }
+            for (const auto * nested = child->children; nested != nullptr; nested = nested->next) {
+                if (nested->type == XML_ELEMENT_NODE) {
+                    error = "XML record has nested structures; use a format-specific projection";
+                    return false;
+                }
+            }
+            row[key] = xml_content(child);
+        }
+        rows.push_back(std::move(row));
+    }
+    return make_json_worksheet(dataset_name, rows, limits, worksheet_json, error);
 }
 
 } // namespace
@@ -279,6 +666,252 @@ bool normalize_agent_csv_text(
     worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
     error.clear();
     return true;
+}
+
+bool normalize_agent_json_dataset(
+        const std::string & json_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error,
+        const common_agent_dataset_limits & limits) {
+    const auto root = json::parse(json_text, nullptr, false);
+    if (root.is_discarded()) {
+        error = "structured JSON resource is invalid";
+        return false;
+    }
+    const json * records = nullptr;
+    if (root.is_array()) records = &root;
+    else if (root.is_object() && root.value("class", std::string()) == "dataset" &&
+            root.contains("dimension") && root.contains("value")) {
+        if (!root["dimension"].is_object() || !root["value"].is_array() && !root["value"].is_object() ||
+                !root.contains("id") || !root["id"].is_array() || !root.contains("size") ||
+                !root["size"].is_array() || root["id"].size() != root["size"].size()) {
+            error = "JSON-stat dataset has invalid dimensions, sizes or values";
+            return false;
+        }
+        const size_t dimension_count = root["id"].size();
+        if (dimension_count == 0 || dimension_count > limits.max_columns / 2) {
+            error = "JSON-stat dimension count exceeds the host column limit";
+            return false;
+        }
+        std::vector<std::string> dimension_ids;
+        std::vector<std::vector<std::string>> codes;
+        std::vector<std::map<std::string, std::string>> labels;
+        std::set<std::string> unique_ids;
+        size_t cell_count = 1;
+        for (size_t index = 0; index < dimension_count; ++index) {
+            if (!root["id"][index].is_string() || !root["size"][index].is_number_unsigned()) {
+                error = "JSON-stat dimension id or size is invalid";
+                return false;
+            }
+            const auto id = root["id"][index].get<std::string>();
+            if (id.empty() || !unique_ids.insert(id).second || id == "value" || id == "status" ||
+                    !root["dimension"].contains(id) || !root["dimension"][id].is_object()) {
+                error = "JSON-stat dimension ids must be unique and usable as dataset columns";
+                return false;
+            }
+            const size_t size = root["size"][index].get<size_t>();
+            if (size == 0 || cell_count > limits.max_cells / size) {
+                error = "JSON-stat Cartesian cell count exceeds the host cell limit";
+                return false;
+            }
+            cell_count *= size;
+            const auto & dimension = root["dimension"][id];
+            if (!dimension.contains("category") || !dimension["category"].is_object() ||
+                    !dimension["category"].contains("index")) {
+                error = "JSON-stat dimension is missing category indexes";
+                return false;
+            }
+            const auto & index_map = dimension["category"]["index"];
+            std::vector<std::pair<size_t, std::string>> ordered_codes;
+            if (index_map.is_array()) {
+                for (size_t code_index = 0; code_index < index_map.size(); ++code_index) {
+                    if (!index_map[code_index].is_string()) {
+                        error = "JSON-stat category index array contains a non-string code";
+                        return false;
+                    }
+                    ordered_codes.emplace_back(code_index, index_map[code_index].get<std::string>());
+                }
+            } else if (index_map.is_object()) {
+                for (const auto & item : index_map.items()) {
+                    if (!item.value().is_number_unsigned()) {
+                        error = "JSON-stat category index map contains an invalid index";
+                        return false;
+                    }
+                    ordered_codes.emplace_back(item.value().get<size_t>(), item.key());
+                }
+            } else {
+                error = "JSON-stat category index must be an array or object";
+                return false;
+            }
+            std::sort(ordered_codes.begin(), ordered_codes.end());
+            if (ordered_codes.size() != size) {
+                error = "JSON-stat category count does not match the declared dimension size";
+                return false;
+            }
+            std::vector<std::string> dimension_codes(size);
+            for (size_t code_index = 0; code_index < ordered_codes.size(); ++code_index) {
+                if (ordered_codes[code_index].first != code_index) {
+                    error = "JSON-stat category indexes are not contiguous";
+                    return false;
+                }
+                dimension_codes[code_index] = ordered_codes[code_index].second;
+            }
+            std::map<std::string, std::string> dimension_labels;
+            if (dimension["category"].contains("label") && dimension["category"]["label"].is_object()) {
+                for (const auto & item : dimension["category"]["label"].items())
+                    if (item.value().is_string()) dimension_labels[item.key()] = item.value().get<std::string>();
+            }
+            dimension_ids.push_back(id);
+            codes.push_back(std::move(dimension_codes));
+            labels.push_back(std::move(dimension_labels));
+        }
+        const auto & values = root["value"];
+        const bool sparse = values.is_object();
+        if ((!sparse && values.size() != cell_count) ||
+                (sparse && values.size() > limits.max_rows)) {
+            error = "JSON-stat value count does not match dimensions or exceeds the host row limit";
+            return false;
+        }
+        const json * statuses = root.contains("status") ? &root["status"] : nullptr;
+        if (statuses != nullptr && ((!statuses->is_array() && !statuses->is_object()) ||
+                (!statuses->is_object() && statuses->size() != cell_count))) {
+            error = "JSON-stat status values do not match the value representation";
+            return false;
+        }
+        std::vector<std::pair<size_t, json>> indexed_values;
+        if (sparse) {
+            indexed_values.reserve(values.size());
+            for (const auto & item : values.items()) {
+                char * end = nullptr;
+                const auto cell = std::strtoull(item.key().c_str(), &end, 10);
+                if (end == nullptr || *end != '\0' || cell >= cell_count ||
+                        item.value().is_object() || item.value().is_array()) {
+                    error = "JSON-stat sparse values contain an invalid cell index or value";
+                    return false;
+                }
+                indexed_values.emplace_back(static_cast<size_t>(cell), item.value());
+            }
+            std::sort(indexed_values.begin(), indexed_values.end(), [](const auto & left, const auto & right) {
+                return left.first < right.first;
+            });
+        } else {
+            indexed_values.reserve(values.size());
+            for (size_t cell = 0; cell < values.size(); ++cell) {
+                if (values[cell].is_object() || values[cell].is_array()) {
+                    error = "JSON-stat values must be scalar or null";
+                    return false;
+                }
+                indexed_values.emplace_back(cell, values[cell]);
+            }
+        }
+        if (indexed_values.size() > limits.max_rows) {
+            error = "JSON-stat observations exceed the host row limit";
+            return false;
+        }
+        std::vector<json> rows;
+        rows.reserve(indexed_values.size());
+        for (const auto & indexed : indexed_values) {
+            size_t remainder = indexed.first;
+            std::vector<size_t> coordinates(dimension_count);
+            for (size_t reverse = dimension_count; reverse-- > 0;) {
+                coordinates[reverse] = remainder % codes[reverse].size();
+                remainder /= codes[reverse].size();
+            }
+            json row = json::object();
+            for (size_t dimension = 0; dimension < dimension_count; ++dimension) {
+                const auto & code = codes[dimension][coordinates[dimension]];
+                row[dimension_ids[dimension]] = code;
+                const auto label = labels[dimension].find(code);
+                if (label != labels[dimension].end()) row[dimension_ids[dimension] + "_label"] = label->second;
+            }
+            row["value"] = indexed.second;
+            if (statuses != nullptr) {
+                const json * status = nullptr;
+                if (statuses->is_array()) status = &(*statuses)[indexed.first];
+                else {
+                    const auto found = statuses->find(std::to_string(indexed.first));
+                    if (found != statuses->end()) status = &found.value();
+                }
+                row["status"] = status == nullptr ? json(nullptr) : *status;
+            }
+            rows.push_back(std::move(row));
+        }
+        if (!make_json_worksheet(dataset_name, rows, limits, worksheet_json, error)) return false;
+        auto normalized = json::parse(worksheet_json, nullptr, false);
+        if (normalized.is_object() && normalized.contains("worksheets") && normalized["worksheets"].is_array() &&
+                !normalized["worksheets"].empty()) {
+            normalized["worksheets"][0]["source_format"] = "json-stat-2.0";
+            worksheet_json = normalized.dump();
+        }
+        return true;
+    }
+
+    if (root.is_object()) {
+        if (root.contains("results") && root["results"].is_array()) records = &root["results"];
+        else if (root.contains("items") && root["items"].is_array()) records = &root["items"];
+        else if (root.contains("data") && root["data"].is_array()) records = &root["data"];
+    }
+    if (records == nullptr || !records->is_array()) {
+        error = "JSON resource is neither a JSON-stat dataset nor a supported array of records";
+        return false;
+    }
+    std::vector<json> rows;
+    if (records->size() > limits.max_rows) {
+        error = "JSON collection exceeds the host row limit";
+        return false;
+    }
+    rows.reserve(records->size());
+    for (const auto & item : *records) {
+        if (!item.is_object()) {
+            error = "JSON collection contains a non-object row";
+            return false;
+        }
+        rows.push_back(item);
+    }
+    return make_json_worksheet(dataset_name, rows, limits, worksheet_json, error);
+}
+
+bool normalize_agent_xml_dataset(
+        const std::string & xml_text,
+        const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error,
+        const common_agent_dataset_limits & limits) {
+    if (xml_text.empty() || xml_text.size() > limits.max_source_bytes ||
+            xml_text.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        error = "XML source is empty or exceeds the host source-byte limit";
+        return false;
+    }
+    const int flags = XML_PARSE_NONET | XML_PARSE_NOBLANKS | XML_PARSE_NOERROR |
+        XML_PARSE_NOWARNING | XML_PARSE_COMPACT | XML_PARSE_NSCLEAN;
+    xmlDocPtr document = xmlReadMemory(xml_text.data(), static_cast<int>(xml_text.size()),
+        "agent-resource.xml", nullptr, flags);
+    if (document == nullptr) {
+        error = "XML resource is malformed";
+        return false;
+    }
+    struct document_guard { xmlDocPtr value; ~document_guard() { xmlFreeDoc(value); } } guard{document};
+    if (document->intSubset != nullptr || document->extSubset != nullptr) {
+        error = "XML DTDs and entity declarations are not accepted";
+        return false;
+    }
+    const xmlNode * root = xmlDocGetRootElement(document);
+    if (root == nullptr) {
+        error = "XML resource has no document element";
+        return false;
+    }
+    size_t node_count = 0;
+    if (!xml_tree_within_limits(root, 0, node_count, limits, error)) return false;
+    const std::string namespace_uri = root->ns == nullptr || root->ns->href == nullptr
+        ? std::string() : reinterpret_cast<const char *>(root->ns->href);
+    if (namespace_uri.find("eurostat.navtree") != std::string::npos) {
+        return normalize_eurostat_toc(root, dataset_name, limits, worksheet_json, error);
+    }
+    if (namespace_uri.find("sdmx") != std::string::npos || xml_local_name(root) == "Structure") {
+        return normalize_sdmx_structure(root, dataset_name, limits, worksheet_json, error);
+    }
+    return normalize_generic_xml_records(root, dataset_name, limits, worksheet_json, error);
 }
 
 bool make_agent_document_table_catalog(

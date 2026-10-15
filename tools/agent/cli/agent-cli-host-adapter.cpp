@@ -469,38 +469,69 @@ bool resolve_agent_host_tool_selection(
                         "tool.dataset.resource_unavailable", common_tool_failure_class::not_found, false,
                         "The resource is unavailable as a dataset.", std::move(error));
                 }
-                if (common_normalize_resource_media_type(resource.mime_type) != "text/csv") {
+                const auto media_type = common_normalize_resource_media_type(resource.mime_type);
+                const bool csv_resource = media_type == "text/csv";
+                const bool json_resource = media_type == "application/json" ||
+                    media_type == "text/json" || (media_type.size() >= 5 &&
+                    media_type.compare(media_type.size() - 5, 5, "+json") == 0);
+                const bool xml_resource = media_type == "application/xml" || media_type == "text/xml" ||
+                    media_type == "application/sdmx+xml" || (media_type.size() >= 4 &&
+                    media_type.compare(media_type.size() - 4, 4, "+xml") == 0);
+                if (!csv_resource && !json_resource && !xml_resource) {
                     return common_tool_execution_result::failure(
                         "tool.dataset.resource_unsupported", common_tool_failure_class::validation, false,
-                        "Only CSV resources are currently materialized as datasets.",
-                        "resource MIME type is not text/csv");
+                        "Only CSV, structured JSON and supported XML resources can be materialized as datasets.",
+                        "unsupported resource MIME type: " + media_type);
                 }
-                std::string csv;
-                if (!resource_store->read_bytes(uri, authority, 128 * 1024 * 1024, csv, error)) {
+                std::string source_bytes;
+                if (!resource_store->read_bytes(uri, authority, common_agent_dataset_limits{}.max_source_bytes,
+                        source_bytes, error)) {
                     return common_tool_execution_result::failure(
                         "tool.dataset.resource_read_failed", common_tool_failure_class::execution, true,
-                        "The CSV resource could not be read.", std::move(error));
+                        "The structured resource could not be read.", std::move(error));
                 }
                 std::string worksheet_json;
-                if (!normalize_agent_csv_text(csv, resource.name, worksheet_json, error)) {
+                const bool normalized = csv_resource
+                    ? normalize_agent_csv_text(source_bytes, resource.name, worksheet_json, error)
+                    : json_resource
+                        ? normalize_agent_json_dataset(source_bytes, resource.name, worksheet_json, error)
+                        : normalize_agent_xml_dataset(source_bytes, resource.name, worksheet_json, error);
+                if (!normalized) {
                     return common_tool_execution_result::failure(
                         "tool.dataset.resource_invalid", common_tool_failure_class::validation, false,
-                        "The CSV resource could not be normalized.", std::move(error));
+                        "The structured resource could not be normalized as a dataset.", std::move(error));
                 }
                 agent_dataset_import_request import;
                 import.source_resource_uri = resource.uri;
                 import.source_workbook_name = resource.name;
-                import.source_representation = "csv:dataset";
+                import.source_representation = csv_resource ? "csv:dataset"
+                    : json_resource && source_bytes.find("\"class\"") != std::string::npos &&
+                        source_bytes.find("\"dimension\"") != std::string::npos ? "json-stat:dataset"
+                    : json_resource ? "json:dataset"
+                    : source_bytes.find("eurostat.navtree") != std::string::npos ? "xml:eurostat-catalogue"
+                    : source_bytes.find("sdmx") != std::string::npos ||
+                        source_bytes.find("<Structure") != std::string::npos ? "xml:sdmx-structure"
+                    : "xml:records";
                 import.source_representation_uri = resource.uri;
-                import.origin_kind = "csv_resource";
-                import.import_processor_id = "csv-resource-import-v1";
+                import.origin_kind = csv_resource ? "csv_resource" : json_resource
+                    ? "json_resource" : "xml_resource";
+                import.import_processor_id = csv_resource ? "csv-resource-import-v1"
+                    : json_resource && source_bytes.find("\"class\"") != std::string::npos &&
+                        source_bytes.find("\"dimension\"") != std::string::npos
+                        ? "json-stat-dataset-import-v1"
+                    : json_resource ? "json-records-import-v1"
+                    : source_bytes.find("eurostat.navtree") != std::string::npos
+                        ? "eurostat-catalogue-xml-import-v1"
+                    : source_bytes.find("sdmx") != std::string::npos ||
+                        source_bytes.find("<Structure") != std::string::npos
+                        ? "sdmx-structure-xml-import-v1" : "xml-records-import-v1";
                 import.import_processor_version = "1";
                 import.worksheet_json = std::move(worksheet_json);
                 std::vector<common_agent_dataset_descriptor> imported;
                 if (!import_agent_worksheet_envelope(*data_store, import, imported, error) || imported.size() != 1) {
                     return common_tool_execution_result::failure(
                         "tool.dataset.materialization_failed", common_tool_failure_class::execution, false,
-                        "The CSV resource could not be materialized as a dataset.", std::move(error));
+                        "The structured resource could not be materialized as a dataset.", std::move(error));
                 }
                 const auto & dataset = imported.front();
                 if (operation == "schema") {
@@ -521,7 +552,7 @@ bool resolve_agent_host_tool_selection(
                     if (!data_store->execute("data.query", query.dump(), sample_json, error)) {
                         return common_tool_execution_result::failure(
                             "tool.dataset.sample_failed", common_tool_failure_class::execution, false,
-                            "The CSV dataset sample could not be read.", std::move(error));
+                            "The structured dataset sample could not be read.", std::move(error));
                     }
                     auto result = common_tool_execution_result::success(std::move(sample_json));
                     result.dataset_refs.push_back(dataset.ref);

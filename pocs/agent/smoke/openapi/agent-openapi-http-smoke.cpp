@@ -40,6 +40,21 @@ agent_openapi_catalog make_get_sale_catalog(const agent_host_openapi_provider_co
     get_sale.access = agent_openapi_access::read;
     get_sale.read_only = true;
     catalog.operations.push_back(std::move(get_sale));
+    agent_openapi_operation get_eurostat;
+    get_eurostat.operation_id = "getEurostatData";
+    get_eurostat.method = "get";
+    get_eurostat.path = "/data/{datasetCode}";
+    get_eurostat.summary = "Get Eurostat data";
+    get_eurostat.description = get_eurostat.summary;
+    get_eurostat.input_schema_json = R"({"type":"object"})";
+    get_eurostat.path_parameters = {"datasetCode"};
+    get_eurostat.query_parameters = {"geo", "time", "filters"};
+    get_eurostat.query_parameter_styles = {{"geo", "form"}, {"time", "form"}, {"filters", "deepObject"}};
+    get_eurostat.query_parameter_explode = {{"geo", true}, {"time", false}, {"filters", true}};
+    get_eurostat.query_parameter_map = "dimensions";
+    get_eurostat.access = agent_openapi_access::read;
+    get_eurostat.read_only = true;
+    catalog.operations.push_back(std::move(get_eurostat));
     agent_openapi_operation get_error;
     get_error.operation_id = "getHttpError";
     get_error.method = "get";
@@ -88,6 +103,18 @@ int main() {
             response.set_header("RateLimit-Reset", "13");
         }
         response.set_content(R"({"error":"test status"})", "application/json");
+    });
+    server.Get("/data/DEMO_R_D3DENS", [](const httplib::Request & request, httplib::Response & response) {
+        assert(request.get_param_value_count("geo") == 2);
+        assert(request.get_param_value("geo", 0) == "SE");
+        assert(request.get_param_value("geo", 1) == "NO");
+        assert(request.get_param_value("time") == "2020,2021");
+        assert(request.get_param_value_count("unit") == 2);
+        assert(request.get_param_value("unit", 0) == "P_KM2");
+        assert(request.get_param_value("unit", 1) == "P_M2");
+        assert(request.get_param_value("age") == "TOTAL");
+        assert(request.get_param_value("filters[age]") == "TOTAL");
+        response.set_content(R"({"ok":true})", "application/json");
     });
     server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
         assert(request.get_header_value("Authorization") == "Basic dXNlcjpwYXNz");
@@ -154,6 +181,12 @@ int main() {
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);
     assert(observed_mime == "application/json");
+    const auto eurostat = view->call({"eurostat-query", "sales.getEurostatData",
+        R"({"datasetCode":"DEMO_R_D3DENS","geo":["SE","NO"],"time":["2020","2021"],"filters":{"age":"TOTAL"},"dimensions":{"unit":["P_KM2","P_M2"],"age":"TOTAL"}})"}, error);
+    assert(eurostat.ok);
+    const auto invalid_dimension = view->call({"eurostat-invalid-dimension", "sales.getEurostatData",
+        R"({"datasetCode":"DEMO_R_D3DENS","dimensions":{"bad key":"value"}})"}, error);
+    assert(!invalid_dimension.ok);
     const struct {
         int status;
         common_tool_failure_class failure_class;

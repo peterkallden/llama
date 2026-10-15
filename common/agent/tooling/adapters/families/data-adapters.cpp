@@ -188,8 +188,8 @@ bool prepare_dataset_validation_rules(
             return false;
         }
         if (type == "numeric_range") {
-            if (rule.size() < 3 || rule.size() > 4 ||
-                    (!rule.contains("min") && !rule.contains("max"))) {
+            if ((!rule.contains("min") && !rule.contains("max")) ||
+                    rule.size() != 2 + size_t(rule.contains("min")) + size_t(rule.contains("max"))) {
                 error = "numeric_range requires min, max, or both, and no other fields";
                 return false;
             }

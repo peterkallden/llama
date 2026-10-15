@@ -242,7 +242,21 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v12");
+        checked_in_starter.version == "v13");
+    const auto has_workflow = [&](const std::string & ref) {
+        return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+            [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
+    };
+    assert(has_workflow("workflow://eurostat/catalog-discovery"));
+    assert(has_workflow("workflow://eurostat/metadata-resolution"));
+    assert(has_workflow("workflow://eurostat/data-retrieval"));
+    const auto has_procedure = [&](const std::string & id) {
+        return std::any_of(checked_in_starter.procedures.begin(), checked_in_starter.procedures.end(),
+            [&](const auto & procedure) { return procedure.id == id; });
+    };
+    assert(has_procedure("eurostat-catalog-discovery-v1"));
+    assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
+    assert(has_procedure("json-stat-dataset-interpretation-v1"));
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));
@@ -261,6 +275,14 @@ int main() {
     assert(roundtrip_full_text_workflow->definition.workflow_revision == "v3");
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
+    const auto roundtrip_eurostat_catalog = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(roundtrip_eurostat_catalog != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_catalog->definition.transitions.size() == 2);
+    assert(roundtrip_eurostat_catalog->definition.transitions[1].argument_bindings.size() == 1);
     const auto roundtrip_search_workflow = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -276,9 +298,16 @@ int main() {
     common_agent_bootstrap_package over_budget_package;
     assert(!common_agent_package_parse_json(
         over_budget_package_json, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 15 &&
-        checked_in_starter.blueprints.size() == 13);
-    assert(checked_in_starter.workflows.size() == 14);
+    // Reject out-of-range integers before narrowing; 2^32 + 5 must not
+    // wrap to an apparently valid five-page limit.
+    auto overflowing_page_package = starter_file_text.str();
+    overflowing_page_package.replace(page_limit_position,
+        std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
+    assert(!common_agent_package_parse_json(
+        overflowing_page_package, over_budget_package, error));
+    assert(checked_in_starter.procedures.size() == 20 &&
+        checked_in_starter.blueprints.size() == 16);
+    assert(checked_in_starter.workflows.size() == 17);
     assert(checked_in_starter.workflows[0].definition.workflow_ref ==
         "workflow://dataset/analysis");
     assert(checked_in_starter.workflows[0].definition.required_capabilities ==
@@ -474,9 +503,9 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 15 &&
-        checked_in_import.installed_blueprint_ids.size() == 13);
-    assert(checked_in_import.installed_workflow_ids.size() == 14);
+    assert(checked_in_import.installed_memory_ids.size() == 20 &&
+        checked_in_import.installed_blueprint_ids.size() == 16);
+    assert(checked_in_import.installed_workflow_ids.size() == 17);
     const auto checked_in_openapi_blueprint = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:openapi-resource-onboarding-v1", error);
     assert(checked_in_openapi_blueprint &&
@@ -508,7 +537,7 @@ int main() {
     assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
     assert(reparsed_starter.blueprints[3].selection_description ==
         checked_in_starter.blueprints[3].selection_description);
-    assert(reparsed_starter.workflows.size() == 14 &&
+    assert(reparsed_starter.workflows.size() == 17 &&
         reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
@@ -527,7 +556,7 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         partial_memory, partial_plans, config, partial_package, embed,
         partial_import, error));
-    assert(partial_import.installed_blueprint_ids.size() == 12 &&
+    assert(partial_import.installed_blueprint_ids.size() == 15 &&
         partial_import.rejected_items.size() == 1 &&
         partial_import.rejected_items.front().id == "dataset-analysis-v2");
 

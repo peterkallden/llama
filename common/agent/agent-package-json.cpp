@@ -110,12 +110,11 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
                 error = "workflow transition max_pages must be an integer";
                 return false;
             }
-            const int max_pages = source["max_pages"].get<int>();
-            if (max_pages < 2 || max_pages > 5) {
+            if (source["max_pages"] < 2 || source["max_pages"] > 5) {
                 error = "workflow transition max_pages must be between 2 and 5";
                 return false;
             }
-            transition.max_pages = static_cast<uint8_t>(max_pages);
+            transition.max_pages = source["max_pages"].get<uint8_t>();
         }
         if (source.contains("choices")) {
             if (!source["choices"].is_array()) { error = "workflow transition choices must be an array"; return false; }
