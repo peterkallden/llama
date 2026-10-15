@@ -187,6 +187,14 @@ int main() {
     const auto invalid_dimension = view->call({"eurostat-invalid-dimension", "sales.getEurostatData",
         R"({"datasetCode":"DEMO_R_D3DENS","dimensions":{"bad key":"value"}})"}, error);
     assert(!invalid_dimension.ok);
+    nlohmann::json large_encoded_query = {{"datasetCode", "DEMO_R_D3DENS"}, {"dimensions", nlohmann::json::object()}};
+    for (int index = 0; index < 6; ++index) {
+        large_encoded_query["dimensions"]["dimension" + std::to_string(index)] = std::string(1024, '%');
+    }
+    const auto oversized_encoded = view->call({"encoded-query-limit", "sales.getEurostatData",
+        large_encoded_query.dump()}, error);
+    assert(!oversized_encoded.ok);
+    assert(oversized_encoded.raw_diagnostic.find("encoded request path") != std::string::npos);
     const struct {
         int status;
         common_tool_failure_class failure_class;

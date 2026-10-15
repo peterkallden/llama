@@ -197,6 +197,18 @@ bool resolve_workflow_tools(
                     });
             }), resolved_optional_capabilities.end());
         if (resolved.empty()) reason = "legacy allowed_tools excludes every resolved capability tool";
+        // Narrowing must not silently remove the last implementation of a
+        // required capability (for example, the selected API provider).
+        for (const auto & capability : workflow.required_capabilities) {
+            const auto & names = tooling.capability_tools.at(capability);
+            if (std::none_of(names.begin(), names.end(), [&](const auto & name) {
+                    return std::find(resolved.begin(), resolved.end(), name) != resolved.end();
+                })) {
+                reason = "workflow allowed_tools excludes required capability: " + capability;
+                resolved.clear();
+                return false;
+            }
+        }
     }
     return !resolved.empty();
 }

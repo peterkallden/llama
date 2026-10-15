@@ -504,27 +504,23 @@ bool resolve_agent_host_tool_selection(
                 agent_dataset_import_request import;
                 import.source_resource_uri = resource.uri;
                 import.source_workbook_name = resource.name;
+                const auto normalized_document = json::parse(worksheet_json, nullptr, false);
+                const std::string source_format = normalized_document["worksheets"][0].value(
+                    "source_format", csv_resource ? std::string("csv") : std::string{});
                 import.source_representation = csv_resource ? "csv:dataset"
-                    : json_resource && source_bytes.find("\"class\"") != std::string::npos &&
-                        source_bytes.find("\"dimension\"") != std::string::npos ? "json-stat:dataset"
+                    : source_format == "json-stat-2.0" ? "json-stat:dataset"
                     : json_resource ? "json:dataset"
-                    : source_bytes.find("eurostat.navtree") != std::string::npos ? "xml:eurostat-catalogue"
-                    : source_bytes.find("sdmx") != std::string::npos ||
-                        source_bytes.find("<Structure") != std::string::npos ? "xml:sdmx-structure"
+                    : source_format == "eurostat-catalogue-xml" ? "xml:eurostat-catalogue"
+                    : source_format == "sdmx-structure-xml" ? "xml:sdmx-structure"
                     : "xml:records";
                 import.source_representation_uri = resource.uri;
                 import.origin_kind = csv_resource ? "csv_resource" : json_resource
                     ? "json_resource" : "xml_resource";
                 import.import_processor_id = csv_resource ? "csv-resource-import-v1"
-                    : json_resource && source_bytes.find("\"class\"") != std::string::npos &&
-                        source_bytes.find("\"dimension\"") != std::string::npos
-                        ? "json-stat-dataset-import-v1"
+                    : source_format == "json-stat-2.0" ? "json-stat-dataset-import-v1"
                     : json_resource ? "json-records-import-v1"
-                    : source_bytes.find("eurostat.navtree") != std::string::npos
-                        ? "eurostat-catalogue-xml-import-v1"
-                    : source_bytes.find("sdmx") != std::string::npos ||
-                        source_bytes.find("<Structure") != std::string::npos
-                        ? "sdmx-structure-xml-import-v1" : "xml-records-import-v1";
+                    : source_format == "eurostat-catalogue-xml" ? "eurostat-catalogue-xml-import-v1"
+                    : source_format == "sdmx-structure-xml" ? "sdmx-structure-xml-import-v1" : "xml-records-import-v1";
                 import.import_processor_version = "1";
                 import.worksheet_json = std::move(worksheet_json);
                 std::vector<common_agent_dataset_descriptor> imported;
@@ -533,7 +529,17 @@ bool resolve_agent_host_tool_selection(
                         "tool.dataset.materialization_failed", common_tool_failure_class::execution, false,
                         "The structured resource could not be materialized as a dataset.", std::move(error));
                 }
-                const auto & dataset = imported.front();
+                auto & dataset = imported.front();
+                dataset.ref.source_provider = resource.metadata.source_provider;
+                dataset.ref.source_operation = resource.metadata.source_operation;
+                dataset.ref.source_request_json = resource.metadata.source_request_json;
+                dataset.ref.retrieved_at = resource.metadata.retrieved_at;
+                dataset.ref.content_hash = resource.sha256;
+                if (!data_store->put_dataset_descriptor(dataset, error)) {
+                    return common_tool_execution_result::failure(
+                        "tool.dataset.materialization_failed", common_tool_failure_class::execution, false,
+                        "The dataset provenance could not be saved.", std::move(error));
+                }
                 if (operation == "schema") {
                     json columns = json::array();
                     for (const auto & column : dataset.columns) columns.push_back({
@@ -945,6 +951,7 @@ bool resolve_agent_host_tool_selection(
                     imported.front().ref.source_request_json = arguments_json;
                     imported.front().ref.retrieved_at = source_request.created_at;
                     imported.front().ref.content_hash = source_descriptor.sha256;
+                    if (!openapi_data_store->put_dataset_descriptor(imported.front(), materializer_error)) return false;
                     result.dataset_refs.push_back(imported.front().ref);
                     result.structured_content_json = json({
                         {"materialized", "dataset"},

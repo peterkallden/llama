@@ -150,9 +150,29 @@ int main() {
     })";
     assert(normalize_agent_json_dataset(sparse_json_stat, "sparse", structured, error));
     const auto sparse_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
-    assert(sparse_rows.size() == 2 && sparse_rows[0]["geo"] == "SE" &&
-        sparse_rows[0]["time"] == "2021" && sparse_rows[1]["geo"] == "NO" &&
-        sparse_rows[1]["status"] == "e");
+    assert(sparse_rows.size() == 4 && sparse_rows[0]["geo"] == "SE" &&
+        sparse_rows[0]["value"].is_null() && sparse_rows[1]["time"] == "2021" &&
+        sparse_rows[2]["value"].is_null() && sparse_rows[3]["geo"] == "NO" &&
+        sparse_rows[3]["status"] == "e");
+    auto malformed_stat = nlohmann::json::parse(sparse_json_stat);
+    malformed_stat["value"] = {{"01", 11}};
+    assert(!normalize_agent_json_dataset(malformed_stat.dump(), "bad-index", structured, error));
+    malformed_stat = nlohmann::json::parse(sparse_json_stat);
+    malformed_stat["status"] = {{"9", "e"}};
+    assert(!normalize_agent_json_dataset(malformed_stat.dump(), "bad-status", structured, error));
+    malformed_stat = nlohmann::json::parse(json_stat);
+    malformed_stat["id"][1] = "geo_label";
+    malformed_stat["dimension"]["geo_label"] = malformed_stat["dimension"]["time"];
+    assert(!normalize_agent_json_dataset(malformed_stat.dump(), "label-collision", structured, error));
+    malformed_stat = nlohmann::json::parse(sparse_json_stat);
+    malformed_stat["dimension"]["geo"]["category"]["index"] = {"SE", "SE"};
+    assert(!normalize_agent_json_dataset(malformed_stat.dump(), "duplicate-codes", structured, error));
+    common_agent_dataset_limits small_limits;
+    small_limits.max_rows = 3;
+    assert(!normalize_agent_json_dataset(sparse_json_stat, "sparse-limit", structured, error, small_limits));
+    small_limits.max_source_bytes = 1;
+    assert(!normalize_agent_json_dataset("[]", "bytes", structured, error, small_limits));
+    assert(!normalize_agent_json_dataset(R"({"class":17})", "bad-class", structured, error));
     assert(normalize_agent_json_dataset(
         R"([{"code":"A","label":"Alpha"},{"code":"B","label":"Beta"}])",
         "catalog", structured, error));
@@ -172,29 +192,44 @@ int main() {
     auto toc_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
     assert(toc_rows.size() == 1 && toc_rows[0]["dataset_code"] == "nama_10_gdp");
     assert(toc_rows[0]["category_path"] == "Economy" && toc_rows[0]["values"] == 1200);
+    std::string dataset_toc = toc_xml;
+    dataset_toc.replace(dataset_toc.find("type=\"table\""), 12, "type=\"dataset\"");
+    assert(normalize_agent_xml_dataset(dataset_toc, "dataset entries", structured, error));
 
     const std::string sdmx_xml = R"(<Structure xmlns="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/structure">
       <Dataflows><Dataflow id="NAMA_10_GDP"><Name xml:lang="en">GDP</Name>
         <Structure><Ref id="DSD_NAMA_10_GDP"/></Structure></Dataflow></Dataflows>
       <DataStructures><DataStructure id="DSD_NAMA_10_GDP"><DataStructureComponents>
         <DimensionList><Dimension id="geo" position="1"><Name xml:lang="en">Geopolitical entity</Name>
-          <LocalRepresentation><Enumeration><Ref id="CL_GEO"/></Enumeration></LocalRepresentation>
+          <ConceptIdentity><Ref id="GEO_CONCEPT"/></ConceptIdentity>
+          <LocalRepresentation><Enumeration><Ref id="CL_GEO" agencyID="ESTAT" version="1.0"/></Enumeration></LocalRepresentation>
         </Dimension></DimensionList>
       </DataStructureComponents></DataStructure></DataStructures>
       <Codelists><Codelist id="CL_GEO"><Code id="SE"><Name xml:lang="en">Sweden</Name></Code></Codelist></Codelists>
+      <Constraints><ContentConstraint id="AVAILABLE" type="Actual">
+        <CubeRegion include="false"><KeyValue id="geo"><Value>NO</Value></KeyValue></CubeRegion>
+        <CubeRegion include="true"><KeyValue id="unit"><Value>PC</Value></KeyValue></CubeRegion>
+      </ContentConstraint></Constraints>
     </Structure>)";
     assert(normalize_agent_xml_dataset(sdmx_xml, "Eurostat metadata", structured, error));
     auto sdmx_rows = nlohmann::json::parse(structured)["worksheets"][0]["rows"];
     assert(sdmx_rows.size() >= 3);
     bool found_code = false;
     bool found_dimension = false;
+    bool found_constraint = false;
     for (const auto & row : sdmx_rows) {
         if (row.value("artifact_kind", "") == "Code") found_code = row.value("code", "") == "SE";
         if (row.value("artifact_kind", "") == "Dimension") {
             found_dimension = row.value("dimension_id", "") == "geo" && row.value("codelist_id", "") == "CL_GEO";
+            assert(row["codelist_agency_id"] == "ESTAT" && row["codelist_version"] == "1.0");
+        }
+        if (row.value("artifact_kind", "") == "Value" && row.value("code", "") == "NO") {
+            found_constraint = row["dimension_id"] == "geo" && row["constraint_id"] == "AVAILABLE" &&
+                row["constraint_type"] == "Actual" && row["region_include"] == "false" &&
+                row["constraint_region"] == 0;
         }
     }
-    assert(found_code && found_dimension);
+    assert(found_code && found_dimension && found_constraint);
 
     const std::string record_xml = R"(<records><record id="1"><country>SE</country><value>42</value></record>
       <record id="2"><country>NO</country><value>24</value></record></records>)";

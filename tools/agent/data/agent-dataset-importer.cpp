@@ -5,6 +5,7 @@
 #include <libxml/tree.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -158,7 +159,8 @@ bool make_json_worksheet(
         const std::vector<json> & rows,
         const common_agent_dataset_limits & limits,
         std::string & worksheet_json,
-        std::string & error) {
+        std::string & error,
+        const std::string & source_format = "json-records") {
     if (rows.size() > limits.max_rows) {
         error = "structured resource exceeds the host row limit";
         return false;
@@ -194,6 +196,7 @@ bool make_json_worksheet(
         return false;
     }
     json worksheet = {{"name", name.empty() ? "JSON" : name}, {"index", 0},
+        {"source_format", source_format},
         {"table_index", 0}, {"node_id", "resource-node://structured/0"},
         {"header_mode", "explicit"}, {"header_confidence", 1.0},
         {"header_reason", "Host parser identified structured records"},
@@ -303,7 +306,8 @@ bool normalize_eurostat_toc(
                 category.pop_back();
             } else if (kind == "children") {
                 if (!visit(child)) return false;
-            } else if (kind == "leaf" && xml_attribute(child, "type") == "table") {
+            } else if (kind == "leaf" && (xml_attribute(child, "type") == "table" ||
+                    xml_attribute(child, "type") == "dataset")) {
                 const auto code = xml_named_child_text(child, "code");
                 const auto title = xml_english_name(child);
                 if (code.empty() || title.empty()) continue;
@@ -341,7 +345,7 @@ bool normalize_eurostat_toc(
         return false;
     }
     return make_json_worksheet(dataset_name.empty() ? "Eurostat table of contents" : dataset_name,
-        rows, limits, worksheet_json, error);
+        rows, limits, worksheet_json, error, "eurostat-catalogue-xml");
 }
 
 bool normalize_sdmx_structure(
@@ -351,11 +355,13 @@ bool normalize_sdmx_structure(
         std::string & worksheet_json,
         std::string & error) {
     std::vector<json> rows;
+    std::map<const xmlNode *, size_t> regions;
     std::function<void(const xmlNode *, std::string, std::string, std::string, std::string)> visit =
         [&](const xmlNode * node, std::string dataflow, std::string structure,
                 std::string codelist, std::string constraint) {
             if (node == nullptr || !error.empty()) return;
             const std::string name = xml_local_name(node);
+            if (name == "CubeRegion") regions.emplace(node, regions.size());
             std::string next_dataflow = dataflow;
             std::string next_structure = structure;
             std::string next_codelist = codelist;
@@ -377,6 +383,18 @@ bool normalize_sdmx_structure(
                 row["structure_id"] = next_structure;
                 row["codelist_id"] = next_codelist;
                 row["constraint_id"] = next_constraint;
+                for (const auto * parent = node->parent; parent != nullptr; parent = parent->parent) {
+                    if (xml_local_name(parent) == "CubeRegion") {
+                        row["constraint_region"] = regions.at(parent);
+                        const auto include = xml_attribute(parent, "include");
+                        if (!include.empty()) row["region_include"] = include;
+                    } else if (xml_local_name(parent) == "ContentConstraint") {
+                        row["constraint_type"] = xml_attribute(parent, "type");
+                    } else if (xml_local_name(parent) == "KeyValue") {
+                        const auto include = xml_attribute(parent, "include");
+                        if (!include.empty()) row["key_include"] = include;
+                    }
+                }
                 const auto label = xml_english_name(node);
                 if (!label.empty()) row["label"] = label;
                 const auto agency = xml_attribute(node, "agencyID");
@@ -397,12 +415,16 @@ bool normalize_sdmx_structure(
                         if (xml_local_name(candidate) == "Ref") {
                             const auto ref = xml_attribute(candidate, "id");
                             if (!ref.empty()) row["codelist_id"] = ref;
+                            row["codelist_agency_id"] = xml_attribute(candidate, "agencyID");
+                            row["codelist_version"] = xml_attribute(candidate, "version");
                             return;
                         }
                         for (const auto * part = candidate->children; part != nullptr; part = part->next)
                             if (part->type == XML_ELEMENT_NODE) find_ref(part);
                     };
-                    find_ref(node);
+                    // ConceptIdentity precedes LocalRepresentation in a real
+                    // DSD. Only Enumeration owns the codelist reference.
+                    find_ref(xml_child(xml_child(node, "LocalRepresentation"), "Enumeration"));
                 } else if (name == "Code") {
                     row["code"] = id;
                     row["parent_id"] = next_codelist;
@@ -412,6 +434,9 @@ bool normalize_sdmx_structure(
                 } else if (name == "Value") {
                     row["code"] = xml_content(node);
                     row["parent_id"] = next_constraint;
+                    if (node->parent != nullptr && xml_local_name(node->parent) == "KeyValue") {
+                        row["dimension_id"] = xml_attribute(node->parent, "id");
+                    }
                 }
                 if (name == "Dataflow") {
                     std::function<void(const xmlNode *)> find_ref = [&](const xmlNode * candidate) {
@@ -419,12 +444,14 @@ bool normalize_sdmx_structure(
                         if (xml_local_name(candidate) == "Ref") {
                             const auto ref = xml_attribute(candidate, "id");
                             if (!ref.empty()) row["structure_id_ref"] = ref;
+                            row["structure_agency_id_ref"] = xml_attribute(candidate, "agencyID");
+                            row["structure_version_ref"] = xml_attribute(candidate, "version");
                             return;
                         }
                         for (const auto * part = candidate->children; part != nullptr; part = part->next)
                             if (part->type == XML_ELEMENT_NODE) find_ref(part);
                     };
-                    find_ref(node);
+                    find_ref(xml_child(node, "Structure"));
                 }
                 if (rows.size() >= limits.max_rows) error = "SDMX structure exceeds the host row limit";
                 else rows.push_back(std::move(row));
@@ -440,7 +467,7 @@ bool normalize_sdmx_structure(
         return false;
     }
     return make_json_worksheet(dataset_name.empty() ? "SDMX structure" : dataset_name,
-        rows, limits, worksheet_json, error);
+        rows, limits, worksheet_json, error, "sdmx-structure-xml");
 }
 
 bool normalize_generic_xml_records(
@@ -453,15 +480,15 @@ bool normalize_generic_xml_records(
     std::vector<group> groups;
     std::function<void(const xmlNode *, size_t)> find_groups = [&](const xmlNode * parent, size_t depth) {
         if (depth > 64) return;
+        std::map<std::string, size_t> siblings;
         for (const auto * child = parent->children; child != nullptr; child = child->next) {
             if (child->type != XML_ELEMENT_NODE) continue;
-            auto found = std::find_if(groups.begin(), groups.end(), [&](const group & value) {
-                return value.parent == parent && value.name == xml_local_name(child);
-            });
-            if (found == groups.end()) groups.push_back({parent, xml_local_name(child), {child}, depth});
-            else found->nodes.push_back(child);
-            find_groups(child, depth + 1);
+            const auto inserted = siblings.emplace(xml_local_name(child), groups.size());
+            if (inserted.second) groups.push_back({parent, xml_local_name(child), {child}, depth});
+            else groups[inserted.first->second].nodes.push_back(child);
         }
+        for (const auto * child = parent->children; child != nullptr; child = child->next)
+            if (child->type == XML_ELEMENT_NODE) find_groups(child, depth + 1);
     };
     find_groups(root, 0);
     std::vector<const group *> candidates;
@@ -508,7 +535,7 @@ bool normalize_generic_xml_records(
         }
         rows.push_back(std::move(row));
     }
-    return make_json_worksheet(dataset_name, rows, limits, worksheet_json, error);
+    return make_json_worksheet(dataset_name, rows, limits, worksheet_json, error, "xml-records");
 }
 
 } // namespace
@@ -674,6 +701,12 @@ bool normalize_agent_json_dataset(
         std::string & worksheet_json,
         std::string & error,
         const common_agent_dataset_limits & limits) {
+    error.clear();
+    worksheet_json.clear();
+    if (json_text.empty() || json_text.size() > limits.max_source_bytes) {
+        error = "JSON source is empty or exceeds the host source-byte limit";
+        return false;
+    }
     const auto root = json::parse(json_text, nullptr, false);
     if (root.is_discarded()) {
         error = "structured JSON resource is invalid";
@@ -681,9 +714,9 @@ bool normalize_agent_json_dataset(
     }
     const json * records = nullptr;
     if (root.is_array()) records = &root;
-    else if (root.is_object() && root.value("class", std::string()) == "dataset" &&
+    else if (root.is_object() && root.contains("class") && root["class"] == "dataset" &&
             root.contains("dimension") && root.contains("value")) {
-        if (!root["dimension"].is_object() || !root["value"].is_array() && !root["value"].is_object() ||
+        if (!root["dimension"].is_object() || (!root["value"].is_array() && !root["value"].is_object()) ||
                 !root.contains("id") || !root["id"].is_array() || !root.contains("size") ||
                 !root["size"].is_array() || root["id"].size() != root["size"].size()) {
             error = "JSON-stat dataset has invalid dimensions, sizes or values";
@@ -750,9 +783,12 @@ bool normalize_agent_json_dataset(
                 return false;
             }
             std::vector<std::string> dimension_codes(size);
+            std::set<std::string> unique_codes;
             for (size_t code_index = 0; code_index < ordered_codes.size(); ++code_index) {
-                if (ordered_codes[code_index].first != code_index) {
-                    error = "JSON-stat category indexes are not contiguous";
+                if (ordered_codes[code_index].first != code_index ||
+                        ordered_codes[code_index].second.empty() ||
+                        !unique_codes.insert(ordered_codes[code_index].second).second) {
+                    error = "JSON-stat category indexes must be contiguous with unique non-empty codes";
                     return false;
                 }
                 dimension_codes[code_index] = ordered_codes[code_index].second;
@@ -765,6 +801,19 @@ bool normalize_agent_json_dataset(
             dimension_ids.push_back(id);
             codes.push_back(std::move(dimension_codes));
             labels.push_back(std::move(dimension_labels));
+        }
+        for (size_t dimension = 0; dimension < dimension_count; ++dimension) {
+            if (!labels[dimension].empty() && unique_ids.count(dimension_ids[dimension] + "_label")) {
+                error = "JSON-stat label column conflicts with a dimension id";
+                return false;
+            }
+        }
+        size_t column_count = dimension_count + 1 + (root.contains("status") ? 1 : 0);
+        for (const auto & dimension_labels : labels) if (!dimension_labels.empty()) ++column_count;
+        if (column_count > limits.max_columns || cell_count > limits.max_rows ||
+                cell_count > limits.max_cells / column_count) {
+            error = "JSON-stat observations exceed the host row limit";
+            return false;
         }
         const auto & values = root["value"];
         const bool sparse = values.is_object();
@@ -779,22 +828,45 @@ bool normalize_agent_json_dataset(
             error = "JSON-stat status values do not match the value representation";
             return false;
         }
+        if (statuses != nullptr) {
+            for (const auto & item : statuses->items()) {
+                if (!item.value().is_string() && !item.value().is_null()) {
+                    error = "JSON-stat statuses must be strings or null";
+                    return false;
+                }
+                if (statuses->is_object()) {
+                    size_t index = 0;
+                    const auto parsed = std::from_chars(item.key().data(),
+                        item.key().data() + item.key().size(), index);
+                    if (parsed.ec != std::errc() || parsed.ptr != item.key().data() + item.key().size() ||
+                            std::to_string(index) != item.key() || index >= cell_count) {
+                        error = "JSON-stat status contains an invalid cell index";
+                        return false;
+                    }
+                }
+            }
+        }
         std::vector<std::pair<size_t, json>> indexed_values;
         if (sparse) {
-            indexed_values.reserve(values.size());
+            std::map<size_t, json> sparse_values;
             for (const auto & item : values.items()) {
-                char * end = nullptr;
-                const auto cell = std::strtoull(item.key().c_str(), &end, 10);
-                if (end == nullptr || *end != '\0' || cell >= cell_count ||
+                size_t cell = 0;
+                const auto parsed = std::from_chars(item.key().data(),
+                    item.key().data() + item.key().size(), cell);
+                if (parsed.ec != std::errc() || parsed.ptr != item.key().data() + item.key().size() ||
+                        std::to_string(cell) != item.key() || cell >= cell_count ||
                         item.value().is_object() || item.value().is_array()) {
                     error = "JSON-stat sparse values contain an invalid cell index or value";
                     return false;
                 }
-                indexed_values.emplace_back(static_cast<size_t>(cell), item.value());
+                sparse_values.emplace(cell, item.value());
             }
-            std::sort(indexed_values.begin(), indexed_values.end(), [](const auto & left, const auto & right) {
-                return left.first < right.first;
-            });
+            // Omitted sparse cells are missing observations, not absent rows.
+            indexed_values.reserve(cell_count);
+            for (size_t cell = 0; cell < cell_count; ++cell) {
+                const auto found = sparse_values.find(cell);
+                indexed_values.emplace_back(cell, found == sparse_values.end() ? json(nullptr) : found->second);
+            }
         } else {
             indexed_values.reserve(values.size());
             for (size_t cell = 0; cell < values.size(); ++cell) {
@@ -878,6 +950,8 @@ bool normalize_agent_xml_dataset(
         std::string & worksheet_json,
         std::string & error,
         const common_agent_dataset_limits & limits) {
+    error.clear();
+    worksheet_json.clear();
     if (xml_text.empty() || xml_text.size() > limits.max_source_bytes ||
             xml_text.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
         error = "XML source is empty or exceeds the host source-byte limit";

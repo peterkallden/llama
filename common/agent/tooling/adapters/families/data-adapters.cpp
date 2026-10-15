@@ -855,7 +855,19 @@ bool common_try_register_data_tool_adapter(
             if (!common_adapter_parse_object(input, arguments, error)) return common_adapter_validation_failure("tool.dataset.sample.invalid_arguments", std::move(error));
             if (arguments.contains("resource")) {
                 if (!bindings.dataset_from_resource) return common_adapter_not_found_failure("tool.dataset.resource_unavailable", "resource-to-dataset materialization is unavailable", "This resource cannot be inspected as a dataset in the current runtime.");
-                return bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "sample");
+                const auto materialized = bindings.dataset_from_resource(arguments["resource"].get<std::string>(), "inspect");
+                if (!materialized.ok) return materialized;
+                const auto descriptor = json::parse(materialized.output, nullptr, false);
+                if (!descriptor.is_object() || !descriptor.contains("dataset") || !descriptor["dataset"].is_string()) {
+                    return common_adapter_execution_failure("tool.dataset.materialization_invalid",
+                        "resource materializer returned no dataset reference", "The resource could not be sampled as a dataset.");
+                }
+                const size_t rows = std::min<size_t>(arguments.value("rows", 20), 100);
+                auto sampled = execute_data_backend(bindings, "data.query", json({
+                    {"dataset", descriptor["dataset"]}, {"limit", rows},
+                    {"max_result_rows", rows}, {"max_scan_rows", 10000}}).dump());
+                sampled.dataset_refs = materialized.dataset_refs;
+                return sampled;
             }
             if (arguments.contains("dataset")) {
                 const size_t rows = std::min<size_t>(arguments.value("rows", 20), 100);

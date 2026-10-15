@@ -408,6 +408,11 @@ int main() {
     result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find("dataset://analysis/sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"resource":"resource://uploads/sales.csv","rows":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    const auto resource_sample_query = nlohmann::json::parse(foundation_data.last_request);
+    assert(resource_sample_query["dataset"] == "dataset://analysis/csv-sales" &&
+        resource_sample_query["limit"] == 1 && resource_sample_query["max_result_rows"] == 1);
     result = foundation_registry.execute({"document.tables", R"({"resource":"agent-resource://document/report.json"})"});
     assert(result.ok && result.output.find("Population") != std::string::npos);
     result = foundation_registry.execute({"document.table", R"({"resource":"agent-resource://document/report.json","table":"Budget summary"})"});

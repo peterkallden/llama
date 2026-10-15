@@ -662,6 +662,10 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         }
         std::string request_path = join_path(url.base_path, path);
         request_path = httplib::append_query_params(request_path, query);
+        if (request_path.size() > 16 * 1024) {
+            error = "OpenAPI encoded request path exceeds the host URL-size bound";
+            return false;
+        }
         result.http.requested_url = url.scheme + "://" + url.host +
             (url.port == (url.scheme == "https" ? 443 : 80) ? "" : ":" + std::to_string(url.port)) + request_path;
         result.http.final_url = result.http.requested_url;

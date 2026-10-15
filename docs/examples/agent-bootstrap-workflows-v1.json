@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v13",
+  "version": "v14",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -343,15 +343,15 @@
       ]
     },
     {
-      "id": "eurostat-catalog-discovery-path-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-catalog-discovery-path-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "workflow_ref": "workflow://eurostat/catalog-discovery",
-      "workflow_revision": "v1",
-      "family": "eurostat",
-      "graph_revision": "eurostat-catalog-discovery-graph@v1",
+      "workflow_revision": "v2",
+      "family": "dataset",
+      "graph_revision": "eurostat-catalog-discovery-graph@v2",
       "required_capabilities": ["web.fetch", "dataset.inspect", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://eurostat/metadata-resolution", "workflow://dataset/analysis", "workflow://dataset/quality"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality"],
       "required_context": ["context.network.allowed"],
       "start_state": "catalog_pending",
       "terminal_states": ["catalog_dataset_ready"],
@@ -363,26 +363,28 @@
       ]
     },
     {
-      "id": "eurostat-metadata-resolution-path-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-metadata-resolution-path-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "workflow_ref": "workflow://eurostat/metadata-resolution",
-      "workflow_revision": "v1",
-      "family": "eurostat_sdmx",
-      "graph_revision": "eurostat-metadata-resolution-graph@v1",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "eurostat-metadata-resolution-graph@v2",
+      "allowed_tools": ["eurostat_sdmx.getStructure", "dataset.inspect", "dataset.sample", "artifact.export"],
       "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://eurostat/data-retrieval", "workflow://dataset/analysis", "workflow://dataset/quality"],
+      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality"],
       "required_context": ["context.openapi.available"],
       "start_state": "dataflow_candidate_selected",
       "terminal_states": ["dimensions_and_codes_verified"]
     },
     {
-      "id": "eurostat-data-retrieval-path-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-data-retrieval-path-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "workflow_ref": "workflow://eurostat/data-retrieval",
-      "workflow_revision": "v1",
-      "family": "eurostat",
-      "graph_revision": "eurostat-data-retrieval-graph@v1",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "eurostat-data-retrieval-graph@v2",
+      "allowed_tools": ["eurostat.getData", "dataset.inspect", "dataset.sample", "artifact.export"],
       "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
       "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
@@ -759,8 +761,8 @@
       ]
     },
     {
-      "id": "eurostat-catalog-discovery-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-catalog-discovery-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "selection_description": "Find candidate Eurostat tables by statistical concept and inspect the host-materialized catalogue rows.",
       "purpose": "Resolve a user's statistical measure and coverage into candidate Eurostat table codes without guessing codes.",
       "goal": "Select a table whose returned title, category and coverage plausibly match the requested measure.",
@@ -768,7 +770,7 @@
       "required_capabilities": ["tool.web", "tool.dataset", "workflow.dataset"],
       "workflow_policy": "required",
       "procedure_refs": ["statistical-intent-and-measure-v1", "eurostat-catalog-discovery-v1", "structured-resource-dataset-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v1"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v2"}],
       "next_action": "clarify-statistical-intent",
       "constraints": [
         {"id": "returned-code-only", "description": "Use only a table code returned by the host-materialized Eurostat catalogue.", "hard": true},
@@ -783,8 +785,8 @@
       ]
     },
     {
-      "id": "eurostat-metadata-resolution-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-metadata-resolution-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "selection_description": "Resolve a returned Eurostat dataflow against its SDMX structure, dimensions, code lists and constraints.",
       "purpose": "Validate candidate identifiers and dimension codes before requesting observations.",
       "goal": "Establish a metadata-backed Eurostat query with compatible measure, geography, time and unit.",
@@ -792,7 +794,7 @@
       "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["eurostat-sdmx-metadata-resolution-v1", "statistical-intent-and-measure-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v1"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v2"}],
       "next_action": "resolve-dataflow-structure",
       "constraints": [
         {"id": "metadata-grounded-parameters", "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.", "hard": true},
@@ -807,16 +809,16 @@
       ]
     },
     {
-      "id": "eurostat-data-retrieval-v1",
-      "source_revision": "agent-workflows-starter@v13",
+      "id": "eurostat-data-retrieval-v2",
+      "source_revision": "agent-workflows-starter@v14",
       "selection_description": "Fetch a metadata-validated Eurostat JSON-stat response and continue with standard dataset analysis.",
       "purpose": "Retrieve bounded observations while preserving Eurostat query provenance and status metadata.",
       "goal": "Create a host dataset from JSON-stat and answer the statistical question using the ordinary dataset workflows.",
       "success_criteria": "The API request uses metadata-returned codes; the JSON-stat response is converted to long-form rows and retains source, dimensions, labels, values and status.",
-      "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.dataset"],
+      "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["json-stat-dataset-interpretation-v1", "structured-resource-dataset-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v1"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v2"}],
       "next_action": "request-observations",
       "constraints": [
         {"id": "validated-query-only", "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.", "hard": true},

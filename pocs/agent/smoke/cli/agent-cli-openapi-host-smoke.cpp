@@ -78,7 +78,8 @@ int main() {
     request.tool_context.scope.turn_id = "turn-1";
     common_tool_profile profile;
     profile.id = "openapi-host-smoke";
-    profile.members = {{"data.query", 1, true, "{}"}, {"openapi.connect", 1, true, "{}"}};
+    profile.members = {{"data.query", 1, true, "{}"}, {"openapi.connect", 1, true, "{}"},
+        {"dataset.inspect", 1, true, "{}"}};
     profile.allow_network = true;
     request.tool_profiles.emplace(profile.id, profile);
     request.dynamic_openapi_registry = std::make_shared<agent_openapi_dynamic_registry>();
@@ -342,6 +343,9 @@ int main() {
         return 1;
     }
     if (list.dataset_refs.front().source_resource_uri != list.resource_refs.front().uri ||
+            data.descriptor.ref.source_provider != request.openapi_providers.front().id ||
+            data.descriptor.ref.source_request_json != "{}" ||
+            data.descriptor.ref.content_hash.empty() ||
             list.dataset_refs.front().source_provider != request.openapi_providers.front().id ||
             list.dataset_refs.front().source_operation != list_operation.operation_id ||
             list.dataset_refs.front().source_request_json != "{}" ||
@@ -398,6 +402,38 @@ int main() {
         return 1;
     }
 
+    // Exercise the production resource -> dataset binding, including saved
+    // acquisition provenance, rather than testing only the normalizer.
+    for (const auto & fixture : std::vector<std::pair<std::string, std::string>>{
+            {"application/json", R"({"class":"dataset","id":["geo"],"size":[2],"dimension":{"geo":{"category":{"index":["SE","NO"]}}},"value":{"1":42}})"},
+            {"application/xml", R"(<records><record><geo>SE</geo></record><record><geo>NO</geo></record></records>)"}}) {
+        auto source = spec_resource_request;
+        source.mime_type = fixture.first;
+        source.text = fixture.second;
+        source.name = fixture.first == "application/json" ? "observations.json" : "metadata.xml";
+        source.metadata.source_provider = "eurostat-test";
+        source.metadata.source_operation = "observations";
+        source.metadata.source_request_json = R"({"geo":["SE","NO"]})";
+        source.metadata.retrieved_at = 42;
+        agent_resource_descriptor descriptor;
+        if (!resource_store.put_text(source, descriptor, error)) {
+            std::cerr << "structured resource setup failed: " << error << "\n";
+            return 1;
+        }
+        const auto inspected = selection.tool_view->call({"inspect-structured", "dataset.inspect",
+            nlohmann::json({{"resource", descriptor.uri}}).dump()}, error);
+        if (!inspected.ok || inspected.dataset_refs.size() != 1 ||
+                data.descriptor.ref.row_count != 2 || data.descriptor.ref.source_provider != "eurostat-test" ||
+                data.descriptor.ref.source_operation != "observations" ||
+                data.descriptor.ref.source_request_json != source.metadata.source_request_json ||
+                data.descriptor.ref.retrieved_at != 42 || data.descriptor.ref.content_hash != descriptor.sha256 ||
+                data.descriptor.import_processor_id != (fixture.first == "application/json"
+                    ? "json-stat-dataset-import-v1" : "xml-records-import-v1")) {
+            std::cerr << "structured resource binding or persisted provenance failed: " << error << " "
+                << inspected.raw_diagnostic << "\n";
+            return 1;
+        }
+    }
     std::filesystem::remove(spec_path);
     std::cout << "agent-cli-openapi-host-smoke: ok\n";
 }

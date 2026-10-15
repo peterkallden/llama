@@ -570,6 +570,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-route-compiler")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_compile_definitions(${TEST_NAME} PRIVATE LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
             target_sources(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp

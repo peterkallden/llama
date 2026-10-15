@@ -188,6 +188,12 @@ requirements generically. The starter library covers these host-tool domains:
   dataset and continues through the generic dataset analysis/quality workflows.
   These starter procedures and blueprints are imported from the JSON package;
   the host supplies generic safe XML/JSON normalization and query serialization.
+  Package v14 provides revised Eurostat blueprint/workflow IDs and workflow
+  revisions v2 so importing after v13 installs the corrections without changing
+  historical templates. Catalogue acquisition is graph-driven; metadata and
+  query planning use blueprint steps. Acquisition-stage changes require a route
+  transition or a subsequent turn. Automatic continuation targets are limited
+  to the existing dataset workflows.
 
 The starter blueprint, procedure and workflow for this path are imported from
 [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).

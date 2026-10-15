@@ -110,6 +110,27 @@ Eurostat acquisition follows three distinct steps:
    source-resource provenance and can continue through ordinary dataset
    analysis or quality workflows.
 
+The Eurostat starter definitions use the existing `dataset` and `openapi`
+workflow families. Metadata and data routes explicitly restrict their API
+tools to `eurostat_sdmx.getStructure` and `eurostat.getData` respectively;
+another configured API cannot satisfy that requirement. The catalogue has an
+executable fetch/import graph. Metadata and query steps are planner-driven
+blueprint steps, not a deterministic SDMX query validator. Moving between
+Eurostat acquisition stages requires an explicit route transition or a later
+turn; `continuation_workflow_targets` currently supports dataset continuations
+and does not automatically switch to another acquisition route.
+
+SDMX projection distinguishes ConceptIdentity from Enumeration references and
+retains codelist/DSD agency and version references, constraint dimensions,
+region grouping and include/exclude flags. These fields must be considered
+together when checking availability; independent code lists do not prove
+that every combination is available. Sparse JSON-stat cells omitted from the
+response become null-valued rows so missing observations remain visible to
+dataset quality checks. Full Cartesian row/cell limits apply before expansion.
+Generated label columns cannot overwrite dimension columns. Acquisition
+provider, operation, query, retrieval time and content hash are persisted with
+the imported descriptor as well as returned in the tool result.
+
 The shared dataset-from-resource path also accepts bounded JSON arrays of
 objects, JSON-stat 2.0, recognized Eurostat catalogue XML, SDMX structural XML
 and simple repeated-record XML. XML parsing disables network access and rejects

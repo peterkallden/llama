@@ -2,9 +2,13 @@
 #include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
 #include "tools/agent/runtime/agent-workflow-transition.h"
 #include "plan/plan-in-memory.h"
+#include "agent/agent-package-json.h"
+#include "memory/memory-in-memory.h"
 
 #include <algorithm>
 #include <cassert>
+#include <fstream>
+#include <sstream>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -559,5 +563,62 @@ int main() {
     continuation_steps.clear(); error.clear();
     assert(!evidence_continuation(evidence_plan, "get-work-step", missing_url_observation, continuation_steps, error));
     assert(error.find("outside the host observation") != std::string::npos);
+    // Import the shipped package, then exercise real route applicability.
+    // Parsing a workflow alone cannot detect mismatched workflow families.
+    common_agent_bootstrap_package package;
+    std::ifstream package_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
+        "/docs/examples/agent-bootstrap-workflows-v1.json");
+    assert(package_file);
+    std::stringstream package_text;
+    package_text << package_file.rdbuf();
+    assert(common_agent_package_parse_json(package_text.str(), package, error));
+    common_memory_in_memory_store package_memory;
+    common_plan_in_memory_store package_plans;
+    assert(package_memory.open("", error) && package_plans.open("", error));
+    common_agent_bootstrap_config bootstrap;
+    bootstrap.namespace_id = "local";
+    bootstrap.session_id = "s";
+    common_agent_bootstrap_result installed;
+    assert(common_agent_install_bootstrap_package(package_memory, package_plans, bootstrap, package,
+        [](const std::string &, std::vector<float> & embedding, std::string & e) {
+            embedding = {1.0f, 0.0f}; e.clear(); return true;
+        }, installed, error));
+    std::vector<common_blueprint_candidate> eurostat_candidates;
+    for (const auto & id : installed.installed_blueprint_ids) {
+        if (id.find(":blueprint:eurostat-") == std::string::npos) continue;
+        common_blueprint_candidate candidate;
+        candidate.logical_id = id;
+        candidate.persisted_id = id;
+        eurostat_candidates.push_back(std::move(candidate));
+    }
+    assert(eurostat_candidates.size() == 3);
+    common_agent_runtime_tooling eurostat_tools;
+    eurostat_tools.profile_tools_active = true;
+    eurostat_tools.capabilities = {"tool.web", "web.fetch", "dataset.inspect", "dataset.sample", "openapi.read"};
+    eurostat_tools.available_context = {"context.network.allowed", "context.openapi.available"};
+    eurostat_tools.capability_tools = {
+        {"web.fetch", {"web.fetch"}}, {"dataset.inspect", {"dataset.inspect"}},
+        {"dataset.sample", {"dataset.sample"}},
+        {"openapi.read", {"eurostat.getData", "eurostat_sdmx.getStructure", "openalex.listWorks"}}};
+    for (const auto & name : {"web.fetch", "dataset.inspect", "dataset.sample",
+            "eurostat.getData", "eurostat_sdmx.getStructure", "openalex.listWorks"}) {
+        eurostat_tools.tools.push_back({name, name, R"({"type":"object"})"});
+    }
+    assert(compile_agent_route_catalog(request, package_plans, scope, eurostat_candidates,
+        eurostat_tools, "", catalog, error));
+    assert(catalog.candidates.size() == 4); // Normal plus all three Eurostat routes.
+    for (const auto & candidate : catalog.candidates) {
+        if (!candidate.workflow_definition) continue;
+        assert(candidate.kind == common_agent_route_kind::blueprint_workflow);
+        assert(candidate.workflow_revision == "v2");
+        assert(std::find(candidate.resolved_tools.begin(), candidate.resolved_tools.end(),
+            "openalex.listWorks") == candidate.resolved_tools.end());
+    }
+    eurostat_tools.tools.erase(std::remove_if(eurostat_tools.tools.begin(), eurostat_tools.tools.end(),
+        [](const auto & tool) { return tool.name == "eurostat.getData" || tool.name == "eurostat_sdmx.getStructure"; }),
+        eurostat_tools.tools.end());
+    assert(compile_agent_route_catalog(request, package_plans, scope, eurostat_candidates,
+        eurostat_tools, "", catalog, error));
+    assert(catalog.candidates.size() == 2); // OpenAlex cannot substitute for Eurostat.
     return 0;
 }
