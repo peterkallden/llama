@@ -44,7 +44,6 @@
 #include <vector>
 
 namespace {
-using json = nlohmann::ordered_json;
 using ordered_json = nlohmann::ordered_json;
 
 struct options {
@@ -243,17 +242,17 @@ std::string preview(const common_agent_generation_result & result) {
 std::string deep_arm_trace_id(const std::string & fixture_id, int32_t layer,
         const std::vector<float> & coefficients, bool full_execution) {
     return fixture_id + "/deep/" + (full_execution ? "full/" : "diagnostic/") +
-        "layer-" + std::to_string(layer) + "/" + json(coefficients).dump();
+        "layer-" + std::to_string(layer) + "/" + ordered_json(coefficients).dump();
 }
 
 void trace_model_exchange(const std::string & phase, const std::string & id,
         const common_agent_generation_request & request,
         const common_agent_generation_result & result) {
-    json messages = json::array();
+    ordered_json messages = ordered_json::array();
     for (const auto & message : request.messages) {
         messages.push_back({{"role", message.role}, {"content", message.content}});
     }
-    const json exchange = {{"phase", phase}, {"id", id},
+    const ordered_json exchange = {{"phase", phase}, {"id", id},
         {"messages", messages}, {"n_predict", request.options.n_predict},
         {"budget", {{"phase", phase}, {"token_limit", request.options.n_predict},
             {"decoded_tokens", result.decoded_tokens},
@@ -646,7 +645,7 @@ int main(int argc, char ** argv) {
             std::cerr << "scenario has invalid verification_mode: " << id << '\n';
             return 1;
         }
-        std::cout << "flydelta_fixture " << json({{"id", id}, {"expected", canonical_repair},
+        std::cout << "flydelta_fixture " << ordered_json({{"id", id}, {"expected", canonical_repair},
             {"canonical_output", canonical_execution.output}, {"verification_mode", verification_mode}}).dump()
                   << std::endl;
 
@@ -657,7 +656,7 @@ int main(int argc, char ** argv) {
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
-        std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "baseline"},
+        std::cout << "flydelta_host_verdict " << ordered_json({{"id", id}, {"phase", "baseline"},
             {"selected_tool", failed_verdict.selected_tool}, {"diagnostic", failed_verdict.diagnostic},
             {"passed", failed_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         std::string decision_failed_tool = failed_verdict.selected_tool;
@@ -748,11 +747,11 @@ int main(int argc, char ** argv) {
             trace_model_exchange("repair", id, repaired_request, repaired_result);
             repaired_verdict = verify_model_call(repaired_result, expected,
                 canonical_repair["arguments"], verification_mode, &canonical_execution, host);
-            std::cout << "flydelta_host_verdict " << json({{"id", id}, {"phase", "repair"},
+            std::cout << "flydelta_host_verdict " << ordered_json({{"id", id}, {"phase", "repair"},
                 {"selected_tool", repaired_verdict.selected_tool}, {"diagnostic", repaired_verdict.diagnostic},
                 {"passed", repaired_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         } else {
-            std::cout << "flydelta_host_repair " << json({{"id", id}, {"canonical_call", canonical_dsl_call},
+            std::cout << "flydelta_host_repair " << ordered_json({{"id", id}, {"canonical_call", canonical_dsl_call},
                 {"model_generation", false}, {"source", "host_canonical"}, {"learning_credit", false}}).dump() << std::endl;
         }
         const bool capture_pair = failed_result.flydelta_capture && repaired_result.flydelta_capture &&
@@ -893,7 +892,7 @@ int main(int argc, char ** argv) {
             std::cout << "scenario=" << id << " host_outcome=synthetic_repair_observation"
                       << " selected=" << expected << " preferred_source=host_canonical"
                       << " failed_output=" << preview(failed_result)
-                      << " preferred_output=" << json(canonical_dsl_call).dump() << '\n';
+                      << " preferred_output=" << ordered_json(canonical_dsl_call).dump() << '\n';
             continue;
         }
 
@@ -1108,7 +1107,7 @@ int main(int argc, char ** argv) {
                 : sample.credit.outcome != common_flydelta_counterfactual_outcome::helped
                     ? "outcome_is_not_helped"
                     : "learning_eligibility_flag_not_set";
-            const json credit_event = {
+            const ordered_json credit_event = {
                 {"group", entry.first}, {"sample_id", sample.delta.id},
                 {"fixture_id", sample.credit.fixture_id},
                 {"source", replay_mode ? "synthetic_replay" : "host_verified_repair"},
@@ -1211,7 +1210,7 @@ int main(int argc, char ** argv) {
                 production_provider = daemon_flydelta_make_resource_provider(daemon_config, server_host,
                     &production_resources, {}, std::make_shared<common_learning_in_memory_lifecycle_store>(), error);
                 if (!production_provider) { host.close(); std::cerr << error << '\n'; return 1; }
-                const auto put = [&](const json & data, std::string & uri) {
+                const auto put = [&](const ordered_json & data, std::string & uri) {
                     agent_resource_put_request request;
                     request.name = "flydelta-production-smoke.json";
                     request.mime_type = "application/json";
@@ -1234,17 +1233,17 @@ int main(int argc, char ** argv) {
                 production_job.seed.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
                 production_job.seed.template_fingerprint = deep_fixture.template_fingerprint;
                 production_job.seed.execution_context_fingerprint = deep_fixture.execution_context_fingerprint;
-                json tools = json::array();
+                ordered_json tools = ordered_json::array();
                 for (const auto & name : described_tools) {
                     const auto * definition = catalog.find_definition(name);
                     if (!definition) { host.close(); return 1; }
                     tools.push_back({{"name", name}, {"description", definition->description},
-                        {"parameters", json::parse(common_tool_model_input_schema(*definition))}});
+                        {"parameters", ordered_json::parse(common_tool_model_input_schema(*definition))}});
                 }
                 const auto context = make_request(value, contract, deep_case.question, {});
-                json messages = json::array();
+                ordered_json messages = ordered_json::array();
                 for (const auto & message : context.messages) messages.push_back({{"role", message.role}, {"content", message.content}});
-                json fixture_data = {{"verification_mode", "normalized_call"},
+                ordered_json fixture_data = {{"verification_mode", "normalized_call"},
                     {"expected_decision", {{"name", deep_case.expected_tool}, {"arguments", deep_case.canonical_arguments}}}};
                 common_agent_teacher_forced_choice_request contrast;
                 std::string contrast_error;
@@ -1478,7 +1477,7 @@ int main(int argc, char ** argv) {
                 std::cout << "flydelta_deep_model_output group=" << entry.first
                           << " phase=" << (full_execution ? "full" : "diagnostic")
                           << " overlay=" << (apply_overlay ? "yes" : "no")
-                          << " response=" << json({{"content", generated_result.content},
+                          << " response=" << ordered_json({{"content", generated_result.content},
                               {"decoded_tokens", generated_result.decoded_tokens},
                               {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
                               {"verifier_known", trial.verifier_known},
@@ -1736,7 +1735,7 @@ int main(int argc, char ** argv) {
                         std::cout << "flydelta_deep_batch_response group=" << entry.first
                                   << " phase=" << (full_execution ? "full" : "diagnostic")
                                   << " arm=" << index << " response="
-                                  << json({{"content", generated_result.content},
+                                  << ordered_json({{"content", generated_result.content},
                                       {"decoded_tokens", generated_result.decoded_tokens},
                                       {"stop_reason", common_agent_generation_stop_reason_name(generated_result.stop_reason)},
                                       {"verifier_known", trial.verifier_known},
@@ -1894,7 +1893,7 @@ int main(int argc, char ** argv) {
                                 : trial.outcome == common_flydelta_counterfactual_outcome::neutral
                                     ? "baseline_and_candidate_passed"
                                     : "baseline_and_candidate_did_not_establish_helped";
-                    json arm = {
+                    ordered_json arm = {
                         {"group", entry.first}, {"fixture_id", deep_fixture.id},
                         {"task", deep_case.question}, {"arm_id", trial.arm_id},
                         {"raw_output_trace_id", trial.arm_id},
