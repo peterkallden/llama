@@ -72,6 +72,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-model-residency.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session-host.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-session-context-store.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-turn-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-package-io.cpp
         ${LLAMA_SRC}/tools/agent/resource/agent-resource-chunker.cpp
