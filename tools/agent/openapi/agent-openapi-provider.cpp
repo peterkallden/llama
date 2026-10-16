@@ -99,6 +99,9 @@ public:
             definition.result_schema_json = operation.result_schema_json;
             definition.model_result_schema_json = openapi_model_result_schema;
             definition.read_only = operation.read_only;
+            // OpenAPI operations are model tools by default. Empty visibility
+            // remains an explicit provider choice to hide a tool.
+            definition.ui_visibility = {"model"};
             definition.requires_confirmation = operation.requires_confirmation;
             definition.uses_network = true;
             tools.push_back(std::move(definition));

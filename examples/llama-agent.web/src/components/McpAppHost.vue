@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
+import { isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
 
 const props = defineProps<{
   tool: DaemonToolStatus;
@@ -35,67 +36,6 @@ function toolEnvelope(payload: unknown): Record<string, unknown> {
   return outer.tool && typeof outer.tool === "object" ? outer.tool as Record<string, unknown> : outer;
 }
 
-function cspMeta(meta: unknown): Record<string, string[]> {
-  const outer = meta && typeof meta === "object" ? meta as Record<string, unknown> : {};
-  const ui = outer.ui && typeof outer.ui === "object" ? outer.ui as Record<string, unknown> : outer;
-  const csp = ui.csp && typeof ui.csp === "object" ? ui.csp as Record<string, unknown> : {};
-  const domains = (field: string) => Array.isArray(csp[field])
-    ? (csp[field] as unknown[]).flatMap((value) => {
-      if (typeof value !== "string") return [];
-      try {
-        const candidate = value.startsWith("https://*.") ? `https://${value.slice("https://*".length)}` : value.includes("://") ? value : `https://${value}`;
-        const url = new URL(candidate);
-        if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) return [];
-        const hostname = value.includes("*.") ? `*.${url.hostname}` : url.hostname;
-        return [/^(\*\.)?[a-z0-9.-]+$/i.test(hostname) ? `${url.protocol}//${hostname}${url.port ? `:${url.port}` : ""}` : ""].filter(Boolean);
-      } catch { return []; }
-    })
-    : [];
-  return {
-    connectDomains: [...new Set(domains("connectDomains"))],
-    resourceDomains: [...new Set(domains("resourceDomains"))],
-    frameDomains: [...new Set(domains("frameDomains"))],
-    baseUriDomains: [...new Set(domains("baseUriDomains"))],
-  };
-}
-
-// The top-level sandbox is a data: document (opaque origin, different from the
-// web host). It creates a separate opaque-origin view iframe and relays only
-// postMessage traffic between that view and its parent host.
-function sandboxProxyDocument(): string {
-  return `<!doctype html><meta charset="utf-8"><script>
-    let view;
-    function sendHost(message){ parent.postMessage(message, '*'); }
-    addEventListener('message', event => {
-      if (event.source === parent && event.data?.method === 'ui/notifications/sandbox-resource-ready') {
-        const { html, csp } = event.data.params || {};
-        if (typeof html !== 'string' || !csp || typeof csp !== 'object') return;
-        const domains = key => Array.isArray(csp[key]) ? csp[key].filter(value => typeof value === 'string' && /^(https:\/\/)?(\*\.)?[a-z0-9.-]+(:[0-9]+)?$/i.test(value)) : [];
-        const resource = domains('resourceDomains').join(' ');
-        const connect = domains('connectDomains').join(' ') || "'none'";
-        const frames = domains('frameDomains').join(' ') || "'none'";
-        const base = domains('baseUriDomains').join(' ') || "'none'";
-        const policy = "default-src 'none'; script-src 'unsafe-inline' " + resource + "; style-src 'unsafe-inline' " + resource + "; img-src data: blob: " + resource + "; font-src " + resource + "; connect-src " + connect + "; frame-src " + frames + "; object-src 'none'; base-uri " + base + "; form-action 'none'";
-        view = document.createElement('iframe');
-        view.setAttribute('sandbox', 'allow-scripts');
-        view.setAttribute('referrerpolicy', 'no-referrer');
-        view.style.cssText = 'border:0;width:100%;height:100%;min-height:560px';
-        view.srcdoc = html.replace(/<head\\b[^>]*>/i, head => head + '<meta http-equiv="Content-Security-Policy" content="' + policy.replaceAll('&','&amp;').replaceAll('"','&quot;') + '">');
-        if (!/<head\\b/i.test(html)) view.srcdoc = '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="' + policy + '"></head><body>' + html + '</body></html>';
-        view.onload = () => {};
-        document.body.replaceChildren(view);
-        return;
-      }
-      if (event.source === parent && view?.contentWindow && !String(event.data?.method || '').includes('/sandbox-')) {
-        view.contentWindow.postMessage(event.data, '*');
-      } else if (view?.contentWindow === event.source && event.origin === 'null' && !String(event.data?.method || '').includes('/sandbox-')) {
-        sendHost(event.data);
-      }
-    });
-    sendHost({jsonrpc:'2.0', method:'ui/notifications/sandbox-proxy-ready'});
-  </scr${"ipt"}>`;
-}
-
 let loadGeneration = 0;
 async function load() {
   const generation = ++loadGeneration;
@@ -118,9 +58,12 @@ async function load() {
     const proxy = sandboxProxyDocument();
     proxyUrl.value = `data:text/html;charset=utf-8,${encodeURIComponent(proxy)}`;
     pendingHtml = html;
-    pendingCsp = cspMeta(result._meta);
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
-  finally { busy.value = false; }
+    pendingCsp = normalizeMcpAppCsp(result._meta);
+  } catch (cause) {
+    if (generation === loadGeneration) error.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    if (generation === loadGeneration) busy.value = false;
+  }
 }
 
 let pendingHtml = "";
@@ -143,17 +86,20 @@ function publishInvocation() {
 }
 
 async function onMessage(event: MessageEvent) {
-  if (!frame.value?.contentWindow || event.source !== frame.value.contentWindow || event.origin !== "null") return;
+  const targetWindow = frame.value?.contentWindow;
+  if (!targetWindow || event.source !== targetWindow || event.origin !== "null") return;
+  const requestGeneration = loadGeneration;
   const message = event.data as Record<string, unknown>;
   if (!message || typeof message !== "object" || message.jsonrpc !== "2.0") return;
   const method = typeof message.method === "string" ? message.method : "";
   const id = message.id;
   const reply = (result: unknown, errorText?: string) => {
-    if (id === undefined) return;
-    send({
+    if (id === undefined || !isCurrentAppRequest(
+      { generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) return;
+    targetWindow.postMessage({
       jsonrpc: "2.0", id,
       ...(errorText ? { error: { code: -32000, message: errorText } } : { result }),
-    });
+    }, "*");
   };
   if (method === "ui/notifications/sandbox-proxy-ready") {
     send({ jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready", params: { html: pendingHtml, csp: pendingCsp } });
@@ -244,11 +190,11 @@ async function onMessage(event: MessageEvent) {
   } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
 }
 
-watch(() => [props.tool.name, props.tool.provider_id, uri.value], () => { initialized = false; void load(); });
+watch(() => [props.tool.name, props.tool.provider_id, uri.value], () => { initialized = false; void load(); }, { flush: "sync" });
 watch(() => props.invocation, publishInvocation, { deep: true });
 if (typeof window !== "undefined") window.addEventListener("message", onMessage);
 void load();
-onBeforeUnmount(() => window.removeEventListener("message", onMessage));
+onBeforeUnmount(() => { ++loadGeneration; window.removeEventListener("message", onMessage); });
 </script>
 
 <template>

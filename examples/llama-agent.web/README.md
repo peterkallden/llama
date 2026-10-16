@@ -140,7 +140,12 @@ read-only tools owned by the same provider and named in that provider's
 host-controlled `read_only_tools` list. The list is empty by default; remote
 `readOnlyHint` is metadata, not authorization. App-only tools appear in status
 for app discovery without being exposed to model tool selection. Links and
-arbitrary network access are not brokered.
+arbitrary network access are not brokered. OpenAPI operations remain visible to
+model selection by default. App invocation context is isolated by provider and
+UI resource and uses the newest matching invocation; automatic navigation
+reacts only to a newly received matching invocation. HTTPS CSP wildcards are
+normalized before they reach the sandbox; stale RPC responses are dropped
+after app reload or switching.
 
 The bounded web host supports initialization, scoped `tools/list` and
 `tools/call`, reads of the app's own declared UI resource, ping, and a displayed

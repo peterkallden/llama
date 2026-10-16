@@ -5,6 +5,7 @@ import type { DaemonProviderStatus } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
 import WorkflowInspector from "./components/WorkflowInspector.vue";
 import McpAppHost from "./components/McpAppHost.vue";
+import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppKey } from "./components/app-invocation";
 
 const session = useAgentSession();
 const prompt = ref("");
@@ -16,28 +17,21 @@ const webClientExpanded = ref(true);
 const eventsViewport = ref<HTMLElement | null>(null);
 const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
 const activeAppTool = ref("");
-const appKey = (tool: (typeof session.tools)[number]) => `${tool.provider_id ?? "native"}\u0000${tool._meta?.ui?.resourceUri ?? ""}`;
 const mcpApps = () => {
   const apps = new Map<string, (typeof session.tools)[number]>();
   for (const tool of session.tools) {
     const ui = tool._meta?.ui;
     const uri = ui?.resourceUri;
-    const key = appKey(tool);
+    const key = mcpAppKey(tool);
     if (uri && (ui?.visibility ?? []).includes("app") && !apps.has(key)) apps.set(key, tool);
   }
   return [...apps.values()];
 };
-const activeMcpApp = () => mcpApps().find((tool) => appKey(tool) === activeAppTool.value);
+const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAppTool.value);
 const activeAppInvocation = () => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const appUri = app._meta?.ui?.resourceUri;
-  const event = [...session.events].reverse().find((candidate) => {
-    if (candidate.app_context_available !== true || !candidate.tool_input || typeof candidate.tool_input !== "object") return false;
-    const originTool = session.tools.find((tool) => tool.provider_id === candidate.provider_id &&
-      tool.server_tool_name === candidate.server_tool_name);
-    return originTool?._meta?.ui?.resourceUri === appUri;
-  });
+  const event = findLatestAppInvocation(session.events, session.tools, app);
   if (!event) return undefined;
   return {
     input: event.tool_input as Record<string, unknown>,
@@ -45,17 +39,10 @@ const activeAppInvocation = () => {
   };
 };
 
-watch(() => session.events.length, () => {
-  const event = [...session.events].reverse().find((candidate) => candidate.app_context_available === true);
-  if (!event) return;
-  const originTool = session.tools.find((tool) => tool.provider_id === event.provider_id &&
-    tool.server_tool_name === event.server_tool_name);
-  const targetApp = originTool?._meta?.ui?.resourceUri
-    ? mcpApps().find((tool) => tool.provider_id === originTool.provider_id &&
-      tool._meta?.ui?.resourceUri === originTool._meta?.ui?.resourceUri)
-    : undefined;
+watch(() => session.events[0], (event) => {
+  const targetApp = findAppForInvocationEvent(event, session.tools);
   if (targetApp) {
-    activeAppTool.value = appKey(targetApp);
+    activeAppTool.value = mcpAppKey(targetApp);
     activeView.value = "app";
   }
 });
@@ -182,12 +169,12 @@ function isArtifactEvent(event: Record<string, unknown>) {
       <button :class="{ selected: activeView === 'chat' }" @click="activeView = 'chat'">Chat</button>
       <button :class="{ selected: activeView === 'data' }" @click="activeView = 'data'">Data Explorer</button>
       <button :class="{ selected: activeView === 'workflow' }" @click="activeView = 'workflow'">Workflow Inspector</button>
-      <button v-for="tool in mcpApps()" :key="appKey(tool)" :class="{ selected: activeAppTool === appKey(tool) }" @click="activeView = 'app'; activeAppTool = appKey(tool)">{{ tool.name }} app</button>
+      <button v-for="tool in mcpApps()" :key="mcpAppKey(tool)" :class="{ selected: activeAppTool === mcpAppKey(tool) }" @click="activeView = 'app'; activeAppTool = mcpAppKey(tool)">{{ tool.name }} app</button>
     </nav>
 
     <DataExplorer v-if="activeView === 'data'" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
     <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :invocation="activeAppInvocation()" />
+    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="mcpAppKey(activeMcpApp()!)" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :invocation="activeAppInvocation()" />
 
     <section v-else class="grid">
       <div class="primary">

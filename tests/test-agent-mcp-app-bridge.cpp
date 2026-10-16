@@ -112,7 +112,8 @@ int main() {
     visible_both.ui_metadata_json = R"({"visibility":["model","app"]})";
     auto write_app = tool("dataset.write", true);
     write_app.writes_plan = true;
-    client.definitions = {app, app_operation, visible_both, write_app};
+    auto hidden = tool("hidden", false);
+    client.definitions = {app, app_operation, visible_both, write_app, hidden};
 
     mcp_agent_tool_provider provider("catalog", client, {}, {}, "mcp", {"schema", "list", "dataset.write"});
     agent_tool_context context;
@@ -120,6 +121,7 @@ int main() {
     assert(view && error.empty());
     assert(view->chat_tools().size() == 1 && view->chat_tools()[0].name == "catalog_list");
     assert(view->app_tools().size() == 4);
+    assert(!view->exposes_tool("catalog_hidden"));
     assert(!view->exposes_tool("catalog_schema"));
     assert(!view->validate({"test", "catalog_schema", "{}"}, error));
     assert(view->is_mcp_app_read_only("catalog_schema"));

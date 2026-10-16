@@ -341,6 +341,8 @@ int main() {
     auto view = provider.resolve_tools(context, error);
     assert(view && error.empty());
     assert(view->exposes_tool("openalex.listWorks"));
+    assert(std::any_of(view->chat_tools().begin(), view->chat_tools().end(),
+        [](const common_chat_tool & tool) { return tool.name == "openalex.listWorks"; }));
     auto result = view->call({"call-1", "openalex.listWorks", "{}", 5}, error);
     assert(result.ok && error.empty());
     assert(calls == 2 && materializations == 1);

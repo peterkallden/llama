@@ -1426,7 +1426,15 @@ are resolved only within their owning provider. The host-owned per-provider
 `read_only_tools` list defaults to empty; remote `readOnlyHint` is metadata and
 cannot authorize a web/app call. The view receives no daemon token; network
 access is denied unless a sanitized resource-domain policy explicitly allows
-it.
+it. OpenAPI operations are visible to model tool selection by default; an
+explicit empty visibility list still hides a provider-defined tool. Invocation
+context is selected from the newest matching event for the active provider and
+UI resource; automatic navigation reacts only to a newly received matching
+invocation. Late RPC results are discarded after an app reload, app switch or
+unmount.
+Sandbox CSP sources accept HTTPS hostnames and wildcard subdomains; malformed,
+credential-bearing and non-HTTPS sources are omitted. The generated proxy
+document is tested as browser JavaScript after serialization.
 
 - foreground process only;
 - stdin/stdout remains the local administrative transport; JSONL TCP is
