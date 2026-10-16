@@ -2,12 +2,14 @@
 #include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
 #include "tools/agent/runtime/agent-workflow-transition.h"
 #include "plan/plan-in-memory.h"
+#include "plan/plan-workflow-state.h"
 #include "agent/agent-package-json.h"
 #include "memory/memory-in-memory.h"
 
 #include <algorithm>
 #include <cassert>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <nlohmann/json.hpp>
 
@@ -530,6 +532,21 @@ int main() {
     assert(!rejected_graph_continuation(graph_plan, "resolve", candidates, continuation_steps, error));
     assert(error.find("outside the host observation") != std::string::npos);
 
+    // A fixed next action needs no structured binding evidence. Preserve
+    // workflows whose preceding successful tool returns plain text.
+    auto text_route = graph_route;
+    text_route.workflow_definition->transitions.erase(text_route.workflow_definition->transitions.begin() + 1);
+    text_route.workflow_definition->transitions.back().from_state = "candidates";
+    text_route.workflow_definition->transitions.back().arguments_template_json = "{}";
+    auto text_plan = graph_plan;
+    text_plan.workflow_definition = text_route.workflow_definition;
+    auto text_observation = candidates;
+    text_observation.summary = "Bounded successful text output";
+    auto text_continuation = make_agent_workflow_graph_continuation(text_route);
+    continuation_steps.clear(); error.clear();
+    assert(text_continuation(text_plan, "resolve", text_observation, continuation_steps, error));
+    assert(error.empty() && continuation_steps.size() == 1);
+
     common_plan_workflow_definition table_choice_definition;
     table_choice_definition.workflow_ref = "workflow://eurostat/catalogue-choice";
     table_choice_definition.workflow_revision = "v1";
@@ -625,18 +642,20 @@ int main() {
     delayed_choice_plan.workflow_definition = delayed_choice_definition;
     common_plan_step structure_step{"get-structure", "Get dataflow", "Resolve DSD"};
     structure_step.status = common_plan_step_status::completed;
+    structure_step.tool_call = common_plan_tool_call{"eurostat_sdmx.getStructure", "{}"};
     structure_step.semantic_alias = "workflow-transition:choose-dataflow=TPS00003,get-dataflow-structure";
     delayed_choice_plan.steps.push_back(structure_step);
     common_plan_observation selected_dataflow;
-    selected_dataflow.id = "workflow-choice:choose-dataflow";
+    selected_dataflow.id = "workflow_choice:get-structure:choose-dataflow";
     selected_dataflow.source = "workflow_choice";
     selected_dataflow.confidence = 1.0f;
     selected_dataflow.summary = R"({"transition_id":"choose-dataflow","choice":"TPS00003","verified_against_host_candidates":true})";
-    delayed_choice_plan.observations.push_back(selected_dataflow);
+    selected_dataflow.evidence_ids = {"tool:get-structure:1"};
     common_plan_observation structure_result;
     structure_result.id = "tool:get-structure:1";
     structure_result.source = "eurostat_sdmx.getStructure";
     structure_result.summary = R"({"ok":true,"result":{"id":"TPS00003"}})";
+    delayed_choice_plan.observations = {structure_result, selected_dataflow};
     auto delayed_choice_continuation = make_agent_workflow_graph_continuation(delayed_choice_route, {});
     continuation_steps.clear(); error.clear();
     assert(delayed_choice_continuation(delayed_choice_plan, "get-structure", structure_result,
@@ -645,6 +664,24 @@ int main() {
     const auto constraint_call = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
     assert(constraint_call["artifactType"] == "contentconstraint");
     assert(constraint_call["resourceID"] == "TPS00003");
+
+    // A choice is bound to its successful tool step, not merely a JSON flag.
+    auto ungrounded_choice_plan = delayed_choice_plan;
+    ungrounded_choice_plan.observations.back().evidence_ids.clear();
+    assert(common_plan_workflow_observation(ungrounded_choice_plan, "choose-dataflow") == nullptr);
+    ungrounded_choice_plan = delayed_choice_plan;
+    ungrounded_choice_plan.observations.front().summary = R"({"ok":false,"result":{"id":"TPS00003"}})";
+    assert(common_plan_workflow_observation(ungrounded_choice_plan, "choose-dataflow") == nullptr);
+    ungrounded_choice_plan = delayed_choice_plan;
+    ungrounded_choice_plan.observations.front().confidence = 0.0f;
+    assert(common_plan_workflow_observation(ungrounded_choice_plan, "choose-dataflow") == nullptr);
+    ungrounded_choice_plan.observations.front().confidence = std::numeric_limits<float>::quiet_NaN();
+    assert(common_plan_workflow_observation(ungrounded_choice_plan, "choose-dataflow") == nullptr);
+    // Starting a new route segment prevents reusing an older choice with
+    // the same transition id, even though its original proof is still stored.
+    ungrounded_choice_plan = delayed_choice_plan;
+    ungrounded_choice_plan.route_binding->workflow_step_start_index = 1;
+    assert(common_plan_workflow_observation(ungrounded_choice_plan, "choose-dataflow") == nullptr);
 
     // Fixed host choices can depend on a structured observation, and a
     // selected tool transition binds only the declared scalar result field.
@@ -682,6 +719,7 @@ int main() {
     evidence_plan.workflow_definition = evidence_definition;
     common_plan_step get_work_step{"get-work-step", "Get work", "Retrieve OpenAlex work"};
     get_work_step.status = common_plan_step_status::completed;
+    get_work_step.tool_call = common_plan_tool_call{"openalex.getWork", "{}"};
     get_work_step.semantic_alias = "workflow-transition:get-work";
     evidence_plan.steps.push_back(get_work_step);
     common_plan_observation openalex_observation;
@@ -707,6 +745,71 @@ int main() {
     continuation_steps.clear(); error.clear();
     assert(!evidence_continuation(evidence_plan, "get-work-step", missing_url_observation, continuation_steps, error));
     assert(error.find("outside the host observation") != std::string::npos);
+
+    auto failed_observation = openalex_observation;
+    failed_observation.summary = R"({"ok":false,"result":{"best_oa_location":{"pdf_url":"https://example.org/paper.pdf"}}})";
+    continuation_steps.clear(); error.clear();
+    assert(!evidence_continuation(evidence_plan, "get-work-step", failed_observation, continuation_steps, error));
+    assert(error.find("successful structured") != std::string::npos);
+
+    // Bind the current route's latest matching transition, not an older
+    // workflow's same-named step. A newer unrelated observation cannot win.
+    auto scoped_plan = evidence_plan;
+    auto old_step = get_work_step;
+    old_step.id = "old-get-work";
+    scoped_plan.steps.insert(scoped_plan.steps.begin(), old_step);
+    scoped_plan.route_binding->workflow_step_start_index = 1;
+    auto old_observation = openalex_observation;
+    old_observation.id = "tool:old-get-work:1";
+    old_observation.summary = R"({"ok":true,"result":{"best_oa_location":{"pdf_url":"https://example.org/stale.pdf"}}})";
+    scoped_plan.observations.push_back(old_observation);
+    continuation_steps.clear(); error.clear();
+    assert(evidence_continuation(scoped_plan, "get-work-step", openalex_observation, continuation_steps, error));
+    assert(nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json)["url"] ==
+        "https://example.org/paper.pdf");
+    scoped_plan.observations.erase(scoped_plan.observations.begin());
+    continuation_steps.clear(); error.clear();
+    assert(!evidence_continuation(scoped_plan, "get-work-step", openalex_observation, continuation_steps, error));
+    assert(error.find("no verified observation") != std::string::npos);
+
+    auto typed_route = evidence_route;
+    auto & typed_transition = typed_route.workflow_definition->transitions[2];
+    typed_transition.tool_name = "test.consume";
+    typed_transition.argument_bindings = {{"/count", "get-work", "/result/count", true},
+        {"/columns", "get-work", "/result/columns", true},
+        {"/options", "get-work", "/result/options", true}};
+    typed_route.resolved_tools = {"openalex.getWork", "test.consume"};
+    auto typed_plan = evidence_plan;
+    auto typed_observation = openalex_observation;
+    typed_observation.summary = R"({"ok":true,"result":{"count":2,"columns":["a","b"],"options":{"unit":"people"}}})";
+    typed_plan.observations = {typed_observation};
+    // Start directly at the tool transition to isolate typed dataflow.
+    typed_route.workflow_definition->transitions[1].choices.clear();
+    typed_route.workflow_definition->transitions.erase(typed_route.workflow_definition->transitions.begin() + 1);
+    typed_route.workflow_definition->transitions[1].from_state = "work_retrieved";
+    typed_plan.workflow_definition = typed_route.workflow_definition;
+    auto typed_continuation = make_agent_workflow_graph_continuation(typed_route);
+    continuation_steps.clear(); error.clear();
+    assert(typed_continuation(typed_plan, "get-work-step", typed_observation, continuation_steps, error));
+    const auto typed_arguments = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
+    assert(typed_arguments["count"] == 2 && typed_arguments["columns"] == nlohmann::json::array({"a", "b"}));
+    assert(typed_arguments["options"]["unit"] == "people");
+    typed_plan.observations.front().summary = R"({"ok":true,"result":{"count":null,"columns":[],"options":{}}})";
+    continuation_steps.clear(); error.clear();
+    assert(!typed_continuation(typed_plan, "get-work-step", typed_observation, continuation_steps, error));
+    assert(error.find("null or an empty string") != std::string::npos);
+
+    // Legacy graph-less handoffs still accept a successful active tool
+    // result without a transition alias, while named bindings require one.
+    auto legacy_plan = evidence_plan;
+    legacy_plan.steps.front().semantic_alias.reset();
+    common_agent_dataset_ref legacy_dataset;
+    legacy_dataset.uri = "dataset://test/materialized";
+    legacy_plan.observations.front().dataset_refs.push_back(legacy_dataset);
+    assert(common_plan_workflow_observation(legacy_plan, {}, true) == &legacy_plan.observations.front());
+    assert(common_plan_workflow_observation(legacy_plan, "get-work") == nullptr);
+    legacy_plan.route_binding->workflow_step_start_index = legacy_plan.steps.size();
+    assert(common_plan_workflow_observation(legacy_plan, {}, true) == nullptr);
     // Import the shipped package, then exercise real route applicability.
     // Parsing a workflow alone cannot detect mismatched workflow families.
     common_agent_bootstrap_package package;
@@ -759,8 +862,8 @@ int main() {
         if (!candidate.workflow_definition) continue;
         assert(candidate.kind == common_agent_route_kind::blueprint_workflow);
         const auto & workflow_ref = candidate.workflow->workflow_ref;
-        const auto expected_revision = workflow_ref == "workflow://eurostat/catalog-discovery" ? "v5" :
-            workflow_ref == "workflow://eurostat/metadata-resolution" ? "v7" :
+        const auto expected_revision = workflow_ref == "workflow://eurostat/catalog-discovery" ? "v6" :
+            workflow_ref == "workflow://eurostat/metadata-resolution" ? "v8" :
             workflow_ref == "workflow://eurostat/data-retrieval" ? "v7" : "v4";
         assert(candidate.workflow_revision == expected_revision);
         assert(std::find(candidate.resolved_tools.begin(), candidate.resolved_tools.end(),

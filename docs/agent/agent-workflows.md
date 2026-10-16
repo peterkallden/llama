@@ -37,6 +37,16 @@ structured resource/API metadata even when the source result is not a dataset;
 legacy `continuation_workflow_targets` remain restricted to verified dataset
 outputs.
 
+Both within-workflow bindings and cross-workflow handoffs resolve named
+transitions only inside the active route's workflow-step segment. A successful
+step from an earlier workflow with the same transition ID cannot supply a
+current binding. Candidate-choice evidence must match the completed step's
+recorded choice alias and reference that step's successful tool observation.
+Zero/non-finite confidence and explicit failure envelopes are rejected.
+Bindings preserve JSON types (including numbers, lists, and objects); required
+null values or empty strings are missing values. The target tool schema still
+validates the materialized arguments before execution.
+
 A tool transition that asks the model to supply request-dependent arguments may
 include a bounded `model_instruction`. The runtime adds this as method guidance
 for that transition only; tool identity, schema, bindings, and execution
@@ -84,6 +94,38 @@ reviewed.
 `allowed_tools` remains accepted for v1 package compatibility. When semantic
 capabilities are also present, `allowed_tools` can only narrow the resolved
 tool set. New workflow packages should prefer capabilities.
+
+## Thinking modes and factual grounding
+
+A workflow's route and execution envelope determine its available tools.
+The runtime thinking policy determines whether the current turn uses
+`deliberate` or `research`. The workflow JSON currently has no
+`preferred_thinking_mode` field: allowing the research phase in the envelope
+does not request or select it. Use the existing `runtime.thinking_mode`
+configuration or the bounded runtime escalation policy to select research.
+
+For a specified indicator, geography and period, deliberate can carry out
+discovery, metadata checks, retrieval and calculation. Research is useful when
+the request requires competing definitions, multiple sources or explicit
+evidence cross-checks. In research mode mandatory workflow tool steps execute
+before the deferred research pass consumes their evidence. Neither mode proves
+that a dataset matches the statistical question.
+
+The following semantic checks remain design work for the Eurostat path:
+
+- Validate selected geography, time and dimension codes against the retrieved
+  dataset-specific constraint before authorizing data retrieval.
+- Preserve the intended measure, geographic level, unit and period as explicit
+  requirements; request clarification when a necessary definition is absent.
+- Compare returned JSON-stat dimensions, units, observation flags and coverage
+  with those requirements before treating the answer as supported.
+- Link final numerical claims to actual returned cells and transformations.
+  A second source is useful for independent corroboration; repeating requests
+  to the same source does not establish independent agreement.
+
+These checks require host-readable contracts and evidence. Transition guidance,
+candidate membership, successful HTTP status and research mode alone do not
+establish semantic correctness.
 
 ## Bounded workflow graphs
 
@@ -236,7 +278,7 @@ requirements generically. The starter library covers these host-tool domains:
   dataset and continues through the generic dataset analysis/quality workflows.
   These starter procedures and blueprints are imported from the JSON package;
   the host supplies generic safe XML/JSON normalization and query serialization.
-  Package v22 declares terminal-state links from catalogue discovery to SDMX
+  Package v23 declares terminal-state links from catalogue discovery to SDMX
   metadata resolution and from inspected metadata to data retrieval. The
   data-retrieval workflow now uses the same typed continuation-link contract
   for its handoff to dataset analysis, quality, or join; it no longer relies
@@ -291,12 +333,16 @@ requirements generically. The starter library covers these host-tool domains:
 
   The full 2026-10-16 Qwen Instruct trace completed catalogue materialization
   (12,241 rows, 48 batches), dataflow and ContentConstraint retrieval, JSON-stat
-  fetch, and dataset materialization. It still selected the regional
-  `demo_r_d3dens` candidate for a national Sweden request, despite explicit
-  transition guidance. HTTP 200 and a one-row result are not semantic
-  validation; final answer generation also stopped at context pressure. This
-  confirms the linked-route and import seams, not a correct Eurostat answer.
-  The host-side dataset/constraint compatibility gate and final-context budget
+  fetch, and dataset materialization. The selected `demo_r_d3dens` has a regional
+  title but contains a valid national aggregate: saved constraints include SE,
+  2020, A and PER_KM2, and the JSON-stat response reports Sweden, 2020 and 25.2
+  persons/km2. The initial audit's claim that this selection was wrong based on
+  its regional title was incorrect. Package v23 replaces the overly restrictive
+  title instruction with metadata-based coverage guidance. The metadata graph's
+  terminal state is named `metadata_materialized`, not `dimensions_and_codes_verified`,
+  because inspection does not implement a semantic verification gate.
+  Final answer generation still stopped at context pressure. Host-side
+  dataset/constraint compatibility enforcement and the final-context budget
   remain follow-up work. See
   `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 

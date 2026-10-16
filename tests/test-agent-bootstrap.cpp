@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v22");
+        checked_in_starter.version == "v23");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -273,7 +273,7 @@ int main() {
     assert(inspect_constraint->argument_bindings.front().source_transition_id == "get-content-constraint");
     assert(metadata_definition.continuation_links.size() == 1);
     assert(metadata_definition.continuation_links.front().source_transition_id == "inspect-content-constraint");
-    assert(metadata_definition.continuation_links.front().source_terminal_state == "dimensions_and_codes_verified");
+    assert(metadata_definition.continuation_links.front().source_terminal_state == "metadata_materialized");
     const auto has_procedure = [&](const std::string & id) {
         return std::any_of(checked_in_starter.procedures.begin(), checked_in_starter.procedures.end(),
             [&](const auto & procedure) { return procedure.id == id; });
@@ -281,6 +281,7 @@ int main() {
     assert(has_procedure("eurostat-catalog-discovery-v1"));
     assert(has_procedure("eurostat-catalog-discovery-v2"));
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
+    assert(has_procedure("eurostat-sdmx-metadata-resolution-v2"));
     assert(has_procedure("json-stat-dataset-interpretation-v1"));
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
@@ -304,7 +305,7 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
         });
     assert(roundtrip_eurostat_metadata != checked_in_roundtrip.workflows.end());
-    assert(roundtrip_eurostat_metadata->definition.workflow_revision == "v7");
+    assert(roundtrip_eurostat_metadata->definition.workflow_revision == "v8");
     assert(roundtrip_eurostat_metadata->definition.transitions.size() == metadata_definition.transitions.size());
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
@@ -314,12 +315,12 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
         });
     assert(roundtrip_eurostat_catalog != checked_in_roundtrip.workflows.end());
-    assert(roundtrip_eurostat_catalog->definition.workflow_revision == "v5");
+    assert(roundtrip_eurostat_catalog->definition.workflow_revision == "v6");
     assert(roundtrip_eurostat_catalog->definition.transitions.size() == 3);
     assert(roundtrip_eurostat_catalog->definition.transitions[1].argument_bindings.size() == 1);
     assert(roundtrip_eurostat_catalog->definition.transitions[2].tool_name == "dataset.schema");
     assert(roundtrip_eurostat_catalog->definition.transitions[2].argument_bindings.size() == 1);
-    assert(roundtrip_eurostat_catalog->definition.continuation_links.front().target_workflow_revision == "v7");
+    assert(roundtrip_eurostat_catalog->definition.continuation_links.front().target_workflow_revision == "v8");
     const auto roundtrip_eurostat_data = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -362,7 +363,7 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 21 &&
+    assert(checked_in_starter.procedures.size() == 22 &&
         checked_in_starter.blueprints.size() == 16);
     assert(checked_in_starter.workflows.size() == 17);
     assert(checked_in_starter.workflows[0].definition.workflow_ref ==
@@ -465,7 +466,7 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
         });
     assert(eurostat_catalog_workflow != checked_in_starter.workflows.end());
-    assert(eurostat_catalog_workflow->definition.workflow_revision == "v5");
+    assert(eurostat_catalog_workflow->definition.workflow_revision == "v6");
     assert(eurostat_catalog_workflow->definition.continuation_links.size() == 1);
     assert(eurostat_catalog_workflow->definition.continuation_links.front().source_transition_id == "inspect-toc-schema");
     assert(eurostat_catalog_workflow->definition.continuation_links.front().source_terminal_state == "catalog_schema_ready");
@@ -478,7 +479,7 @@ int main() {
     const auto eurostat_metadata_workflow = std::find_if(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
         [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution"; });
     assert(eurostat_metadata_workflow != checked_in_starter.workflows.end());
-    assert(eurostat_metadata_workflow->definition.workflow_revision == "v7");
+    assert(eurostat_metadata_workflow->definition.workflow_revision == "v8");
     assert(eurostat_metadata_workflow->definition.transitions.size() == 6);
     assert(eurostat_metadata_workflow->definition.transitions[0].id == "search-catalogue");
     assert(eurostat_metadata_workflow->definition.transitions[0].model_supplies_arguments);
@@ -625,7 +626,7 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 21 &&
+    assert(checked_in_import.installed_memory_ids.size() == 22 &&
         checked_in_import.installed_blueprint_ids.size() == 16);
     assert(checked_in_import.installed_workflow_ids.size() == 17);
     const auto checked_in_openapi_blueprint = checked_in_plans.get(

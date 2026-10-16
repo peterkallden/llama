@@ -79,16 +79,18 @@ DOCX/XLSX processor policies and sets
 - The 2026-10-16 full Qwen Instruct run exercised the new linked workflow
   chain through catalogue materialization, SDMX dataflow/constraint fetches,
   JSON-stat retrieval and `dataset.inspect`. The catalogue import completed
-  with 12,241 rows in 48 batches. However, Qwen selected
-  `demo_r_d3dens` (a NUTS-3 regional dataset) for a request that called for
-  national Sweden data, despite transition guidance. The selected API returned
-  HTTP 200 and a one-row dataset, so transport and workflow completion do not
-  establish semantic correctness. The host currently does not enforce that
-  the selected dataset and requested `geo`/`time` values satisfy the user's
-  intent or the fetched SDMX ContentConstraint. Final answer generation also
-  stopped at context pressure (`decoded 0 tokens`). Treat this as a successful
-  wiring/materialization trace but a failed semantic end-to-end result; the
-  remaining host-side constraint gate and final-context budget need follow-up.
+  with 12,241 rows in 48 batches. Qwen selected `demo_r_d3dens`, whose title
+  refers to NUTS-3 regions. The initial audit incorrectly treated that title
+  as evidence that the choice could not answer a national question. Subsequent
+  inspection of the saved resources shows that its ContentConstraint includes
+  `geo=SE`, `TIME_PERIOD=2020`, `unit=PER_KM2` and `freq=A`. The returned
+  JSON-stat explicitly contains Sweden, 2020, persons per square kilometre
+  and value 25.2. Regional tables can contain national aggregates; actual
+  dimensions, definitions and observations determine suitability.
+  This offline check supports the retrieved value, but the runtime itself has
+  no enforced constraint-membership gate. Final answer generation stopped at
+  context pressure (`decoded 0 tokens`), so model end-to-end completion is
+  still unproven. The constraint gate and final-context budget need follow-up.
   Full trace:
   `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 - Full connection traces are under

@@ -100,43 +100,20 @@ bool json_pointer_is_present(const json & value, const std::string & pointer) {
 
 const common_plan_observation * binding_observation(
         const common_plan_state & plan,
-        const std::string & completed_step_id,
         const common_plan_observation & current,
         const std::string & source_transition_id) {
-    if (source_transition_id.empty() || source_transition_id == "$previous") return &current;
+    if (source_transition_id.empty() || source_transition_id == "$previous") {
+        return common_plan_workflow_observation_is_usable(current) ? &current : nullptr;
+    }
     // A model-choice transition has no tool step of its own. Its verified
     // candidate is persisted as a workflow_choice observation after the
     // immediately following tool succeeds, so later graph transitions must
     // resolve explicit bindings from that host-validated observation.
-    for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
-        if (observation->source != "workflow_choice" || observation->confidence <= 0.0f) continue;
-        const auto choice = json::parse(observation->summary, nullptr, false);
-        if (choice.is_object() && choice.value("transition_id", std::string{}) == source_transition_id &&
-                choice.value("verified_against_host_candidates", false) &&
-                !choice.value("choice", std::string{}).empty()) {
-            return &*observation;
-        }
-    }
-    const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const auto & candidate) {
-        if (candidate.status != common_plan_step_status::completed || !candidate.semantic_alias ||
-                candidate.semantic_alias->rfind("workflow-transition:", 0) != 0) return false;
-        const auto aliases = candidate.semantic_alias->substr(std::string("workflow-transition:").size());
-        const auto separator = aliases.rfind(',');
-        const auto last = separator == std::string::npos ? aliases : aliases.substr(separator + 1);
-        return last == source_transition_id || (separator == std::string::npos &&
-            candidate.id == completed_step_id && last == source_transition_id);
-    });
-    if (step == plan.steps.end()) return nullptr;
-    const std::string observation_prefix = "tool:" + step->id + ":";
-    const auto observation = std::find_if(plan.observations.rbegin(), plan.observations.rend(),
-        [&](const auto & candidate) { return candidate.id.rfind(observation_prefix, 0) == 0; });
-    if (observation != plan.observations.rend()) return &*observation;
-    return nullptr;
+    return common_plan_workflow_observation(plan, source_transition_id);
 }
 
 bool resolve_argument_bindings(json & arguments,
         const common_plan_state & plan,
-        const std::string & completed_step_id,
         const common_plan_workflow_transition & transition,
         const common_plan_observation & observation,
         std::string & error) {
@@ -148,7 +125,7 @@ bool resolve_argument_bindings(json & arguments,
     }
     for (const auto & binding : transition.argument_bindings) {
         const auto * source_observation = binding_observation(
-            plan, completed_step_id, observation, binding.source_transition_id);
+            plan, observation, binding.source_transition_id);
         if (source_observation == nullptr) {
             if (binding.required) {
                 error = "required workflow source transition has no verified observation: " +
@@ -172,9 +149,9 @@ bool resolve_argument_bindings(json & arguments,
             continue;
         }
         const auto & source_value = source_value_json.at(source);
-        if (!source_value.is_string() || source_value.get<std::string>().empty()) {
+        if (source_value.is_null() || (source_value.is_string() && source_value.get<std::string>().empty())) {
             if (binding.required) {
-                error = "required workflow argument source must be a non-empty string";
+                error = "required workflow argument source must not be null or an empty string";
                 return false;
             }
             continue;
@@ -194,7 +171,7 @@ common_plan_step make_tool_step(const common_plan_state & plan,
     if (!arguments.is_object()) { error = "workflow transition arguments are not an object"; return {}; }
     auto resolved = arguments;
     if (!replace_previous(resolved, completed_step_id, choice)) { error = "workflow transition arguments are invalid"; return {}; }
-    if (!resolve_argument_bindings(resolved, plan, completed_step_id, transition, observation, error)) return {};
+    if (!resolve_argument_bindings(resolved, plan, transition, observation, error)) return {};
     common_plan_step step;
     step.id = plan.id + ":workflow:" + transition.id + ":" + std::to_string(plan.version);
     step.title = transition.tool_name;
@@ -303,6 +280,11 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
         std::string state = common_plan_workflow_completed_state(plan, definition);
         const auto * next = common_agent_workflow_next_transition(definition, state);
         if (next == nullptr) return true;
+        if ((next->kind == common_plan_workflow_transition_kind::model_choice ||
+                !next->argument_bindings.empty()) && !common_plan_workflow_observation_is_usable(observation)) {
+            error = "workflow continuation requires a successful structured host observation";
+            return false;
+        }
         std::string choice;
         std::string aliases;
         if (next->kind == common_plan_workflow_transition_kind::model_choice) {

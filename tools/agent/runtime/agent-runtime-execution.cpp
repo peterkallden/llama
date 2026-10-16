@@ -1103,34 +1103,7 @@ static const common_plan_observation * successful_workflow_observation(
         const common_plan_state & plan,
         const std::string & source_transition_id,
         bool require_dataset) {
-    if (!source_transition_id.empty()) {
-        for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
-            if (observation->source != "workflow_choice" || observation->confidence <= 0.0f) continue;
-            const auto choice = json::parse(observation->summary, nullptr, false);
-            if (choice.is_object() && choice.value("transition_id", std::string{}) == source_transition_id &&
-                    choice.value("verified_against_host_candidates", false) && choice.value("choice", std::string{}).size()) {
-                return &*observation;
-            }
-        }
-    }
-    const size_t start_index = plan.route_binding
-        ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
-    for (size_t index = plan.steps.size(); index > start_index; --index) {
-        const auto & step = plan.steps[index - 1];
-        if (step.status != common_plan_step_status::completed ||
-                common_plan_step_effective_mode(step) != common_plan_step_mode::tool || !step.tool_call) continue;
-        if (!source_transition_id.empty() &&
-                workflow_step_transition_id(step) != source_transition_id) continue;
-        const std::string prefix = "tool:" + step.id + ":";
-        for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
-            if (observation->id.rfind(prefix, 0) != 0 || observation->confidence <= 0.0f ||
-                    (require_dataset && observation->dataset_refs.empty())) continue;
-            const auto structured = json::parse(observation->summary, nullptr, false);
-            if (structured.is_object() || structured.is_array()) return &*observation;
-        }
-        if (!source_transition_id.empty()) return nullptr;
-    }
-    return nullptr;
+    return common_plan_workflow_observation(plan, source_transition_id, require_dataset);
 }
 
 static bool transition_to_workflow(
@@ -1145,16 +1118,11 @@ static bool transition_to_workflow(
         error = "workflow handoff has no declared continuation targets";
         return false;
     }
-    const common_plan_observation * legacy_trigger_observation = nullptr;
+    const common_plan_observation * legacy_trigger_observation =
+        successful_workflow_observation(plan, {}, true);
     std::vector<common_agent_dataset_descriptor> produced;
     for (const auto & observation : plan.observations) {
-        if (!observation.dataset_refs.empty()) {
-            if (observation.confidence > 0.0f &&
-                    (json::parse(observation.summary, nullptr, false).is_object() ||
-                     json::parse(observation.summary, nullptr, false).is_array())) {
-                legacy_trigger_observation = &observation;
-            }
-        }
+        if (!common_plan_workflow_observation_is_usable(observation)) continue;
         for (const auto & ref : observation.dataset_refs) {
             if (ref.uri.empty() || std::any_of(produced.begin(), produced.end(), [&](const auto & value) {
                     return value.ref.uri == ref.uri;
@@ -1261,7 +1229,8 @@ static bool transition_to_workflow(
                     continue;
                 }
                 const json::json_pointer pointer(binding.source_json_pointer);
-                if (!source_json.contains(pointer)) {
+                if (!source_json.contains(pointer) || source_json.at(pointer).is_null() ||
+                        (source_json.at(pointer).is_string() && source_json.at(pointer).get<std::string>().empty())) {
                     if (binding.required) {
                         bindings_present = false; missing_binding = binding.source_json_pointer; break;
                     }
@@ -1448,7 +1417,10 @@ static bool transition_to_workflow(
                     continue;
                 }
                 const json::json_pointer pointer(binding.source_json_pointer);
-                if (source_json.contains(pointer)) { value = source_json.at(pointer); present = true; }
+                if (source_json.contains(pointer)) {
+                    value = source_json.at(pointer);
+                    present = !value.is_null() && (!value.is_string() || !value.get<std::string>().empty());
+                }
             } catch (const std::exception &) {}
             if (!present) {
                 if (binding.required) {
