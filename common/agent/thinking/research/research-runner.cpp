@@ -57,7 +57,17 @@ bool build_call(
     return false;
 }
 
-std::string bounded_summary(const common_tool_execution_result & result) {
+std::string bounded_summary(const common_tool_execution_result & result, const std::string & tool_name) {
+    if (tool_name == "resource.read") {
+        const auto payload = json::parse(result.output, nullptr, false);
+        if (payload.is_object()) {
+            const auto & value = payload.contains("result") && payload["result"].is_object()
+                ? payload["result"] : payload;
+            if (value.contains("content") && value["content"].is_string()) {
+                return value["content"].get<std::string>();
+            }
+        }
+    }
     std::string summary = !result.content_summary.empty()
         ? result.content_summary
         : (!result.safe_summary.empty() ? result.safe_summary : result.output);
@@ -142,6 +152,21 @@ bool common_agent_research_runtime_adapter::execute(
             continue;
         }
 
+        // Search results are discovery candidates, not evidence that resolves
+        // the research question. In particular, a generic “N candidates”
+        // summary must never become a supporting claim or a primary source.
+        // A later fetch/read can materialize source-backed evidence.
+        if (resolved_tool_name == "web.search") {
+            event.type = common_agent_research_event_type::task_completed;
+            event.gap_sufficiently_answered = false;
+            event.gap_confidence = 0.0;
+            event.assessment_summary = "web search found candidates but did not read a source; the research gap remains open";
+            event.assessment = {common_agent_research_assessment_status::insufficient, 0.0,
+                event.assessment_summary};
+            error.clear();
+            return true;
+        }
+
         const std::string existing_source_id = existing_source_id_for_resource(
             workspace, result.resource_refs, action.instruction);
         const std::string memory_source_id = (resolved_tool_name == "memory.get")
@@ -155,13 +180,20 @@ bool common_agent_research_runtime_adapter::execute(
             evidence.evidence_id = action.task_id + ":evidence";
             evidence.source_id = source_id;
             evidence.claim_id = action.gap_id;
-            evidence.statement = bounded_summary(result);
+            evidence.statement = bounded_summary(result, resolved_tool_name);
             if (evidence.statement.empty()) evidence.statement = "Research resource was read successfully.";
             evidence.source_location = result.resource_refs.empty()
                 ? action.instruction
                 : result.resource_refs.front().uri;
             evidence.relation = common_agent_research_evidence_relation::supports;
-            evidence.origin = common_agent_research_evidence_origin::normalized_tool_result;
+            evidence.origin = resolved_tool_name == "resource.read"
+                ? common_agent_research_evidence_origin::direct_source
+                : common_agent_research_evidence_origin::normalized_tool_result;
+            if (resolved_tool_name == "resource.read" && !evidence.statement.empty()) {
+                evidence.supporting_excerpt = evidence.statement;
+                evidence.supporting_excerpt_host_verified = true;
+                evidence.directly_observed = true;
+            }
             evidence.relevance = 0.75;
             evidence.confidence = 0.9;
             if (!common_agent_research_record_evidence(workspace, evidence, error)) return false;
@@ -218,7 +250,7 @@ bool common_agent_research_runtime_adapter::execute(
         evidence.evidence_id = action.task_id + ":evidence";
         evidence.source_id = source_id;
         evidence.claim_id = action.gap_id;
-        evidence.statement = bounded_summary(result);
+        evidence.statement = bounded_summary(result, resolved_tool_name);
         if (evidence.statement.empty()) evidence.statement = "Research tool returned a successful result.";
         evidence.source_location = result.resource_refs.empty()
             ? action.instruction

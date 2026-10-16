@@ -524,14 +524,18 @@ transition; section generation therefore has ordinary step identity, tracing,
 budget handling and resume behavior. The starter example is
 `docs/examples/agent-bootstrap-workflows-v1.json` (`research-report-composition-v1`).
 
-Before the first report section, the host persists one immutable
-`artifact_snapshot` observation from the current plan's host observations,
-resource references, assumptions and coverage indicators. Later sections and
-export reuse that same snapshot and fingerprint rather than silently reading
-newer plan observations. This is a frozen report input, not a replacement for
-the research workspace or source resources.
+Before the first report section, the host persists one immutable, versioned
+`artifact_snapshot` observation. It projects current plan observations,
+assumptions, dataset/resource provenance and, when present, the matching
+Research Workspace checkpoint: objective, source metadata, evidence statements
+and relations, source locations, comparisons, coverage and gaps. The snapshot
+retains workspace/checkpoint identity and fingerprints these fields. Later
+sections and export reuse it instead of silently reading newer observations.
+This is a frozen report input, not a replacement for the research workspace or
+source resources.
 
-The model writes each section in the established flat DSL:
+The model writes each section using the request's selected output format. The
+default compact DSL allows repeated blocks and an explicit empty result:
 
 ```text
 block: observation
@@ -540,12 +544,39 @@ evidence: host-evidence-id
 source: resource-uri-or-observation-id
 ```
 
-The host owns section/block IDs and checks that evidence and source handles
-exist in the frozen snapshot. A resolved reference is not proof that the text
-is entailed by that reference. Missing or unknown references become visible
-`gap` status in the structured report; they are not upgraded to verified
-claims. Missing section output likewise becomes an explicit host-generated
-gap. Sections are stored as plan observations so the chain remains resumable.
+An empty section is `status: no_findings`. A JSON-selected model returns
+`{"status":"findings","blocks":[...]}` or
+`{"status":"no_findings"}` with the same block fields. Each profile section
+declares allowed block kinds. The host provides short handles such as `E1` and
+`S1` in a budgeted, JSON-escaped evidence view, maps them back to canonical IDs
+after generation and records references omitted by the context budget.
+That view is intentionally smaller than the frozen snapshot: it carries a
+bounded objective and coverage state, then prioritizes compact source/evidence
+pairs (`source_handle`, title; `evidence_handle`, linked `source_handle`,
+grounded text, support relation and verification state). Long host IDs,
+duplicated resource URIs and full snapshot fingerprints stay in the immutable
+host snapshot rather than consuming the model's evidence budget. Full gaps and
+omitted-reference provenance remain host-side; only records actually present
+in the view can be cited by the model.
+
+The host owns section/block IDs and checks reference integrity against the
+frozen snapshot. It preserves research evidence relations and marks generated
+prose unverified unless the source workspace provides a relation; linked
+support is still not proof of entailment. Unknown references, contradictions,
+missing required sections, critical source gaps and recorded context omissions
+make report coverage incomplete. Sections are stored as host-authorized plan
+observations with the snapshot fingerprint, so resume reuses validated output
+without generating or appending it twice.
+
+Only handles whose records fit in the section context are accepted for that
+generation. `no_findings` remains available when evidence supports another
+section but does not directly address this section's purpose. Generated block
+text is constrained to one short, complete sentence. If syntax or a reference is invalid, the runtime makes one bounded,
+targeted repair generation; a second invalid response leaves the step
+incomplete. Research source coverage and report coverage remain separate:
+the export's `coverage_complete` is false when required sections, references,
+or relevant context are missing, even if the research workspace's own coverage
+was complete.
 
 The final declared `artifact.export` transition builds linked resources for
 the frozen source snapshot JSON, structured report JSON and deterministically
@@ -557,9 +588,19 @@ happen merely because a profile exists.
 
 Profiles define presentation and coverage, not tool authority. Workflows
 orchestrate and resume sections; blueprints/routes select the method;
-`artifact.export` publishes the composed result. A future MCP Apps editor can
-use stable section/block IDs and revisions, but this implementation does not
-expose collaborative editing or mutate research evidence.
+`artifact.export` publishes the composed result. A published report revision is
+immutable; a deliberate recomposition creates the next revision with a link to
+the previous one. The workflow may provide a stable `report_id` when a new
+composition continues an existing report; a changed frozen snapshot increments
+the content revision. Re-exporting the same snapshot, including in another
+format, keeps the revision. Export uses deterministic cache keys for the
+snapshot, document and Markdown, verifies exact bytes before reuse, and writes
+a publication manifest last. Retries therefore reuse verified resources and
+cannot advertise a partial publication as complete. The manifest and successful
+tool observation retain the revision and resource references.
+A future MCP Apps editor should create a new report revision while the original
+research evidence remains authoritative. Collaborative editing is not part of
+the current implementation.
 
 When a completed `artifact.export` returns the structured report and Markdown
 resource references plus `coverage_complete`, the host also constructs the
@@ -574,10 +615,20 @@ auto-fit and writes its log under `$HOME/llama-agent-smokes/` by default (or
 under `LLAMA_AGENT_SMOKE_WORKDIR` when explicitly set). Its empty-source case
 checks that the host freezes the snapshot, executes every section transition,
 publishes through `artifact.export`, and retains incomplete coverage rather
-than inventing citations. It also verifies that completion uses the host-built
-resource/coverage summary rather than a second model-generated report. This is
-a wiring/grounding-boundary check, not a claim about report quality on a
-populated research workspace.
+than inventing citations. It verifies the publication manifest, persisted
+report/Markdown resources and host-built completion summary. This remains a
+grounding-boundary check, not evidence of report quality on populated research
+data.
+
+`scripts/test-agent-report-composition-sourced-model-smoke.sh` is the populated
+workspace companion. It reads two explicitly synthetic text fixtures through
+the normal `resource.read` research path, checks that the model context contains
+paired `S`/`E` handles, and expects the shared fixture date in the exported
+report. The fixture is test data, not a historical source; this smoke validates
+the acquisition-to-citation seam, not external factual accuracy. Web search
+results alone are discovery candidates and do not close research gaps or become
+supporting evidence before a source is read. Contradiction behavior is covered
+by the model-free snapshot/report tests.
 
 Repository and web workflows currently use the common route compiler and
 execution envelope, with ordinary planning for request-specific paths.

@@ -535,14 +535,70 @@ common_tool_execution_result export_plan_report(
     std::string snapshot_json;
     if (!common_agent_artifact_snapshot_to_json(snapshot, snapshot_json, error))
         return tool_execution_failure("tool.artifact.export.snapshot_failed", std::move(error), "The report source snapshot could not be serialized.");
+    const auto base_name=arguments.value("name",profile.id+"-report");
+    const auto report_id=arguments.value("report_id",std::string("report:")+plan->id);
+    if(base_name.empty()||base_name.size()>256||report_id.empty()||report_id.size()>256)
+        return tool_validation_failure("tool.artifact.export.invalid_name","report name or identity is outside bounds");
+    // Validate the complete document and deterministic Markdown before the
+    // first resource write. The final pass substitutes the stored snapshot URI.
+    common_agent_artifact_document document;
+    if(!common_agent_artifact_document_from_plan(*plan,profile,snapshot.id,document,error,report_id))
+        return tool_execution_failure("tool.artifact.export.document_failed",std::move(error),"The report could not be assembled from validated sections.");
+    // Manifests are the durable revision index. This also works when the next
+    // explicit composition runs in a new plan but continues the same report ID.
+    if(bindings.resource_runtime.store==nullptr)return tool_execution_failure("tool.artifact.export.store_unavailable","resource store is unavailable","Report export is unavailable.");
+    const auto authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
+    std::vector<agent_resource_descriptor> existing_resources;
+    if(!bindings.resource_runtime.store->list(authority,existing_resources,error))
+        return tool_execution_failure("tool.artifact.export.revision_index_failed",std::move(error),"The existing report revision index could not be read safely.");
+    const auto manifest_prefix="artifact-export:"+report_id+":r";
+    uint64_t latest_revision=0;std::string latest_report_uri;bool same_snapshot=false;
+    for(const auto & candidate:existing_resources){const auto & key=candidate.metadata.processing_cache_key;
+        if(key.rfind(manifest_prefix,0)!=0||key.size()<9||key.substr(key.size()-9)!=":manifest")continue;
+        std::string manifest_text;
+        if(!bindings.resource_runtime.store->read_text(candidate.uri,authority,1024*1024,manifest_text,error))
+            return tool_execution_failure("tool.artifact.export.manifest_read_failed",std::move(error),"An existing report manifest could not be verified.");
+        const auto manifest=nlohmann::json::parse(manifest_text,nullptr,false);
+        if(!manifest.is_object()||manifest.value("report_id",std::string{})!=report_id)continue;
+        const auto prior_revision=manifest.value("revision",uint64_t(0));if(prior_revision==0)continue;
+        if(prior_revision>latest_revision){latest_revision=prior_revision;latest_report_uri=manifest.value("report_resource",std::string{});}
+        if(manifest.value("snapshot_fingerprint",std::string{})==snapshot.fingerprint){same_snapshot=true;document.revision=prior_revision;document.previous_revision_uri=manifest.value("previous_revision_uri",std::string{});}
+    }
+    if(!same_snapshot&&latest_revision>0){document.revision=latest_revision+1;document.previous_revision_uri=latest_report_uri;}
+    std::string document_json,markdown;
+    if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
+        return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
+    const auto content_export_id=report_id+":r"+std::to_string(document.revision)+":"+snapshot.fingerprint;
+    const auto export_id=content_export_id+":"+format;
+    auto cache_key=[&](const std::string & part){
+        return part=="docx"||part=="manifest" ? "artifact-export:"+export_id+":"+part : "artifact-content:"+content_export_id+":"+part;
+    };
+    auto find_cached=[&](const std::string & key,const std::string & mime,const std::string & expected,
+            common_runtime_resource_ref & out,bool & found)->bool{
+        found=false;std::vector<agent_resource_descriptor> descriptors;
+        if(bindings.resource_runtime.store==nullptr){error="resource store is unavailable";return false;}
+        if(!bindings.resource_runtime.store->list(authority,descriptors,error))return false;
+        for(const auto & descriptor:descriptors){if(descriptor.metadata.processing_cache_key!=key)continue;
+            if(descriptor.mime_type!=mime){error="cached artifact key has a conflicting media type";return false;}
+            std::string existing;
+            if(!bindings.resource_runtime.store->read_bytes(descriptor.uri,authority,expected.size()+1,existing,error))return false;
+            if(existing!=expected){error="cached artifact key content does not match the frozen report";return false;}
+            out=descriptor;found=true;error.clear();return true;
+        }
+        error.clear();return true;
+    };
     auto put_scoped = [&](const std::string & name, const std::string & summary, const std::string & mime,
             const std::string & text, const std::string & parent, const std::string & derivation,
-            common_runtime_resource_ref & out) -> bool {
+            const std::string & key, common_runtime_resource_ref & out) -> bool {
         if (bindings.resource_runtime.store == nullptr) { error="resource store is unavailable"; return false; }
+        bool cached=false;
+        if(!find_cached(key,mime,text,out,cached))return false;
+        if(cached)return true;
         agent_resource_put_request put; put.name=name; put.description=summary; put.mime_type=mime; put.text=text;
         put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
         put.source_provider="native";put.source_tool="artifact.export";
         put.metadata=make_tool_resource_metadata("A revisioned report artifact with host-owned provenance.",summary,"Read or download this report resource.","Source observations and evidence remain authoritative.");
+        put.metadata.processing_cache_key=key;
         put.lineage.parent_uri=parent;put.lineage.derivation=derivation;
         if(!parent.empty()){put.lineage.chunk_count=1;put.lineage.byte_length=text.size();}
         apply_agent_resource_runtime(bindings.resource_runtime,put);
@@ -554,22 +610,17 @@ common_tool_execution_result export_plan_report(
         return true;
     };
     common_runtime_resource_ref snapshot_resource;
-    const auto base_name=arguments.value("name",profile.id+"-report");
-    if(base_name.empty()||base_name.size()>256)return tool_validation_failure("tool.artifact.export.invalid_name","report name is outside bounds");
-    if(!put_scoped(base_name+"-sources.json","Immutable report source snapshot","application/json",snapshot_json,{},"artifact.snapshot:v1",snapshot_resource))
+    if(!put_scoped(base_name+"-sources.json","Immutable report source snapshot","application/json",snapshot_json,{},"artifact.snapshot:v2",cache_key("snapshot"),snapshot_resource))
         return tool_execution_failure("tool.artifact.export.snapshot_store_failed",std::move(error),"The report source snapshot could not be stored.");
-
-    common_agent_artifact_document document;
-    if(!common_agent_artifact_document_from_plan(*plan,profile,snapshot_resource.uri,document,error))
+    if(!common_agent_artifact_document_from_plan(*plan,profile,snapshot_resource.uri,document,error,report_id))
         return tool_execution_failure("tool.artifact.export.document_failed",std::move(error),"The report could not be assembled from validated sections.");
-    std::string document_json,markdown;
     if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
         return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
     common_runtime_resource_ref report_resource;
-    if(!put_scoped(base_name+"-report.json","Structured report document", "application/vnd.llama-agent.report+json",document_json,snapshot_resource.uri,"artifact.report:v1",report_resource))
+    if(!put_scoped(base_name+"-r"+std::to_string(document.revision)+"-report.json","Structured report document", "application/vnd.llama-agent.report+json",document_json,snapshot_resource.uri,"artifact.report:v2",cache_key("report"),report_resource))
         return tool_execution_failure("tool.artifact.export.report_store_failed",std::move(error),"The structured report could not be stored.");
     common_runtime_resource_ref markdown_resource;
-    if(!put_scoped(base_name+".md",profile.title,"text/markdown",markdown,report_resource.uri,"artifact.export:markdown",markdown_resource))
+    if(!put_scoped(base_name+"-r"+std::to_string(document.revision)+".md",profile.title,"text/markdown",markdown,report_resource.uri,"artifact.export:markdown:v2",cache_key("markdown"),markdown_resource))
         return tool_execution_failure("tool.artifact.export.markdown_store_failed",std::move(error),"The Markdown report could not be stored.");
 
     common_runtime_resource_ref final_resource=markdown_resource;
@@ -584,20 +635,38 @@ common_tool_execution_result export_plan_report(
         const auto processed=bindings.resource_processing_service->process(conversion);
         if(!processed.success||processed.outputs.empty())return tool_execution_failure("tool.artifact.export.docx_failed",processed.failure_code,"The report could not be converted to DOCX.");
         const auto & output=processed.outputs.front();
-        common_runtime_resource_lineage docx_lineage;docx_lineage.parent_uri=markdown_resource.uri;docx_lineage.chunk_count=1;docx_lineage.byte_length=output.bytes.size();docx_lineage.derivation="artifact.export:docx";
-        agent_resource_put_request put;put.name=base_name+".docx";put.description=profile.title;
-        put.mime_type=output.mime_type.empty()?conversion.target_media_type:output.mime_type;
-        put.bytes=output.bytes;put.bytes_are_authoritative=true;
-        put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
-        put.source_provider="native";put.source_tool="artifact.export";put.metadata=output.metadata;put.lineage=std::move(docx_lineage);
-        apply_agent_resource_runtime(bindings.resource_runtime,put);
-        agent_resource_descriptor descriptor;
-        if(bindings.resource_runtime.store==nullptr||!bindings.resource_runtime.store->put_bytes(put,descriptor,error))
-            return tool_execution_failure("tool.artifact.export.docx_store_failed",std::move(error),"The DOCX report could not be stored.");
-        final_resource=descriptor;
+        const auto docx_mime=output.mime_type.empty()?conversion.target_media_type:output.mime_type;
+        bool cached_docx=false;
+        if(!find_cached(cache_key("docx"),docx_mime,output.bytes,final_resource,cached_docx))return tool_execution_failure("tool.artifact.export.docx_cache_failed",std::move(error),"The prior DOCX export could not be safely reused.");
+        if(!cached_docx){
+            common_runtime_resource_lineage docx_lineage;docx_lineage.parent_uri=markdown_resource.uri;docx_lineage.chunk_count=1;docx_lineage.byte_length=output.bytes.size();docx_lineage.derivation="artifact.export:docx";
+            agent_resource_put_request put;put.name=base_name+".docx";put.description=profile.title;
+            put.mime_type=docx_mime;
+            put.bytes=output.bytes;put.bytes_are_authoritative=true;
+            put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
+            put.source_provider="native";put.source_tool="artifact.export";put.metadata=output.metadata;put.metadata.processing_cache_key=cache_key("docx");put.lineage=std::move(docx_lineage);
+            apply_agent_resource_runtime(bindings.resource_runtime,put);
+            agent_resource_descriptor descriptor;
+            if(bindings.resource_runtime.store==nullptr||!bindings.resource_runtime.store->put_bytes(put,descriptor,error))
+                return tool_execution_failure("tool.artifact.export.docx_store_failed",std::move(error),"The DOCX report could not be stored.");
+            final_resource=descriptor;
+        }
     }
+    const auto manifest_json=json{{"schema_version",1},{"export_id",export_id},{"report_id",document.id},
+        {"revision",document.revision},{"previous_revision_uri",document.previous_revision_uri},
+        {"snapshot_fingerprint",snapshot.fingerprint},{"profile_id",document.profile_id},
+        {"profile_revision",document.profile_revision},{"format",format},{"coverage_complete",document.coverage_complete},
+        {"snapshot_resource",snapshot_resource.uri},{"report_resource",report_resource.uri},
+        {"markdown_resource",markdown_resource.uri},{"resource",final_resource.uri}}.dump();
+    common_runtime_resource_ref manifest_resource;
+    if(!put_scoped(base_name+"-r"+std::to_string(document.revision)+"-"+format+"-manifest.json",
+            "Complete report publication manifest","application/json",manifest_json,report_resource.uri,
+            "artifact.export:manifest:v1",cache_key("manifest"),manifest_resource))
+        return tool_execution_failure("tool.artifact.export.manifest_failed",std::move(error),"The report resources were stored but the publication manifest could not be verified.");
     const auto output=json{{"resource",final_resource.uri},{"name",final_resource.name},{"mime_type",final_resource.mime_type},
         {"report_resource",report_resource.uri},{"snapshot_resource",snapshot_resource.uri},{"markdown_resource",markdown_resource.uri},
+        {"manifest_resource",manifest_resource.uri},{"report_id",document.id},{"snapshot_fingerprint",snapshot.fingerprint},
+        {"previous_revision_uri",document.previous_revision_uri},{"export_id",export_id},
         {"revision",document.revision},{"profile_id",document.profile_id},{"profile_revision",document.profile_revision},
         {"source_plan_id",document.source_plan_id},{"source_plan_version",document.source_plan_version},
         {"coverage_complete",document.coverage_complete},{"format",format}}.dump();
@@ -606,6 +675,7 @@ common_tool_execution_result export_plan_report(
     exported_resources.push_back(std::move(report_resource));
     exported_resources.push_back(std::move(snapshot_resource));
     exported_resources.push_back(std::move(markdown_resource));
+    exported_resources.push_back(std::move(manifest_resource));
     return common_tool_execution_result::success(output,
         "Exported a report with source snapshot and revision provenance.",std::move(exported_resources));
 }

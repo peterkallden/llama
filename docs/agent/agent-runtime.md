@@ -255,6 +255,11 @@ coverage transitions remain controller state transitions, not additional model
 tools or research tasks. The model receives the bounded evidence and synthesis
 context after acquisition has completed.
 
+Search results are discovery candidates, not supporting evidence by themselves.
+The research adapter does not turn a generic web-search summary (for example,
+“one candidate returned”) into a source or a satisfied research gap. A source
+must be materialized/read before it can supply evidence to a composed report.
+
 This boundary is being tightened incrementally. The current model-free CSV
 research smoke verifies that two local resources produce two `resource.read`
 calls and no alternative acquisition tool. Completed research is now also
@@ -882,12 +887,36 @@ larger streaming exports and chart artifacts are intentionally later work.
 
 Report export is another mode of the same host tool. Workflow
 `artifact_compose` transitions create one resumable model step per declared
-section. The host freezes a plan-observation snapshot before the first section
-and persists its JSON and fingerprint in the plan; later section generations
-and export reuse that snapshot. Model output uses flat
-`block`/`text`/`evidence`/`source` DSL records. The host assigns IDs and checks
-reference existence, but reference resolution is not a semantic entailment
-proof. Missing or out-of-snapshot references remain visible as report gaps.
+section. The host freezes a versioned snapshot before the first section and
+persists its JSON and full-content fingerprint in the plan. When a research
+workspace is available, the snapshot retains workspace/checkpoint identity,
+objective, source records, evidence relations and locations, comparisons,
+gaps and source coverage. Plan observations retain resource and dataset
+references, timestamps and confidence. Later sections reuse this snapshot.
+
+Each generation receives a budgeted JSON data view of the snapshot. Handles
+such as `E1`, `S1` and `O1` are host-owned aliases for canonical evidence,
+source and observation references. The selected model-facing format is used:
+compact DSL is the default, while JSON is accepted when selected. A section may
+contain multiple blocks or explicitly return `no_findings`; the profile limits
+allowed block kinds. `no_findings` remains valid when evidence is irrelevant
+to the current section, and generated block text is one short, complete
+sentence. Source strings are escaped as data. The host checks
+reference integrity separately from research support relations, so a resolving
+reference never upgrades an unverified conclusion. Included and omitted
+references are recorded; a relevant omission makes report coverage incomplete.
+Only handles actually included in that section's context are accepted. One
+bounded repair generation is allowed after a parse or reference failure; if it
+also fails, the step remains incomplete and export cannot claim complete
+coverage. Research source coverage and report coverage are independent fields.
+The model-facing view is a compact projection, not a second full snapshot: it
+keeps a bounded objective and coverage state, then prioritizes compact,
+linked source/evidence pairs (`source_handle`, title; `evidence_handle`, linked
+`source_handle`, grounded text, support relation and verification state).
+Workspace/checkpoint/snapshot identities, fingerprint, full gap details and
+the complete omitted-reference list stay host-side in the immutable snapshot.
+This lets a small section budget carry actual evidence instead of spending it
+on duplicated provenance metadata, without weakening export coverage checks.
 
 `artifact.export` materializes a structured report JSON resource plus
 deterministic Markdown, optionally converting Markdown to DOCX through the
@@ -898,11 +927,21 @@ does not overwrite the research workspace and does not currently implement
 interactive MCP Apps editing. See [Agent workflows](agent-workflows.md#report-composition)
 and the report profile/workflow in
 [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).
-The export result includes `coverage_complete`. For a successful report export,
+The export result includes report-level `coverage_complete`, distinct from
+source workspace coverage. Missing sections, invalid references, unresolved
+critical gaps, contradictions and context omissions keep it false. For a
+successful report export,
 the host builds the final conversational status from that flag and the returned
 resource references instead of asking the model to generate the report a second
 time. This prevents a final free-form answer from erasing the report's explicit
-coverage gaps. Other workflows keep the ordinary draft/reflection path.
+coverage gaps. A stable optional `report_id` links explicit recompositions;
+each different snapshot creates the next immutable content revision, while
+another format for the same snapshot keeps the revision. Export parts use
+content-derived cache keys and are byte-verified before reuse. A publication
+manifest is stored last and is the durable completeness marker; partial outputs
+are not included in the successful result. The manifest plus normal tool
+observation make retries idempotent. Other workflows keep the ordinary
+draft/reflection path.
 
 The first common contract slice is implemented in
 `common/agent/dataset-contracts.h`. It validates dataset references and

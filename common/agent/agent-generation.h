@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 enum class common_agent_generation_status {
     completed,
@@ -44,6 +45,8 @@ struct common_agent_generated_text_result {
     common_agent_generation_status status = common_agent_generation_status::errored;
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
     std::string error_message;
+    std::vector<std::string> artifact_included_refs;
+    std::vector<std::string> artifact_omitted_refs;
 };
 
 enum class common_agent_generation_stage {

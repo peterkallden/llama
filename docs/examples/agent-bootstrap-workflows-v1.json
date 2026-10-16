@@ -482,7 +482,7 @@
       "transitions": [
         {"id":"compose-findings","from":"ready","to":"findings","kind":"artifact_compose","artifact_profile_ref":"research","artifact_profile_revision":"v1","artifact_section_id":"findings"},
         {"id":"compose-limitations","from":"findings","to":"render","kind":"artifact_compose","artifact_profile_ref":"research","artifact_profile_revision":"v1","artifact_section_id":"limitations"},
-        {"id":"publish-report","from":"render","to":"complete","kind":"tool","tool":"artifact.export","arguments":"{\"format\":\"markdown\",\"name\":\"research-report\"}"}
+        {"id":"publish-report","from":"render","to":"complete","kind":"tool","tool":"artifact.export","arguments":"{\"format\":\"markdown\",\"name\":\"research-report\",\"report_id\":\"research-report\"}"}
       ]
     }
   ],
@@ -491,24 +491,24 @@
       "id":"research","revision":"v1","title":"Research report",
       "purpose":"A source-grounded synthesis that distinguishes observations, conclusions and unresolved limitations.",
       "sections":[
-        {"id":"findings","title":"Findings","purpose":"Summarize the findings supported by the provided research and plan observations."},
-        {"id":"limitations","title":"Limitations and open questions","purpose":"Record contradictions, incomplete coverage, unsupported claims and unresolved questions."}
+        {"id":"findings","title":"Findings","purpose":"Summarize the findings supported by the provided research and plan observations.","allowed_block_kinds":["observation","conclusion"]},
+        {"id":"limitations","title":"Limitations and open questions","purpose":"Record contradictions, incomplete coverage, unsupported claims and unresolved questions.","allowed_block_kinds":["observation","conclusion","recommendation"]}
       ]
     },
     {
       "id":"technical_analysis","revision":"v1","title":"Technical analysis",
       "purpose":"Compare verified observations and explain bounded conclusions and tradeoffs.",
       "sections":[
-        {"id":"observations","title":"Observed facts","purpose":"Present directly observed tool and source results."},
-        {"id":"analysis","title":"Analysis and limitations","purpose":"Draw bounded conclusions and preserve uncertainty and conflicting evidence."}
+        {"id":"observations","title":"Observed facts","purpose":"Present directly observed tool and source results.","allowed_block_kinds":["observation"]},
+        {"id":"analysis","title":"Analysis and limitations","purpose":"Draw bounded conclusions and preserve uncertainty and conflicting evidence.","allowed_block_kinds":["observation","conclusion","recommendation"]}
       ]
     },
     {
       "id":"dataset_analysis","revision":"v1","title":"Dataset analysis",
       "purpose":"Summarize a dataset analysis with source identity, method, results and limitations.",
       "sections":[
-        {"id":"method","title":"Dataset and method","purpose":"Identify the dataset, relevant schema and transformations from host observations."},
-        {"id":"results","title":"Results and limitations","purpose":"Report calculated findings and coverage limits grounded in structured results."}
+        {"id":"method","title":"Dataset and method","purpose":"Identify the dataset, relevant schema and transformations from host observations.","allowed_block_kinds":["observation"]},
+        {"id":"results","title":"Results and limitations","purpose":"Report calculated findings and coverage limits grounded in structured results.","allowed_block_kinds":["observation","conclusion","recommendation"]}
       ]
     }
   ],

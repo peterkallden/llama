@@ -343,7 +343,8 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
             step.mode = common_plan_step_mode::artifact_compose;
             step.depends_on.push_back(completed_step_id);
             step.required_evidence = section->required_observation_sources;
-            step.semantic_alias = "workflow-transition:" + next->id + ",artifact-section:" + profile.id + "@" + profile.revision + ":" + section->id;
+            step.semantic_alias = "workflow-transition:" + next->id;
+            step.artifact_binding = common_plan_artifact_binding{next->id,profile.id,profile.revision,section->id,"snapshot:"+plan.id};
             steps.push_back(std::move(step));
             error.clear();
             return true;

@@ -161,9 +161,10 @@ bool generate_chat_turn_result(
     common_chat_params * chat_params,
     const std::string & json_schema,
     const std::vector<llama_adapter_lora *> & adapters,
-    const std::vector<float> & adapter_scales,
-    const common_flydelta_static_overlay & flydelta_overlay,
-    const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & flydelta_capture) {
+        const std::vector<float> & adapter_scales,
+        const common_flydelta_static_overlay & flydelta_overlay,
+        const std::shared_ptr<const common_flydelta_hidden_state_capture_request> & flydelta_capture,
+        const std::string & grammar) {
     result = {};
 
     common_agent_generation_request request;
@@ -172,6 +173,7 @@ bool generate_chat_turn_result(
     request.tool_choice = tool_choice;
     request.options = options;
     request.json_schema = json_schema;
+    request.grammar = grammar;
 
     const auto prompt_started_at = steady_clock::now();
     common_agent_prepared_generation prepared;

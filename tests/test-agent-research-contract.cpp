@@ -50,13 +50,35 @@ public:
         last_executed_name = call.name;
         last_executed_arguments = call.arguments_json;
         return common_tool_execution_result::success(
-            "bounded resource content", "the resource supports the research gap", {resource});
+            R"({"ok":true,"result":{"content":"Host-read exact source sentence."}})",
+            "Readable text resource materialized.", {resource});
     }
 
     common_runtime_resource_ref resource;
     mutable std::string last_validated_name;
     mutable std::string last_executed_name;
     mutable std::string last_executed_arguments;
+};
+
+class web_search_candidate_runtime final : public common_agent_tool_runtime {
+public:
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+    bool resolve_tool_name(const std::string & requested, std::string & resolved,
+            std::vector<std::string> & candidates) const override {
+        candidates.clear();
+        if (requested != "web.search") return false;
+        resolved = requested;
+        return true;
+    }
+    bool validate(const common_agent_tool_call &, std::string & error) const override {
+        error.clear();
+        return true;
+    }
+    common_tool_execution_result execute(const common_agent_tool_call &) const override {
+        return common_tool_execution_result::success("{\"candidates\":[{\"title\":\"NASA\",\"url\":\"https://nasa.example\"}]}",
+            "Web search returned 1 candidate(s).");
+    }
 };
 
 int main() {
@@ -197,6 +219,10 @@ int main() {
     assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
     assert(canonical_runtime.last_validated_name == "resource.read");
     assert(canonical_runtime.last_executed_name == "resource.read");
+    assert(canonical_workspace.evidence.size()==1);
+    assert(canonical_workspace.evidence.front().statement=="Host-read exact source sentence.");
+    assert(canonical_workspace.evidence.front().origin==common_agent_research_evidence_origin::direct_source);
+    assert(canonical_workspace.evidence.front().supporting_excerpt_host_verified);
     assert(canonical_event.type == common_agent_research_event_type::task_completed);
 
     canonical_action.task_id = "fetch-task";
@@ -386,6 +412,30 @@ int main() {
     assert(!failed_result.complete);
     assert(run_error.find("tool.route_denied") != std::string::npos);
     assert(run_error.find("outside the active envelope") != std::string::npos);
+
+    // A successful web search is discovery only. Its generic candidate-count
+    // summary must not be promoted to a source-backed supporting claim.
+    common_agent_research_workspace discovery_workspace;
+    discovery_workspace.workspace_id="research:discovery-only";
+    discovery_workspace.objective.objective_id="discovery-question";
+    discovery_workspace.objective.question="Find a primary source";
+    discovery_workspace.scope.namespace_id="discovery-ns";
+    discovery_workspace.scope.session_id="discovery-session";
+    discovery_workspace.gaps.push_back({"discovery-gap","Find a primary source","","read an actual source",1});
+    common_agent_research_action discovery_action;
+    discovery_action.kind=common_agent_research_action_kind::schedule_task;
+    discovery_action.task_id="discovery-task";
+    discovery_action.gap_id="discovery-gap";
+    discovery_action.instruction="Find a primary source";
+    discovery_action.preferred_tools={"web.search"};
+    web_search_candidate_runtime candidate_runtime;
+    common_agent_research_runtime_adapter discovery_adapter(candidate_runtime);
+    common_agent_research_event discovery_event;
+    assert(discovery_adapter.execute(discovery_action,discovery_workspace,discovery_event,run_error));
+    assert(discovery_event.type==common_agent_research_event_type::task_completed);
+    assert(!discovery_event.gap_sufficiently_answered && discovery_event.evidence_count==0);
+    assert(discovery_workspace.sources.empty() && discovery_workspace.evidence.empty());
+    assert(discovery_event.assessment.status==common_agent_research_assessment_status::insufficient);
 
     auto confidence_workspace = workspace;
     confidence_workspace.gaps.front().status = common_agent_research_gap_status::open;

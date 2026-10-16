@@ -108,6 +108,14 @@ int main() {
         op.step->intended_contribution = "preserve the persisted evidence";
         op.step->selected_tool = "web.search";
         op.step->tool_call = common_plan_tool_call{"web.search", R"({"query":"cozo"})"};
+        op.step->artifact_binding = common_plan_artifact_binding{
+            "compose-findings", "research-report", "v2", "findings", "snapshot-7"};
+        assert(store.apply(op, plan, error));
+        op.expected_version = plan.version;
+        op.step = common_plan_step{"legacy-artifact-step", "legacy artifact", "legacy contract"};
+        op.step->mode = common_plan_step_mode::artifact_compose;
+        op.step->semantic_alias =
+            "workflow-transition:compose-summary,artifact-section:research-report@v1:summary";
         assert(store.apply(op, plan, error));
     }
 
@@ -117,10 +125,21 @@ int main() {
         auto plan = store.get("p", error);
         assert(plan);
         assert(plan->scope == common_plan_scope::global && plan->purpose == "persist and resume");
-        assert(plan->steps.size() == 1 &&
+        assert(plan->steps.size() == 2 &&
             plan->steps[0].intended_contribution == "preserve the persisted evidence" &&
             plan->steps[0].tool_call && plan->steps[0].tool_call->name == "web.search");
-        assert(plan->version == 2 && plan->workflow_policy == common_plan_workflow_policy::required &&
+        assert(plan->steps[0].artifact_binding &&
+            plan->steps[0].artifact_binding->transition_id == "compose-findings" &&
+            plan->steps[0].artifact_binding->profile_ref == "research-report" &&
+            plan->steps[0].artifact_binding->profile_revision == "v2" &&
+            plan->steps[0].artifact_binding->section_id == "findings" &&
+            plan->steps[0].artifact_binding->snapshot_id == "snapshot-7");
+        assert(plan->steps[1].artifact_binding &&
+            plan->steps[1].artifact_binding->transition_id == "compose-summary" &&
+            plan->steps[1].artifact_binding->profile_ref == "research-report" &&
+            plan->steps[1].artifact_binding->profile_revision == "v1" &&
+            plan->steps[1].artifact_binding->section_id == "summary");
+        assert(plan->version == 3 && plan->workflow_policy == common_plan_workflow_policy::required &&
             plan->procedure_refs == std::vector<std::string>{"data-quality-v1"});
         assert(plan->workflow_bindings.size() == 2 && plan->selected_workflow &&
             plan->selected_workflow->workflow_ref == "workflow://dataset/quality");
@@ -157,7 +176,7 @@ int main() {
             plan->route_binding->route_id.find("blueprint:dataset-quality") == 0 &&
             plan->route_binding->execution_envelope_fingerprint == "env-v2");
         auto events = store.history("p", error);
-        assert(events.size() == 2);
+        assert(events.size() == 3);
         assert(store.erase("p", error));
     }
 

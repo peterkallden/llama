@@ -235,6 +235,7 @@ json serialize_plan(const common_plan_state & plan) {
         if (step.selected_tool) value["selected_tool"] = *step.selected_tool;
         if (step.result_summary) value["result_summary"] = *step.result_summary;
         if (step.semantic_alias) value["semantic_alias"] = *step.semantic_alias;
+        if(step.artifact_binding)value["artifact_binding"]={{"transition_id",step.artifact_binding->transition_id},{"profile_ref",step.artifact_binding->profile_ref},{"profile_revision",step.artifact_binding->profile_revision},{"section_id",step.artifact_binding->section_id},{"snapshot_id",step.artifact_binding->snapshot_id}};
         if (step.tool_call) value["tool_call"] = {{"name", step.tool_call->name}, {"arguments_json", step.tool_call->arguments_json}};
         steps.push_back(std::move(value));
     }
@@ -332,7 +333,9 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
         step.mode = parse_step_mode(item.value("mode", std::string("final_response"))); step.status = parse_step_status(item.value("status", std::string("pending"))); step.depends_on = item.value("depends_on", std::vector<std::string>{}); step.blocked_by = item.value("blocked_by", std::vector<std::string>{}); step.required_evidence = item.value("required_evidence", std::vector<std::string>{}); step.source_memory_ids = item.value("source_memory_ids", std::vector<std::string>{}); step.optional = item.value("optional", false); step.generated_from_memory = item.value("generated_from_memory", false); step.created_at = item.value("created_at", int64_t(0)); step.updated_at = item.value("updated_at", int64_t(0));
         if (item.contains("selected_tool") && item["selected_tool"].is_string()) step.selected_tool = item["selected_tool"].get<std::string>();
         if (item.contains("result_summary") && item["result_summary"].is_string()) step.result_summary = item["result_summary"].get<std::string>();
-        if (item.contains("semantic_alias") && item["semantic_alias"].is_string()) step.semantic_alias = item["semantic_alias"].get<std::string>();
+            if (item.contains("semantic_alias") && item["semantic_alias"].is_string()) step.semantic_alias = item["semantic_alias"].get<std::string>();
+            if(item.contains("artifact_binding")&&item["artifact_binding"].is_object()){const auto & b=item["artifact_binding"];step.artifact_binding=common_plan_artifact_binding{b.value("transition_id",std::string{}),b.value("profile_ref",std::string{}),b.value("profile_revision",std::string{}),b.value("section_id",std::string{}),b.value("snapshot_id",std::string{})};}
+            else step.artifact_binding=common_plan_artifact_binding_effective(step);
         if (item.contains("tool_call") && item["tool_call"].is_object()) step.tool_call = common_plan_tool_call{item["tool_call"].value("name", std::string{}), item["tool_call"].value("arguments_json", std::string("{}"))};
         plan.steps.push_back(std::move(step));
     }

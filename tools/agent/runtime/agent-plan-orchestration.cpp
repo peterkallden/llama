@@ -698,7 +698,8 @@ bool maybe_select_agent_route(
                 common_plan_step compose;compose.id=instance.id+":artifact:"+profile.id+":"+section->id;
                 compose.title=section->title;compose.objective=section->purpose;compose.intended_contribution=section->purpose;
                 compose.status=common_plan_step_status::pending;compose.mode=common_plan_step_mode::artifact_compose;
-                compose.semantic_alias="workflow-transition:"+artifact_entry->id+",artifact-section:"+profile.id+"@"+profile.revision+":"+section->id;
+                compose.semantic_alias="workflow-transition:"+artifact_entry->id;
+                compose.artifact_binding=common_plan_artifact_binding{artifact_entry->id,profile.id,profile.revision,section->id,"snapshot:"+out.id};
                 compose.required_evidence=section->required_observation_sources;compose.created_at=instance.created_at;compose.updated_at=instance.updated_at;
                 out.steps.push_back(compose);
                 common_plan_step answer;answer.id=instance.id+":workflow:answer";answer.title="Answer";

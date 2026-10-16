@@ -1,0 +1,2 @@
+Sample mission landing date: 20 July 1969. This synthetic fixture tests source
+reading and citations; it is not a historical or primary source.

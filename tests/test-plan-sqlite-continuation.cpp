@@ -18,7 +18,15 @@ int main() {
     source.id = "source-tool";
     source.status = common_plan_step_status::completed;
     source.tool_call = common_plan_tool_call{"dataset.inspect", "{}"};
+    source.artifact_binding = common_plan_artifact_binding{
+        "compose-findings", "research-report", "v2", "findings", "snapshot-7"};
     plan.steps.push_back(source);
+    common_plan_step legacy_artifact_step;
+    legacy_artifact_step.id = "legacy-artifact-step";
+    legacy_artifact_step.mode = common_plan_step_mode::artifact_compose;
+    legacy_artifact_step.semantic_alias =
+        "workflow-transition:compose-summary,artifact-section:research-report@v1:summary";
+    plan.steps.push_back(legacy_artifact_step);
     common_plan_observation observation;
     observation.id = "tool:source-tool:dataset.inspect";
     observation.source = "dataset.inspect";
@@ -105,11 +113,22 @@ int main() {
     assert(restored->route_binding && restored->route_binding->workflow_revision == "v2");
     assert(restored->route_binding->continuation_link_id == route.continuation_link_id &&
         restored->route_binding->continuation_source_fingerprint == "fp-1");
-    assert(restored->route_binding->workflow_step_start_index == 1);
+    assert(restored->route_binding->workflow_step_start_index == 2);
     assert(restored->workflow_definition->continuation_links.front().argument_bindings.front().source_transition_id == "choose-code");
     assert(restored->workflow_definition->transitions.front().candidate_id_json_pointer == "/code");
     assert(restored->workflow_definition->transitions.back().model_instruction ==
         "Use the verified dataset code.");
+    assert(restored->steps.size() == 2 && restored->steps.front().artifact_binding &&
+        restored->steps.front().artifact_binding->transition_id == "compose-findings" &&
+        restored->steps.front().artifact_binding->profile_ref == "research-report" &&
+        restored->steps.front().artifact_binding->profile_revision == "v2" &&
+        restored->steps.front().artifact_binding->section_id == "findings" &&
+        restored->steps.front().artifact_binding->snapshot_id == "snapshot-7");
+    assert(restored->steps.back().artifact_binding &&
+        restored->steps.back().artifact_binding->transition_id == "compose-summary" &&
+        restored->steps.back().artifact_binding->profile_ref == "research-report" &&
+        restored->steps.back().artifact_binding->profile_revision == "v1" &&
+        restored->steps.back().artifact_binding->section_id == "summary");
     store.close();
     std::filesystem::remove(path, ignored);
     return 0;

@@ -22,10 +22,18 @@ enum class common_plan_step_mode { tool, reasoning, final_response, artifact_com
 struct common_plan_artifact_section_profile {
     std::string id, title, purpose;
     std::vector<std::string> required_observation_sources;
+    std::vector<std::string> allowed_block_kinds{"observation", "conclusion", "recommendation"};
 };
 struct common_plan_artifact_profile {
     std::string id, revision, title, purpose;
     std::vector<common_plan_artifact_section_profile> sections;
+};
+struct common_plan_artifact_binding {
+    std::string transition_id;
+    std::string profile_ref;
+    std::string profile_revision;
+    std::string section_id;
+    std::string snapshot_id;
 };
 
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
@@ -345,7 +353,23 @@ struct common_plan_step {
     // Retain the semantic name so repair can explain typed choices without
     // exposing host-owned step IDs as the model-facing contract.
     std::optional<std::string> semantic_alias;
+    std::optional<common_plan_artifact_binding> artifact_binding;
 };
+
+inline std::optional<common_plan_artifact_binding> common_plan_artifact_binding_effective(
+        const common_plan_step & step) {
+    if (step.artifact_binding) return step.artifact_binding;
+    if (!step.semantic_alias || step.semantic_alias->rfind("workflow-transition:",0)!=0) return std::nullopt;
+    const auto marker=step.semantic_alias->find(",artifact-section:");
+    if(marker==std::string::npos)return std::nullopt;
+    const auto transition=step.semantic_alias->substr(std::string("workflow-transition:").size(),marker-std::string("workflow-transition:").size());
+    const auto suffix=step.semantic_alias->substr(marker+std::string(",artifact-section:").size());
+    const auto at=suffix.find('@'),colon=suffix.find(':',at==std::string::npos?0:at+1);
+    if(transition.empty()||at==std::string::npos||colon==std::string::npos)return std::nullopt;
+    common_plan_artifact_binding binding;binding.transition_id=transition;binding.profile_ref=suffix.substr(0,at);
+    binding.profile_revision=suffix.substr(at+1,colon-at-1);binding.section_id=suffix.substr(colon+1);
+    return binding;
+}
 
 inline common_plan_step_mode common_plan_step_effective_mode(const common_plan_step & step) {
     return step.tool_call ? common_plan_step_mode::tool : step.mode;

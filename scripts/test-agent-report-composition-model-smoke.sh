@@ -68,6 +68,10 @@ grep -Fq 'host-generated completion summary from verified report export' "$log_p
     echo "report composition smoke did not use the host-owned completion summary; log=$log_path" >&2
     exit 1
 }
+grep -Fq 'source coverage is incomplete' "$log_path" || {
+    echo "report composition smoke did not preserve incomplete source coverage; log=$log_path" >&2
+    exit 1
+}
 if grep -Fq 'purpose=draft' "$log_path"; then
     echo "report composition smoke unexpectedly generated a free-form second report; log=$log_path" >&2
     exit 1

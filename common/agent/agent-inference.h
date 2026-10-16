@@ -295,13 +295,13 @@ inline bool common_agent_generation_succeeded(const common_agent_generation_resu
 
 inline common_agent_generated_text_result common_agent_generated_text_result_from_generation_result(
         const common_agent_generation_result & result) {
-    return {
-        result.content,
-        result.decoded_tokens,
-        result.status,
-        result.stop_reason,
-        result.error_message,
-    };
+    common_agent_generated_text_result generated;
+    generated.content=result.content;
+    generated.decoded_tokens=result.decoded_tokens;
+    generated.status=result.status;
+    generated.stop_reason=result.stop_reason;
+    generated.error_message=result.error_message;
+    return generated;
 }
 
 class common_agent_inference {

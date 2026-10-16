@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <stdexcept>
 
@@ -26,16 +27,32 @@ public:
         out.name = request.name;
         out.mime_type = request.mime_type;
         out.scope = request.scope;
+        out.metadata = request.metadata;
+        out.size_bytes = request.text.size();
+        out.sha256 = std::to_string(request.text.size());
+        resources[out.uri] = out;
+        contents[out.uri] = request.bytes_are_authoritative ? request.bytes : request.text;
         return true;
+    }
+    bool put_bytes(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string & error) override {
+        auto text_request=request;
+        text_request.text=request.bytes;
+        text_request.bytes_are_authoritative=false;
+        return put_text(text_request,out,error);
     }
     bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t max_bytes,
             std::string & out, std::string & error) const override {
+        const auto it=contents.find(uri);
+        if(it!=contents.end()){out=it->second.substr(0,max_bytes);return true;}
         if (uri != "resource://session/long-text") {
             error = "resource was not found";
             return false;
         }
         out.assign(std::min<size_t>(max_bytes, 16000), 'x');
         return true;
+    }
+    bool read_bytes(const std::string & uri,const agent_resource_read_authority & authority,size_t max_bytes,std::string & out,std::string & error) const override {
+        return read_text(uri,authority,max_bytes,out,error);
     }
     bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
         if (available_uris.count(uri) == 0) {
@@ -50,10 +67,14 @@ public:
         out.size_bytes = uri == "resource://session/long-text" ? 16000 : 0;
         return true;
     }
-    bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
+    bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> & out, std::string &) const override {
+        out.clear();for(const auto & item:resources)out.push_back(item.second);return true;
+    }
     agent_resource_put_request last_request;
     std::vector<agent_resource_put_request> requests;
     std::set<std::string> available_uris;
+    std::map<std::string,agent_resource_descriptor> resources;
+    std::map<std::string,std::string> contents;
 };
 
 class test_data_store final : public common_agent_data_store {
@@ -408,10 +429,10 @@ int main() {
     report_plan.observations.push_back({"artifact-snapshot:report-plan", "artifact_snapshot",
         empty_report_snapshot_json, 1.0f, {}, {}, 1, {}});
     report_plan.observations.push_back({"artifact-section:findings", "artifact_section",
-        R"({"id":"findings","title":"Findings","blocks":[{"id":"findings:1","kind":"observation","text":"No source evidence was supplied.","validation":"gap","validation_note":"empty snapshot"}]})",
+        nlohmann::json{{"id","findings"},{"title","Findings"},{"snapshot_fingerprint",empty_report_snapshot.fingerprint},{"blocks",nlohmann::json::array({{{"id","findings:1"},{"kind","observation"},{"text","No source evidence was supplied."},{"validation","gap"},{"validation_note","empty snapshot"}}})}}.dump(),
         1.0f, {}, {}, 2, {}});
     report_plan.observations.push_back({"artifact-section:limitations", "artifact_section",
-        R"({"id":"limitations","title":"Limitations","blocks":[{"id":"limitations:1","kind":"observation","text":"Coverage is incomplete.","validation":"gap","validation_note":"empty snapshot"}]})",
+        nlohmann::json{{"id","limitations"},{"title","Limitations"},{"snapshot_fingerprint",empty_report_snapshot.fingerprint},{"blocks",nlohmann::json::array({{{"id","limitations:1"},{"kind","observation"},{"text","Coverage is incomplete."},{"validation","gap"},{"validation_note","empty snapshot"}}})}}.dump(),
         1.0f, {}, {}, 3, {}});
     assert(plans.create(report_plan, error));
     foundation_bindings.plan_store = &plans;
@@ -672,12 +693,22 @@ int main() {
         !report_export.value("report_resource", std::string{}).empty() &&
         !report_export.value("snapshot_resource", std::string{}).empty() &&
         !report_export.value("markdown_resource", std::string{}).empty() &&
+        !report_export.value("manifest_resource", std::string{}).empty() &&
+        report_export.value("report_id", std::string{}) == "report:report-plan" &&
+        report_export.value("revision", uint64_t(0)) == 1 &&
         report_export.contains("coverage_complete") && !report_export["coverage_complete"].get<bool>());
-    assert(foundation_resources.requests.size() == 4 &&
+    assert(foundation_resources.requests.size() == 5 &&
         foundation_resources.requests[1].mime_type == "application/json" &&
         foundation_resources.requests[2].mime_type == "application/vnd.llama-agent.report+json" &&
         foundation_resources.requests[3].mime_type == "text/markdown" &&
-        foundation_resources.requests[3].text.find("Coverage incomplete") != std::string::npos);
+        foundation_resources.requests[3].text.find("Coverage incomplete") != std::string::npos &&
+        foundation_resources.requests[4].text.find(report_export.value("export_id", std::string{})) != std::string::npos);
+    const auto writes_before_retry=foundation_resources.requests.size();
+    result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
+    assert(result.ok);
+    const auto retried_report=nlohmann::json::parse(result.output);
+    assert(retried_report.value("manifest_resource",std::string{})==report_export.value("manifest_resource",std::string{}));
+    assert(foundation_resources.requests.size()==writes_before_retry);
     result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
     assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
            foundation_resources.last_request.mime_type == "text/csv" &&

@@ -50,7 +50,8 @@ public:
             adapters,
             adapter_scales,
             *flydelta_overlay,
-            request.flydelta_capture);
+            request.flydelta_capture,
+            request.grammar);
         result.chat_params = chat_params;
         return ok;
     }
