@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent, DaemonToolStatus } from "../types/agent";
-import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppKey } from "./app-invocation";
+import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey } from "./app-invocation";
 
 const appTool = (provider_id: string, name: string, uri: string, server_tool_name = name): DaemonToolStatus => ({
   name,
@@ -10,6 +10,20 @@ const appTool = (provider_id: string, name: string, uri: string, server_tool_nam
 });
 
 describe("MCP App invocation routing", () => {
+  it("gives repeated identical calls separate app instances using host event identity", () => {
+    const event = { session_id: "s", request_id: "r", sequence: 3, tool_input: {}, tool_result: {} };
+    expect(mcpAppInvocationKey(event)).not.toBe(mcpAppInvocationKey({ ...event, sequence: 4 }));
+    expect(mcpAppInvocationKey(event)).toBe(mcpAppInvocationKey({ ...event }));
+  });
+  it("keeps session context isolated and selects the latest call within that session", () => {
+    const tools = [appTool("provider", "app", "ui://shared/app", "run")];
+    const old: AgentEvent = { session_id: "s1", provider_id: "provider", server_tool_name: "run", app_context_available: true, tool_input: {} };
+    const latest = { ...old, tool_input: { latest: true } };
+    const other = { ...latest, session_id: "s2" };
+    expect(findLatestAppInvocation([other, latest, old], tools, tools[0], "s1")).toBe(latest);
+    expect(findAppForInvocationEvent(other, tools, "s1")).toBeUndefined();
+    expect(findLatestAppInvocation([other], tools, tools[0], "s1")).toBeUndefined();
+  });
   it("selects the newest event and isolates identical resource URIs by provider", () => {
     const tools = [
       appTool("provider-a", "app-a", "ui://shared/app", "run"),

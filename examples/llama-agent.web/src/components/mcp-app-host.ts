@@ -75,6 +75,23 @@ export function sandboxProxyDocument(): string {
 
 export type AppRequestGeneration = { generation: number; target: Window };
 
+export function invocationNotifications(invocation: {
+  input?: Record<string, unknown>; result?: unknown;
+}): Record<string, unknown>[] {
+  if (!invocation.input || Array.isArray(invocation.input)) return [];
+  const messages: Record<string, unknown>[] = [{
+    jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: invocation.input },
+  }];
+  if (invocation.result && typeof invocation.result === "object" && !Array.isArray(invocation.result)) {
+    const result = invocation.result as Record<string, unknown>;
+    messages.push({
+      jsonrpc: "2.0", method: "ui/notifications/tool-result",
+      params: { ...result, content: Array.isArray(result.content) ? result.content : [] },
+    });
+  }
+  return messages;
+}
+
 export function isCurrentAppRequest(
   request: AppRequestGeneration,
   generation: number,

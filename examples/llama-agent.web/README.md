@@ -147,6 +147,17 @@ reacts only to a newly received matching invocation. HTTPS CSP wildcards are
 normalized before they reach the sandbox; stale RPC responses are dropped
 after app reload or switching.
 
+Changing session remounts the app and Data Explorer, invalidates pending app
+replies and excludes invocation events from other sessions. The bundled MCP
+Apps populate their input and display results from invocation notifications,
+including tool errors. Result notification parameters carry the standard MCP
+result directly (`content`, `structuredContent`, `isError`). Initialization must
+complete before the host accepts app tool requests.
+Each completed invocation gets its own app instance using the host event
+identity, so repeated calls with identical arguments and output are still
+delivered. Event-driven navigation is processed synchronously before a later
+turn event in the same SSE burst can replace the newest tool event.
+
 The bounded web host supports initialization, scoped `tools/list` and
 `tools/call`, reads of the app's own declared UI resource, ping, and a displayed
 `ui/message`. Tool execution failures are MCP tool results with `isError: true`;

@@ -5,7 +5,7 @@ import type { DaemonProviderStatus } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
 import WorkflowInspector from "./components/WorkflowInspector.vue";
 import McpAppHost from "./components/McpAppHost.vue";
-import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppKey } from "./components/app-invocation";
+import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey } from "./components/app-invocation";
 
 const session = useAgentSession();
 const prompt = ref("");
@@ -31,21 +31,22 @@ const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAp
 const activeAppInvocation = () => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const event = findLatestAppInvocation(session.events, session.tools, app);
+  const event = findLatestAppInvocation(session.events, session.tools, app, session.sessionId);
   if (!event) return undefined;
   return {
+    id: mcpAppInvocationKey(event),
     input: event.tool_input as Record<string, unknown>,
     ...(event.tool_result !== undefined ? { result: event.tool_result } : {}),
   };
 };
 
 watch(() => session.events[0], (event) => {
-  const targetApp = findAppForInvocationEvent(event, session.tools);
+  const targetApp = findAppForInvocationEvent(event, session.tools, session.sessionId);
   if (targetApp) {
     activeAppTool.value = mcpAppKey(targetApp);
     activeView.value = "app";
   }
-});
+}, { flush: "sync" });
 
 const connectionLabel = {
   connecting: "connecting",
@@ -172,9 +173,9 @@ function isArtifactEvent(event: Record<string, unknown>) {
       <button v-for="tool in mcpApps()" :key="mcpAppKey(tool)" :class="{ selected: activeAppTool === mcpAppKey(tool) }" @click="activeView = 'app'; activeAppTool = mcpAppKey(tool)">{{ tool.name }} app</button>
     </nav>
 
-    <DataExplorer v-if="activeView === 'data'" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
+    <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
     <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="mcpAppKey(activeMcpApp()!)" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :invocation="activeAppInvocation()" />
+    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!), activeAppInvocation()?.id])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :invocation="activeAppInvocation()" />
 
     <section v-else class="grid">
       <div class="primary">

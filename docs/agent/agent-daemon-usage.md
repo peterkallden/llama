@@ -1435,6 +1435,12 @@ unmount.
 Sandbox CSP sources accept HTTPS hostnames and wildcard subdomains; malformed,
 credential-bearing and non-HTTPS sources are omitted. The generated proxy
 document is tested as browser JavaScript after serialization.
+The web host also isolates invocation events by session and reloads app state
+on session changes. Result notifications carry the standard MCP result fields
+directly in `params`. Both bundled apps consume input/result notifications and
+show tool errors as well as successful results. Proxy tests execute CSP
+injection and message forwarding with controlled DOM and window objects;
+these are model-free checks rather than a live browser end-to-end run.
 
 - foreground process only;
 - stdin/stdout remains the local administrative transport; JSONL TCP is

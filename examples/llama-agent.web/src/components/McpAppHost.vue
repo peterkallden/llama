@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
-import { isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
 
 const props = defineProps<{
   tool: DaemonToolStatus;
@@ -19,6 +19,7 @@ const appMessage = ref("");
 const uri = computed(() => String(props.tool._meta?.ui?.resourceUri ?? ""));
 const appVisible = computed(() => (props.tool._meta?.ui?.visibility ?? []).includes("app"));
 let initialized = false;
+let initializeAccepted = false;
 let lastInvocationSignature = "";
 
 function unwrap(payload: unknown): Record<string, unknown> {
@@ -39,7 +40,8 @@ function toolEnvelope(payload: unknown): Record<string, unknown> {
 let loadGeneration = 0;
 async function load() {
   const generation = ++loadGeneration;
-  initialized = false; proxyUrl.value = ""; error.value = "";
+  initialized = false; initializeAccepted = false; proxyUrl.value = ""; error.value = "";
+  busy.value = false; appMessage.value = "";
   lastInvocationSignature = "";
   pendingHtml = ""; pendingCsp = {};
   if (!uri.value || !appVisible.value) { error.value = "This tool does not advertise an app-visible UI resource."; return; }
@@ -54,7 +56,7 @@ async function load() {
       html = new TextDecoder().decode(bytes);
     }
     if (!html) throw new Error("The provider returned no HTML content.");
-    if (html.length > 2 * 1024 * 1024) throw new Error("The MCP App resource exceeds the 2 MiB web-host limit.");
+    if (new TextEncoder().encode(html).byteLength > 2 * 1024 * 1024) throw new Error("The MCP App resource exceeds the 2 MiB web-host limit.");
     const proxy = sandboxProxyDocument();
     proxyUrl.value = `data:text/html;charset=utf-8,${encodeURIComponent(proxy)}`;
     pendingHtml = html;
@@ -77,12 +79,7 @@ function publishInvocation() {
   const signature = JSON.stringify(props.invocation);
   if (!signature || signature === lastInvocationSignature) return;
   lastInvocationSignature = signature;
-  if (props.invocation.input) {
-    send({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: props.invocation.input } });
-  }
-  if ("result" in props.invocation) {
-    send({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: { result: props.invocation.result } });
-  }
+  for (const notification of invocationNotifications(props.invocation)) send(notification);
 }
 
 async function onMessage(event: MessageEvent) {
@@ -107,10 +104,11 @@ async function onMessage(event: MessageEvent) {
   }
   if (method === "ui/initialize") {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
-    if (!params.appInfo || !params.appCapabilities || params.protocolVersion !== "2026-01-26") {
+    if (id === undefined || !params.appInfo || !params.appCapabilities || params.protocolVersion !== "2026-01-26") {
       reply(undefined, "Invalid MCP App initialization request.");
       return;
     }
+    initializeAccepted = true;
     reply({
       protocolVersion: "2026-01-26",
       hostInfo: { name: "llama-agent-web", version: "0.1" },
@@ -120,6 +118,7 @@ async function onMessage(event: MessageEvent) {
     return;
   }
   if (method === "ui/notifications/initialized") {
+    if (!initializeAccepted) return;
     initialized = true;
     publishInvocation();
     return;
@@ -190,7 +189,7 @@ async function onMessage(event: MessageEvent) {
   } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
 }
 
-watch(() => [props.tool.name, props.tool.provider_id, uri.value], () => { initialized = false; void load(); }, { flush: "sync" });
+watch(() => [props.tool.name, props.tool.provider_id, uri.value, props.sessionId], () => { initialized = false; void load(); }, { flush: "sync" });
 watch(() => props.invocation, publishInvocation, { deep: true });
 if (typeof window !== "undefined") window.addEventListener("message", onMessage);
 void load();
