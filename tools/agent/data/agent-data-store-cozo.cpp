@@ -75,6 +75,11 @@ bool materialize_data_result(
     descriptor.ref.name = descriptor.ref.uri.substr(descriptor.ref.uri.find_last_of('/') + 1);
     descriptor.ref.row_count = result["rows"].size();
     descriptor.ref.source_resource_uri = first_parent.ref.source_resource_uri;
+    descriptor.ref.content_hash = first_parent.ref.content_hash;
+    descriptor.ref.source_provider = first_parent.ref.source_provider;
+    descriptor.ref.source_operation = first_parent.ref.source_operation;
+    descriptor.ref.source_request_json = first_parent.ref.source_request_json;
+    descriptor.ref.retrieved_at = first_parent.ref.retrieved_at;
     descriptor.ref.source_representation = "derived-dataset";
     descriptor.lineage.parent_dataset_uris = parents;
     descriptor.lineage.operation = operation;

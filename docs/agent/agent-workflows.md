@@ -99,10 +99,13 @@ tool set. New workflow packages should prefer capabilities.
 
 A workflow's route and execution envelope determine its available tools.
 The runtime thinking policy determines whether the current turn uses
-`deliberate` or `research`. The workflow JSON currently has no
-`preferred_thinking_mode` field: allowing the research phase in the envelope
-does not request or select it. Use the existing `runtime.thinking_mode`
-configuration or the bounded runtime escalation policy to select research.
+`deliberate` or `research`. Workflow JSON can declare the optional
+`preferred_thinking_mode` with either value. With `runtime.thinking_mode: "auto"`
+the driver considers it after route selection, on resume and at a declared
+workflow handoff. Explicitly selected thinking modes, host review availability,
+maximum mode and escalation limits take precedence. A preference never lowers
+an already higher mode or expands the caller's tool/revision budgets.
+Allowing the research phase in an envelope is still separate from selecting it.
 
 For a specified indicator, geography and period, deliberate can carry out
 discovery, metadata checks, retrieval and calculation. Research is useful when
@@ -111,21 +114,25 @@ evidence cross-checks. In research mode mandatory workflow tool steps execute
 before the deferred research pass consumes their evidence. Neither mode proves
 that a dataset matches the statistical question.
 
-The following semantic checks remain design work for the Eurostat path:
+The source implementation now supports declared `verification_checks` at
+`before_tool`, `after_tool` and `before_answer`, and an opt-in
+`require_declared_claims` draft contract. Required conditions must pass;
+missing or unsupported evidence remains `unknown`. Tool success and semantic
+verification are recorded separately. Successful API output survives a failed
+after-check, but the guarded transition cannot complete or hand off.
 
-- Validate selected geography, time and dimension codes against the retrieved
-  dataset-specific constraint before authorizing data retrieval.
-- Preserve the intended measure, geographic level, unit and period as explicit
-  requirements; request clarification when a necessary definition is absent.
-- Compare returned JSON-stat dimensions, units, observation flags and coverage
-  with those requirements before treating the answer as supported.
-- Link final numerical claims to actual returned cells and transformations.
-  A second source is useful for independent corroboration; repeating requests
-  to the same source does not establish independent agreement.
+Package v24 applies these controls to Eurostat: requested geography/period,
+SDMX constraint tuples, returned dimension coverage and observation status.
+Final numeric declarations refer to bounded host evidence handles and reuse
+research's claims/evidence contracts in both deliberate and research modes.
+Metadata membership does not prove that a model correctly understood the user's
+intended indicator. Independent corroboration also requires actual source
+comparison; multiple responses from one authority are not independent proof.
 
-These checks require host-readable contracts and evidence. Transition guidance,
-candidate membership, successful HTTP status and research mode alone do not
-establish semantic correctness.
+See [Workflow grounding](agent-workflow-grounding.md) for JSON, draft DSL,
+scope/resume rules and the pending verification checklist. This implementation
+has intentionally not been built or tested yet; historical smoke results do
+not validate these new paths.
 
 ## Bounded workflow graphs
 
@@ -278,7 +285,7 @@ requirements generically. The starter library covers these host-tool domains:
   dataset and continues through the generic dataset analysis/quality workflows.
   These starter procedures and blueprints are imported from the JSON package;
   the host supplies generic safe XML/JSON normalization and query serialization.
-  Package v23 declares terminal-state links from catalogue discovery to SDMX
+  Package v24 declares terminal-state links from catalogue discovery to SDMX
   metadata resolution and from inspected metadata to data retrieval. The
   data-retrieval workflow now uses the same typed continuation-link contract
   for its handoff to dataset analysis, quality, or join; it no longer relies
@@ -318,16 +325,11 @@ requirements generically. The starter library covers these host-tool domains:
   quality workflow continue. Each handoff revalidates its declared target and
   execution envelope.
 
-  The SDMX content-constraint response is evidence, not an automatic semantic
-  allow-list on `geo`/`time`: the workflow procedure requires the model to
-  inspect the materialized constraint and compare requested values before
-  calling `eurostat.getData`. The host still does not enforce semantic
-  membership of each requested code against that dataset. A failed Qwen run on 2026-10-16 selected the
+  Earlier traces predate the declared verification gates. A failed Qwen run on 2026-10-16 selected the
   ENP-East-only `enpe_demo_r_d3dens` candidate for a Sweden request, then
   emitted metadata URLs as `geo` values. The API returned HTTP 200, but the
   unfiltered JSON-stat was rejected by `dataset.inspect` at the bounded
-  Cartesian-cell limit. This is fail-closed, but demonstrates that the host
-  does not yet enforce candidate/constraint compatibility; see the audit
+  Cartesian-cell limit. That exposed the missing candidate/constraint check; see the audit
   trace under `var/codex-mcp-tool-audit/` before treating this model path as a
   successful end-to-end workflow.
 
@@ -341,9 +343,10 @@ requirements generically. The starter library covers these host-tool domains:
   title instruction with metadata-based coverage guidance. The metadata graph's
   terminal state is named `metadata_materialized`, not `dimensions_and_codes_verified`,
   because inspection does not implement a semantic verification gate.
-  Final answer generation still stopped at context pressure. Host-side
-  dataset/constraint compatibility enforcement and the final-context budget
-  remain follow-up work. See
+  Final answer generation still stopped at context pressure. Package v24 adds
+  declared host checks for the constraint and returned codes, but their build,
+  model-free and model verification remain pending. The final-context budget
+  still needs follow-up. See
   `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 
 The starter blueprint, procedure and workflow for this path are imported from

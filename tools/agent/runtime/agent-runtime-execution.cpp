@@ -980,6 +980,30 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
     return execution;
 }
 
+static void apply_workflow_thinking_preference(common_agent_runtime_driver_execution & execution) {
+    if (!execution.selected_route.workflow_definition) return;
+    const auto & workflow = *execution.selected_route.workflow_definition;
+    if (workflow.preferred_thinking_mode.empty()) return;
+    auto decision = resolve_common_agent_workflow_thinking_preference(
+        execution.policy.deliberation_policy, workflow.preferred_thinking_mode);
+    if (decision.allowed && (!execution.policy.enable_reflection || execution.policy.max_reflection_rounds == 0)) {
+        decision.allowed = false;
+        decision.summary = "workflow thinking preference denied: host step-review budget unavailable";
+    }
+    if (decision.allowed) {
+        auto next = make_common_agent_escalated_policy(execution.policy.deliberation_policy, decision.to_mode);
+        next.max_tool_rounds = execution.policy.deliberation_policy.max_tool_rounds;
+        next.max_plan_revisions = execution.policy.deliberation_policy.max_plan_revisions;
+        next.max_reflection_rounds = std::min(next.max_reflection_rounds,
+            static_cast<int>(execution.policy.max_reflection_rounds));
+        execution.policy.deliberation_policy = next;
+        execution.workflow_preference_applied = true;
+    }
+    execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan, common_runtime_trace_kind::decided,
+        decision.summary + " workflow=" + workflow.workflow_ref + " preferred=" + workflow.preferred_thinking_mode +
+        " resolved=" + common_agent_thinking_mode_name(execution.policy.deliberation_policy.mode)});
+}
+
 common_agent_request make_agent_runtime_driver_request(
     const common_agent_runtime_driver_execution & execution) {
     common_agent_request request;
@@ -995,6 +1019,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.input_resources = execution.input_resources;
     request.available_resources = execution.available_resources;
     request.available_datasets = execution.tooling.available_datasets;
+    request.grounding_dataset_reader = execution.tooling.grounding_dataset_reader;
     for (const auto & dataset : execution.continuation_datasets) {
         if (std::none_of(request.available_datasets.begin(), request.available_datasets.end(),
                 [&](const auto & existing) { return existing.ref.uri == dataset.ref.uri; })) {
@@ -1061,7 +1086,7 @@ common_agent_request make_agent_runtime_driver_request(
                 })) {
         request.require_tool_execution = true;
     }
-    apply_explicit_deliberation_policy(request.deliberation_policy, request);
+    if (!execution.workflow_preference_applied) apply_explicit_deliberation_policy(request.deliberation_policy, request);
     return request;
 }
 
@@ -1601,8 +1626,25 @@ static bool transition_to_workflow(
             }
         }
     }
+    if (trigger_observation != nullptr) {
+        common_plan_operation handoff;
+        handoff.kind = common_plan_operation_kind::record_observation;
+        handoff.plan_id = transitioned.id;
+        handoff.expected_version = transitioned.version;
+        handoff.reason_summary = "declared workflow handoff grounding snapshot";
+        handoff.host_authorized = true;
+        handoff.observation = common_plan_observation{
+            "workflow_handoff:" + binding.continuation_source_fingerprint + ":" + selected.workflow_definition->workflow_ref,
+            "workflow_handoff",
+            json{{"value", json::parse(trigger_observation->summary)},
+                {"source_fingerprint", binding.continuation_source_fingerprint},
+                {"target_revision", selected.workflow_definition->workflow_revision}}.dump(),
+            1.0f, {trigger_observation->id}, trigger_observation->resource_refs, 0, trigger_observation->dataset_refs};
+        if (!execution.plan_store.apply(handoff, transitioned, error)) return false;
+    }
     execution.current_plan_id = transitioned.id;
     execution.selected_route = std::move(selected);
+    apply_workflow_thinking_preference(execution);
     execution.route_selected = true;
     execution.execution_envelope = std::move(envelope);
     execution.execution_envelope_ready = true;
@@ -1756,6 +1798,7 @@ bool run_agent_runtime_driver(
     }
 
     if (execution.route_selected) {
+        apply_workflow_thinking_preference(execution);
         if (!build_agent_execution_envelope(
                 execution.selected_route, execution.tooling,
                 execution.execution_envelope, error)) {

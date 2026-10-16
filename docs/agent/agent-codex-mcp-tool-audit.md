@@ -87,10 +87,12 @@ DOCX/XLSX processor policies and sets
   JSON-stat explicitly contains Sweden, 2020, persons per square kilometre
   and value 25.2. Regional tables can contain national aggregates; actual
   dimensions, definitions and observations determine suitability.
-  This offline check supports the retrieved value, but the runtime itself has
-  no enforced constraint-membership gate. Final answer generation stopped at
+  This offline check supports the retrieved value. That run predates the new
+  declared constraint/coverage gates in starter package v24, which are added in
+  source but deliberately await build, model-free and model verification.
+  Final answer generation stopped at
   context pressure (`decoded 0 tokens`), so model end-to-end completion is
-  still unproven. The constraint gate and final-context budget need follow-up.
+  still unproven. The final-context budget also needs follow-up.
   Full trace:
   `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 - Full connection traces are under

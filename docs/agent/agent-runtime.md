@@ -127,6 +127,15 @@ thinking mode: reflective | deliberate | research
 cognitive mode: explore | frame | execute | reflect
 ```
 
+Workflow definitions may declare `preferred_thinking_mode` (`deliberate` or
+`research`). The route driver applies it to automatic thinking selection within
+the host's policy and budgets; an explicitly requested mode takes precedence.
+The source implementation also adds workflow pre/postconditions and declared
+numeric claims, sharing plan observations and research evidence rather than a
+new fact store. These changes are pending build/test verification. See
+[Workflow grounding](agent-workflow-grounding.md) for the JSON/DSL contracts,
+dataset bounds, authority and resume behavior.
+
 Cognitive mode is a per-turn activity label, separate from thinking mode and
 the route execution envelope. The host/runtime supplies a short mode-specific
 instruction to model calls and traces each transition. The allowed progression

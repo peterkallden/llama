@@ -1,4 +1,5 @@
 #include "agent/agent-package-json.h"
+#include "plan/plan-workflow-verification.h"
 
 #include <nlohmann/json.hpp>
 
@@ -80,6 +81,7 @@ bool workflow_transition_kind(const json & value, common_plan_workflow_transitio
 }
 
 bool workflow_graph(const json & item, common_plan_workflow_definition & definition, std::string & error) {
+    if (!common_plan_workflow_grounding_from_json(item, definition, error)) return false;
     const auto read_policy = item.value("resource_read_policy", std::string("single_range"));
     if (read_policy == "chunked") {
         definition.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
@@ -234,6 +236,25 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                         !link_fields.emplace(binding.target_transition_id + ":" + binding.target_tool_name,
                             binding.target_json_pointer).second) {
                     error = "workflow continuation binding requires tool and unique source/target pointers"; return false;
+                }
+            }
+        }
+        for (const auto & check : definition.verification_checks) {
+            const auto known_transition = [&](const std::string & id) {
+                return std::any_of(definition.transitions.begin(), definition.transitions.end(),
+                    [&](const auto & transition) { return transition.id == id &&
+                        transition.kind == common_plan_workflow_transition_kind::tool; });
+            };
+            if (check.phase != common_plan_verification_phase::before_answer && !known_transition(check.transition_id)) {
+                error = "verification check names an unavailable tool transition"; return false;
+            }
+            for (const auto * operand : {&check.left, &check.right}) {
+                if ((operand->source == "observation" || operand->source == "transition_arguments") &&
+                        !known_transition(operand->transition_id)) {
+                    error = "verification operand names an unavailable tool transition"; return false;
+                }
+                if (check.phase == common_plan_verification_phase::before_tool && operand->source == "result") {
+                    error = "before_tool verification cannot read a future result"; return false;
                 }
             }
         }
@@ -395,7 +416,17 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
 bool common_agent_package_parse_json(const std::string & text, common_agent_bootstrap_package & package, std::string & error) {
     try {
         const auto root = json::parse(text, nullptr, false);
-        if (!root.is_object() || root.value("schema_version", 0) != 1) { error = "package requires supported schema_version"; return false; }
+        if (!root.is_object() || (root.value("schema_version", 0) != 1 && root.value("schema_version", 0) != 2)) {
+            error = "package requires supported schema_version (1 or 2)"; return false;
+        }
+        if (root.value("schema_version", 0) == 1 && root.contains("workflows")) {
+            for (const auto & workflow : root["workflows"]) {
+                if (workflow.value("require_declared_claims", false) ||
+                        !workflow.value("verification_checks", json::array()).empty()) {
+                    error = "workflow verification contracts require package schema_version 2"; return false;
+                }
+            }
+        }
         package = {};
         package.name = root.value("name", std::string{});
         package.version = root.value("version", std::string{});
@@ -492,6 +523,9 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
 bool common_agent_package_to_json(const common_agent_bootstrap_package & package, std::string & text, std::string & error, bool pretty) {
     if (!validate(package, error)) return false;
     json root = {{"schema_version", 1}, {"name", package.name}, {"version", package.version}, {"procedures", json::array()}, {"workflows", json::array()}, {"blueprints", json::array()}};
+    if (std::any_of(package.workflows.begin(), package.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.require_declared_claims || !workflow.definition.verification_checks.empty();
+        })) root["schema_version"] = 2;
     for (const auto & procedure : package.procedures) root["procedures"].push_back({{"id", procedure.id}, {"summary", procedure.summary}, {"content", procedure.content}, {"importance", procedure.importance}, {"confidence", procedure.confidence}});
     for (const auto & blueprint : package.blueprints) {
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
@@ -539,6 +573,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                 value["continuation_links"].push_back(std::move(item));
             }
         }
+        common_plan_workflow_grounding_to_json(workflow.definition, value);
         if (workflow.definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
             value["resource_read_policy"] = "chunked";
         }

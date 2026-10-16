@@ -63,6 +63,7 @@ add_library(${TARGET}
     thinking/phases/agent-runtime-reflection-phase.cpp
     thinking/phases/agent-runtime-research-phase.cpp
     agent-runtime.cpp agent-runtime.h
+    grounding/workflow-grounding.cpp grounding/workflow-grounding.h
     runtime-json-contracts.cpp runtime-json-contracts.h
     learning/memory-learning.cpp learning/memory-learning.h
     adaptation/learning-observation.cpp adaptation/learning-observation.h

@@ -33,6 +33,8 @@
 #include <ctime>
 #include <filesystem>
 #include <memory>
+#include <set>
+#include <functional>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
 
@@ -314,6 +316,49 @@ bool resolve_agent_host_tool_selection(
         common_agent_data_store * inventory_store = request.data_store != nullptr
             ? request.data_store : selection.owned_data_store.get();
         if (exposes_dataset_tools && inventory_store != nullptr) {
+            const auto resource_runtime = selection.tooling.resource_runtime;
+            selection.tooling.grounding_dataset_reader = [inventory_store, resource_runtime](
+                    const std::string & uri, nlohmann::ordered_json & rows, std::string & read_error) {
+                common_agent_dataset_descriptor descriptor;
+                if (!inventory_store->get_dataset_descriptor(uri, descriptor, read_error)) return false;
+                if (descriptor.ref.row_count > 10000) { read_error = "grounding dataset exceeds 10000 row bound"; return false; }
+                std::set<std::string> visited;
+                size_t lineage_nodes = 0;
+                std::function<bool(const common_agent_dataset_descriptor &, size_t)> authorize =
+                    [&](const common_agent_dataset_descriptor & current, size_t depth) {
+                    if (depth > 16 || ++lineage_nodes > 64 || !visited.insert(current.ref.uri).second) {
+                        read_error = "grounding lineage is cyclic or exceeds depth bound"; return false;
+                    }
+                    if (!current.ref.source_resource_uri.empty()) {
+                        agent_resource_descriptor source;
+                        if (resource_runtime.store == nullptr || !resource_runtime.store->stat(
+                                current.ref.source_resource_uri, make_agent_resource_read_authority(resource_runtime), source, read_error)) return false;
+                        if ((current.ref.content_hash.empty() && current.lineage.parent_dataset_uris.empty()) ||
+                                (!current.ref.content_hash.empty() && current.ref.content_hash != source.sha256)) {
+                            read_error = "grounding dataset source fingerprint is missing or changed"; return false;
+                        }
+                    }
+                    for (const auto & parent_uri : current.lineage.parent_dataset_uris) {
+                        common_agent_dataset_descriptor parent;
+                        if (!inventory_store->get_dataset_descriptor(parent_uri, parent, read_error) || !authorize(parent, depth + 1)) return false;
+                    }
+                    visited.erase(current.ref.uri);
+                    return true;
+                };
+                if (!authorize(descriptor, 0)) return false;
+                std::string output;
+                const auto count = std::max<size_t>(1, descriptor.ref.row_count);
+                if (!inventory_store->execute("data.query", nlohmann::ordered_json{
+                        {"dataset", uri}, {"limit", count}, {"max_scan_rows", count},
+                        {"max_result_rows", count}}.dump(), output, read_error)) return false;
+                const auto result = nlohmann::ordered_json::parse(output, nullptr, false);
+                if (!result.is_object() || result.value("scan_truncated", false) || result.value("truncated", false) ||
+                        !result.contains("rows") || !result["rows"].is_array() || result["rows"].size() != descriptor.ref.row_count) {
+                    read_error = "grounding dataset view incomplete"; return false;
+                }
+                rows = result["rows"];
+                return true;
+            };
             std::vector<common_agent_dataset_descriptor> descriptors;
             std::string inventory_error;
             if (inventory_store->list_dataset_descriptors(descriptors, inventory_error)) {

@@ -155,6 +155,7 @@ struct common_agent_runtime_driver_execution {
     std::vector<common_agent_dataset_descriptor> continuation_datasets;
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
     common_agent_cognitive_state cognitive_state;
+    bool workflow_preference_applied = false;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

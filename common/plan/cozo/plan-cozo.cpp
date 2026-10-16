@@ -1,4 +1,6 @@
 #include "plan/cozo/plan-cozo.h"
+#include "plan/plan-workflow-verification.h"
+#include <stdexcept>
 #include "plan/cozo/plan-cozo-schema.h"
 #include <nlohmann/json.hpp>
 extern "C" {
@@ -82,6 +84,7 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
             value["continuation_links"].push_back(std::move(item));
         }
     }
+    common_plan_workflow_grounding_to_json(definition, value);
     if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
         value["resource_read_policy"] = "chunked";
     }
@@ -121,6 +124,8 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
 
 static common_plan_workflow_definition parse_workflow_definition(const json & definition) {
     common_plan_workflow_definition value;
+    std::string grounding_error;
+    if (!common_plan_workflow_grounding_from_json(definition, value, grounding_error)) throw std::runtime_error(grounding_error);
     value.workflow_ref=definition.value("workflow_ref",std::string{}); value.workflow_revision=definition.value("workflow_revision",std::string{});
     value.family=definition.value("family",std::string{}); value.graph_revision=definition.value("graph_revision",std::string{});
     value.allowed_tools=definition.value("allowed_tools",std::vector<std::string>{}); value.required_capabilities=definition.value("required_capabilities",std::vector<std::string>{});

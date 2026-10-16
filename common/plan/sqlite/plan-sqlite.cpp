@@ -1,4 +1,6 @@
 #include "plan-sqlite.h"
+#include "plan/plan-workflow-verification.h"
+#include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
@@ -109,6 +111,7 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
             value["continuation_links"].push_back(std::move(item));
         }
     }
+    common_plan_workflow_grounding_to_json(definition, value);
     if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
         value["resource_read_policy"] = "chunked";
     }
@@ -146,6 +149,8 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
 
 common_plan_workflow_definition parse_workflow_definition(const json & definition) {
     common_plan_workflow_definition value;
+    std::string grounding_error;
+    if (!common_plan_workflow_grounding_from_json(definition, value, grounding_error)) throw std::runtime_error(grounding_error);
     value.workflow_ref = definition.value("workflow_ref", std::string{});
     value.workflow_revision = definition.value("workflow_revision", std::string{});
     value.family = definition.value("family", std::string{});

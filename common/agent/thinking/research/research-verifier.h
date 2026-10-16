@@ -38,6 +38,7 @@ struct common_agent_research_verification_claim {
     std::vector<std::string> resource_uris;
     std::vector<std::string> memory_ids;
     double confidence = 0.0;
+    std::string numeric_value_json, unit, dimensions_json, dataset_uri, source_location;
 };
 
 struct common_agent_research_verification_context {
@@ -111,6 +112,7 @@ public:
             std::vector<std::string> known_evidence = research.critical_evidence_ids;
             if (context.plan) {
                 for (const auto & observation : context.plan->observations) {
+                    if (observation.confidence > 0.0f) known_evidence.push_back(observation.id);
                     known_evidence.insert(known_evidence.end(),
                         observation.evidence_ids.begin(), observation.evidence_ids.end());
                 }

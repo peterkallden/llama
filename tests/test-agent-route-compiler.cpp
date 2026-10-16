@@ -862,9 +862,9 @@ int main() {
         if (!candidate.workflow_definition) continue;
         assert(candidate.kind == common_agent_route_kind::blueprint_workflow);
         const auto & workflow_ref = candidate.workflow->workflow_ref;
-        const auto expected_revision = workflow_ref == "workflow://eurostat/catalog-discovery" ? "v6" :
-            workflow_ref == "workflow://eurostat/metadata-resolution" ? "v8" :
-            workflow_ref == "workflow://eurostat/data-retrieval" ? "v7" : "v4";
+        const auto expected_revision = workflow_ref == "workflow://eurostat/catalog-discovery" ? "v7" :
+            workflow_ref == "workflow://eurostat/metadata-resolution" ? "v9" :
+            workflow_ref == "workflow://eurostat/data-retrieval" ? "v8" : "v5";
         assert(candidate.workflow_revision == expected_revision);
         assert(std::find(candidate.resolved_tools.begin(), candidate.resolved_tools.end(),
             "openalex.listWorks") == candidate.resolved_tools.end());

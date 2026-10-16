@@ -1,10 +1,12 @@
 #include "agent/agent-runtime.h"
+#include "agent/grounding/workflow-grounding.h"
 #include "agent/context/observation-projection.h"
 #include "agent/agent-runtime-context.h"
 #include "agent/context-pressure.h"
 #include "agent/learning/memory-learning.h"
 #include "agent/adaptation/adaptation-observer.h"
 #include "agent/thinking/research/research-runner.h"
+#include "agent/thinking/research/research-workspace.h"
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/routing/tool-navigation.h"
 #include "plan/plan-bindings.h"
@@ -959,6 +961,65 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (!research_deferred_for_workflow && !run_common_agent_research_phase(turn)) return result;
     }
     result.plan_id = plan.id;
+    if (plan.workflow_definition && plan.workflow_definition->require_declared_claims &&
+            std::none_of(plan.observations.begin(), plan.observations.end(), [](const auto & observation) {
+                return observation.source == "workflow_grounding_policy";
+            })) {
+        common_plan_operation policy;
+        policy.kind = common_plan_operation_kind::record_observation;
+        policy.plan_id = plan.id; policy.expected_version = plan.version;
+        policy.reason_summary = "preserve workflow claim requirement through declared handoffs";
+        policy.host_authorized = true;
+        policy.observation = common_plan_observation{"workflow_grounding_policy:" + plan.id,
+            "workflow_grounding_policy", json{{"require_declared_claims", true},
+                {"workflow", plan.workflow_definition->workflow_ref},
+                {"revision", plan.workflow_definition->workflow_revision}}.dump(), 1.0f};
+        if (!store.apply(policy, plan, error)) { result.error = error; return result; }
+    }
+    const auto record_grounding = [&](const common_agent_grounding_result & checked,
+            const std::string & step_id, const std::string & tool, bool fail_step) {
+        for (const auto & record : checked.records) {
+            common_plan_operation operation;
+            operation.kind = common_plan_operation_kind::record_observation;
+            operation.plan_id = plan.id; operation.expected_version = plan.version;
+            operation.reason_summary = "host workflow verification result";
+            operation.host_authorized = true;
+            auto record_value = record;
+            record_value["step_id"] = step_id;
+            auto prior = plan.observations.rbegin();
+            for (; prior != plan.observations.rend(); ++prior) {
+                if (prior->source != "workflow_verification") continue;
+                const auto value = json::parse(prior->summary, nullptr, false);
+                if (value.is_object() && value.value("step_id", std::string{}) == step_id &&
+                        value.value("check", std::string{}) == record_value.value("check", std::string{}) &&
+                        value.value("phase", std::string{}) == record_value.value("phase", std::string{}) &&
+                        value.value("handle", json{}) == record_value.value("handle", json{})) break;
+            }
+            if (prior != plan.observations.rend() && prior->summary == record_value.dump()) {
+                append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::recorded,
+                    "workflow verification revalidated unchanged inputs", plan.id, step_id, tool, prior->id);
+                continue;
+            }
+            operation.observation = common_plan_observation{
+                "workflow_verification:" + step_id + ":" + std::to_string(plan.version),
+                "workflow_verification", record_value.dump(), 1.0f};
+            if (!store.apply(operation, plan, error)) return false;
+            append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::recorded,
+                "workflow_verification " + record.dump(), plan.id, step_id, tool, operation.observation->id);
+        }
+        if (!checked.passed && fail_step && step_id != "request") {
+            auto failure = tool_failure(tool, step_id, "", "workflow.verification_incomplete",
+                common_agent_failure_class::validation, true, checked.summary);
+            failure.stage = "workflow_verification";
+            result.failures.push_back(failure);
+            common_plan_operation failed;
+            failed.kind = common_plan_operation_kind::fail_step;
+            failed.plan_id = plan.id; failed.expected_version = plan.version;
+            failed.step_id = step_id; failed.reason_summary = ("workflow verification: " + checked.summary).substr(0, 240);
+            if (!store.apply(failed, plan, error)) return false;
+        }
+        return true;
+    };
     if (!turn.research_synthesis_context.empty()) {
         request.prompt += "\n\nHost-approved research synthesis context:\n";
         request.prompt += turn.research_synthesis_context;
@@ -1215,6 +1276,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     bool tool_navigation_active = false;
     bool executed_request_tool = false;
     size_t plan_revision_count = 0;
+    size_t grounding_revision_count = 0;
     size_t runtime_iteration_limit = request.max_iterations;
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
         if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
@@ -1444,6 +1506,35 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
+            const auto before = common_agent_verify_workflow(request, plan,
+                common_plan_verification_phase::before_tool, tool_step_id, tool_call->arguments_json, "{}", tool_call->name);
+            if (!record_grounding(before, tool_step_id, tool_call->name, true)) { result.error = error; return result; }
+            if (!before.passed) {
+                if (!before.clarification_question.empty()) {
+                    result.response = before.clarification_question;
+                    result.response_generation_status = common_agent_generation_status::completed;
+                    result.response_stop_reason = common_agent_generation_stop_reason::none;
+                    result.plan_version = plan.version;
+                    return result;
+                }
+                if (tool_step_id == "request") {
+                    result.error = "explicit request tool requires workflow transition verification: " + before.summary;
+                    return result;
+                }
+                break;
+            }
+            if (plan.workflow_definition && (!plan.workflow_definition->verification_checks.empty() ||
+                    common_agent_workflow_requires_claims(plan))) {
+                common_plan_operation arguments;
+                arguments.kind = common_plan_operation_kind::record_observation;
+                arguments.plan_id = plan.id; arguments.expected_version = plan.version;
+                arguments.reason_summary = "retain materialized parameter mapping with request provenance";
+                arguments.host_authorized = true;
+                arguments.observation = common_plan_observation{"workflow_arguments:" + tool_step_id,
+                    "workflow_arguments", json{{"arguments", json::parse(tool_call->arguments_json)},
+                        {"origin", "parameter_mapping"}, {"request_ref", request.turn_id}}.dump(), 1.0f};
+                if (!store.apply(arguments, plan, error)) { result.error = error; return result; }
+            }
             const auto execution = tools->execute(*tool_call);
             if (!execution.ok) {
                 if (tool_step_id == "request") { append_event(result, request, {common_agent_event_type::tool_rejected, execution.safe_summary, {}, plan.id}); result.error = "registered request tool failed: " + execution.safe_summary; return result; }
@@ -1525,6 +1616,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             observed.reason_summary = "registered tool result";
             observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0, execution.dataset_refs};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+            const auto after = common_agent_verify_workflow(request, plan,
+                common_plan_verification_phase::after_tool, tool_step_id, tool_call->arguments_json,
+                tool_observation_payload(execution), tool_call->name);
+            if (!record_grounding(after, tool_step_id, tool_call->name, true)) { result.error = error; return result; }
+            if (!after.passed) break;
             // A model-selected workflow choice is accepted only after the
             // host has checked it against the preceding bounded candidate
             // set. Persist that accepted choice as structured evidence tied
@@ -1569,6 +1665,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 executed_step_ids.insert(tool_step_id);
                 common_plan_operation complete;
                 complete.kind = common_plan_operation_kind::complete_step;
+                complete.host_authorized = true;
                 complete.plan_id = plan.id;
                 complete.expected_version = plan.version;
                 complete.step_id = tool_step_id;
@@ -1780,6 +1877,41 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         const bool draft_deferred_for_tool_repair =
             plan_has_failed_mandatory_tool_step(plan);
 
+        if (!draft_deferred_for_tool_repair && plan.workflow_definition &&
+                !plan.workflow_definition->verification_checks.empty()) {
+            const auto completed_steps = plan.steps;
+            const size_t start = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, completed_steps.size()) : 0;
+            for (size_t index = start; index < completed_steps.size(); ++index) {
+                const auto & step = completed_steps[index];
+                if (step.status != common_plan_step_status::completed || !step.tool_call) continue;
+                std::string saved_arguments;
+                for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                    if (item->id != "workflow_arguments:" + step.id || item->source != "workflow_arguments") continue;
+                    const auto value = json::parse(item->summary, nullptr, false);
+                    if (value.is_object() && value.contains("arguments")) saved_arguments = value["arguments"].dump();
+                    break;
+                }
+                const auto aliases = step.semantic_alias.value_or("");
+                const auto comma = aliases.rfind(',');
+                const auto transition = aliases.rfind("workflow-transition:", 0) == 0
+                    ? aliases.substr(comma == std::string::npos ? std::string("workflow-transition:").size() : comma + 1)
+                    : std::string{};
+                const auto * source = common_plan_workflow_observation(plan, transition);
+                const auto source_text = source ? source->summary : std::string("{}");
+                for (auto phase : {common_plan_verification_phase::before_tool, common_plan_verification_phase::after_tool}) {
+                    const auto checked = common_agent_verify_workflow(request, plan, phase, step.id,
+                        saved_arguments.empty() ? "{}" : saved_arguments, source_text);
+                    if (!record_grounding(checked, step.id, step.tool_call->name, false)) { result.error = error; return result; }
+                    if (!checked.passed) {
+                        result.error = "workflow completed-step revalidation incomplete: " + step.id + ": " + checked.summary;
+                        result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                        result.limit_reached = true;
+                        return result;
+                    }
+                }
+            }
+        }
+
         if (!draft_deferred_for_tool_repair && context_size_tokens > 0) {
             const size_t estimated_context_tokens = context_token_estimator
                 ? context_token_estimator(request, plan).value_or(estimate_common_agent_context_tokens(request, plan, context_budgets))
@@ -1814,6 +1946,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
 
         std::string draft;
+        std::vector<common_agent_research_verification_claim> declared_claims;
         if (draft_deferred_for_tool_repair) {
             append_trace(result, common_runtime_trace_stage::response,
                 common_runtime_trace_kind::decided,
@@ -1833,11 +1966,110 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
                 "draft generated", plan.id);
         }
+        if (!draft_deferred_for_tool_repair) {
+            json claims = json::array();
+            common_agent_grounding_result grounded;
+            if (common_agent_workflow_requires_claims(plan)) {
+                std::string answer, parse_error;
+                if (!common_agent_parse_grounded_draft(draft,
+                        request.tool_output_format != common_agent_tool_output_format::compact_dsl,
+                        answer, claims, parse_error)) {
+                    grounded.passed = false;
+                    grounded.summary = parse_error;
+                    grounded.records.push_back({{"status", "unknown"}, {"reason", parse_error}});
+                } else {
+                    grounded = common_agent_verify_declared_claims(claims,
+                        common_agent_workflow_claim_handles(request, plan), declared_claims);
+                    if (grounded.passed) draft = std::move(answer);
+                }
+                if (!grounded.records.empty()) {
+                    auto details = std::move(grounded.records);
+                    grounded.records = json::array({json{{"kind","declared_numeric_claims"},
+                        {"status",grounded.passed ? "passed" : "unknown"}, {"claims",std::move(details)}}});
+                }
+            }
+            auto final_checks = common_agent_verify_workflow(request, plan,
+                common_plan_verification_phase::before_answer, "answer", "{}",
+                json{{"answer", draft}, {"claims", claims}}.dump());
+            for (auto & record : final_checks.records) grounded.records.push_back(std::move(record));
+            grounded.passed = grounded.passed && final_checks.passed;
+            grounded.summary += final_checks.summary;
+            if (!record_grounding(grounded, "answer", "", false)) { result.error = error; return result; }
+            if (!grounded.passed) {
+                if (request.enable_reflection && grounding_revision_count < request.max_reflection_rounds &&
+                        iteration + 1 < runtime_iteration_limit) {
+                    ++grounding_revision_count;
+                    guidance.push_back("Host grounding check: " + grounded.summary +
+                        " Use only supplied evidence handles and matching values, units and dimension codes.");
+                    continue;
+                }
+                result.error = "workflow answer grounding incomplete: " + grounded.summary;
+                result.response = "The numerical result could not be verified from the available evidence.";
+                result.limit_reached = true;
+                result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                return result;
+            }
+            if (!declared_claims.empty()) {
+                json values = json::array();
+                std::vector<std::string> evidence_ids;
+                for (const auto & claim : declared_claims) {
+                    values.push_back({{"claim",json::parse(claim.statement)}, {"dataset",claim.dataset_uri},
+                        {"source_location",claim.source_location}, {"claim_id",claim.claim_id}});
+                    evidence_ids.insert(evidence_ids.end(), claim.evidence_ids.begin(), claim.evidence_ids.end());
+                }
+                common_plan_operation observed;
+                observed.kind = common_plan_operation_kind::record_observation;
+                observed.plan_id = plan.id; observed.expected_version = plan.version;
+                observed.reason_summary = "host-checked declared numeric claim";
+                observed.host_authorized = true;
+                observed.observation = common_plan_observation{"declared_claims:" + std::to_string(plan.version),
+                    "declared_claim", json{{"claims", std::move(values)},
+                        {"scope", "declared numeric claims only"}}.dump(), 1.0f, std::move(evidence_ids)};
+                if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+            }
+            for (const auto & claim : declared_claims) {
+                if (turn.research_workspace && result.research_result) {
+                    const auto source_id = "dataset:" + claim.dataset_uri;
+                    const auto evidence_id = "workflow-claim:" + claim.claim_id;
+                    if (std::none_of(turn.research_workspace->sources.begin(), turn.research_workspace->sources.end(),
+                            [&](const auto & source) { return source.source_id == source_id; })) {
+                        if (turn.research_workspace->sources.size() >= static_cast<size_t>(turn.research_workspace->budget.max_sources)) {
+                            append_trace(result, common_runtime_trace_stage::research, common_runtime_trace_kind::recorded,
+                                "declared numeric evidence retained in plan; research source budget full", plan.id);
+                            continue;
+                        }
+                        common_agent_research_source source;
+                        source.source_id = source_id; source.title = claim.dataset_uri;
+                        source.origin = claim.resource_uris.empty() ? claim.dataset_uri : claim.resource_uris.front();
+                        source.authority = "host-normalized tool result";
+                        source.kind = common_agent_research_source_kind::api_result;
+                        source.availability = common_agent_research_source_availability::materialized_context;
+                        source.quality_score = 1.0;
+                        if (!common_agent_research_add_source(*turn.research_workspace, source, error)) { result.error = error; return result; }
+                        result.research_result->sources.push_back(std::move(source));
+                    }
+                    if (std::none_of(turn.research_workspace->evidence.begin(), turn.research_workspace->evidence.end(),
+                            [&](const auto & evidence) { return evidence.evidence_id == evidence_id; })) {
+                        common_agent_research_evidence evidence;
+                        evidence.evidence_id = evidence_id; evidence.source_id = source_id;
+                        evidence.claim_id = claim.claim_id; evidence.statement = claim.statement;
+                        evidence.source_location = claim.source_location;
+                        evidence.relation = common_agent_research_evidence_relation::supports;
+                        evidence.origin = common_agent_research_evidence_origin::normalized_tool_result;
+                        evidence.directly_observed = true; evidence.relevance = evidence.confidence = 1.0;
+                        if (!common_agent_research_record_evidence(*turn.research_workspace, evidence, error)) { result.error = error; return result; }
+                        result.research_result->evidence.push_back(std::move(evidence));
+                        result.research_result->critical_evidence_ids.push_back(evidence_id);
+                    }
+                }
+            }
+        }
         if (result.research_result) {
             const auto & verifier = research_verifier ? *research_verifier : default_research_verifier;
             common_agent_research_verification_context verification_context;
             verification_context.plan = &plan;
             verification_context.memories = &request.memories;
+            verification_context.claims = declared_claims;
             for (const auto & input : request.input_resources) {
                 verification_context.input_resources.push_back(input.resource);
             }

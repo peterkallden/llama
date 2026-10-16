@@ -49,6 +49,13 @@ int main() {
     common_plan_workflow_definition target;
     target.workflow_ref = "workflow://eurostat/metadata";
     target.workflow_revision = "v2";
+    target.preferred_thinking_mode = "deliberate";
+    target.require_declared_claims = true;
+    common_plan_verification_check evidence_check;
+    evidence_check.id = "evidence-present";
+    evidence_check.phase = common_plan_verification_phase::before_answer;
+    evidence_check.left.literal_json = "1";
+    target.verification_checks = {evidence_check};
     target.family = "openapi";
     target.graph_revision = "metadata-graph-v2";
     target.required_capabilities = {"dataset.inspect"};
@@ -92,6 +99,9 @@ int main() {
     assert(restored->observations.front().resource_refs.size() == 1 &&
         restored->observations.front().resource_refs.front().uri == "resource://eurostat/toc");
     assert(restored->workflow_definition && restored->workflow_definition->workflow_ref == "workflow://eurostat/metadata");
+    assert(restored->workflow_definition->preferred_thinking_mode == "deliberate");
+    assert(restored->workflow_definition->require_declared_claims);
+    assert(restored->workflow_definition->verification_checks.front().left.literal_json == "1");
     assert(restored->route_binding && restored->route_binding->workflow_revision == "v2");
     assert(restored->route_binding->continuation_link_id == route.continuation_link_id &&
         restored->route_binding->continuation_source_fingerprint == "fp-1");

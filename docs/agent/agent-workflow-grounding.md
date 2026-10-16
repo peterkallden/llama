@@ -1,0 +1,157 @@
+# Workflow grounding
+
+Implementation status: source and regression cases added; build, CTests,
+MCP checks and model smokes deliberately deferred to the next validation sweep.
+The earlier Eurostat run22 trace predates this implementation.
+
+## Execution preference
+
+`preferred_thinking_mode` is optional workflow metadata, accepting `deliberate`
+or `research`. It is considered for automatic thinking selection after route
+selection, on resume and on a declared handoff. An explicit requested mode and
+host escalation/review limits take precedence. The driver preserves an already
+higher mode and does not expand tool or plan-revision budgets. The trace records
+the preferred and resolved modes and denial reasons. Research remains subject
+to its existing execution envelope and evidence-acquisition budgets.
+
+Old packages without the field retain their previous behavior. Workflows with
+verification or declared-claim contracts require package `schema_version: 2`;
+the current importer accepts schema 1 and 2. Export chooses schema 2 when these
+contracts are present, so an older schema-1-only importer rejects rather than
+silently dropping mandatory gates. The historical starter filename is retained;
+its package version is now v24.
+
+## Verification contract
+
+`verification_checks` is a workflow-level bounded list (maximum 32), with each
+check attached to a stable tool transition through `transition`. The check has
+an `id`, `phase`, `operation`, `left`, optional `right`, and `required` (default
+true). `before_answer` conditions need no tool transition. Available operations
+are `required`, `equal`, `member`, `count`, `status`, `dimension_membership`,
+and `coverage`.
+
+```json
+{
+  "preferred_thinking_mode": "deliberate",
+  "require_declared_claims": true,
+  "verification_checks": [
+    {
+      "id": "geography-defined",
+      "transition": "request-observations",
+      "phase": "before_tool",
+      "operation": "required",
+      "left": {"source": "arguments", "pointer": "/geo"},
+      "clarification_question": "Which geographic area should the statistics cover?"
+    }
+  ]
+}
+```
+
+Operands select typed JSON through RFC-6901 pointers. Sources are `arguments`
+(materialized current arguments), `result` (the full current successful output),
+`literal` (the `value` member), `observation` (successful named completed
+transition), `transition_arguments` (host-retained actual arguments of that
+completed transition), and `handoff` (the host snapshot from a declared link).
+`observation` and `transition_arguments` require `transition`; they never search
+an earlier workflow segment by a same-named transition. Handoff snapshots bind
+the source fingerprint and target workflow/revision.
+
+Setting `dataset_rows: true` resolves a dataset URI through the host's bounded
+reader. It checks the current descriptor, resource read authority and source
+fingerprint before reading all rows, with a 10,000-row bound. Derived datasets
+retain the first parent's source provenance, and every parent is authorized
+through the existing lineage (maximum depth 16 / 64 visited nodes). Partial results,
+unavailable readers and unknown authority fail to `unknown`. Reads use the
+existing data store and do not expose a new model tool or network operation.
+
+Before-checks run after argument materialization and schema validation, before
+execution. After-checks consume the full host output before the next workflow
+transition; compact model observations do not define the verifier's input.
+The successful tool observation remains stored if verification fails. Required
+checks must produce `passed`; `failed` and `unknown` stop dependent progress.
+A missing required argument can return its configured clarification question
+and leave the step incomplete for repair on a later turn.
+
+Proof observations record phase, check/step/revision, status, evidence references,
+reason and an input fingerprint. They use existing plan persistence. Unchanged
+revalidation results are not stored repeatedly. Completed guarded steps are
+rechecked against current evidence before synthesis, including on resume.
+Only host-authorized operations may record grounding evidence or complete a
+guarded step; reflection cannot bypass a failed gate by naming a successful
+transport observation or replacing its transition identity.
+
+## Eurostat and dataset interpretation
+
+The SDMX normalizer's rows retain constraint regions, include/exclude flags,
+dimension codes and constraint provenance. `dimension_membership` checks tuples
+against these grouped regions; it does not merge them into independent global
+code lists. Excluded regions are respected. Unsupported key exclusions,
+ranges or varying unbound dimensions remain unknown. At most 256 requested
+tuples are expanded. This is bounded verification, not a general SDMX solver.
+
+`dimension_mapping` maps argument/result field names to normalized dimension
+names. Eurostat uses `geo -> geo` and `time -> TIME_PERIOD` before retrieval.
+After JSON-stat materialization, coverage compares result `geo`/`time` against
+the retained request, checks complete requested tuples and non-null values,
+then checks returned `unit`, `freq`, `geo` and `time` against SDMX constraints.
+Status policy in the starter permits only absent/null or empty flags.
+
+Regional titles do not exclude national aggregates. The saved run22 response
+from `demo_r_d3dens` contains SE/2020/PER_KM2/A and 25.2; its title alone was
+not grounds for rejecting it. Catalogue discovery still narrows candidates
+by concept before metadata inspection. Metadata verifies code support, not
+whether an inferred indicator definition exactly matches a user's intent.
+
+## Declared numerical claims
+
+`require_declared_claims` makes the existing draft generation return an answer
+plus 1..16 declarations. The requirement is retained in host plan observations
+through subsequent declared analysis handoffs. No additional extraction call
+is introduced. The selected model-facing DSL/JSON format is used.
+
+The host exposes short evidence handles (`E1`, etc.), values, units, dimensions
+and status. Full dataset/resource references and fingerprints remain on the
+host. A maximum of 16 handles and 8 KiB of host handle data are prepared.
+
+```text
+answer: Sweden had 25.2 persons per square kilometre in 2020.
+claim: E1
+value: 25.2
+unit: Persons per square kilometre
+dimension: freq A
+dimension: geo SE
+dimension: time 2020
+```
+
+For JSON the equivalent object has `answer` and `claims`, where each claim
+contains `handle`, `value`, `unit`, and a `dimensions` object. Repeat `answer`
+lines for a multiline DSL answer and repeat `claim` blocks for multiple claims.
+Dimension names or codes containing spaces may be quoted.
+The host verifies exact numeric value, unit, dimension codes and usable status
+against the referenced cell. It retains dataset URI, cell location, source
+resource and fingerprint in existing plan/research evidence. Declared claims
+populate the existing research verifier's claim context; deliberate uses the
+same numeric check without starting research.
+
+V1 handles require a materialized numeric `value` column with explicit `unit`
+or `unit_label`. A transformed result must retain those and the required
+dimensions to be admitted. Missing measurement provenance or flagged values
+remain unsupported rather than deriving units or calculations from model text.
+Draft revision uses the existing bounded iteration/reflection budgets.
+Only the declarations are checked: arbitrary claims in prose are not thereby
+certified, and a correctly quoted data point does not prove a causal explanation.
+
+## Pending validation
+
+The prepared `test-agent-workflow-grounding` cases cover preference precedence,
+codec validation, handoff isolation, tuple membership, coverage, DSL/JSON claims
+and forged proof rejection. Existing bootstrap and SQLite/Cozo roundtrip cases
+are extended. Build and execute these only in the next validation sweep.
+
+That sweep must also exercise the daemon's dataset reader, missing-argument
+clarification/resume, tool success followed by a failed postcondition, stale
+sources, guarded plan mutation, budget exhaustion and bounded claim revisions.
+Then run MCP and Qwen with full trace/GPU auto-fit, contrasting supported SE/2020
+with absent codes, wrong unit/status and unsupported declarations. The earlier
+context-pressure stop still requires investigation before claiming model E2E
+completion. No tests or performance claims are implied by this source delivery.

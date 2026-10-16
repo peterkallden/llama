@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v23",
+  "version": "v24",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -227,11 +227,12 @@
     },
     {
       "id": "web-research-path-v4",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v24",
       "workflow_ref": "workflow://web/research",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
+      "preferred_thinking_mode": "research",
       "family": "web",
-      "graph_revision": "web-research-graph@v4",
+      "graph_revision": "web-research-graph@v5",
       "resource_read_policy": "chunked",
       "required_capabilities": ["web.search", "web.fetch"],
       "optional_capabilities": ["resource.read", "dataset.inspect", "artifact.export"],
@@ -358,14 +359,15 @@
     },
     {
       "id": "eurostat-catalog-discovery-path-v3",
-      "source_revision": "agent-workflows-starter@v23",
+      "source_revision": "agent-workflows-starter@v24",
       "workflow_ref": "workflow://eurostat/catalog-discovery",
-      "workflow_revision": "v6",
+      "workflow_revision": "v7",
+      "preferred_thinking_mode": "deliberate",
       "family": "dataset",
-      "graph_revision": "eurostat-catalog-discovery-graph@v6",
+      "graph_revision": "eurostat-catalog-discovery-graph@v7",
       "required_capabilities": ["web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_links": [{"from_transition": "inspect-toc-schema", "from_terminal_state": "catalog_schema_ready", "workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v8", "bindings": [
+      "continuation_links": [{"from_transition": "inspect-toc-schema", "from_terminal_state": "catalog_schema_ready", "workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v9", "bindings": [
         {"transition": "search-catalogue", "tool": "data.query", "target": "/dataset", "source": "/result/dataset"}
       ]}],
       "required_context": ["context.network.allowed"],
@@ -383,15 +385,16 @@
     },
     {
       "id": "eurostat-metadata-resolution-path-v2",
-      "source_revision": "agent-workflows-starter@v23",
+      "source_revision": "agent-workflows-starter@v24",
       "workflow_ref": "workflow://eurostat/metadata-resolution",
-      "workflow_revision": "v8",
+      "workflow_revision": "v9",
+      "preferred_thinking_mode": "deliberate",
       "family": "openapi",
-      "graph_revision": "eurostat-metadata-resolution-graph@v8",
+      "graph_revision": "eurostat-metadata-resolution-graph@v9",
       "allowed_tools": ["eurostat_sdmx.getStructure", "dataset.inspect", "dataset.sample", "data.query"],
       "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample", "data.query"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_links": [{"from_transition": "inspect-content-constraint", "from_terminal_state": "metadata_materialized", "workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v7", "bindings": [
+      "continuation_links": [{"from_transition": "inspect-content-constraint", "from_terminal_state": "metadata_materialized", "workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v8", "bindings": [
         {"transition": "request-observations", "tool": "eurostat.getData", "target": "/datasetCode", "source": "/choice", "from_transition": "choose-dataflow"}
       ]}],
       "required_context": ["context.openapi.available"],
@@ -414,11 +417,13 @@
     },
     {
       "id": "eurostat-data-retrieval-path-v2",
-      "source_revision": "agent-workflows-starter@v21",
+      "source_revision": "agent-workflows-starter@v24",
       "workflow_ref": "workflow://eurostat/data-retrieval",
-      "workflow_revision": "v7",
+      "workflow_revision": "v8",
+      "preferred_thinking_mode": "deliberate",
+      "require_declared_claims": true,
       "family": "openapi",
-      "graph_revision": "eurostat-data-retrieval-graph@v7",
+      "graph_revision": "eurostat-data-retrieval-graph@v8",
       "allowed_tools": ["eurostat.getData", "dataset.inspect", "dataset.sample"],
       "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
@@ -428,10 +433,27 @@
         {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
       ],
       "required_context": ["context.openapi.available"],
-      "start_state": "verified_query_ready",
+      "start_state": "query_parameters_pending",
+      "verification_checks": [
+        {"id":"geography-defined","transition":"request-observations","phase":"before_tool","operation":"required","left":{"source":"arguments","pointer":"/geo"},"clarification_question":"Which geographic area should the statistics cover?"},
+        {"id":"period-defined","transition":"request-observations","phase":"before_tool","operation":"required","left":{"source":"arguments","pointer":"/time"},"clarification_question":"Which year or period should be used?"},
+        {"id":"metadata-supports-query","transition":"request-observations","phase":"before_tool","operation":"dimension_membership",
+          "left":{"source":"arguments"},"right":{"source":"handoff","pointer":"/value/result/dataset","dataset_rows":true},
+          "dimension_mapping":{"geo":"geo","time":"TIME_PERIOD"}},
+        {"id":"returned-dimensions-match","transition":"materialize-json-stat","phase":"after_tool","operation":"coverage",
+          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},
+          "right":{"source":"transition_arguments","transition":"request-observations","pointer":"/arguments"},
+          "dimension_mapping":{"geo":"geo","time":"time"}},
+        {"id":"observation-status-usable","transition":"materialize-json-stat","phase":"after_tool","operation":"status",
+          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},"right":{"value":[null,""]}},
+        {"id":"returned-codes-supported","transition":"materialize-json-stat","phase":"after_tool","operation":"dimension_membership",
+          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},
+          "right":{"source":"handoff","pointer":"/value/result/dataset","dataset_rows":true},
+          "dimension_mapping":{"geo":"geo","time":"TIME_PERIOD","unit":"unit","freq":"freq"}}
+      ],
       "terminal_states": ["json_stat_dataset_ready"],
       "transitions": [
-        {"id": "request-observations", "from": "verified_query_ready", "to": "observations_retrieved", "tool": "eurostat.getData", "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}", "model_supplies_arguments": true},
+        {"id": "request-observations", "from": "query_parameters_pending", "to": "observations_retrieved", "tool": "eurostat.getData", "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}", "model_supplies_arguments": true},
         {"id": "materialize-json-stat", "from": "observations_retrieved", "to": "json_stat_dataset_ready", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
           {"target": "/resource", "from": "request-observations", "source": "/resources/0/uri"}
         ]}
@@ -624,7 +646,7 @@
     },
     {
       "id": "web-research-v4",
-      "source_revision": "agent-workflows-starter@v11",
+      "source_revision": "agent-workflows-starter@v24",
       "selection_description": "Research a question using bounded search and source retrieval.",
       "purpose": "Build a traceable answer from sources that directly support its claims.",
       "goal": "Answer the research question from retrieved source evidence.",
@@ -633,7 +655,7 @@
       "workflow_policy": "preferred",
       "procedure_refs": ["web-source-evidence-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://web/research", "workflow_revision": "v4"}
+        {"workflow_ref": "workflow://web/research", "workflow_revision": "v5"}
       ],
       "constraints": [
         {"id": "source-grounding", "description": "Do not state material web claims without retrieved source evidence.", "hard": true},
@@ -807,7 +829,7 @@
     },
     {
       "id": "eurostat-catalog-discovery-v3",
-      "source_revision": "agent-workflows-starter@v23",
+      "source_revision": "agent-workflows-starter@v24",
       "selection_description": "Find candidate Eurostat tables by statistical concept and inspect the host-materialized catalogue rows.",
       "purpose": "Resolve a user's statistical measure and coverage into candidate Eurostat table codes without guessing codes.",
       "goal": "Select a table whose returned title, category and coverage plausibly match the requested measure.",
@@ -815,7 +837,7 @@
       "required_capabilities": ["tool.web", "tool.dataset", "workflow.dataset"],
       "workflow_policy": "required",
       "procedure_refs": ["statistical-intent-and-measure-v1", "eurostat-catalog-discovery-v2", "structured-resource-dataset-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v6"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v7"}],
       "next_action": "clarify-statistical-intent",
       "constraints": [
         {"id": "returned-code-only", "description": "Use only a table code returned by the host-materialized Eurostat catalogue.", "hard": true},
@@ -831,7 +853,7 @@
     },
     {
       "id": "eurostat-metadata-resolution-v2",
-      "source_revision": "agent-workflows-starter@v23",
+      "source_revision": "agent-workflows-starter@v24",
       "selection_description": "Resolve a returned Eurostat dataflow against its SDMX structure, dimensions, code lists and constraints.",
       "purpose": "Validate candidate identifiers and dimension codes before requesting observations.",
       "goal": "Establish a metadata-backed Eurostat query with compatible measure, geography, time and unit.",
@@ -839,7 +861,7 @@
       "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["eurostat-sdmx-metadata-resolution-v2", "statistical-intent-and-measure-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v8"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v9"}],
       "next_action": "resolve-dataflow-structure",
       "constraints": [
         {"id": "metadata-grounded-parameters", "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.", "hard": true},
@@ -855,7 +877,7 @@
     },
     {
       "id": "eurostat-data-retrieval-v2",
-      "source_revision": "agent-workflows-starter@v20",
+      "source_revision": "agent-workflows-starter@v24",
       "selection_description": "Fetch a metadata-validated Eurostat JSON-stat response and continue with standard dataset analysis.",
       "purpose": "Retrieve bounded observations while preserving Eurostat query provenance and status metadata.",
       "goal": "Create a host dataset from JSON-stat and answer the statistical question using the ordinary dataset workflows.",
@@ -863,7 +885,7 @@
       "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["json-stat-dataset-interpretation-v1", "structured-resource-dataset-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v7"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v8"}],
       "next_action": "request-observations",
       "constraints": [
         {"id": "validated-query-only", "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.", "hard": true},

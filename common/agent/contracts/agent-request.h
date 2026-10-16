@@ -123,6 +123,8 @@ struct common_agent_request {
     // Per-turn activity label supplied and transitioned by the host/runtime.
     // It is prompt/trace context, not durable plan state or tool authority.
     common_agent_cognitive_state cognitive_state;
+    // Host-owned bounded reader. No model tool call, new authority or store.
+    std::function<bool(const std::string &, nlohmann::ordered_json &, std::string &)> grounding_dataset_reader;
 };
 
 inline common_agent_scope common_agent_scope_from_request(const common_agent_request & request) {

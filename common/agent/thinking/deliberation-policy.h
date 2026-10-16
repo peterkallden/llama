@@ -99,7 +99,10 @@ bool resolve_common_agent_deliberation_policy(
 
 common_agent_escalation_decision resolve_common_agent_escalation(
         const common_agent_deliberation_policy & policy,
-        const common_agent_escalation_signals & signals);
+    const common_agent_escalation_signals & signals);
+
+common_agent_escalation_decision resolve_common_agent_workflow_thinking_preference(
+    const common_agent_deliberation_policy &, const std::string & preference);
 
 common_agent_escalation_decision resolve_common_agent_reflection_escalation(
         const common_agent_deliberation_policy & policy,

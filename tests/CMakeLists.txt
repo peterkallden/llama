@@ -499,6 +499,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-route-compiler.cpp
+        test-agent-workflow-grounding.cpp
         test-agent-execution-envelope.cpp
         test-agent-daemon-scope.cpp
     )

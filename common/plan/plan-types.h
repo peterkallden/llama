@@ -226,6 +226,30 @@ struct common_plan_workflow_continuation_link {
     std::vector<argument_binding> argument_bindings;
 };
 
+enum class common_plan_verification_phase { before_tool, after_tool, before_answer };
+enum class common_plan_verification_operation { required, equal, member, count, status, dimension_membership, coverage };
+struct common_plan_verification_operand {
+    // arguments, result, observation or literal. Observations are resolved
+    // from completed transitions in the active workflow segment.
+    std::string source = "literal";
+    std::string transition_id;
+    std::string pointer;
+    std::string literal_json = "null";
+    bool dataset_rows = false;
+};
+struct common_plan_verification_check {
+    std::string id;
+    std::string transition_id;
+    common_plan_verification_phase phase = common_plan_verification_phase::before_tool;
+    common_plan_verification_operation operation = common_plan_verification_operation::required;
+    common_plan_verification_operand left, right;
+    bool required = true;
+    // Format-independent argument-field -> dimension-field mapping. The
+    // dataset normalizer retains region grouping for constraint evaluation.
+    std::string dimension_mapping_json = "{}";
+    std::string clarification_question;
+};
+
 // Workflow definitions describe a host-validated family of work. They never
 // contain request-specific resource ids or tool arguments.
 struct common_plan_workflow_definition {
@@ -259,6 +283,9 @@ struct common_plan_workflow_definition {
     std::string start_state;
     std::vector<std::string> terminal_states;
     std::vector<common_plan_workflow_transition> transitions;
+    std::string preferred_thinking_mode;
+    std::vector<common_plan_verification_check> verification_checks;
+    bool require_declared_claims = false;
 };
 
 // Host-owned route provenance for a concrete task plan.  This is deliberately

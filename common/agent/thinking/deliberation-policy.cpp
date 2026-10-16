@@ -49,6 +49,25 @@ const char * common_agent_reflection_next_action_name(common_agent_reflection_ne
     return "accept";
 }
 
+common_agent_escalation_decision resolve_common_agent_workflow_thinking_preference(
+        const common_agent_deliberation_policy & policy, const std::string & preference) {
+    common_agent_escalation_decision result;
+    result.from_mode = result.to_mode = policy.mode;
+    if (preference.empty()) { result.summary = "workflow thinking preference absent"; return result; }
+    if (preference != "research" && preference != "deliberate") { result.summary = "unsupported workflow thinking preference"; return result; }
+    result.to_mode = preference == "research" ? common_agent_thinking_mode::research : common_agent_thinking_mode::deliberate;
+    const bool higher = static_cast<int>(result.to_mode) > static_cast<int>(policy.mode);
+    result.escalation_requested = higher;
+    if (!higher) { result.summary = "workflow preference already satisfied; preserve current mode"; return result; }
+    if (policy.requested_mode != common_agent_thinking_request::auto_select) {
+        result.summary = "workflow preference deferred to explicit thinking mode"; return result;
+    }
+    result.allowed = policy.allow_escalation && policy.max_escalations > 0 &&
+        static_cast<int>(result.to_mode) <= static_cast<int>(policy.maximum_mode);
+    result.summary = result.allowed ? "workflow thinking preference accepted" : "workflow thinking preference denied by policy/budget";
+    return result;
+}
+
 static int thinking_mode_rank(common_agent_thinking_mode mode) {
     switch (mode) {
         case common_agent_thinking_mode::reflective: return 0;

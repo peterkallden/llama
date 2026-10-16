@@ -5,6 +5,7 @@
 #include "resource/resource-contract.h"
 
 #include <memory>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -36,4 +37,5 @@ struct common_agent_runtime_tooling {
     // The runtime copies this into each turn request; it is never a model alias
     // unless the planner explicitly uses the documented host inventory form.
     std::vector<common_agent_dataset_descriptor> available_datasets;
+    std::function<bool(const std::string &, nlohmann::ordered_json &, std::string &)> grounding_dataset_reader;
 };

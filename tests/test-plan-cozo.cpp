@@ -58,6 +58,13 @@ int main() {
         common_plan_workflow_definition transitioned_workflow;
         transitioned_workflow.workflow_ref = "workflow://dataset/quality";
         transitioned_workflow.workflow_revision = "v2";
+        transitioned_workflow.preferred_thinking_mode = "research";
+        transitioned_workflow.require_declared_claims = true;
+        common_plan_verification_check evidence_check;
+        evidence_check.id = "evidence-present";
+        evidence_check.phase = common_plan_verification_phase::before_answer;
+        evidence_check.left.literal_json = "1";
+        transitioned_workflow.verification_checks = {evidence_check};
         transitioned_workflow.family = "dataset";
         transitioned_workflow.graph_revision = "quality-graph-v2";
         transitioned_workflow.allowed_tools = {"dataset.select"};
@@ -121,6 +128,10 @@ int main() {
             plan->workflow_definition->workflow_ref == "workflow://dataset/quality" &&
             plan->workflow_definition->resource_read_policy ==
                 common_plan_workflow_resource_read_policy::chunked);
+        assert(plan->workflow_definition->preferred_thinking_mode == "research");
+        assert(plan->workflow_definition->require_declared_claims);
+        assert(plan->workflow_definition->verification_checks.size() == 1);
+        assert(plan->workflow_definition->verification_checks.front().left.literal_json == "1");
         assert(plan->workflow_definition->required_capabilities ==
             std::vector<std::string>({"dataset.resolve", "dataset.inspect"}) &&
             plan->workflow_definition->optional_capabilities ==
