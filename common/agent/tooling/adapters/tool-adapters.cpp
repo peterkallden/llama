@@ -359,6 +359,15 @@ std::string trim_copy(const std::string & value) {
     return value.substr(begin, end - begin);
 }
 
+bool valid_accept_header(const std::string & value) {
+    if (value.empty() || value.size() > 512) return false;
+    return std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        // Accept is the only caller-controlled request header. Keep it printable
+        // ASCII so it cannot inject another HTTP header or a request line.
+        return c >= 0x20 && c <= 0x7e;
+    });
+}
+
 std::string csv_escape(const json & value) {
     if (value.is_null()) return {};
     std::string text = value.is_string() ? value.get<std::string>() : value.dump();
@@ -560,15 +569,6 @@ json trim_search_results_for_inline(
     return trimmed;
 }
 
-std::string bounded_text_preview(
-        const std::string & text,
-        size_t max_chars) {
-    if (text.size() <= max_chars) {
-        return text;
-    }
-    return text.substr(0, max_chars);
-}
-
 std::string url_encode(const std::string & value) {
     std::ostringstream out;
     out << std::hex << std::uppercase;
@@ -666,7 +666,8 @@ bool winhttp_query_string(HINTERNET request, DWORD query, std::string & value, s
 }
 
 bool winhttp_fetch_text(const std::string & url, const common_http_url & parts, size_t max_bytes,
-        std::string & body, int & status, std::string & content_type, std::string & error, bool & truncated) {
+        const std::string & accept, std::string & body, int & status, std::string & content_type,
+        std::string & error, bool & truncated) {
     const auto host = utf8_to_wide(parts.host);
     const auto path = utf8_to_wide(parts.path);
     if (host.empty() || path.empty()) { error = "URL is not valid UTF-8"; return false; }
@@ -685,8 +686,8 @@ bool winhttp_fetch_text(const std::string & url, const common_http_url & parts, 
         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (!request) { error = "WinHTTP request creation failed: " + winhttp_error(GetLastError()); close_connection(); return false; }
     const auto close_request = [&] { WinHttpCloseHandle(request); close_connection(); };
-    const wchar_t headers[] = L"Accept: text/html, text/plain;q=0.9, application/xhtml+xml;q=0.8\r\n";
-    if (!WinHttpSendRequest(request, headers, (DWORD) -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request, nullptr)) {
+    const std::wstring headers = L"Accept: " + utf8_to_wide(accept) + L"\r\n";
+    if (!WinHttpSendRequest(request, headers.c_str(), (DWORD) -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request, nullptr)) {
         error = "WinHTTP request failed: " + winhttp_error(GetLastError()); close_request(); return false;
     }
 
@@ -722,7 +723,9 @@ bool winhttp_fetch_text(const std::string & url, const common_http_url & parts, 
 
 #endif
 
-bool http_fetch_text(const std::string & url, size_t max_bytes, json & response, std::string & error, std::string * raw_body = nullptr) {
+bool http_fetch_text(const std::string & url, size_t max_bytes, json & response, std::string & error,
+        std::string * raw_body = nullptr,
+        const std::string & accept = "text/html, text/plain;q=0.9, application/xhtml+xml;q=0.8") {
     const auto request_started = std::chrono::steady_clock::now();
     std::string final_url = url;
     const auto record_http = [&](int status, const std::string & content_type, size_t bytes) {
@@ -742,7 +745,7 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
         bool truncated = false;
         int status = 0;
         std::string content_type;
-        if (!winhttp_fetch_text(url, parts, max_bytes, body, status, content_type, error, truncated)) {
+        if (!winhttp_fetch_text(url, parts, max_bytes, accept, body, status, content_type, error, truncated)) {
             record_http(status, content_type, body.size());
             return false;
         }
@@ -753,7 +756,7 @@ bool http_fetch_text(const std::string & url, size_t max_bytes, json & response,
         cli.set_read_timeout(10);
         cli.set_write_timeout(10);
         cli.set_follow_location(true);
-        cli.set_default_headers({{"User-Agent", "llama-agent/1"}, {"Accept", "text/html, text/plain;q=0.9, application/xhtml+xml;q=0.8"}});
+        cli.set_default_headers({{"User-Agent", "llama-agent/1"}, {"Accept", accept}});
 
         std::string body;
         body.reserve(std::min<size_t>(max_bytes, 65536));
@@ -1035,12 +1038,20 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     const auto url = trim_copy(arguments["url"].get<std::string>());
                     const auto extract = arguments.value("extract", std::string("text"));
                     const int max_bytes = arguments.value("max_bytes", 10 * 1024 * 1024);
-                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 || max_bytes > 10 * 1024 * 1024) {
+                    std::string accept = "*/*";
+                    if (arguments.contains("accept")) {
+                        if (!arguments["accept"].is_string()) {
+                            return tool_validation_failure("tool.web_fetch.out_of_bounds", "web_fetch accept must be a string", "Web fetch arguments are out of bounds.");
+                        }
+                        accept = trim_copy(arguments["accept"].get<std::string>());
+                    }
+                    if (url.size() < 9 || url.size() > 2048 || extract != "text" || max_bytes < 1 ||
+                            max_bytes > 10 * 1024 * 1024 || !valid_accept_header(accept)) {
                         return tool_validation_failure("tool.web_fetch.out_of_bounds", "web_fetch arguments are out of bounds", "Web fetch arguments are out of bounds.");
                     }
                     json fetched;
                     std::string raw_body;
-                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err, &raw_body)) {
+                    if (!http_fetch_text(url, (size_t) max_bytes, fetched, err, &raw_body, accept)) {
                         auto failure = fetched.is_object() && fetched.value("truncated", false)
                             ? tool_limit_failure("tool.web_fetch.byte_limit", std::move(err),
                                 "Resource exceeds max_bytes; request a larger bound within the tool's limit.")
@@ -1073,7 +1084,6 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         fetched.value("truncated", false),
                     };
                     const std::string title = trim_copy(fetch_result.title);
-                    const std::string text = fetch_result.text;
                     const bool truncated = fetch_result.truncated;
                     common_tool_http_metadata http_metadata;
                     if (fetched.contains("http") && fetched["http"].is_object()) {
@@ -1094,12 +1104,13 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     // processing instead of storing only an extracted-text
                     // JSON wrapper.
                     const bool should_externalize = bindings.resource_runtime.store != nullptr;
+                    auto payload = common_tool_web_fetch_make_inline_result(fetch_result);
                     if (!should_externalize) {
                         auto success = common_tool_execution_result::success(
-                            common_tool_web_fetch_result_to_json(fetch_result).dump(),
+                            common_tool_web_fetch_inline_result_to_json(payload).dump(),
                             title.empty()
-                                ? "Fetched bounded page text from " + url + "."
-                                : "Fetched bounded page text for \"" + title + "\".");
+                                ? "Fetched bounded page text from " + url + "; only a bounded preview is available."
+                                : "Fetched bounded page text for \"" + title + "\"; only a bounded preview is available.");
                         success.http = std::move(http_metadata);
                         return success;
                     }
@@ -1134,17 +1145,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     }
                     http_metadata.resource_ref = resource_ref.uri;
 
-                    common_tool_web_fetch_inline_result payload{
-                        fetch_result.url,
-                        fetch_result.final_url,
-                        fetch_result.status,
-                        fetch_result.content_type,
-                        fetch_result.title,
-                        bounded_text_preview(text, 1024),
-                        text.size(),
-                        truncated,
-                        resource_ref.uri,
-                    };
+                    payload.resource_ref = resource_ref.uri;
 
                     auto success = common_tool_execution_result::success(
                         common_tool_web_fetch_inline_result_to_json(payload).dump(),

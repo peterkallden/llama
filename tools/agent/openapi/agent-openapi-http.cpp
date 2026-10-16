@@ -610,7 +610,15 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
                 }
             }
         }
-        httplib::Headers headers;
+        std::string accept = "application/json";
+        if (!operation.response_media_types.empty()) {
+            accept.clear();
+            for (const auto & media_type : operation.response_media_types) {
+                if (!accept.empty()) accept += ", ";
+                accept += media_type;
+            }
+        }
+        httplib::Headers headers{{"Accept", std::move(accept)}};
         std::string token;
         if (operation.auth_required && (config.auth.type == "bearer" || config.auth.type == "api_key")) {
             const char * value = std::getenv(config.auth.token_env.c_str());

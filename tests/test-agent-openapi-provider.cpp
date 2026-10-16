@@ -4,6 +4,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#include <algorithm>
 #include <cassert>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -40,17 +41,42 @@ static void test_checked_in_eurostat_provider_examples() {
         if (config.prefix == "eurostat") {
             const auto & operation = catalog.operations.front();
             assert(operation.operation_id == "getData");
-            assert(operation.query_parameter_map == "dimensions");
+            assert(operation.query_parameter_map.empty());
+            assert(operation.response_media_types == std::vector<std::string>{"application/json"});
             const auto input = json::parse(operation.input_schema_json);
             assert(input["properties"]["geo"]["type"] == "array");
             assert(input["properties"]["time"]["type"] == "array");
-            assert(input["properties"]["dimensions"]["type"] == "object");
+            assert(!input["properties"].contains("dimensions"));
         } else {
             assert(config.prefix == "eurostat_sdmx");
             assert(catalog.operations.front().operation_id == "getStructure");
             assert(catalog.operations.front().path_parameters.size() == 4);
+            assert(std::find(catalog.operations.front().query_parameters.begin(),
+                catalog.operations.front().query_parameters.end(), "lang") ==
+                catalog.operations.front().query_parameters.end());
+            assert((catalog.operations.front().response_media_types == std::vector<std::string>{
+                "application/vnd.sdmx.structure+xml", "application/xml"}));
+            assert(json::parse(catalog.operations.front().result_schema_json).value("type", "") == "string");
         }
     }
+}
+
+static void test_response_media_type_contract_is_safely_filtered() {
+    const auto spec = json::parse(R"({
+        "openapi":"3.0.0","paths":{"/resource":{"get":{"operationId":"getResource",
+          "responses":{"200":{"content":{"text/xml":{"schema":{"type":"string"}},
+            "application/json":{"schema":{"type":"object"}},
+            "text/plain\\r\\nX-Evil: yes":{"schema":{"type":"string"}}}}}}}}
+    })");
+    agent_host_openapi_provider_config config;
+    config.id = "media-contract";
+    config.base_url = "https://example.test";
+    agent_openapi_catalog catalog;
+    std::string error;
+    assert(build_agent_openapi_catalog(spec, config, catalog, error));
+    assert(catalog.operations.size() == 1);
+    assert((catalog.operations.front().response_media_types == std::vector<std::string>{
+        "application/json", "text/xml"}));
 }
 
 static void test_generic_workflow_pagination() {
@@ -241,6 +267,7 @@ static void test_openapi_query_parameter_serialization_contract() {
 
 int main() {
     test_checked_in_eurostat_provider_examples();
+    test_response_media_type_contract_is_safely_filtered();
     test_openapi_query_parameter_serialization_contract();
     test_generic_workflow_pagination();
     agent_openapi_catalog catalog;

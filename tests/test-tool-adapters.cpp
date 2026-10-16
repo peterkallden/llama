@@ -125,6 +125,15 @@ int main() {
         "https://example.test/openapi.json", "https://example.test/openapi.json", 200,
         "application/json", "spec", "{}", 2, false, "resource://session/spec-1"});
     assert(fetched_payload.value("resource_ref", std::string{}) == "resource://session/spec-1");
+    common_tool_web_fetch_result large_fetch{
+        "https://example.test/catalogue", "https://example.test/catalogue", 200,
+        "text/plain", {}, std::string(1023, 'x') + "€" + std::string(8192, 'x'), false};
+    const auto bounded_fetch = common_tool_web_fetch_make_inline_result(large_fetch);
+    const auto bounded_fetch_json = common_tool_web_fetch_inline_result_to_json(bounded_fetch);
+    assert(bounded_fetch.text_excerpt.size() == 1023); // preserve UTF-8 at the 1 KiB boundary
+    assert(bounded_fetch.text_length == 9218 && bounded_fetch.preview_truncated);
+    assert(!bounded_fetch.truncated && bounded_fetch.resource_ref.empty());
+    assert(!bounded_fetch_json.contains("text"));
     std::string error;
     common_memory_in_memory_store memories;
     assert(memories.open("", error));
@@ -205,7 +214,7 @@ int main() {
         return common_tool_execution_result::success(R"({"results":[{"title":"llama.cpp","url":"https://example.com/llama","snippet":"native tools","source":"test"}],"provider":"test"})");
     };
     repository_bindings.web_fetch = [](const std::string & input) {
-        if (input.find("\"url\":\"https://example.com/llama\"") == std::string::npos) {
+        if (input.find("\"url\":\"https://example.com/llama") == std::string::npos) {
             return common_tool_execution_result::failure("tool.web_fetch.unexpected_url", common_tool_failure_class::validation, false, "Unexpected fetch URL.", "unexpected fetch url");
         }
         auto fetched = common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
@@ -549,6 +558,12 @@ int main() {
     result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":{"status":"failed"}})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find(R"("where":[{"field":"status","operator":"=","value":"failed"}])") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":{"title":{"contains":"GDP"}}})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("where":[{"field":"title","operator":"contains","value":"GDP"}])") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":[{"field":"title","operator":"contains","value":"GDP"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("operator":"contains","value":"GDP")") != std::string::npos);
     result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":"status -eq \"failed\" and attempt -gt 1"})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find(R"("field":"status")") != std::string::npos &&
@@ -634,6 +649,9 @@ int main() {
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));
     result = native_network_registry.execute({"web.fetch", R"({"url":"http://127.0.0.1/test"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::network);
+    result = native_network_registry.execute({"web.fetch", R"({"url":"https://example.org/data","accept":"application/json\r\nX-Injected: true"})"});
+    assert(!result.ok && result.failure_code == "tool.web_fetch.out_of_bounds" &&
+           result.failure_class == common_tool_failure_class::validation);
     std::filesystem::remove_all(repository);
     return 0;
 }

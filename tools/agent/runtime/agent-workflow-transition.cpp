@@ -1,6 +1,9 @@
 #include "agent-workflow-transition.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "plan/plan-workflow-state.h"
 
 #include <algorithm>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <queue>
 #include <set>
@@ -13,42 +16,6 @@ namespace {
 bool terminal(const common_plan_workflow_definition & definition, const std::string & state) {
     return std::find(definition.terminal_states.begin(), definition.terminal_states.end(), state) !=
         definition.terminal_states.end();
-}
-
-std::string state_after_completed_transitions(
-        const common_plan_state & plan,
-        const common_plan_workflow_definition & definition) {
-    std::string state = definition.start_state;
-    for (const auto & step : plan.steps) {
-        if (step.status != common_plan_step_status::completed || !step.semantic_alias ||
-                step.semantic_alias->rfind("workflow-transition:", 0) != 0) continue;
-        const auto ids = step.semantic_alias->substr(std::string("workflow-transition:").size());
-        size_t begin = 0;
-        while (begin <= ids.size()) {
-            const auto end = ids.find(',', begin);
-            auto token = ids.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
-            std::string selected_choice;
-            const auto choice_separator = token.find('=');
-            if (choice_separator != std::string::npos) {
-                selected_choice = token.substr(choice_separator + 1);
-                token.resize(choice_separator);
-            }
-            const auto found = std::find_if(definition.transitions.begin(), definition.transitions.end(),
-                [&](const auto & transition) { return transition.id == token && transition.from_state == state; });
-            if (found != definition.transitions.end()) {
-                if (!selected_choice.empty() && found->kind == common_plan_workflow_transition_kind::model_choice) {
-                    const auto choice = std::find_if(found->choices.begin(), found->choices.end(),
-                        [&](const auto & candidate) { return candidate.id == selected_choice; });
-                    if (choice != found->choices.end()) state = choice->to_state;
-                } else {
-                    state = found->to_state;
-                }
-            }
-            if (end == std::string::npos) break;
-            begin = end + 1;
-        }
-    }
-    return state;
 }
 
 bool replace_previous(json & value, const std::string & step_id, const std::string & choice) {
@@ -77,7 +44,8 @@ bool replace_previous(json & value, const std::string & step_id, const std::stri
 }
 
 bool candidate_ids(const common_plan_observation & observation,
-        const std::string & pointer, std::set<std::string> & ids, std::string & error) {
+        const std::string & pointer, const std::string & id_pointer,
+        std::set<std::string> & ids, std::string & error) {
     ids.clear();
     const auto value = json::parse(observation.summary, nullptr, false);
     if (!value.is_object() && !value.is_array()) { error = "workflow choice observation is not JSON"; return false; }
@@ -86,9 +54,35 @@ bool candidate_ids(const common_plan_observation & observation,
         if (!value.contains(location)) { error = "workflow choice candidate pointer is absent"; return false; }
         const auto & selected = value.at(location);
         if (!selected.is_array()) { error = "workflow choice candidates are not an array"; return false; }
+        std::string columns_pointer = pointer;
+        const auto last_separator = columns_pointer.rfind('/');
+        columns_pointer = last_separator == std::string::npos || last_separator == 0
+            ? std::string{} : columns_pointer.substr(0, last_separator);
+        if (!columns_pointer.empty()) columns_pointer += "/columns";
+        const json::json_pointer columns_location(columns_pointer);
+        const json * columns = !columns_pointer.empty() && value.contains(columns_location)
+            ? &value.at(columns_location) : nullptr;
+        const size_t id_column = [&]() {
+            if (columns == nullptr || !columns->is_array() || id_pointer.size() < 2 ||
+                    id_pointer.front() != '/' || id_pointer.find('/', 1) != std::string::npos) {
+                return std::numeric_limits<size_t>::max();
+            }
+            const std::string field = id_pointer.substr(1);
+            for (size_t index = 0; index < columns->size(); ++index) {
+                if ((*columns)[index].is_string() && (*columns)[index].get<std::string>() == field) return index;
+            }
+            return std::numeric_limits<size_t>::max();
+        }();
         for (const auto & candidate : selected) {
-            if (candidate.is_object() && candidate.contains("id") && candidate["id"].is_string()) {
-                ids.insert(candidate["id"].get<std::string>());
+            const json * identity = nullptr;
+            if (candidate.is_object()) {
+                try { identity = &candidate.at(json::json_pointer(id_pointer)); }
+                catch (const std::exception &) {}
+            } else if (candidate.is_array() && id_column < candidate.size()) {
+                identity = &candidate[id_column];
+            }
+            if (identity && identity->is_string() && !identity->get<std::string>().empty()) {
+                ids.insert(identity->get<std::string>());
             }
         }
     }
@@ -110,6 +104,19 @@ const common_plan_observation * binding_observation(
         const common_plan_observation & current,
         const std::string & source_transition_id) {
     if (source_transition_id.empty() || source_transition_id == "$previous") return &current;
+    // A model-choice transition has no tool step of its own. Its verified
+    // candidate is persisted as a workflow_choice observation after the
+    // immediately following tool succeeds, so later graph transitions must
+    // resolve explicit bindings from that host-validated observation.
+    for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
+        if (observation->source != "workflow_choice" || observation->confidence <= 0.0f) continue;
+        const auto choice = json::parse(observation->summary, nullptr, false);
+        if (choice.is_object() && choice.value("transition_id", std::string{}) == source_transition_id &&
+                choice.value("verified_against_host_candidates", false) &&
+                !choice.value("choice", std::string{}).empty()) {
+            return &*observation;
+        }
+    }
     const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const auto & candidate) {
         if (candidate.status != common_plan_step_status::completed || !candidate.semantic_alias ||
                 candidate.semantic_alias->rfind("workflow-transition:", 0) != 0) return false;
@@ -237,6 +244,50 @@ const common_plan_workflow_transition * common_agent_workflow_next_transition(
     return nullptr;
 }
 
+bool common_agent_workflow_static_tool_arguments(
+        const common_plan_workflow_transition & transition,
+        const common_chat_tool & tool,
+        std::string & normalized_arguments_json,
+        std::string & error) {
+    normalized_arguments_json.clear();
+    error.clear();
+    if (transition.kind != common_plan_workflow_transition_kind::tool ||
+            transition.tool_name != tool.name || !transition.argument_bindings.empty()) {
+        return false;
+    }
+    const auto arguments = json::parse(transition.arguments_template_json, nullptr, false);
+    if (!arguments.is_object()) {
+        error = "workflow transition arguments are not an object";
+        return false;
+    }
+    std::string validation_error;
+    if (common_schema_normalize_and_validate_object(
+            arguments.dump(), tool.parameters, normalized_arguments_json, validation_error)) {
+        return !transition.model_supplies_arguments;
+    }
+
+    // A partial static template can still be completed by the model, but its
+    // provided values must independently satisfy the tool's schema. Remove
+    // only `required` for this check so malformed fixed values cannot be
+    // silently replaced by model-generated arguments.
+    auto partial_schema = json::parse(tool.parameters, nullptr, false);
+    if (partial_schema.is_object()) {
+        partial_schema.erase("required");
+        std::string partial_normalized;
+        std::string partial_error;
+        if (!common_schema_normalize_and_validate_object(
+                arguments.dump(), partial_schema.dump(), partial_normalized, partial_error)) {
+            error = "workflow transition static arguments violate " + tool.name + " schema: " + partial_error;
+            return false;
+        }
+        normalized_arguments_json = std::move(partial_normalized);
+        return false;
+    }
+    error = "workflow transition static arguments violate " + tool.name + " schema: " + validation_error;
+    normalized_arguments_json.clear();
+    return false;
+}
+
 common_agent_workflow_continuation_provider make_agent_workflow_graph_continuation(
         common_agent_route_candidate route,
         common_agent_workflow_choice_selector select_choice) {
@@ -249,7 +300,7 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
                 !plan.workflow_definition || !plan.route_binding ||
                 plan.route_binding->route_id != route.id) return true;
         const auto & definition = *route.workflow_definition;
-        std::string state = state_after_completed_transitions(plan, definition);
+        std::string state = common_plan_workflow_completed_state(plan, definition);
         const auto * next = common_agent_workflow_next_transition(definition, state);
         if (next == nullptr) return true;
         std::string choice;
@@ -267,7 +318,8 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
                     if (available) ids.insert(option.id);
                 }
                 if (ids.empty()) { error = "workflow has no available fixed choices for this observation"; return false; }
-            } else if (!candidate_ids(observation, next->candidate_json_pointer, ids, error)) {
+            } else if (!candidate_ids(observation, next->candidate_json_pointer,
+                    next->candidate_id_json_pointer, ids, error)) {
                 return false;
             }
             if (!select_choice(observation, *next, choice, error)) return false;
@@ -280,7 +332,11 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
                 aliases = next->id + "=" + choice + ",";
             } else {
                 state = next->to_state;
-                aliases = next->id + ",";
+                // Persist the selected host-validated candidate in the step
+                // alias as well as the workflow_choice observation. State
+                // replay needs the choice token to advance candidate-backed
+                // model_choice transitions after resume.
+                aliases = next->id + "=" + choice + ",";
             }
             next = common_agent_workflow_next_transition(definition, state);
             if (next == nullptr) return true;

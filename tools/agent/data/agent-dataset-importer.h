@@ -6,6 +6,15 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <cstdint>
+
+struct agent_dataset_import_stats {
+    size_t rows_imported = 0;
+    size_t batches_written = 0;
+    bool reused_existing = false;
+    uint64_t write_elapsed_us = 0;
+    uint64_t descriptor_elapsed_us = 0;
+};
 
 // Host-normalized worksheet envelope. Resource processors may use a richer
 // intermediate (for example Pandoc AST) but must normalize it before dataset
@@ -18,6 +27,9 @@ struct agent_dataset_import_request {
     // "document:table".
     std::string source_representation = "xlsx:worksheet";
     std::string source_representation_uri;
+    // A stable hash allows safe reuse of an already materialized resource.
+    // Empty keeps legacy imports uncached.
+    std::string source_content_hash;
     // Stable source family used for common dataset provenance. The source
     // adapter supplies this while the shared importer owns validation/storage.
     std::string origin_kind = "spreadsheet";
@@ -29,13 +41,15 @@ struct agent_dataset_import_request {
     std::optional<std::string> sheet_name;
     std::optional<size_t> sheet_index;
     common_agent_dataset_limits limits;
+    size_t row_batch_size = 256;
 };
 
 bool import_agent_worksheet_envelope(
         common_agent_data_store & store,
         const agent_dataset_import_request & request,
         std::vector<common_agent_dataset_descriptor> & imported,
-        std::string & error);
+        std::string & error,
+        agent_dataset_import_stats * stats = nullptr);
 
 // Normalizes the Pandoc JSON AST emitted by the shared Pandoc processor into
 // the bounded worksheet envelope consumed by the dataset importer.
@@ -58,6 +72,15 @@ bool normalize_agent_pandoc_document_json(
 bool normalize_agent_csv_text(
         const std::string & csv_text,
         const std::string & dataset_name,
+        std::string & worksheet_json,
+        std::string & error,
+        char delimiter = ',');
+
+// Recognizes Eurostat's documented language-specific tab-separated TOC,
+// preserves its metadata, and derives each row's category path from the
+// indentation hierarchy. Unrecognized plain text is not accepted.
+bool normalize_agent_eurostat_toc_text(
+        const std::string & toc_text,
         std::string & worksheet_json,
         std::string & error);
 

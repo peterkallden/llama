@@ -21,23 +21,49 @@ capabilities gate route eligibility. Optional capabilities are included only
 when the host can resolve them in the active tool view; those resolved tools
 are part of the route envelope and its fingerprint from route selection.
 Context requirements are checked separately and do not grant tool authority.
-Workflows may also declare `continuation_workflow_targets`. These are workflow
-references the host may consider after a successful tool observation returns
-typed dataset references. The host recompiles only declared targets, then
-selects among eligible dataset workflows against the original task. It does
-not offer `normal-plan` as a competing choice after a workflow explicitly
-yielded a materialized dataset for continuation. If no declared target is
-eligible, or route selection is inconclusive, the existing route continues.
-The host attempts this handoff once per runtime execution. A selected route
-transition is host-authorized; the dataset reference remains in plan
-observations and is reconstructed into route context when the plan resumes. A
-join workflow is eligible only when at least two
+Legacy `continuation_workflow_targets` remain supported for dataset handoffs.
+New cross-workflow handoffs use `continuation_links`, which bind a source
+transition and terminal state to a target workflow revision and may carry
+JSON-pointer bindings from successful structured observations, including a
+named completed transition. A model choice over host-returned candidates is
+persisted as a host-validated structured observation after its following tool
+action succeeds. Model prose cannot satisfy a binding or create a verified
+resource/dataset reference. The host recompiles only declared targets against
+current applicability and execution-envelope policy. A unique eligible route
+is deterministic; multiple routes use the bounded route selector. If a
+required source value is missing, the host records the gap and leaves the
+source route active instead of inventing a value. Typed links can carry
+structured resource/API metadata even when the source result is not a dataset;
+legacy `continuation_workflow_targets` remain restricted to verified dataset
+outputs.
+
+A tool transition that asks the model to supply request-dependent arguments may
+include a bounded `model_instruction`. The runtime adds this as method guidance
+for that transition only; tool identity, schema, bindings, and execution
+authority remain host-owned. Use it to keep discovery queries narrow when later
+workflow steps will verify geography, periods, units, or other metadata.
+The same field may guide a model-choice transition over host-returned candidates;
+it only changes the comparison criteria, not the host-bounded candidate set.
+
+The runtime requests a cross-workflow handoff only after replaying completed,
+host-recorded transition IDs reaches the link's declared terminal state. A
+successful structured result in the middle of a graph is ordinary workflow
+evidence: it does not spend continuation budget or interrupt the next graph
+transition. The completed-state replay is shared by graph continuation and
+route handoff, and starts at the active route binding's workflow-step boundary
+so prior workflow revisions cannot advance the new graph.
+
+The host records each completed link and source-observation fingerprint in the
+existing plan. The same link cannot replay against identical evidence, while
+new verified output may continue within `max_continuations`. This history
+survives plan-store resume. Budget exhaustion is traced as an incomplete,
+resumable continuation; it never marks the chain complete. Graph-less targets
+use the bounded action selector and the dataset A* materializer where
+applicable. Graph targets start at their declared host-approved tool
+transition, whose stable transition ID is retained in the plan. In both cases
+completed source steps remain in plan history and the final-answer step waits
+for the appended work. Join workflows remain eligible only when at least two
 distinct datasets are present and the request selects that route.
-For a selected graph-less dataset workflow, the host uses the same bounded
-workflow-action selector and dataset A* materializer as initial planning. It
-adds those verified steps to the existing plan, preserves completed source
-steps as history, and makes the existing final-answer step wait for the new
-dataset path.
 
 Host-provided read-only memory tools (`memory.search`, `memory.get`,
 `memory.inspect`, and `memory.conflict_check`) remain ambient in a scoped route
@@ -91,6 +117,28 @@ transition observation into argument JSON pointers. A missing required source
 fails closed; it never becomes a model-invented value. Bindings can name the
 source transition with `from` and mark an unavailable value optional with
 `required: false`.
+
+For candidate arrays, `candidates` points to the host-returned array and the
+optional `candidate_id` points inside each row to its stable string identity
+(default `/id`). This supports catalogues whose canonical key is named `code`
+without copying or rewriting the source rows.
+
+When a start-state tool transition has a complete, static `arguments` object
+that validates against the resolved tool schema and has no observation
+bindings, the host materializes that exact call directly. The model is not
+asked to select the already-fixed tool or echo its arguments. This lets a
+workflow pin representation parameters such as `web.fetch`'s `accept` without
+making them model guesses. Invalid fixed arguments fail route materialization
+closed. Eurostat's catalogue workflow uses this for its English TOC request
+(`accept: text/plain`, bounded `max_bytes`); the next transition binds the
+returned resource reference into `dataset.inspect`.
+
+A graph-entry transition may also set `model_supplies_arguments: true`. The
+workflow still fixes the tool and validates its host-owned seed arguments, but
+the bounded action selector may add request-dependent arguments. This is
+intended for safe interpretation such as searching a materialized catalogue;
+the selected code still has to come from the query's host-returned rows before
+the following model-choice transition accepts it.
 
 The OpenAlex full-text evidence workflow uses this seam after `getWork`: the
 model chooses between answering from the abstract and fetching full text. The
@@ -182,18 +230,75 @@ requirements generically. The starter library covers these host-tool domains:
 - Configured scholarly research through OpenAlex. A static provider is exposed
   at host startup; its workflows therefore require `context.openapi.available`
   and do not repeat dynamic API onboarding.
-- Eurostat statistics through a bounded chain: catalogue TOC XML discovery,
+- Eurostat statistics through a bounded chain: catalogue TOC TSV discovery,
   SDMX dataflow/DSD/code-list/constraint resolution, then Statistics API
   retrieval. The JSON-stat response becomes an ordinary provenance-bearing
   dataset and continues through the generic dataset analysis/quality workflows.
   These starter procedures and blueprints are imported from the JSON package;
   the host supplies generic safe XML/JSON normalization and query serialization.
-  Package v14 provides revised Eurostat blueprint/workflow IDs and workflow
-  revisions v2 so importing after v13 installs the corrections without changing
-  historical templates. Catalogue acquisition is graph-driven; metadata and
-  query planning use blueprint steps. Acquisition-stage changes require a route
-  transition or a subsequent turn. Automatic continuation targets are limited
-  to the existing dataset workflows.
+  Package v22 declares terminal-state links from catalogue discovery to SDMX
+  metadata resolution and from inspected metadata to data retrieval. The
+  data-retrieval workflow now uses the same typed continuation-link contract
+  for its handoff to dataset analysis, quality, or join; it no longer relies
+  on the legacy dataset-only target list. These are host-validated route
+  transitions, not proof that a model correctly interpreted every statistical
+  definition. In particular, `dataset.inspect` materializes SDMX records but
+  does not itself decide that a selected geography, time, unit, or measure is
+  semantically compatible with the user's request; that limitation must remain
+  visible in the final answer and is a separate verification seam. The
+  catalogue workflow now runs `dataset.schema` after materialization and
+  before handing the dataset to the metadata workflow, so the model sees the
+  actual catalogue columns rather than guessing field names. Its route-bound
+  procedure restricts catalogue filtering to one title substring; requested
+  geography and period are checked later against SDMX metadata, not as
+  guessed catalogue predicates. The metadata graph runs a model-parameterized bounded `data.query` over the
+  host-materialized catalogue. Its compact DSL accepts `where: title
+  "population density"` as a host-defined case-insensitive `contains`
+  predicate; explicit operators remain available for other comparisons. The
+  query supports case-insensitive text
+  `contains` predicates, so the original request can narrow titles before the
+  model chooses only among returned `/code` values; it then retrieves that
+  code's SDMX dataflow using Eurostat's fixed dataflow version `1.0` and
+  bounded `references=children`. Both SDMX responses are retained as
+  provenance-bearing resources; OpenAPI returns a compact resource handle
+  rather than duplicating complete XML in the 16 KiB model-facing tool result.
+  `dataset.inspect` uses the shared bounded SDMX-XML importer to materialize
+  the dataflow/DSD and ContentConstraint records. The graph requests the
+  dataflow's version-1.0 ContentConstraint after inspecting the DSD. Versioned
+  DSD IDs and codelist references come from the dataflow response; the
+  constraint dataset contains dataset-specific allowed values.
+  The SDMX endpoint rejects `lang`, so it is not sent. The
+  accepted choice is persisted as host-validated structured evidence and is
+  bound into the `eurostat.getData` transition; it is not recovered from
+  free-form model text. The retrieval graph then runs the fixed API operation,
+  binds its returned resource reference into `dataset.inspect`, and only after
+  materialization becomes terminal can the ordinary dataset-analysis or
+  quality workflow continue. Each handoff revalidates its declared target and
+  execution envelope.
+
+  The SDMX content-constraint response is evidence, not an automatic semantic
+  allow-list on `geo`/`time`: the workflow procedure requires the model to
+  inspect the materialized constraint and compare requested values before
+  calling `eurostat.getData`. The host still does not enforce semantic
+  membership of each requested code against that dataset. A failed Qwen run on 2026-10-16 selected the
+  ENP-East-only `enpe_demo_r_d3dens` candidate for a Sweden request, then
+  emitted metadata URLs as `geo` values. The API returned HTTP 200, but the
+  unfiltered JSON-stat was rejected by `dataset.inspect` at the bounded
+  Cartesian-cell limit. This is fail-closed, but demonstrates that the host
+  does not yet enforce candidate/constraint compatibility; see the audit
+  trace under `var/codex-mcp-tool-audit/` before treating this model path as a
+  successful end-to-end workflow.
+
+  The full 2026-10-16 Qwen Instruct trace completed catalogue materialization
+  (12,241 rows, 48 batches), dataflow and ContentConstraint retrieval, JSON-stat
+  fetch, and dataset materialization. It still selected the regional
+  `demo_r_d3dens` candidate for a national Sweden request, despite explicit
+  transition guidance. HTTP 200 and a one-row result are not semantic
+  validation; final answer generation also stopped at context pressure. This
+  confirms the linked-route and import seams, not a correct Eurostat answer.
+  The host-side dataset/constraint compatibility gate and final-context budget
+  remain follow-up work. See
+  `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 
 The starter blueprint, procedure and workflow for this path are imported from
 [`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).

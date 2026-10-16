@@ -3,6 +3,7 @@
 #include "agent/dataset-contracts.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 struct common_agent_data_store_config {
@@ -29,6 +30,19 @@ public:
         (void) row_json;
         error = "data store does not support dataset ingestion";
         return false;
+    }
+
+    // Batch ingestion keeps importers independent of backend transaction
+    // details. Backends override this to reduce per-row database overhead.
+    virtual bool put_rows(
+            const std::string & dataset,
+            const std::vector<std::pair<std::string, std::string>> & rows,
+            std::string & error) {
+        for (const auto & row : rows) {
+            if (!put_row(dataset, row.first, row.second, error)) return false;
+        }
+        error.clear();
+        return true;
     }
 
     virtual bool put_dataset_descriptor(
@@ -68,6 +82,43 @@ public:
         descriptor = {};
         error = "data store does not support dataset name lookup";
         return false;
+    }
+
+    // Find a fully published materialization for the currently authorized
+    // resource bytes. A descriptor is published only after all rows have been
+    // written, so this lookup is safe before parsing/normalizing the source.
+    virtual bool find_dataset_materialization(
+            const std::string & source_resource_uri,
+            const std::string & content_hash,
+            const std::string & importer_version,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        descriptor = {};
+        std::vector<common_agent_dataset_descriptor> candidates;
+        if (!list_dataset_descriptors(candidates, error)) return false;
+        const common_agent_dataset_descriptor * match = nullptr;
+        for (const auto & candidate : candidates) {
+            if (candidate.ref.source_resource_uri != source_resource_uri ||
+                    candidate.ref.content_hash != content_hash ||
+                    candidate.import_processor_version != importer_version) continue;
+            if (match != nullptr) {
+                error = "multiple complete dataset materializations match the source resource";
+                return false;
+            }
+            match = &candidate;
+        }
+        if (match == nullptr) {
+            error.clear();
+            return false;
+        }
+        if (!validate_common_agent_dataset_descriptor(*match, common_agent_dataset_limits{}, error)) {
+            descriptor = {};
+            error = "cached dataset materialization is invalid: " + error;
+            return false;
+        }
+        descriptor = *match;
+        error.clear();
+        return true;
     }
 
     virtual bool execute(

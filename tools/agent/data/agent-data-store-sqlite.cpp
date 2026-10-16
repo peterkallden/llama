@@ -61,7 +61,7 @@ bool parse_descriptor(const std::string & text, common_agent_dataset_descriptor 
 std::string normalized_name(const std::string & value) { std::string result; for (unsigned char c : value) if (!std::isspace(c)) result += static_cast<char>(std::tolower(c)); return result; }
 
 bool condition_matches(const json & row, const json & condition) {
-    const std::string field = condition.value("field", std::string{}); const std::string op = condition.value("operator", std::string("=")); if (field.empty()) return false; if (op == "is_null") return !row.contains(field) || row[field].is_null(); if (op == "not_null") return row.contains(field) && !row[field].is_null(); if (!row.contains(field)) return false; const auto & actual = row[field]; const auto expected = condition.value("value", json()); if (op == "in") return expected.is_array() && std::find(expected.begin(), expected.end(), actual) != expected.end(); if (op == "=") return actual == expected; if (op == "!=") return actual != expected; if (!actual.is_number() || !expected.is_number()) return false; const double a = actual.get<double>(), b = expected.get<double>(); return op == ">" ? a > b : op == ">=" ? a >= b : op == "<" ? a < b : op == "<=" ? a <= b : false;
+    const std::string field = condition.value("field", std::string{}); const std::string op = condition.value("operator", std::string("=")); if (field.empty()) return false; if (op == "is_null") return !row.contains(field) || row[field].is_null(); if (op == "not_null") return row.contains(field) && !row[field].is_null(); if (!row.contains(field)) return false; const auto & actual = row[field]; const auto expected = condition.value("value", json()); if (op == "in") return expected.is_array() && std::find(expected.begin(), expected.end(), actual) != expected.end(); if (op == "=") return actual == expected; if (op == "!=") return actual != expected; if (op == "contains" && actual.is_string() && expected.is_string()) { auto lower = [](std::string text) { std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); }); return text; }; return lower(actual.get<std::string>()).find(lower(expected.get<std::string>())) != std::string::npos; } if (!actual.is_number() || !expected.is_number()) return false; const double a = actual.get<double>(), b = expected.get<double>(); return op == ">" ? a > b : op == ">=" ? a >= b : op == "<" ? a < b : op == "<=" ? a <= b : false;
 }
 
 }
@@ -75,6 +75,44 @@ bool common_agent_sqlite_data_store::ensure_schema(std::string & error) { return
 bool common_agent_sqlite_data_store::put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) {
     const auto value = json::parse(row_json, nullptr, false); if (!value.is_object() || dataset.empty() || row_id.empty()) { error = "data row requires dataset, row id and JSON object"; return false; }
     common_sqlite_statement statement; if (!database_.prepare("INSERT INTO agent_data_rows(dataset,row_id,row_seq,row_json) VALUES(?,?,COALESCE((SELECT MAX(row_seq)+1 FROM agent_data_rows WHERE dataset=?),1),?) ON CONFLICT(dataset,row_id) DO UPDATE SET row_json=excluded.row_json;", statement, error) || !statement.bind_text(1, dataset, error) || !statement.bind_text(2, row_id, error) || !statement.bind_text(3, dataset, error) || !statement.bind_text(4, row_json, error)) return false; bool row = false; return statement.step(row, error);
+}
+
+bool common_agent_sqlite_data_store::put_rows(
+        const std::string & dataset,
+        const std::vector<std::pair<std::string, std::string>> & rows,
+        std::string & error) {
+    if (dataset.empty()) { error = "data row batch requires a dataset"; return false; }
+    if (rows.empty()) { error.clear(); return true; }
+    common_sqlite_transaction transaction(database_);
+    if (!transaction.begin(error)) return false;
+    common_sqlite_statement maximum;
+    if (!database_.prepare("SELECT COALESCE(MAX(row_seq),0) FROM agent_data_rows WHERE dataset=?;", maximum, error) ||
+            !maximum.bind_text(1, dataset, error)) { transaction.rollback(); return false; }
+    bool has_row = false;
+    if (!maximum.step(has_row, error) || !has_row) { transaction.rollback(); return false; }
+    int64_t next_sequence = maximum.column_int64(0) + 1;
+    common_sqlite_statement insert;
+    if (!database_.prepare("INSERT INTO agent_data_rows(dataset,row_id,row_seq,row_json) VALUES(?,?,?,?) ON CONFLICT(dataset,row_id) DO UPDATE SET row_json=excluded.row_json;", insert, error)) {
+        transaction.rollback(); return false;
+    }
+    for (const auto & item : rows) {
+        const auto parsed = json::parse(item.second, nullptr, false);
+        if (item.first.empty() || !parsed.is_object()) {
+            error = "data row batch contains an invalid row";
+            transaction.rollback(); return false;
+        }
+        if (!insert.bind_text(1, dataset, error) || !insert.bind_text(2, item.first, error) ||
+                !insert.bind_int64(3, next_sequence++, error) || !insert.bind_text(4, item.second, error)) {
+            transaction.rollback(); return false;
+        }
+        bool inserted_row = false;
+        if (!insert.step(inserted_row, error) || inserted_row || !insert.reset(error)) {
+            transaction.rollback(); return false;
+        }
+    }
+    if (!transaction.commit(error)) { transaction.rollback(); return false; }
+    error.clear();
+    return true;
 }
 
 bool common_agent_sqlite_data_store::put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor, std::string & error) {

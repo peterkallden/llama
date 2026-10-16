@@ -496,11 +496,38 @@ bool parse_flat_directive_value(
             const auto field = slots[slot_index++].get<std::string>();
             json slot_value;
             if (!parse_value(value, position, slot_value, error)) return false;
-            if (slot_value.is_object() || slot_value.is_array()) {
-                error = "flat DSL directive slots must be scalar values";
+            const auto slot_schema = item_properties.value(field, json::object());
+            const std::string slot_type = slot_schema.is_object()
+                ? slot_schema.value("type", std::string{}) : std::string{};
+            if (slot_value.is_object() ||
+                    (slot_value.is_array() && slot_type != "array" && !slot_type.empty())) {
+                error = "flat DSL directive slot does not match its declared scalar/array type";
                 return false;
             }
             object[field] = std::move(slot_value);
+        }
+        const std::string short_form_operator = annotation.value(
+            "two_slot_value_default_operator", std::string{});
+        if (!short_form_operator.empty() && object.contains("field") &&
+                object.contains("operator") && !object.contains("value") &&
+                object["operator"].is_string()) {
+            const auto operator_schema = item_properties.value("operator", json::object());
+            const auto allowed = operator_schema.value("enum", json::array());
+            const bool operator_is_known = allowed.is_array() &&
+                std::any_of(allowed.begin(), allowed.end(), [&](const auto & item) {
+                    return item.is_string() && item == object["operator"];
+                });
+            const bool default_is_known = allowed.is_array() &&
+                std::any_of(allowed.begin(), allowed.end(), [&](const auto & item) {
+                    return item.is_string() && item == short_form_operator;
+                });
+            // If a two-token field/value form placed its value in the
+            // positional operator slot, normalize it only when that token is
+            // not an operator declared by the tool's own schema.
+            if (!operator_is_known && default_is_known) {
+                object["value"] = std::move(object["operator"]);
+                object["operator"] = short_form_operator;
+            }
         }
     }
     for (const auto & item : object.items()) {
@@ -508,8 +535,11 @@ bool parse_flat_directive_value(
             error = "flat DSL directive contains an unknown slot: " + item.key();
             return false;
         }
-        if (item.value().is_object() || item.value().is_array()) {
-            error = "flat DSL directive slots must be scalar values";
+        const auto & slot_schema = item_properties[item.key()];
+        const std::string slot_type = slot_schema.is_object()
+            ? slot_schema.value("type", std::string{}) : std::string{};
+        if (item.value().is_object() || (item.value().is_array() && slot_type != "array" && !slot_type.empty())) {
+            error = "flat DSL directive slot does not match its declared scalar/array type";
             return false;
         }
     }

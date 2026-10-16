@@ -240,6 +240,25 @@ bool common_agent_install_bootstrap_package(
                 error = "bootstrap workflow contains invalid or duplicate authority requirements";
                 return false;
             }
+            for (const auto & link : definition.definition.continuation_links) {
+                if (link.source_terminal_state.empty() ||
+                        link.target_workflow_ref.empty() || link.target_workflow_ref.size() > 256 ||
+                        link.target_workflow_revision.size() > 128 ||
+                        link.source_terminal_state.size() > 64) {
+                    error = "bootstrap workflow contains an invalid continuation link";
+                    return false;
+                }
+                for (const auto & binding : link.argument_bindings) {
+                    if ((binding.target_transition_id.empty() && binding.target_tool_name.empty()) ||
+                            binding.target_transition_id.size() > 64 || binding.target_tool_name.size() > 128 ||
+                            binding.source_transition_id.size() > 64 ||
+                            binding.target_json_pointer.empty() || binding.target_json_pointer.front() != '/' ||
+                            binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/') {
+                        error = "bootstrap workflow contains an invalid continuation argument binding";
+                        return false;
+                    }
+                }
+            }
             common_plan_state workflow;
             workflow.id = prefix + "workflow:" + definition.id;
             workflow.namespace_id = config.namespace_id;

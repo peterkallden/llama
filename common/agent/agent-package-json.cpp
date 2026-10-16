@@ -103,6 +103,9 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.tool_name = source.value("tool", std::string{});
         transition.arguments_template_json = source.value("arguments", std::string("{}"));
         transition.candidate_json_pointer = source.value("candidates", std::string{});
+        transition.candidate_id_json_pointer = source.value("candidate_id", std::string("/id"));
+        transition.model_supplies_arguments = source.value("model_supplies_arguments", false);
+        transition.model_instruction = source.value("model_instruction", std::string{});
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
         if (source.contains("max_pages")) {
@@ -204,6 +207,36 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
         for (const auto & requirement : definition.required_context) if (requirement.empty() || requirement.size() > 128 || !required_context.insert(requirement).second) { error = "invalid or duplicate workflow context requirement"; return false; }
         std::set<std::string> continuation_targets;
         for (const auto & target : definition.continuation_workflow_targets) if (target.empty() || target.size() > 256 || !continuation_targets.insert(target).second) { error = "invalid or duplicate workflow continuation target"; return false; }
+        std::set<std::string> continuation_link_targets;
+        for (const auto & link : definition.continuation_links) {
+            if (link.target_workflow_ref.empty() || link.target_workflow_ref.size() > 256 ||
+                    link.source_transition_id.size() > 64 ||
+                    link.source_terminal_state.size() > 64 ||
+                    link.target_workflow_revision.size() > 128 ||
+                    !continuation_link_targets.insert(link.source_transition_id + "@" +
+                        link.source_terminal_state + "->" + link.target_workflow_ref + "@" +
+                        link.target_workflow_revision).second) {
+                error = "invalid or duplicate workflow continuation link"; return false;
+            }
+            if (link.source_terminal_state.empty() ||
+                    std::find(definition.terminal_states.begin(), definition.terminal_states.end(),
+                        link.source_terminal_state) == definition.terminal_states.end()) {
+                error = "workflow continuation link must name a declared source terminal state";
+                return false;
+            }
+            std::set<std::pair<std::string, std::string>> link_fields;
+            for (const auto & binding : link.argument_bindings) {
+                if ((binding.target_transition_id.empty() && binding.target_tool_name.empty()) ||
+                        binding.target_transition_id.size() > 64 || binding.target_tool_name.size() > 128 ||
+                        binding.source_transition_id.size() > 64 ||
+                        binding.target_json_pointer.empty() || binding.target_json_pointer.front() != '/' ||
+                        binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/' ||
+                        !link_fields.emplace(binding.target_transition_id + ":" + binding.target_tool_name,
+                            binding.target_json_pointer).second) {
+                    error = "workflow continuation binding requires tool and unique source/target pointers"; return false;
+                }
+            }
+        }
         if (!definition.transitions.empty()) {
             if (!valid_id(definition.start_state) || definition.terminal_states.empty()) { error = "workflow graph has invalid start or terminal states"; return false; }
             std::set<std::string> transition_ids, states{definition.start_state};
@@ -216,7 +249,9 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                     (!transition.tool_name.empty() ||
                      (transition.choices.empty() &&
                         (transition.candidate_json_pointer.empty() ||
-                         transition.candidate_json_pointer.front() != '/')) ||
+                         transition.candidate_json_pointer.front() != '/' ||
+                         transition.candidate_id_json_pointer.empty() ||
+                         transition.candidate_id_json_pointer.front() != '/')) ||
                      (!transition.choices.empty() && !transition.candidate_json_pointer.empty()));
                 if (!valid_id(transition.id) || !transition_ids.insert(transition.id).second ||
                         !valid_id(transition.from_state) || !valid_id(transition.to_state) ||
@@ -224,6 +259,17 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                         (transition.kind == common_plan_workflow_transition_kind::tool && transition.tool_name.empty()) ||
                         invalid_model_choice) {
                     error = "workflow graph has an invalid transition"; return false;
+                }
+                if (transition.model_instruction.size() > 2048 ||
+                        transition.model_instruction.find('\0') != std::string::npos) {
+                    error = "workflow transition model_instruction exceeds its bounded text contract";
+                    return false;
+                }
+                if (transition.model_supplies_arguments &&
+                        (transition.kind != common_plan_workflow_transition_kind::tool ||
+                         transition.from_state != definition.start_state)) {
+                    error = "model-supplied workflow arguments are supported only on a graph entry tool transition";
+                    return false;
                 }
                 if (transition.kind == common_plan_workflow_transition_kind::tool &&
                         (!transition.choices.empty() || !transition.candidate_json_pointer.empty())) {
@@ -263,6 +309,43 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 states.insert(transition.from_state); states.insert(transition.to_state);
                 predecessors[transition.to_state].push_back(transition.from_state);
             }
+            for (const auto & link : definition.continuation_links) {
+                for (const auto & binding : link.argument_bindings) {
+                    if (!binding.source_transition_id.empty() &&
+                            !transition_ids.count(binding.source_transition_id)) {
+                        error = "workflow continuation binding references an unknown source transition";
+                        return false;
+                    }
+                }
+                if (link.source_terminal_state.empty()) {
+                    error = "workflow continuation link requires a declared source terminal state";
+                    return false;
+                }
+                if (!link.source_transition_id.empty() &&
+                        !transition_ids.count(link.source_transition_id)) {
+                    error = "workflow continuation link references an unknown source transition";
+                    return false;
+                }
+                if (!link.source_terminal_state.empty() &&
+                        std::find(definition.terminal_states.begin(), definition.terminal_states.end(),
+                            link.source_terminal_state) == definition.terminal_states.end()) {
+                    error = "workflow continuation link references a non-terminal source state";
+                    return false;
+                }
+                if (!link.source_transition_id.empty() && !link.source_terminal_state.empty()) {
+                    const auto source = std::find_if(definition.transitions.begin(), definition.transitions.end(),
+                        [&](const auto & candidate) { return candidate.id == link.source_transition_id; });
+                    const bool reaches_terminal = source != definition.transitions.end() &&
+                        (source->to_state == link.source_terminal_state ||
+                         std::any_of(source->choices.begin(), source->choices.end(), [&](const auto & choice) {
+                             return choice.to_state == link.source_terminal_state;
+                         }));
+                    if (!reaches_terminal) {
+                        error = "workflow continuation source transition does not reach its declared terminal state";
+                        return false;
+                    }
+                }
+            }
             for (const auto & terminal : definition.terminal_states) {
                 if (std::any_of(definition.transitions.begin(), definition.transitions.end(), [&](const auto & transition) { return transition.from_state == terminal; })) {
                     error = "workflow terminal state has outgoing transition"; return false;
@@ -281,6 +364,27 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
             }
             for (const auto & state : states) if (!can_finish.count(state)) {
                 error = "workflow graph has a state with no terminal path"; return false;
+            }
+        }
+    }
+    for (const auto & workflow : package.workflows) {
+        for (const auto & link : workflow.definition.continuation_links) {
+            const auto target = std::find_if(package.workflows.begin(), package.workflows.end(), [&](const auto & candidate) {
+                return candidate.definition.workflow_ref == link.target_workflow_ref &&
+                    (link.target_workflow_revision.empty() ||
+                     candidate.definition.workflow_revision == link.target_workflow_revision);
+            });
+            if (target == package.workflows.end()) continue; // May be supplied by an already-installed package.
+            for (const auto & binding : link.argument_bindings) {
+                if (binding.target_transition_id.empty()) continue;
+                const auto transition = std::find_if(target->definition.transitions.begin(), target->definition.transitions.end(),
+                    [&](const auto & candidate) { return candidate.id == binding.target_transition_id; });
+                if (transition == target->definition.transitions.end() ||
+                        transition->kind != common_plan_workflow_transition_kind::tool ||
+                        (!binding.target_tool_name.empty() && transition->tool_name != binding.target_tool_name)) {
+                    error = "workflow continuation binding references an invalid target transition";
+                    return false;
+                }
             }
         }
     }
@@ -352,6 +456,31 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 if (item.contains("optional_capabilities") && !strings(item["optional_capabilities"], workflow.definition.optional_capabilities)) { error = "workflow optional_capabilities must be strings"; return false; }
                 if (item.contains("required_context") && !strings(item["required_context"], workflow.definition.required_context)) { error = "workflow required_context must be strings"; return false; }
                 if (item.contains("continuation_workflow_targets") && !strings(item["continuation_workflow_targets"], workflow.definition.continuation_workflow_targets)) { error = "workflow continuation_workflow_targets must be strings"; return false; }
+                if (item.contains("continuation_links")) {
+                    if (!item["continuation_links"].is_array()) { error = "workflow continuation_links must be an array"; return false; }
+                    for (const auto & link_json : item["continuation_links"]) {
+                        if (!link_json.is_object()) { error = "workflow continuation link must be an object"; return false; }
+                        common_plan_workflow_continuation_link link;
+                        link.target_workflow_ref = link_json.value("workflow_ref", std::string{});
+                        link.source_transition_id = link_json.value("from_transition", std::string{});
+                        link.source_terminal_state = link_json.value("from_terminal_state", std::string{});
+                        link.target_workflow_revision = link_json.value("workflow_revision", std::string{});
+                        if (link_json.contains("bindings")) {
+                            if (!link_json["bindings"].is_array()) { error = "workflow continuation bindings must be an array"; return false; }
+                            for (const auto & binding_json : link_json["bindings"]) {
+                                if (!binding_json.is_object()) { error = "workflow continuation binding must be an object"; return false; }
+                                link.argument_bindings.push_back({
+                                    binding_json.value("transition", std::string{}),
+                                    binding_json.value("tool", std::string{}),
+                                    binding_json.value("target", std::string{}),
+                                    binding_json.value("source", std::string{}),
+                                    binding_json.value("required", true),
+                                    binding_json.value("from_transition", std::string{})});
+                            }
+                        }
+                        workflow.definition.continuation_links.push_back(std::move(link));
+                    }
+                }
                 if (!workflow_graph(item, workflow.definition, error)) return false;
                 package.workflows.push_back(std::move(workflow));
             }
@@ -387,6 +516,29 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         if (!workflow.definition.optional_capabilities.empty()) value["optional_capabilities"] = workflow.definition.optional_capabilities;
         if (!workflow.definition.required_context.empty()) value["required_context"] = workflow.definition.required_context;
         if (!workflow.definition.continuation_workflow_targets.empty()) value["continuation_workflow_targets"] = workflow.definition.continuation_workflow_targets;
+        if (!workflow.definition.continuation_links.empty()) {
+            value["continuation_links"] = json::array();
+            for (const auto & link : workflow.definition.continuation_links) {
+                json item = {{"workflow_ref", link.target_workflow_ref}};
+                if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
+                if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
+                if (!link.target_workflow_revision.empty()) item["workflow_revision"] = link.target_workflow_revision;
+                if (!link.argument_bindings.empty()) {
+                    item["bindings"] = json::array();
+                    for (const auto & binding : link.argument_bindings) {
+                        json binding_json = {
+                            {"transition", binding.target_transition_id},
+                            {"tool", binding.target_tool_name},
+                            {"target", binding.target_json_pointer},
+                            {"source", binding.source_json_pointer},
+                            {"required", binding.required}};
+                        if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                        item["bindings"].push_back(std::move(binding_json));
+                    }
+                }
+                value["continuation_links"].push_back(std::move(item));
+            }
+        }
         if (workflow.definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
             value["resource_read_policy"] = "chunked";
         }
@@ -398,7 +550,13 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                 json item = {{"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
                     {"kind", workflow_transition_kind_name(transition.kind)}, {"arguments", transition.arguments_template_json}, {"cost", transition.cost}};
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
+                if (transition.model_supplies_arguments) item["model_supplies_arguments"] = true;
+                if (!transition.model_instruction.empty()) item["model_instruction"] = transition.model_instruction;
                 if (!transition.candidate_json_pointer.empty()) item["candidates"] = transition.candidate_json_pointer;
+                if (transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                        transition.choices.empty() && transition.candidate_id_json_pointer != "/id") {
+                    item["candidate_id"] = transition.candidate_id_json_pointer;
+                }
                 if (!transition.choices.empty()) {
                     item["choices"] = json::array();
                     for (const auto & choice : transition.choices) {

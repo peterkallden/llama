@@ -40,6 +40,10 @@ bool has_host_capability(
             has_tool_name(tooling, "data.aggregate") ||
             has_tool_name(tooling, "statistics.describe");
     }
+    if (capability == "tool.web") {
+        return has_tool_name(tooling, "web.fetch") ||
+            has_tool_name(tooling, "web.search");
+    }
     if (capability == "tool.repository") {
         return has_tool_name(tooling, "repository.list") ||
             has_tool_name(tooling, "repository.search") ||

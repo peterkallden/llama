@@ -96,29 +96,50 @@ The HTTP executor honors the declared `form`, `spaceDelimited`,
 keys. It bounds parameter counts and serialized query size, and validates
 dynamic dimension names and values before adding them to the fixed Eurostat
 base URL. This is not an arbitrary URL or header mechanism.
+For `web.fetch`, a workflow may set the bounded `accept` argument when it
+knows the desired representation (the English catalogue requests tab-separated
+text and the Statistics API requests JSON). The multilingual XML TOC is about
+23 MiB and exceeds the current 10 MiB fetch ceiling; the English TSV is about
+2 MiB and carries the same code, title, type, update and coverage columns.
+The importer recognizes this exact TOC header and reconstructs category paths
+from its documented indentation; arbitrary plain text is not treated as a
+dataset. For configured OpenAPI operations, the host derives
+`Accept` from the operation's declared response media types; neither the model
+nor workflow supplies arbitrary HTTP headers. The SDMX adapter therefore asks
+for its declared SDMX-XML representations rather than inheriting a JSON-only
+header.
 
 Eurostat acquisition follows three distinct steps:
 
-1. Fetch the official catalogue TOC XML as a bounded resource and materialize
+1. Fetch the English catalogue TOC TSV from
+   `https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en` as a bounded resource and materialize
    its table code, title, category path and coverage fields into a dataset.
 2. Use a catalogue-returned candidate with the SDMX structure provider to
    inspect its dataflow/DSD, dimensions, code lists and content constraints.
    Use only identifiers and codes present in those returned resources.
+   Dataflow requests use Eurostat's fixed version `1.0`; use the version
+   embedded in returned references for versioned DSDs and code lists. The
+   structural endpoint rejects a `lang` query parameter, so this provider does
+   not expose one.
 3. Call the Statistics API with the validated dataset and dimension codes.
-   JSON-stat 2.0 responses are normalized to long-form dataset rows with
-   dimensions, optional labels, value and status; the derived dataset keeps
-   source-resource provenance and can continue through ordinary dataset
-   analysis or quality workflows.
+   The data-retrieval graph binds the validated dataset code to the declared
+   `eurostat.getData` transition, then binds the successful response's
+   resource reference into `dataset.inspect`. JSON-stat 2.0 responses are
+   normalized to long-form dataset rows with dimensions, optional labels,
+   value and status; the derived dataset keeps source-resource provenance and
+   can continue through ordinary dataset analysis or quality workflows.
 
 The Eurostat starter definitions use the existing `dataset` and `openapi`
 workflow families. Metadata and data routes explicitly restrict their API
 tools to `eurostat_sdmx.getStructure` and `eurostat.getData` respectively;
 another configured API cannot satisfy that requirement. The catalogue has an
-executable fetch/import graph. Metadata and query steps are planner-driven
-blueprint steps, not a deterministic SDMX query validator. Moving between
-Eurostat acquisition stages requires an explicit route transition or a later
-turn; `continuation_workflow_targets` currently supports dataset continuations
-and does not automatically switch to another acquisition route.
+executable fetch/import graph. Typed continuation links carry only successful
+host observations and verified resource/dataset references across the
+catalogue, metadata and data workflows. Model-selected codes remain bound to
+the observed candidate list; they are not recovered from free-form text. The
+handoff is automatic only when its declared target is applicable, all required
+bindings resolve and the target execution envelope validates. Otherwise the
+current plan remains active and records the missing prerequisite.
 
 SDMX projection distinguishes ConceptIdentity from Enumeration references and
 retains codelist/DSD agency and version references, constraint dimensions,
@@ -132,7 +153,7 @@ provider, operation, query, retrieval time and content hash are persisted with
 the imported descriptor as well as returned in the tool result.
 
 The shared dataset-from-resource path also accepts bounded JSON arrays of
-objects, JSON-stat 2.0, recognized Eurostat catalogue XML, SDMX structural XML
+objects, JSON-stat 2.0, recognized Eurostat catalogue XML/TSV, SDMX structural XML
 and simple repeated-record XML. XML parsing disables network access and rejects
 DTD/entity declarations. Unsupported or over-limit structures fail
 explicitly; this is not a general-purpose XML-to-relational converter.

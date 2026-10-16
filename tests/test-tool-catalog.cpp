@@ -68,8 +68,26 @@ int main() {
     const auto web_fetch_schema = nlohmann::json::parse(web_fetch->input_schema_json);
     assert(web_fetch_schema["required"] == nlohmann::json::array({"url"}));
     assert(!web_fetch_schema["properties"].contains("extract"));
+    assert(web_fetch_schema["properties"]["accept"]["type"] == "string");
+    assert(web_fetch_schema["properties"]["accept"]["maxLength"] == 512);
     assert(web_fetch_schema["properties"]["max_bytes"]["default"] == 10485760);
     assert(web_fetch_schema["properties"]["max_bytes"]["maximum"] == 10485760);
+    const auto web_fetch_result_schema = nlohmann::json::parse(web_fetch->model_result_schema_json);
+    assert(web_fetch_result_schema["properties"]["text_excerpt"]["maxLength"] == 1024);
+    assert(web_fetch_result_schema["properties"].contains("preview_truncated"));
+
+    // First use may import and batch-write a bounded resource before exposing
+    // a descriptor. A generic local-read timeout would cut this off early.
+    for (const auto * name : {"dataset.inspect", "dataset.schema", "dataset.sample"}) {
+        const auto * definition = catalog.find_definition(name);
+        assert(definition && definition->timeout_ms == 180000);
+    }
+    const auto * dataset_inspect = catalog.find_definition("dataset.inspect");
+    const auto dataset_inspect_model = nlohmann::json::parse(dataset_inspect->model_input_schema_json);
+    assert(dataset_inspect_model["x-agent-rules"].size() == 2);
+    assert(dataset_inspect_model["x-agent-rules"][1].get<std::string>().find("resource field") != std::string::npos);
+    const auto dataset_inspect_result = nlohmann::json::parse(dataset_inspect->model_result_schema_json);
+    assert(dataset_inspect_result["properties"]["columns"]["type"] == "integer");
 
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
@@ -82,14 +100,27 @@ int main() {
         data_join->capabilities.end());
     const auto calculator_model = nlohmann::json::parse(calculator->model_input_schema_json);
     const auto data_query_model = nlohmann::json::parse(data_query->model_input_schema_json);
+    const auto data_query_host = nlohmann::json::parse(data_query->input_schema_json);
+    const auto data_query_result = nlohmann::json::parse(data_query->result_schema_json);
     assert(calculator_model["properties"].contains("expression"));
     assert(data_query_model["properties"].contains("dataset"));
     assert(!data_query_model["properties"].contains("max_scan_rows"));
     assert(!data_query_model["properties"].contains("materialize"));
+    assert(data_query_host["properties"]["where"]["oneOf"].size() == 2);
+    assert(data_query_host["properties"]["where"]["oneOf"][0]["type"] == "array");
+    assert(data_query_host["properties"]["where"]["oneOf"][1]["type"] == "string");
+    assert(data_query_model["properties"]["where"]["x-agent-flat"]["directive"] == "where");
+    assert(data_query_model["properties"]["where"]["x-agent-flat"]["positional"] ==
+        nlohmann::json({"field", "operator", "value"}));
+    assert(data_query_model["properties"]["order_by"]["x-agent-flat"]["directive"] == "order_by");
+    assert(data_query_model["properties"]["order_by"]["x-agent-flat"]["positional"] ==
+        nlohmann::json({"field", "direction"}));
+    assert(data_query_result["properties"]["rows"]["items"]["type"] == "array");
     for (const auto * operation : {"data.query", "data.filter"}) {
         const auto * definition = catalog.find_definition(operation);
         const auto model_schema = nlohmann::json::parse(definition->model_input_schema_json);
         const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
+        assert(model_schema["properties"][key]["x-agent-flat"]["directive"] == key);
         const auto & operators = model_schema["properties"][key]["items"]["properties"]["operator"]["enum"];
         assert(std::find(operators.begin(), operators.end(), "in") != operators.end());
     }
@@ -298,11 +329,11 @@ int main() {
         common_tool_model_result_schema(*data_filter),
         compact_error);
     assert(compact_error.empty());
-    assert(filter_compact.find("conditions (required, object list)") != std::string::npos);
-    assert(filter_compact.find("conditions[0].field: string") != std::string::npos);
+    assert(filter_compact.find("conditions (required, directive(conditions) list)") != std::string::npos);
+    assert(filter_compact.find("conditions: <field> <operator> <value>") != std::string::npos);
     assert(filter_compact.find("in requires a non-empty list value") != std::string::npos);
     assert(filter_compact.find("<=|in|is_null|not_null") != std::string::npos);
-    assert(filter_compact.find("example:\nopen! data.filter\ndataset: $orders.dataset\nconditions[0].field: status") != std::string::npos);
+    assert(filter_compact.find("example:\nopen! data.filter\ndataset: $orders.dataset\nconditions: status \"=\" paid") != std::string::npos);
     const auto join_compact = common_render_compact_tool_description(
         data_join->name,
         data_join->description,

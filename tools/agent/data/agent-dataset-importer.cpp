@@ -5,7 +5,9 @@
 #include <libxml/tree.h>
 
 #include <algorithm>
+#include <chrono>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -67,18 +69,23 @@ bool table_rows(const json & rows, std::vector<json> & output, std::string & err
 }
 
 common_agent_dataset_column_type inferred_type(const std::string & value) {
-    if (value.empty()) return common_agent_dataset_column_type::null_;
+    if (value.empty() || std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        })) return common_agent_dataset_column_type::null_;
     if (value == "true" || value == "false") return common_agent_dataset_column_type::boolean;
     char * end = nullptr;
     std::strtoll(value.c_str(), &end, 10);
-    if (end != nullptr && *end == '\0') return common_agent_dataset_column_type::integer;
+    if (end != value.c_str() && end != nullptr && *end == '\0') return common_agent_dataset_column_type::integer;
     std::strtod(value.c_str(), &end);
-    if (end != nullptr && *end == '\0') return common_agent_dataset_column_type::decimal;
+    if (end != value.c_str() && end != nullptr && *end == '\0') return common_agent_dataset_column_type::decimal;
     return common_agent_dataset_column_type::string;
 }
 
 json typed_value(const std::string & value, common_agent_dataset_column_type type) {
-    if (type == common_agent_dataset_column_type::null_) return nullptr;
+    if (type == common_agent_dataset_column_type::null_ ||
+            std::all_of(value.begin(), value.end(), [](unsigned char c) {
+                return std::isspace(c) != 0;
+            })) return nullptr;
     if (type == common_agent_dataset_column_type::boolean) return value == "true";
     if (type == common_agent_dataset_column_type::integer) return std::stoll(value);
     if (type == common_agent_dataset_column_type::decimal) return std::stod(value);
@@ -103,7 +110,7 @@ bool read_size(const json & object, const char * key, size_t & value) {
     return true;
 }
 
-std::vector<std::string> csv_row(const std::string & line) {
+std::vector<std::string> csv_row(const std::string & line, char delimiter = ',') {
     std::vector<std::string> fields;
     std::string field;
     bool quoted = false;
@@ -114,7 +121,7 @@ std::vector<std::string> csv_row(const std::string & line) {
                 field += '"';
                 ++index;
             } else quoted = !quoted;
-        } else if (value == ',' && !quoted) {
+        } else if (value == delimiter && !quoted) {
             fields.push_back(field);
             field.clear();
         } else field += value;
@@ -636,7 +643,8 @@ bool normalize_agent_csv_text(
         const std::string & csv_text,
         const std::string & dataset_name,
         std::string & worksheet_json,
-        std::string & error) {
+        std::string & error,
+        char delimiter) {
     std::istringstream input(csv_text);
     std::string line;
     if (!std::getline(input, line)) {
@@ -644,7 +652,7 @@ bool normalize_agent_csv_text(
         return false;
     }
     if (!line.empty() && line.back() == '\r') line.pop_back();
-    const auto names = csv_row(line);
+    const auto names = csv_row(line, delimiter);
     if (names.empty() || names.size() > 512) {
         error = "CSV header exceeds the bounded column limit";
         return false;
@@ -652,7 +660,7 @@ bool normalize_agent_csv_text(
     std::vector<std::vector<std::string>> rows;
     while (rows.size() < 1'000'000 && std::getline(input, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        rows.push_back(csv_row(line));
+        rows.push_back(csv_row(line, delimiter));
     }
     if (!input.eof() && rows.size() >= 1'000'000) {
         error = "CSV resource exceeds the bounded row limit";
@@ -673,7 +681,9 @@ bool normalize_agent_csv_text(
         {"index", 0}, {"table_index", 0},
         {"node_id", "resource-node://csv/0"},
         {"header_mode", "explicit"}, {"header_confidence", 1.0},
-        {"header_reason", "CSV supplied an explicit first-row header"},
+        {"header_reason", delimiter == ',' ? "CSV supplied an explicit first-row header" :
+            "Delimited text supplied an explicit first-row header"},
+        {"source_format", delimiter == ',' ? "csv" : "tsv"},
         {"columns", json::array()}, {"rows", json::array()}};
     for (size_t index = 0; index < names.size(); ++index) {
         worksheet["columns"].push_back({
@@ -691,6 +701,81 @@ bool normalize_agent_csv_text(
         worksheet["rows"].push_back(std::move(object));
     }
     worksheet_json = json({{"worksheets", json::array({std::move(worksheet)})}}).dump();
+    error.clear();
+    return true;
+}
+
+bool normalize_agent_eurostat_toc_text(
+        const std::string & toc_text,
+        std::string & worksheet_json,
+        std::string & error) {
+    std::string normalized;
+    if (!normalize_agent_csv_text(toc_text, "Eurostat catalogue", normalized, error, '\t')) return false;
+    auto document = json::parse(normalized, nullptr, false);
+    if (!document.is_object() || !document.contains("worksheets") ||
+            !document["worksheets"].is_array() || document["worksheets"].size() != 1) {
+        error = "Eurostat catalogue text did not normalize to one worksheet";
+        return false;
+    }
+    auto & worksheet = document["worksheets"][0];
+    const std::vector<std::string> expected = {
+        "title", "code", "type", "last update of data", "last table structure change",
+        "data start", "data end", "values"};
+    if (!worksheet.contains("columns") || !worksheet["columns"].is_array() ||
+            worksheet["columns"].size() != expected.size()) {
+        error = "plain text is not the recognized Eurostat TOC schema";
+        return false;
+    }
+    for (size_t index = 0; index < expected.size(); ++index) {
+        if (!worksheet["columns"][index].is_object() ||
+                worksheet["columns"][index].value("name", "") != expected[index]) {
+            error = "plain text is not the recognized Eurostat TOC schema";
+            return false;
+        }
+    }
+    if (!worksheet.contains("rows") || !worksheet["rows"].is_array()) {
+        error = "recognized Eurostat TOC has no rows";
+        return false;
+    }
+    std::vector<std::string> hierarchy;
+    for (auto & row : worksheet["rows"]) {
+        if (!row.is_object() || !row.contains("title") || !row["title"].is_string() ||
+                !row.contains("type") || !row["type"].is_string()) {
+            error = "recognized Eurostat TOC row is missing title or type";
+            return false;
+        }
+        std::string title = row["title"].get<std::string>();
+        size_t indent = 0;
+        while (indent < title.size() && title[indent] == ' ') ++indent;
+        if (indent % 4 != 0) {
+            error = "recognized Eurostat TOC hierarchy indentation is malformed";
+            return false;
+        }
+        const size_t depth = indent / 4;
+        title = title.substr(indent);
+        while (!title.empty() && title.back() == ' ') title.pop_back();
+        if (title.empty() || depth > 32) {
+            error = "recognized Eurostat TOC contains an invalid hierarchy row";
+            return false;
+        }
+        if (hierarchy.size() < depth) {
+            error = "recognized Eurostat TOC hierarchy skips a parent level";
+            return false;
+        }
+        hierarchy.resize(depth);
+        std::string category_path;
+        for (const auto & component : hierarchy) {
+            if (!category_path.empty()) category_path += " / ";
+            category_path += component;
+        }
+        row["title"] = std::move(title);
+        row["category_path"] = std::move(category_path);
+        hierarchy.push_back(row["title"].get<std::string>());
+    }
+    worksheet["columns"].push_back({{"name", "category_path"}, {"type", "string"}, {"nullable", true}});
+    worksheet["source_format"] = "eurostat-catalogue-tsv";
+    worksheet["header_reason"] = "Recognized Eurostat tab-separated table of contents";
+    worksheet_json = document.dump();
     error.clear();
     return true;
 }
@@ -1022,8 +1107,10 @@ bool import_agent_worksheet_envelope(
         common_agent_data_store & store,
         const agent_dataset_import_request & request,
         std::vector<common_agent_dataset_descriptor> & imported,
-        std::string & error) {
+        std::string & error,
+        agent_dataset_import_stats * stats) {
     imported.clear();
+    if (stats) *stats = {};
     if (request.source_resource_uri.empty() || request.source_workbook_name.empty() ||
             request.import_processor_id.empty()) {
         error = "dataset import requires source and processor provenance";
@@ -1038,6 +1125,33 @@ bool import_agent_worksheet_envelope(
             root["worksheets"].size() > request.limits.max_generated_datasets) {
         error = "worksheet count exceeds host limits";
         return false;
+    }
+
+    // Validate every worksheet and row before the first persistent write. A
+    // malformed later worksheet must not leave an earlier one published.
+    for (const auto & worksheet : root["worksheets"]) {
+        if (!worksheet.is_object() || !worksheet.contains("name") || !worksheet["name"].is_string() ||
+                !worksheet.contains("columns") || !worksheet["columns"].is_array() ||
+                !worksheet.contains("rows") || !worksheet["rows"].is_array() ||
+                worksheet["name"].get<std::string>().empty() || worksheet["columns"].empty() ||
+                worksheet["columns"].size() > request.limits.max_columns || worksheet["rows"].empty() ||
+                worksheet["rows"].size() > request.limits.max_rows ||
+                worksheet["rows"].size() > request.limits.max_cells / worksheet["columns"].size()) {
+            error = "worksheet shape exceeds host limits or is incomplete";
+            return false;
+        }
+        for (const auto & row : worksheet["rows"]) {
+            if (!row.is_object()) { error = "worksheet rows must be JSON objects"; return false; }
+        }
+        std::set<std::string> column_names;
+        for (const auto & column : worksheet["columns"]) {
+            if (!column.is_object() || !column.contains("name") || !column["name"].is_string() ||
+                    column["name"].get<std::string>().empty() ||
+                    !column_names.insert(column["name"].get<std::string>()).second) {
+                error = "worksheet contains an invalid or duplicate column definition";
+                return false;
+            }
+        }
     }
 
     for (const auto & worksheet : root["worksheets"]) {
@@ -1059,14 +1173,22 @@ bool import_agent_worksheet_envelope(
             return false;
         }
         common_agent_dataset_descriptor descriptor;
-        descriptor.ref.uri = "dataset://import/" + stable_source_key(request.source_resource_uri) + "/" +
+        const std::string representation = request.source_representation.empty()
+            ? "xlsx:worksheet" : request.source_representation;
+        const std::string content_hash = request.source_content_hash.empty()
+            ? stable_source_key(worksheet.dump()) : request.source_content_hash;
+        const std::string source_identity = request.source_resource_uri + ":" + content_hash + ":" +
+            representation + ":" + request.import_processor_id + ":" +
+            request.import_processor_version + ":" + sheet_name + ":" +
+            (request.sheet_index ? std::to_string(*request.sheet_index) : std::string("all"));
+        descriptor.ref.uri = "dataset://import/" + stable_source_key(source_identity) + "/" +
             std::to_string(imported.size()) + "/" + sheet_name;
         descriptor.ref.name = sheet_name;
         descriptor.ref.row_count = worksheet["rows"].size();
         descriptor.ref.column_count = worksheet["columns"].size();
         descriptor.ref.source_resource_uri = request.source_resource_uri;
-        descriptor.ref.source_representation = request.source_representation.empty()
-            ? "xlsx:worksheet" : request.source_representation;
+        descriptor.ref.content_hash = content_hash;
+        descriptor.ref.source_representation = representation;
         descriptor.source_workbook_name = request.source_workbook_name;
         descriptor.source_sheet_name = sheet_name;
         descriptor.source_sheet_index = worksheet_index;
@@ -1098,16 +1220,58 @@ bool import_agent_worksheet_envelope(
         }
         if (!validate_common_agent_dataset_descriptor(descriptor, request.limits, error)) return false;
 
-        for (size_t row_index = 0; row_index < worksheet["rows"].size(); ++row_index) {
-            const auto & row = worksheet["rows"][row_index];
-            if (!row.is_object()) {
-                error = "worksheet rows must be JSON objects";
-                return false;
+        // Reuse only a completely published descriptor whose resource bytes,
+        // representation and importer revision all match this request.
+        {
+            common_agent_dataset_descriptor existing;
+            std::string lookup_error;
+            if (store.get_dataset_descriptor(descriptor.ref.uri, existing, lookup_error) &&
+                    existing.ref.content_hash == content_hash &&
+                    existing.ref.source_resource_uri == request.source_resource_uri &&
+                    existing.ref.source_representation == descriptor.ref.source_representation &&
+                    existing.ref.row_count == descriptor.ref.row_count &&
+                    existing.ref.column_count == descriptor.ref.column_count &&
+                    existing.import_processor_id == descriptor.import_processor_id &&
+                    existing.import_processor_version == descriptor.import_processor_version &&
+                    existing.columns.size() == descriptor.columns.size() &&
+                    std::equal(existing.columns.begin(), existing.columns.end(), descriptor.columns.begin(),
+                        [](const auto & a, const auto & b) {
+                            return a.name == b.name && a.type == b.type && a.nullable == b.nullable;
+                        })) {
+                imported.push_back(std::move(existing));
+                if (stats) stats->reused_existing = true;
+                continue;
             }
-            std::string row_id = descriptor.ref.uri + "/row/" + std::to_string(row_index);
-            if (!store.put_row(descriptor.ref.uri, row_id, row.dump(), error)) return false;
         }
+
+        const size_t batch_size = std::max<size_t>(1, std::min<size_t>(request.row_batch_size, 4096));
+        const auto write_start = std::chrono::steady_clock::now();
+        for (size_t offset = 0; offset < worksheet["rows"].size(); offset += batch_size) {
+            std::vector<std::pair<std::string, std::string>> batch;
+            const size_t end = std::min(worksheet["rows"].size(), offset + batch_size);
+            batch.reserve(end - offset);
+            for (size_t row_index = offset; row_index < end; ++row_index) {
+                const auto & row = worksheet["rows"][row_index];
+                if (!row.is_object()) {
+                    error = "worksheet rows must be JSON objects";
+                    return false;
+                }
+                batch.emplace_back(descriptor.ref.uri + "/row/" + std::to_string(row_index), row.dump());
+            }
+            if (!batch.empty() && !store.put_rows(descriptor.ref.uri, batch, error)) return false;
+            if (stats) {
+                stats->rows_imported += batch.size();
+                ++stats->batches_written;
+            }
+        }
+        if (stats) stats->write_elapsed_us += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - write_start).count());
+        const auto descriptor_start = std::chrono::steady_clock::now();
         if (!store.put_dataset_descriptor(descriptor, error)) return false;
+        if (stats) stats->descriptor_elapsed_us += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - descriptor_start).count());
         imported.push_back(std::move(descriptor));
     }
     if ((request.sheet_name.has_value() || request.sheet_index.has_value()) && imported.empty()) {

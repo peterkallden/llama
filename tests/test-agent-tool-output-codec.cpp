@@ -1,9 +1,11 @@
 #include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/contracts/agent-request.h"
 #include "plan/plan-json.h"
 
 #include <cassert>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,15 @@ common_chat_tool describe_tool() {
         "statistics.describe",
         "Describe selected dataset columns.",
         R"json({"type":"object","additionalProperties":false,"required":["columns"],"properties":{"columns":{"type":"array","items":{"type":"string"}},"select":{"type":"string"}}})json",
+        R"json({"type":"object"})json",
+    };
+}
+
+common_chat_tool query_tool() {
+    return {
+        "data.query",
+        "Query a dataset.",
+        R"json({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"},"where":{"type":"array","x-agent-flat":{"directive":"where","positional":["field","operator","value"],"two_slot_value_default_operator":"contains"},"items":{"type":"object","required":["field","operator"],"properties":{"field":{"type":"string"},"operator":{"type":"string","enum":["=","contains","in","not_null"]},"value":{}}}},"order_by":{"type":"array","x-agent-flat":{"directive":"order_by","positional":["field","direction"]},"items":{"type":"object","required":["field"],"properties":{"field":{"type":"string"},"direction":{"type":"string","enum":["asc","desc"]}}}}}})json",
         R"json({"type":"object"})json",
     };
 }
@@ -214,6 +225,58 @@ void test_schema_aware_flat_dsl_and_named_slots() {
         "open! data.aggregate\ndataset: x\nmeasure: sum {column=amount}", tools, call, error));
 }
 
+void test_predicate_directive_avoids_indexed_bracket_paths() {
+    const auto tool = query_tool();
+    std::string error;
+    const auto description = common_render_compact_tool_description(
+        tool.name, tool.description, tool.parameters, tool.result_schema, error);
+    assert(error.empty());
+    assert(description.find("where: <field> <operator> <value>") != std::string::npos);
+    assert(description.find("where[0].field") == std::string::npos);
+    assert(description.find("order_by: <field> <direction>") != std::string::npos);
+    assert(description.find("order_by[0].field") == std::string::npos);
+
+    common_agent_tool_call call;
+    const std::vector<common_chat_tool> tools{tool};
+    const bool parsed = common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.query\n"
+        "where: title contains \"population density\"\n"
+        "where: geo in [SE, NO]\n"
+        "where: status not_null\n"
+        "order_by: code asc\n"
+        "order_by: title desc",
+        tools, call, error);
+    if (!parsed) std::fprintf(stderr, "predicate directive parse failed: %s\n", error.c_str());
+    assert(parsed);
+    const auto arguments = nlohmann::json::parse(call.arguments_json);
+    assert(arguments["where"].size() == 3);
+    assert(arguments["where"][0] == nlohmann::json({
+        {"field", "title"}, {"operator", "contains"}, {"value", "population density"}}));
+    assert(arguments["where"][1]["value"] == nlohmann::json({"SE", "NO"}));
+    assert(arguments["where"][2] == nlohmann::json({
+        {"field", "status"}, {"operator", "not_null"}}));
+    assert(arguments["order_by"] == nlohmann::json::array({
+        nlohmann::json{{"field", "code"}, {"direction", "asc"}},
+        nlohmann::json{{"field", "title"}, {"direction", "desc"}},
+    }));
+
+    assert(common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.query\nwhere: title \"population density\"",
+        tools, call, error));
+    const auto short_form = nlohmann::json::parse(call.arguments_json);
+    assert(short_form["where"][0] == nlohmann::json({
+        {"field", "title"}, {"operator", "contains"}, {"value", "population density"}}));
+
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.query\nwhere[[0]].field: title", tools, call, error));
+    assert(!common_parse_model_tool_call(
+        common_agent_tool_output_format::compact_dsl,
+        "open! data.query\norder_by[[0]].field: code", tools, call, error));
+}
+
 void test_flat_paths_and_multiline_plan() {
     const auto tool = aggregate_tool();
     const std::vector<common_chat_tool> tools{tool};
@@ -377,6 +440,7 @@ int main() {
     test_jsonl_normalization();
     test_v1_schema_boundary_and_rendering();
     test_schema_aware_flat_dsl_and_named_slots();
+    test_predicate_directive_avoids_indexed_bracket_paths();
     test_flat_paths_and_multiline_plan();
     test_nested_scalar_lists();
     test_nested_arguments_and_multistep_plan();

@@ -169,6 +169,9 @@ struct common_plan_workflow_transition {
     // observation that yields the bounded candidate array.
     std::string candidate_json_pointer;
     float cost = 1.0f;
+    // Candidate identity pointer within each array item. Defaults to /id;
+    // catalogue records may expose another stable host-returned key such as /code.
+    std::string candidate_id_json_pointer = "/id";
     // Optional fixed choices owned by the host. When present, the selector
     // chooses among these values using the bounded observation and request.
     struct choice {
@@ -193,6 +196,34 @@ struct common_plan_workflow_transition {
     // Host-controlled bounded collection pagination for this transition only.
     // Zero keeps the ordinary single-request semantics.
     uint8_t max_pages = 0;
+    // The graph fixes this action's tool and host-owned argument seeds while
+    // the model supplies request-dependent arguments for a graph entry.
+    // Kept last to preserve positional aggregate initialization compatibility.
+    bool model_supplies_arguments = false;
+    // Optional bounded guidance for a model-supplied action at this exact
+    // transition. It narrows the method, never the tool or host authority.
+    std::string model_instruction;
+};
+
+// A declared handoff from a completed workflow observation to another
+// workflow. Source JSON pointers are resolved by the host; model generated
+// text can never satisfy a continuation binding.
+struct common_plan_workflow_continuation_link {
+    struct argument_binding {
+        std::string target_transition_id;
+        std::string target_tool_name;
+        std::string target_json_pointer;
+        std::string source_json_pointer;
+        bool required = true;
+        // Optional completed transition whose structured observation supplies
+        // this value; empty means the observation that triggered the link.
+        std::string source_transition_id;
+    };
+    std::string source_transition_id;
+    std::string source_terminal_state;
+    std::string target_workflow_ref;
+    std::string target_workflow_revision;
+    std::vector<argument_binding> argument_bindings;
 };
 
 // Workflow definitions describe a host-validated family of work. They never
@@ -217,6 +248,7 @@ struct common_plan_workflow_definition {
     // Workflow families that this workflow may hand off to after producing a
     // typed host-owned output such as a materialized dataset.
     std::vector<std::string> continuation_workflow_targets;
+    std::vector<common_plan_workflow_continuation_link> continuation_links;
     // Full-text reads remain a single bounded range unless the workflow
     // explicitly opts into host-managed chunk continuation.
     common_plan_workflow_resource_read_policy resource_read_policy =
@@ -241,6 +273,21 @@ struct common_plan_route_binding {
     std::string graph_revision;
     std::string execution_envelope_fingerprint;
     std::string policy_revision;
+    // Durable idempotency provenance for host-authorized workflow handoffs.
+    std::string continuation_link_id;
+    std::string continuation_source_fingerprint;
+    // Historical source-workflow steps remain in the plan. This marks the
+    // first step owned by the currently bound workflow revision.
+    size_t workflow_step_start_index = 0;
+};
+struct common_plan_workflow_continuation_record {
+    std::string link_id;
+    std::string source_fingerprint;
+    std::string source_workflow_ref;
+    std::string source_workflow_revision;
+    std::string source_terminal_state;
+    std::string target_workflow_ref;
+    std::string target_workflow_revision;
 };
 struct common_plan_step {
     std::string id, title, objective, intended_contribution;
@@ -293,6 +340,7 @@ struct common_plan_state {
     std::optional<common_plan_workflow_binding> selected_workflow;
     std::optional<common_plan_workflow_definition> workflow_definition;
     std::optional<common_plan_route_binding> route_binding;
+    std::vector<common_plan_workflow_continuation_record> workflow_continuation_history;
     std::vector<common_plan_observation> observations;
     std::optional<std::string> active_step_id, next_action;
     uint64_t version = 0;
@@ -362,6 +410,7 @@ struct common_plan_operation {
     // Host-only route migration. Model-facing proposal parsing never sets
     // this flag; the plan store policy requires it for rebinding.
     std::optional<common_plan_route_binding> route_binding;
+    std::optional<common_plan_workflow_continuation_record> workflow_continuation_record;
     std::optional<common_plan_workflow_definition> workflow_definition;
     std::vector<std::string> route_required_capabilities;
     std::vector<std::string> route_procedure_refs;

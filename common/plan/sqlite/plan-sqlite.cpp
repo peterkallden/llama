@@ -40,12 +40,75 @@ common_plan_operation_kind parse_operation_kind(const std::string & value) {
     return common_plan_operation_kind::add_step;
 }
 
+json serialize_plan_resource_ref(const common_runtime_resource_ref & resource) {
+    return {{"uri", resource.uri}, {"name", resource.name},
+        {"description", resource.description}, {"mime_type", resource.mime_type},
+        {"size_bytes", resource.size_bytes},
+        {"scope", common_runtime_resource_scope_name(resource.scope)},
+        {"metadata", {{"purpose", resource.metadata.purpose},
+            {"content_summary", resource.metadata.content_summary},
+            {"usage_hint", resource.metadata.usage_hint}, {"limitations", resource.metadata.limitations},
+            {"keywords", resource.metadata.keywords}, {"entities", resource.metadata.entities}}},
+        {"lineage", {{"parent_uri", resource.lineage.parent_uri},
+            {"chunk_index", resource.lineage.chunk_index}, {"chunk_count", resource.lineage.chunk_count},
+            {"byte_offset", resource.lineage.byte_offset}, {"byte_length", resource.lineage.byte_length},
+            {"overlap_bytes", resource.lineage.overlap_bytes}, {"derivation", resource.lineage.derivation}}}};
+}
+
+common_runtime_resource_ref parse_plan_resource_ref(const json & value) {
+    common_runtime_resource_ref resource;
+    resource.uri = value.value("uri", std::string{});
+    resource.name = value.value("name", std::string{});
+    resource.description = value.value("description", std::string{});
+    resource.mime_type = value.value("mime_type", std::string{});
+    resource.size_bytes = value.value("size_bytes", size_t(0));
+    const auto scope = value.value("scope", std::string("turn"));
+    resource.scope = scope == "session" ? common_runtime_resource_scope::session :
+        scope == "project" ? common_runtime_resource_scope::project : common_runtime_resource_scope::turn;
+    if (value.contains("metadata") && value["metadata"].is_object()) {
+        const auto & metadata = value["metadata"];
+        resource.metadata.purpose = metadata.value("purpose", std::string{});
+        resource.metadata.content_summary = metadata.value("content_summary", std::string{});
+        resource.metadata.usage_hint = metadata.value("usage_hint", std::string{});
+        resource.metadata.limitations = metadata.value("limitations", std::string{});
+        resource.metadata.keywords = metadata.value("keywords", std::vector<std::string>{});
+        resource.metadata.entities = metadata.value("entities", std::vector<std::string>{});
+    }
+    if (value.contains("lineage") && value["lineage"].is_object()) {
+        const auto & lineage = value["lineage"];
+        resource.lineage.parent_uri = lineage.value("parent_uri", std::string{});
+        resource.lineage.chunk_index = lineage.value("chunk_index", size_t(0));
+        resource.lineage.chunk_count = lineage.value("chunk_count", size_t(0));
+        resource.lineage.byte_offset = lineage.value("byte_offset", size_t(0));
+        resource.lineage.byte_length = lineage.value("byte_length", size_t(0));
+        resource.lineage.overlap_bytes = lineage.value("overlap_bytes", size_t(0));
+        resource.lineage.derivation = lineage.value("derivation", std::string{});
+    }
+    return resource;
+}
+
 json serialize_workflow_definition(const common_plan_workflow_definition & definition) {
     json value = {{"workflow_ref", definition.workflow_ref}, {"workflow_revision", definition.workflow_revision},
         {"family", definition.family}, {"graph_revision", definition.graph_revision},
         {"allowed_tools", definition.allowed_tools}, {"required_capabilities", definition.required_capabilities},
         {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context},
         {"continuation_workflow_targets", definition.continuation_workflow_targets}};
+    if (!definition.continuation_links.empty()) {
+        value["continuation_links"] = json::array();
+        for (const auto & link : definition.continuation_links) {
+            json item = {{"workflow_ref", link.target_workflow_ref}, {"workflow_revision", link.target_workflow_revision}, {"bindings", json::array()}};
+            if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
+            if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
+            for (const auto & binding : link.argument_bindings) {
+                json binding_json = {{"transition", binding.target_transition_id},
+                    {"tool", binding.target_tool_name}, {"target", binding.target_json_pointer},
+                    {"source", binding.source_json_pointer}, {"required", binding.required}};
+                if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                item["bindings"].push_back(std::move(binding_json));
+            }
+            value["continuation_links"].push_back(std::move(item));
+        }
+    }
     if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
         value["resource_read_policy"] = "chunked";
     }
@@ -53,11 +116,30 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
         value["start_state"] = definition.start_state;
         value["terminal_states"] = definition.terminal_states;
         value["transitions"] = json::array();
-        for (const auto & transition : definition.transitions) value["transitions"].push_back({
-            {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
-            {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
-            {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
-            {"candidates", transition.candidate_json_pointer}, {"cost", transition.cost}});
+        for (const auto & transition : definition.transitions) {
+            json item = {
+                {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
+                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+                {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
+                {"candidates", transition.candidate_json_pointer},
+                {"candidate_id", transition.candidate_id_json_pointer}, {"cost", transition.cost},
+                {"model_supplies_arguments", transition.model_supplies_arguments},
+                {"model_instruction", transition.model_instruction},
+                {"optional", transition.optional}, {"max_pages", transition.max_pages}};
+            if (!transition.choices.empty()) {
+                item["choices"] = json::array();
+                for (const auto & choice : transition.choices) item["choices"].push_back({
+                    {"id", choice.id}, {"description", choice.description}, {"to", choice.to_state},
+                    {"requires", choice.required_observation_json_pointers}});
+            }
+            if (!transition.argument_bindings.empty()) {
+                item["bindings"] = json::array();
+                for (const auto & binding : transition.argument_bindings) item["bindings"].push_back({
+                    {"target", binding.target_json_pointer}, {"from", binding.source_transition_id},
+                    {"source", binding.source_json_pointer}, {"required", binding.required}});
+            }
+            value["transitions"].push_back(std::move(item));
+        }
     }
     return value;
 }
@@ -73,16 +155,53 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
     value.optional_capabilities = definition.value("optional_capabilities", std::vector<std::string>{});
     value.required_context = definition.value("required_context", std::vector<std::string>{});
     value.continuation_workflow_targets = definition.value("continuation_workflow_targets", std::vector<std::string>{});
+    for (const auto & item : definition.value("continuation_links", json::array())) {
+        common_plan_workflow_continuation_link link;
+        link.target_workflow_ref = item.value("workflow_ref", std::string{});
+        link.source_transition_id = item.value("from_transition", std::string{});
+        link.source_terminal_state = item.value("from_terminal_state", std::string{});
+        link.target_workflow_revision = item.value("workflow_revision", std::string{});
+        for (const auto & binding : item.value("bindings", json::array())) link.argument_bindings.push_back({
+            binding.value("transition", std::string{}),
+            binding.value("tool", std::string{}), binding.value("target", std::string{}),
+            binding.value("source", std::string{}), binding.value("required", true),
+            binding.value("from_transition", std::string{})});
+        value.continuation_links.push_back(std::move(link));
+    }
     if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") {
         value.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
     }
     value.start_state = definition.value("start_state", std::string{});
     value.terminal_states = definition.value("terminal_states", std::vector<std::string>{});
-    for (const auto & item : definition.value("transitions", json::array())) value.transitions.push_back({
-        item.value("id", std::string{}), item.value("from", std::string{}), item.value("to", std::string{}),
-        item.value("kind", std::string("tool")) == "model_choice" ? common_plan_workflow_transition_kind::model_choice : common_plan_workflow_transition_kind::tool,
-        item.value("tool", std::string{}), item.value("arguments", std::string("{}")),
-        item.value("candidates", std::string{}), item.value("cost", 1.0f)});
+    for (const auto & item : definition.value("transitions", json::array())) {
+        common_plan_workflow_transition transition;
+        transition.id = item.value("id", std::string{});
+        transition.from_state = item.value("from", std::string{});
+        transition.to_state = item.value("to", std::string{});
+        transition.kind = item.value("kind", std::string("tool")) == "model_choice"
+            ? common_plan_workflow_transition_kind::model_choice : common_plan_workflow_transition_kind::tool;
+        transition.tool_name = item.value("tool", std::string{});
+        transition.arguments_template_json = item.value("arguments", std::string("{}"));
+        transition.candidate_json_pointer = item.value("candidates", std::string{});
+        transition.cost = item.value("cost", 1.0f);
+        transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
+        transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
+        transition.model_instruction = item.value("model_instruction", std::string{});
+        transition.optional = item.value("optional", false);
+        transition.max_pages = item.value("max_pages", uint8_t{0});
+        for (const auto & choice_json : item.value("choices", json::array())) {
+            common_plan_workflow_transition::choice choice;
+            choice.id = choice_json.value("id", std::string{});
+            choice.description = choice_json.value("description", std::string{});
+            choice.to_state = choice_json.value("to", std::string{});
+            choice.required_observation_json_pointers = choice_json.value("requires", std::vector<std::string>{});
+            transition.choices.push_back(std::move(choice));
+        }
+        for (const auto & binding_json : item.value("bindings", json::array())) transition.argument_bindings.push_back({
+            binding_json.value("target", std::string{}), binding_json.value("from", std::string{}),
+            binding_json.value("source", std::string{}), binding_json.value("required", true)});
+        value.transitions.push_back(std::move(transition));
+    }
     return value;
 }
 
@@ -110,11 +229,33 @@ json serialize_plan(const common_plan_state & plan) {
     json assumptions = json::array();
     for (const auto & value : plan.assumptions) assumptions.push_back({{"id", value.id}, {"statement", value.statement}, {"confidence", value.confidence}, {"valid", value.valid}, {"evidence_ids", value.evidence_ids}});
     json observations = json::array();
-    for (const auto & value : plan.observations) observations.push_back({{"id", value.id}, {"source", value.source}, {"summary", value.summary}, {"confidence", value.confidence}, {"evidence_ids", value.evidence_ids}, {"created_at", value.created_at}});
+    for (const auto & observation : plan.observations) {
+        json resource_refs = json::array();
+        for (const auto & resource : observation.resource_refs) resource_refs.push_back(serialize_plan_resource_ref(resource));
+        json dataset_refs = json::array();
+        for (const auto & dataset : observation.dataset_refs) dataset_refs.push_back({
+            {"uri", dataset.uri}, {"name", dataset.name}, {"row_count", dataset.row_count},
+            {"column_count", dataset.column_count}, {"source_resource_uri", dataset.source_resource_uri},
+            {"source_representation", dataset.source_representation}, {"source_provider", dataset.source_provider},
+            {"source_operation", dataset.source_operation}, {"source_request_json", dataset.source_request_json},
+            {"retrieved_at", dataset.retrieved_at}, {"content_hash", dataset.content_hash}});
+        observations.push_back({{"id", observation.id}, {"source", observation.source},
+            {"summary", observation.summary}, {"confidence", observation.confidence},
+            {"evidence_ids", observation.evidence_ids}, {"created_at", observation.created_at},
+            {"resource_refs", resource_refs}, {"dataset_refs", dataset_refs}});
+    }
     json bindings = json::array();
     for (const auto & binding : plan.workflow_bindings) bindings.push_back({{"workflow_ref", binding.workflow_ref}, {"workflow_revision", binding.workflow_revision}});
+    json continuation_history = json::array();
+    for (const auto & item : plan.workflow_continuation_history) continuation_history.push_back({
+        {"link_id", item.link_id}, {"source_fingerprint", item.source_fingerprint},
+        {"source_workflow_ref", item.source_workflow_ref},
+        {"source_workflow_revision", item.source_workflow_revision},
+        {"source_terminal_state", item.source_terminal_state},
+        {"target_workflow_ref", item.target_workflow_ref},
+        {"target_workflow_revision", item.target_workflow_revision}});
     json procedures = plan.procedure_refs;
-    json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
+    json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"workflow_continuation_history", continuation_history}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
     if (plan.selected_workflow) value["selected_workflow"] = {
         {"workflow_ref", plan.selected_workflow->workflow_ref},
         {"workflow_revision", plan.selected_workflow->workflow_revision},
@@ -129,6 +270,9 @@ json serialize_plan(const common_plan_state & plan) {
         {"graph_revision", plan.route_binding->graph_revision},
         {"execution_envelope_fingerprint", plan.route_binding->execution_envelope_fingerprint},
         {"policy_revision", plan.route_binding->policy_revision},
+        {"continuation_link_id", plan.route_binding->continuation_link_id},
+        {"continuation_source_fingerprint", plan.route_binding->continuation_source_fingerprint},
+        {"workflow_step_start_index", plan.route_binding->workflow_step_start_index},
     };
     return value;
 }
@@ -154,9 +298,14 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.workflow_policy = parse_workflow_policy(value.value("workflow_policy", std::string("preferred")));
     plan.procedure_refs = value.value("procedure_refs", std::vector<std::string>{});
     for (const auto & binding : value.value("workflow_bindings", json::array())) plan.workflow_bindings.push_back({binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{})});
+    for (const auto & item : value.value("workflow_continuation_history", json::array())) plan.workflow_continuation_history.push_back({
+        item.value("link_id", std::string{}), item.value("source_fingerprint", std::string{}),
+        item.value("source_workflow_ref", std::string{}), item.value("source_workflow_revision", std::string{}),
+        item.value("source_terminal_state", std::string{}), item.value("target_workflow_ref", std::string{}),
+        item.value("target_workflow_revision", std::string{})});
     if (value.contains("selected_workflow") && value["selected_workflow"].is_object()) plan.selected_workflow = common_plan_workflow_binding{value["selected_workflow"].value("workflow_ref", std::string{}), value["selected_workflow"].value("workflow_revision", std::string{})};
     if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) plan.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
-    if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; plan.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{})}; }
+    if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; plan.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{}), binding.value("continuation_link_id", std::string{}), binding.value("continuation_source_fingerprint", std::string{}), binding.value("workflow_step_start_index", size_t(0))}; }
     plan.version = value.value("version", uint64_t(0));
     plan.created_at = value.value("created_at", int64_t(0));
     plan.updated_at = value.value("updated_at", int64_t(0));
@@ -175,13 +324,28 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     }
     for (const auto & item : value.value("constraints", json::array())) plan.constraints.push_back({item.value("id", std::string{}), item.value("description", std::string{}), item.value("hard", true)});
     for (const auto & item : value.value("assumptions", json::array())) { common_plan_assumption assumption; assumption.id = item.value("id", std::string{}); assumption.statement = item.value("statement", std::string{}); assumption.confidence = item.value("confidence", 0.5f); assumption.valid = item.value("valid", true); assumption.evidence_ids = item.value("evidence_ids", std::vector<std::string>{}); plan.assumptions.push_back(std::move(assumption)); }
-    for (const auto & item : value.value("observations", json::array())) { common_plan_observation observation; observation.id = item.value("id", std::string{}); observation.source = item.value("source", std::string{}); observation.summary = item.value("summary", std::string{}); observation.confidence = item.value("confidence", 0.5f); observation.evidence_ids = item.value("evidence_ids", std::vector<std::string>{}); observation.created_at = item.value("created_at", int64_t(0)); plan.observations.push_back(std::move(observation)); }
+    for (const auto & item : value.value("observations", json::array())) {
+        common_plan_observation observation;
+        observation.id = item.value("id", std::string{}); observation.source = item.value("source", std::string{});
+        observation.summary = item.value("summary", std::string{}); observation.confidence = item.value("confidence", 0.5f);
+        observation.evidence_ids = item.value("evidence_ids", std::vector<std::string>{});
+        observation.created_at = item.value("created_at", int64_t(0));
+        for (const auto & resource : item.value("resource_refs", json::array())) observation.resource_refs.push_back(parse_plan_resource_ref(resource));
+        for (const auto & dataset : item.value("dataset_refs", json::array())) observation.dataset_refs.push_back({
+            dataset.value("uri", std::string{}), dataset.value("name", std::string{}),
+            dataset.value("row_count", size_t(0)), dataset.value("column_count", size_t(0)),
+            dataset.value("source_resource_uri", std::string{}), dataset.value("source_representation", std::string{}),
+            dataset.value("source_provider", std::string{}), dataset.value("source_operation", std::string{}),
+            dataset.value("source_request_json", std::string{}), dataset.value("retrieved_at", int64_t(0)),
+            dataset.value("content_hash", std::string{})});
+        plan.observations.push_back(std::move(observation));
+    }
     return !plan.id.empty();
 }
 
 json serialize_event(const common_plan_event & event, const common_plan_operation & operation) {
     json result = {{"sequence", event.sequence}, {"prior_version", event.prior_version}, {"new_version", event.new_version}, {"accepted", event.accepted}, {"reason_summary", event.reason_summary}, {"created_at", event.created_at}, {"operation", common_plan_operation_kind_name(operation.kind)}, {"plan_id", operation.plan_id}, {"expected_version", operation.expected_version}, {"step_id", operation.step_id}, {"target_id", operation.target_id}, {"value", operation.value}, {"evidence_ids", operation.evidence_ids}, {"host_authorized", operation.host_authorized}};
-    if (operation.route_binding) result["route_binding"] = {{"route_id", operation.route_binding->route_id}, {"blueprint_ref", operation.route_binding->blueprint_ref}, {"blueprint_revision", operation.route_binding->blueprint_revision}, {"workflow_ref", operation.route_binding->workflow_ref}, {"workflow_revision", operation.route_binding->workflow_revision}, {"graph_revision", operation.route_binding->graph_revision}, {"execution_envelope_fingerprint", operation.route_binding->execution_envelope_fingerprint}, {"policy_revision", operation.route_binding->policy_revision}};
+    if (operation.route_binding) result["route_binding"] = {{"route_id", operation.route_binding->route_id}, {"blueprint_ref", operation.route_binding->blueprint_ref}, {"blueprint_revision", operation.route_binding->blueprint_revision}, {"workflow_ref", operation.route_binding->workflow_ref}, {"workflow_revision", operation.route_binding->workflow_revision}, {"graph_revision", operation.route_binding->graph_revision}, {"execution_envelope_fingerprint", operation.route_binding->execution_envelope_fingerprint}, {"policy_revision", operation.route_binding->policy_revision}, {"continuation_link_id", operation.route_binding->continuation_link_id}, {"continuation_source_fingerprint", operation.route_binding->continuation_source_fingerprint}, {"workflow_step_start_index", operation.route_binding->workflow_step_start_index}};
     if (operation.workflow_definition) result["workflow_definition"] = serialize_workflow_definition(*operation.workflow_definition);
     if (!operation.route_required_capabilities.empty()) result["route_required_capabilities"] = operation.route_required_capabilities;
     if (!operation.route_procedure_refs.empty()) result["route_procedure_refs"] = operation.route_procedure_refs;
@@ -234,7 +398,7 @@ bool common_plan_sqlite_store::load_cache(std::string & error) {
         event.operation.reason_summary = event.reason_summary;
         event.operation.evidence_ids = value.value("evidence_ids", std::vector<std::string>{});
         event.operation.host_authorized = value.value("host_authorized", false);
-        if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; event.operation.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{})}; }
+        if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; event.operation.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{}), binding.value("continuation_link_id", std::string{}), binding.value("continuation_source_fingerprint", std::string{}), binding.value("workflow_step_start_index", size_t(0))}; }
         if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) event.operation.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
         event.operation.route_required_capabilities = value.value("route_required_capabilities", std::vector<std::string>{});
         event.operation.route_procedure_refs = value.value("route_procedure_refs", std::vector<std::string>{});

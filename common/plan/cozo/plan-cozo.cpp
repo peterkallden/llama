@@ -66,6 +66,22 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
         {"allowed_tools", definition.allowed_tools}, {"required_capabilities", definition.required_capabilities},
         {"optional_capabilities", definition.optional_capabilities}, {"required_context", definition.required_context},
         {"continuation_workflow_targets", definition.continuation_workflow_targets}};
+    if (!definition.continuation_links.empty()) {
+        value["continuation_links"] = json::array();
+        for (const auto & link : definition.continuation_links) {
+            json item = {{"workflow_ref", link.target_workflow_ref}, {"workflow_revision", link.target_workflow_revision}, {"bindings", json::array()}};
+            if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
+            if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
+            for (const auto & binding : link.argument_bindings) {
+                json binding_json = {{"transition", binding.target_transition_id},
+                    {"tool", binding.target_tool_name}, {"target", binding.target_json_pointer},
+                    {"source", binding.source_json_pointer}, {"required", binding.required}};
+                if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                item["bindings"].push_back(std::move(binding_json));
+            }
+            value["continuation_links"].push_back(std::move(item));
+        }
+    }
     if (definition.resource_read_policy == common_plan_workflow_resource_read_policy::chunked) {
         value["resource_read_policy"] = "chunked";
     }
@@ -76,8 +92,11 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
             json item = {
                 {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
                 {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+                {"model_supplies_arguments", transition.model_supplies_arguments},
+                {"model_instruction", transition.model_instruction},
                 {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
-                {"candidates", transition.candidate_json_pointer}, {"cost", transition.cost},
+                {"candidates", transition.candidate_json_pointer}, {"candidate_id", transition.candidate_id_json_pointer},
+                {"cost", transition.cost},
                 {"optional", transition.optional}};
             if (!transition.choices.empty()) {
                 item["choices"] = json::array();
@@ -107,6 +126,19 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
     value.allowed_tools=definition.value("allowed_tools",std::vector<std::string>{}); value.required_capabilities=definition.value("required_capabilities",std::vector<std::string>{});
     value.optional_capabilities=definition.value("optional_capabilities",std::vector<std::string>{}); value.required_context=definition.value("required_context",std::vector<std::string>{});
     value.continuation_workflow_targets=definition.value("continuation_workflow_targets",std::vector<std::string>{});
+    for (const auto & item : definition.value("continuation_links", json::array())) {
+        common_plan_workflow_continuation_link link;
+        link.target_workflow_ref = item.value("workflow_ref", std::string{});
+        link.source_transition_id = item.value("from_transition", std::string{});
+        link.source_terminal_state = item.value("from_terminal_state", std::string{});
+        link.target_workflow_revision = item.value("workflow_revision", std::string{});
+        for (const auto & binding : item.value("bindings", json::array())) link.argument_bindings.push_back({
+            binding.value("transition", std::string{}),
+            binding.value("tool", std::string{}), binding.value("target", std::string{}),
+            binding.value("source", std::string{}), binding.value("required", true),
+            binding.value("from_transition", std::string{})});
+        value.continuation_links.push_back(std::move(link));
+    }
     if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") value.resource_read_policy=common_plan_workflow_resource_read_policy::chunked;
     value.start_state=definition.value("start_state",std::string{}); value.terminal_states=definition.value("terminal_states",std::vector<std::string>{});
     for (const auto & item : definition.value("transitions",json::array())) {
@@ -121,6 +153,9 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         transition.arguments_template_json = item.value("arguments", std::string("{}"));
         transition.candidate_json_pointer = item.value("candidates", std::string{});
         transition.cost = item.value("cost", 1.0f);
+        transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
+        transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
+        transition.model_instruction = item.value("model_instruction", std::string{});
         transition.optional = item.value("optional", false);
         for (const auto & choice_json : item.value("choices", json::array())) {
             common_plan_workflow_transition::choice choice;
@@ -164,7 +199,18 @@ static json serialize_with_route_fields(const common_plan_state & p) {
         {"graph_revision", p.route_binding->graph_revision},
         {"execution_envelope_fingerprint", p.route_binding->execution_envelope_fingerprint},
         {"policy_revision", p.route_binding->policy_revision},
+        {"continuation_link_id", p.route_binding->continuation_link_id},
+        {"continuation_source_fingerprint", p.route_binding->continuation_source_fingerprint},
+        {"workflow_step_start_index", p.route_binding->workflow_step_start_index},
     };
+    value["workflow_continuation_history"] = json::array();
+    for (const auto & item : p.workflow_continuation_history) value["workflow_continuation_history"].push_back({
+        {"link_id", item.link_id}, {"source_fingerprint", item.source_fingerprint},
+        {"source_workflow_ref", item.source_workflow_ref},
+        {"source_workflow_revision", item.source_workflow_revision},
+        {"source_terminal_state", item.source_terminal_state},
+        {"target_workflow_ref", item.target_workflow_ref},
+        {"target_workflow_revision", item.target_workflow_revision}});
     return value;
 }
 
@@ -193,7 +239,12 @@ static bool deserialize(const std::string & text, common_plan_state & p) {
     for (const auto & binding : j.value("workflow_bindings", json::array())) p.workflow_bindings.push_back({binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{})});
     if (j.contains("selected_workflow") && j["selected_workflow"].is_object()) p.selected_workflow = common_plan_workflow_binding{j["selected_workflow"].value("workflow_ref", std::string{}), j["selected_workflow"].value("workflow_revision", std::string{})};
     if (j.contains("workflow_definition") && j["workflow_definition"].is_object()) p.workflow_definition=parse_workflow_definition(j["workflow_definition"]);
-    if (j.contains("route_binding") && j["route_binding"].is_object()) { const auto & binding=j["route_binding"]; p.route_binding=common_plan_route_binding{binding.value("route_id",std::string{}),binding.value("blueprint_ref",std::string{}),binding.value("blueprint_revision",std::string{}),binding.value("workflow_ref",std::string{}),binding.value("workflow_revision",std::string{}),binding.value("graph_revision",std::string{}),binding.value("execution_envelope_fingerprint",std::string{}),binding.value("policy_revision",std::string{})}; }
+    if (j.contains("route_binding") && j["route_binding"].is_object()) { const auto & binding=j["route_binding"]; p.route_binding=common_plan_route_binding{binding.value("route_id",std::string{}),binding.value("blueprint_ref",std::string{}),binding.value("blueprint_revision",std::string{}),binding.value("workflow_ref",std::string{}),binding.value("workflow_revision",std::string{}),binding.value("graph_revision",std::string{}),binding.value("execution_envelope_fingerprint",std::string{}),binding.value("policy_revision",std::string{}),binding.value("continuation_link_id",std::string{}),binding.value("continuation_source_fingerprint",std::string{}),binding.value("workflow_step_start_index",size_t(0))}; }
+    for (const auto & item : j.value("workflow_continuation_history", json::array())) p.workflow_continuation_history.push_back({
+        item.value("link_id", std::string{}), item.value("source_fingerprint", std::string{}),
+        item.value("source_workflow_ref", std::string{}), item.value("source_workflow_revision", std::string{}),
+        item.value("source_terminal_state", std::string{}), item.value("target_workflow_ref", std::string{}),
+        item.value("target_workflow_revision", std::string{})});
     if (j.contains("active_step_id") && !j["active_step_id"].is_null()) p.active_step_id = j["active_step_id"].get<std::string>();
     if (j.contains("next_action") && !j["next_action"].is_null()) p.next_action = j["next_action"].get<std::string>();
     p.version = j.value("version", uint64_t(0));

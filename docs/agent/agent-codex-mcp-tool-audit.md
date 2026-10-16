@@ -27,19 +27,23 @@ does not depend on a UI reload.
 
 The host profile is
 [`agent-host-config-codex-mcp-tools.json`](../examples/agent-host-config-codex-mcp-tools.json).
-It uses the existing OpenAlex provider fragment, isolated Cozo data/resource
-stores, local DOCX/XLSX processor policies and sets
+It uses the existing OpenAlex provider fragment and the checked-in Eurostat
+Statistics/SDMX adapter contracts, isolated Cozo data/resource stores, local
+DOCX/XLSX processor policies and sets
 `allow_policy_gated_writes=false`.
 
 ## Verified setup state (2026-10-15)
 
 - The stdio server built in `build-agent-vulkan-cozo` and its registered
   `llama-agent-mcp-stdio-client-ctest` passed.
-- A direct MCP `initialize` + `tools/list` protocol check advertised 52 tools,
+- A fresh MCP `initialize` + `tools/list` protocol check advertised 54 tools,
   including `openalex.*`, `dataset.*`, `data.*`, `statistics.*`, `document.*`,
   `resource.*`, `web.*`, diagnostics, repository/workspace read tools and
   `math.calculate`. This check verified registration/schema discovery, not
   successful execution of every operation.
+  The audit profile now additionally configures `eurostat.getData` and
+  `eurostat_sdmx.getStructure`; a running Codex MCP connection must be reloaded
+  before those provider tools appear in its advertised list.
 - The initial Codex attempts failed because our stdio transport incorrectly
   expected LSP `Content-Length` headers. A literal newline-delimited
   `initialize` reproduced the wait. Both client and server now use standard
@@ -51,6 +55,42 @@ stores, local DOCX/XLSX processor policies and sets
   run exposed a second bug: stdio ignored `limits.tool_timeout_ms` and used
   the internal 1-second default. Passing the configured timeout fixed the
   false timeout. An independent delayed-provider test covers this boundary.
+- A fresh Codex/GPT-5.6-luna Eurostat group run made nine calls across eight
+  distinct tools. It fetched the English catalogue resource, queried
+  `eurostat.getData`, fetched an SDMX structure through
+  `eurostat_sdmx.getStructure`, then successfully inspected/sampled the
+  returned JSON-stat resource as a one-row, nine-column dataset. The query
+  returned Sweden's 2020 population density as 25.2 persons/km² and retained
+  the source resource reference. Trace:
+  `var/codex-mcp-tool-audit/eurostat-codex-20261015-retry/eurostat/`.
+- Qwen's earlier model-selected first `web.fetch` reproduced the contract
+  problem: it invented a different URL and left `accept` at `*/*`, yielding
+  HTTP 404. The start transition already declared the TSV URL,
+  `accept=text/plain`, and a 4 MiB bound, but initial route materialization
+  asked the model to regenerate those arguments. The host now executes a
+  complete schema-valid static start transition directly. A bounded Qwen
+  rerun confirms `deterministic_graph_entry`, then fetches the declared URL
+  with HTTP 200, `text/plain;charset=UTF-8`, 1,969,964 bytes, and a host
+  resource reference. That run intentionally allowed one tool call, so the
+  following `dataset.inspect` was rejected by the configured call limit; the
+  full catalogue materialization remains unverified at model-runtime scale.
+  Trace:
+  `var/codex-mcp-tool-audit/eurostat-qwen-20261015/static-accept-rerun/qwen-cpu-workflow.log`.
+- The 2026-10-16 full Qwen Instruct run exercised the new linked workflow
+  chain through catalogue materialization, SDMX dataflow/constraint fetches,
+  JSON-stat retrieval and `dataset.inspect`. The catalogue import completed
+  with 12,241 rows in 48 batches. However, Qwen selected
+  `demo_r_d3dens` (a NUTS-3 regional dataset) for a request that called for
+  national Sweden data, despite transition guidance. The selected API returned
+  HTTP 200 and a one-row dataset, so transport and workflow completion do not
+  establish semantic correctness. The host currently does not enforce that
+  the selected dataset and requested `geo`/`time` values satisfy the user's
+  intent or the fetched SDMX ContentConstraint. Final answer generation also
+  stopped at context pressure (`decoded 0 tokens`). Treat this as a successful
+  wiring/materialization trace but a failed semantic end-to-end result; the
+  remaining host-side constraint gate and final-context budget need follow-up.
+  Full trace:
+  `var/codex-mcp-tool-audit/eurostat-qwen-20261016-v16-run22/qwen-e2e.log`.
 - Full connection traces are under
   `/home/prbm/llama-agent-smokes/codex-mcp-20261015/connection-fixed/`:
   `prompt.txt`, `codex-events.jsonl`, `calls.json` and `answer.txt` contain
@@ -122,7 +162,7 @@ stores, local DOCX/XLSX processor policies and sets
   advertised tools as called. `memory.get` lacked a returned memory ID and
   `diagnostics.native_crash` lacked a safe dump fixture, so neither should be
   counted as behaviorally verified without those inputs.
-- Discovery is not complete coverage: the current profile advertises 52
+- Discovery is not complete coverage: the current profile advertises 54
   tools. Thirteen native catalog tools are excluded by the profile:
   `artifact.export`, `development.build`, `development.test`,
   `workspace.patch`, the five memory proposal/link tools,
@@ -156,15 +196,21 @@ failure layer:
 3. Query OpenAlex for a topic or a known work, inspect the selected record's
    open-access location, then fetch/read the PDF through the resource pipeline
    if the provider supplies a usable public URL.
-4. Run one bounded `web.search` and a separate direct `web.fetch` against a
+4. For Eurostat, fetch the English catalogue TOC from
+   `https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en` with `web.fetch` and
+   `accept=text/plain`, inspect the resulting dataset, resolve a returned
+   candidate with `eurostat_sdmx.getStructure`, then query validated codes and
+   dimensions through `eurostat.getData`. Keep metadata discovery separate
+   from data retrieval.
+5. Run one bounded `web.search` and a separate direct `web.fetch` against a
    public text resource. Do not treat search and fetch as interchangeable.
-5. Inspect `repository.status` and `repository.diff` for a read-only code
+6. Inspect `repository.status` and `repository.diff` for a read-only code
    comparison. Use `diagnostics.symbol` or `diagnostics.references` on a
    symbol with a known source location.
-6. Feed real compiler dependency output from `clang -M` to
+7. Feed real compiler dependency output from `clang -M` to
    `diagnostics.include_graph`; record that this tool parses compiler output
    rather than executing clang itself.
-7. Exercise a simple arithmetic request with `math.calculate` and report that
+8. Exercise a simple arithmetic request with `math.calculate` and report that
    the former `calculator` name is not advertised.
 
 There is currently no checked-in `.xls`/`.xlsx` fixture in the searched

@@ -50,6 +50,7 @@ struct common_tool_web_fetch_inline_result {
     size_t text_length = 0;
     bool truncated = false;
     std::string resource_ref;
+    bool preview_truncated = false;
 };
 
 struct common_tool_memory_search_payload {
@@ -111,6 +112,11 @@ nlohmann::ordered_json common_tool_web_fetch_result_to_json(
 
 nlohmann::ordered_json common_tool_web_fetch_inline_result_to_json(
     const common_tool_web_fetch_inline_result & result);
+
+common_tool_web_fetch_inline_result common_tool_web_fetch_make_inline_result(
+    const common_tool_web_fetch_result & result,
+    std::string resource_ref = {},
+    size_t max_preview_bytes = 1024);
 
 nlohmann::ordered_json common_tool_memory_record_to_json(
     const common_memory_record & memory);

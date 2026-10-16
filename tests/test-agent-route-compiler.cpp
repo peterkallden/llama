@@ -59,6 +59,34 @@ common_blueprint_candidate make_candidate() {
 } // namespace
 
 int main() {
+    common_plan_workflow_transition static_fetch{
+        "fetch-toc", "catalog_pending", "catalog_fetched",
+        common_plan_workflow_transition_kind::tool, "web.fetch",
+        R"({"url":"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en","accept":"text/plain","max_bytes":4194304})"};
+    common_chat_tool web_fetch_tool{
+        "web.fetch", "Fetch a public resource",
+        R"({"type":"object","required":["url"],"properties":{"url":{"type":"string"},"accept":{"type":"string"},"max_bytes":{"type":"integer"}}})"};
+    std::string static_arguments, static_error;
+    assert(common_agent_workflow_static_tool_arguments(
+        static_fetch, web_fetch_tool, static_arguments, static_error));
+    const auto normalized_fetch = nlohmann::json::parse(static_arguments);
+    assert(normalized_fetch["accept"] == "text/plain");
+    assert(normalized_fetch["url"].get<std::string>().find("/catalogue/toc/txt?lang=en") != std::string::npos);
+    auto incomplete_fetch = static_fetch;
+    incomplete_fetch.arguments_template_json = R"({"accept":"text/plain"})";
+    assert(!common_agent_workflow_static_tool_arguments(
+        incomplete_fetch, web_fetch_tool, static_arguments, static_error));
+    assert(static_error.empty()); // Model may fill a missing required URL.
+    incomplete_fetch.arguments_template_json = R"({"accept":5})";
+    assert(!common_agent_workflow_static_tool_arguments(
+        incomplete_fetch, web_fetch_tool, static_arguments, static_error));
+    assert(static_error.find("static arguments violate") != std::string::npos);
+    auto invalid_fetch = static_fetch;
+    invalid_fetch.arguments_template_json = R"({"url":"https://example.org","accept":5})";
+    assert(!common_agent_workflow_static_tool_arguments(
+        invalid_fetch, web_fetch_tool, static_arguments, static_error));
+    assert(static_error.find("static arguments violate") != std::string::npos);
+
     common_plan_in_memory_store store;
     std::string error;
     assert(store.open("", error));
@@ -490,7 +518,7 @@ int main() {
     assert(continuation_steps.front().tool_call &&
         continuation_steps.front().tool_call->name == "catalog.listWorks" &&
         continuation_steps.front().semantic_alias &&
-        *continuation_steps.front().semantic_alias == "workflow-transition:choose-author,retrieve-works");
+        *continuation_steps.front().semantic_alias == "workflow-transition:choose-author=A1,retrieve-works");
     const auto graph_arguments = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
     assert(graph_arguments["filter"] == "author.id:A1");
     assert(graph_arguments["source"].value("$from_step", "") == "resolve");
@@ -501,6 +529,122 @@ int main() {
     continuation_steps.clear(); error.clear();
     assert(!rejected_graph_continuation(graph_plan, "resolve", candidates, continuation_steps, error));
     assert(error.find("outside the host observation") != std::string::npos);
+
+    common_plan_workflow_definition table_choice_definition;
+    table_choice_definition.workflow_ref = "workflow://eurostat/catalogue-choice";
+    table_choice_definition.workflow_revision = "v1";
+    table_choice_definition.family = "dataset";
+    table_choice_definition.graph_revision = "catalogue-choice@v1";
+    table_choice_definition.start_state = "query_pending";
+    table_choice_definition.terminal_states = {"complete"};
+    table_choice_definition.transitions = {
+        {"search", "query_pending", "candidates", common_plan_workflow_transition_kind::tool,
+            "data.query", "{}", {}, 1.0f},
+        {"choose-dataflow", "candidates", "selected", common_plan_workflow_transition_kind::model_choice,
+            {}, "{}", "/result/rows", 1.0f},
+        {"get-structure", "selected", "complete", common_plan_workflow_transition_kind::tool,
+            "eurostat_sdmx.getStructure", "{}", {}, 1.0f},
+    };
+    table_choice_definition.transitions[1].candidate_id_json_pointer = "/code";
+    common_agent_route_candidate table_choice_route;
+    table_choice_route.id = "route:eurostat-table-choice";
+    table_choice_route.workflow_definition = table_choice_definition;
+    table_choice_route.resolved_tools = {"data.query", "eurostat_sdmx.getStructure"};
+    common_plan_state table_choice_plan;
+    table_choice_plan.id = "eurostat-table-choice-plan";
+    table_choice_plan.route_binding = common_plan_route_binding{table_choice_route.id,
+        "eurostat-table-choice", "bp-v1", table_choice_definition.workflow_ref,
+        table_choice_definition.workflow_revision, table_choice_definition.graph_revision,
+        "env-v1", "policy-v1"};
+    table_choice_plan.workflow_definition = table_choice_definition;
+    common_plan_step searched_step{"search-step", "Search", "Find candidates"};
+    searched_step.status = common_plan_step_status::completed;
+    searched_step.semantic_alias = "workflow-transition:search";
+    table_choice_plan.steps = {searched_step};
+    common_plan_observation table_candidates;
+    table_candidates.id = "eurostat-query-results";
+    table_candidates.source = "data.query";
+    table_candidates.summary = R"({"result":{"columns":["code","title"],"rows":[["TPS00003","Population density"],["demo","Demo"]]}})";
+    auto table_choice_continuation = make_agent_workflow_graph_continuation(table_choice_route,
+        [](const common_plan_observation &, const common_plan_workflow_transition &,
+                std::string & id, std::string & selection_error) {
+            id = "TPS00003"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(table_choice_continuation(table_choice_plan, "search-step", table_candidates,
+        continuation_steps, error));
+    assert(error.empty() && continuation_steps.size() == 1 && continuation_steps.front().tool_call &&
+        continuation_steps.front().tool_call->name == "eurostat_sdmx.getStructure");
+    assert(continuation_steps.front().semantic_alias &&
+        *continuation_steps.front().semantic_alias == "workflow-transition:choose-dataflow=TPS00003,get-structure");
+
+    // Candidate-backed model choices must survive state replay. Once the
+    // selected tool is complete, replay reaches the terminal state instead
+    // of asking for the candidate list from the tool's unrelated result.
+    auto selected_structure = continuation_steps.front();
+    selected_structure.status = common_plan_step_status::completed;
+    table_choice_plan.steps.push_back(selected_structure);
+    continuation_steps.clear(); error.clear();
+    assert(table_choice_continuation(table_choice_plan, selected_structure.id,
+        table_candidates, continuation_steps, error));
+    assert(error.empty() && continuation_steps.empty());
+
+    // A verified model choice remains bindable after an intervening tool
+    // transition; the choice must come from its host-owned observation, not
+    // from a transient `$choice` substitution.
+    common_plan_workflow_definition delayed_choice_definition;
+    delayed_choice_definition.workflow_ref = "workflow://eurostat/metadata-resolution";
+    delayed_choice_definition.workflow_revision = "v1";
+    delayed_choice_definition.family = "openapi";
+    delayed_choice_definition.graph_revision = "eurostat-metadata@v1";
+    delayed_choice_definition.start_state = "catalogue_searched";
+    delayed_choice_definition.terminal_states = {"constraints_resolved"};
+    delayed_choice_definition.transitions = {
+        {"choose-dataflow", "catalogue_searched", "dataflow_code_selected",
+            common_plan_workflow_transition_kind::model_choice, {}, "{}", {}, 1.0f},
+        {"get-dataflow-structure", "dataflow_code_selected", "dataflow_structure_resolved",
+            common_plan_workflow_transition_kind::tool, "eurostat_sdmx.getStructure",
+            R"({"artifactType":"dataflow","version":"1.0"})", {}, 1.0f},
+        {"get-content-constraint", "dataflow_structure_resolved", "constraints_resolved",
+            common_plan_workflow_transition_kind::tool, "eurostat_sdmx.getStructure",
+            R"({"artifactType":"contentconstraint","version":"1.0"})", {}, 1.0f},
+    };
+    delayed_choice_definition.transitions[2].argument_bindings = {
+        {"/resourceID", "choose-dataflow", "/choice", true},
+    };
+    common_agent_route_candidate delayed_choice_route;
+    delayed_choice_route.id = "route:eurostat-delayed-choice";
+    delayed_choice_route.workflow_definition = delayed_choice_definition;
+    delayed_choice_route.resolved_tools = {"eurostat_sdmx.getStructure"};
+    common_plan_state delayed_choice_plan;
+    delayed_choice_plan.id = "eurostat-delayed-choice-plan";
+    delayed_choice_plan.route_binding = common_plan_route_binding{delayed_choice_route.id,
+        "eurostat-metadata", "bp-v1", delayed_choice_definition.workflow_ref,
+        delayed_choice_definition.workflow_revision, delayed_choice_definition.graph_revision,
+        "env-v1", "policy-v1"};
+    delayed_choice_plan.workflow_definition = delayed_choice_definition;
+    common_plan_step structure_step{"get-structure", "Get dataflow", "Resolve DSD"};
+    structure_step.status = common_plan_step_status::completed;
+    structure_step.semantic_alias = "workflow-transition:choose-dataflow=TPS00003,get-dataflow-structure";
+    delayed_choice_plan.steps.push_back(structure_step);
+    common_plan_observation selected_dataflow;
+    selected_dataflow.id = "workflow-choice:choose-dataflow";
+    selected_dataflow.source = "workflow_choice";
+    selected_dataflow.confidence = 1.0f;
+    selected_dataflow.summary = R"({"transition_id":"choose-dataflow","choice":"TPS00003","verified_against_host_candidates":true})";
+    delayed_choice_plan.observations.push_back(selected_dataflow);
+    common_plan_observation structure_result;
+    structure_result.id = "tool:get-structure:1";
+    structure_result.source = "eurostat_sdmx.getStructure";
+    structure_result.summary = R"({"ok":true,"result":{"id":"TPS00003"}})";
+    auto delayed_choice_continuation = make_agent_workflow_graph_continuation(delayed_choice_route, {});
+    continuation_steps.clear(); error.clear();
+    assert(delayed_choice_continuation(delayed_choice_plan, "get-structure", structure_result,
+        continuation_steps, error));
+    assert(error.empty() && continuation_steps.size() == 1 && continuation_steps.front().tool_call);
+    const auto constraint_call = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
+    assert(constraint_call["artifactType"] == "contentconstraint");
+    assert(constraint_call["resourceID"] == "TPS00003");
 
     // Fixed host choices can depend on a structured observation, and a
     // selected tool transition binds only the declared scalar result field.
@@ -585,7 +729,7 @@ int main() {
         }, installed, error));
     std::vector<common_blueprint_candidate> eurostat_candidates;
     for (const auto & id : installed.installed_blueprint_ids) {
-        if (id.find(":blueprint:eurostat-") == std::string::npos) continue;
+        if (id.find("eurostat-") == std::string::npos) continue;
         common_blueprint_candidate candidate;
         candidate.logical_id = id;
         candidate.persisted_id = id;
@@ -594,13 +738,17 @@ int main() {
     assert(eurostat_candidates.size() == 3);
     common_agent_runtime_tooling eurostat_tools;
     eurostat_tools.profile_tools_active = true;
-    eurostat_tools.capabilities = {"tool.web", "web.fetch", "dataset.inspect", "dataset.sample", "openapi.read"};
+    // A configured profile may expose concrete tools without repeating their
+    // stable semantic capability.  The route compiler should derive tool.web
+    // from web.fetch/web.search just as it derives tool.dataset above.
+    eurostat_tools.capabilities = {"web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample", "data.query", "openapi.read"};
     eurostat_tools.available_context = {"context.network.allowed", "context.openapi.available"};
     eurostat_tools.capability_tools = {
         {"web.fetch", {"web.fetch"}}, {"dataset.inspect", {"dataset.inspect"}},
-        {"dataset.sample", {"dataset.sample"}},
+        {"dataset.schema", {"dataset.schema"}},
+        {"dataset.sample", {"dataset.sample"}}, {"data.query", {"data.query"}},
         {"openapi.read", {"eurostat.getData", "eurostat_sdmx.getStructure", "openalex.listWorks"}}};
-    for (const auto & name : {"web.fetch", "dataset.inspect", "dataset.sample",
+    for (const auto & name : {"web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample", "data.query",
             "eurostat.getData", "eurostat_sdmx.getStructure", "openalex.listWorks"}) {
         eurostat_tools.tools.push_back({name, name, R"({"type":"object"})"});
     }
@@ -610,7 +758,11 @@ int main() {
     for (const auto & candidate : catalog.candidates) {
         if (!candidate.workflow_definition) continue;
         assert(candidate.kind == common_agent_route_kind::blueprint_workflow);
-        assert(candidate.workflow_revision == "v2");
+        const auto & workflow_ref = candidate.workflow->workflow_ref;
+        const auto expected_revision = workflow_ref == "workflow://eurostat/catalog-discovery" ? "v5" :
+            workflow_ref == "workflow://eurostat/metadata-resolution" ? "v7" :
+            workflow_ref == "workflow://eurostat/data-retrieval" ? "v7" : "v4";
+        assert(candidate.workflow_revision == expected_revision);
         assert(std::find(candidate.resolved_tools.begin(), candidate.resolved_tools.end(),
             "openalex.listWorks") == candidate.resolved_tools.end());
     }

@@ -79,6 +79,10 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
         case common_plan_operation_kind::complete_plan: next.status = common_plan_status::completed; break;
         case common_plan_operation_kind::request_route_transition:
             next.route_binding = op.route_binding;
+            if (next.route_binding) next.route_binding->workflow_step_start_index = next.steps.size();
+            if (op.workflow_continuation_record) {
+                next.workflow_continuation_history.push_back(*op.workflow_continuation_record);
+            }
             if (op.workflow_definition) {
                 next.workflow_definition = op.workflow_definition;
                 next.selected_workflow = common_plan_workflow_binding{

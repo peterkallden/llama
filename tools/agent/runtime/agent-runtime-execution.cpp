@@ -2,6 +2,7 @@
 #include "common/agent/resource-chunk-extraction.h"
 #include "agent/context-compaction.h"
 #include "agent/input-resources.h"
+#include "plan/plan-workflow-state.h"
 #include "agent/tool-family-index.h"
 #include "../runtime/agent-runtime-chat-driver.h"
 #include "../runtime/agent-route-compiler.h"
@@ -18,11 +19,15 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <set>
 #include <sstream>
 #include <ctime>
+#include <cstdint>
 
 namespace {
+
+using json = nlohmann::ordered_json;
 
 void load_route_procedure_memories(
         common_agent_runtime_driver_execution & execution,
@@ -1060,18 +1065,96 @@ common_agent_request make_agent_runtime_driver_request(
     return request;
 }
 
-static bool transition_to_dataset_workflow(
+static std::string continuation_fingerprint(const common_plan_observation & observation,
+        const std::vector<std::string> & supporting_values = {}) {
+    uint64_t hash = 1469598103934665603ULL;
+    const auto add = [&](const std::string & text) {
+        for (const unsigned char ch : text) { hash ^= ch; hash *= 1099511628211ULL; }
+        hash ^= 0xff; hash *= 1099511628211ULL;
+    };
+    add(observation.summary);
+    for (const auto & ref : observation.dataset_refs) { add(ref.uri); add(ref.content_hash); }
+    for (const auto & ref : observation.resource_refs) {
+        add(ref.uri);
+        add(ref.mime_type);
+        add(ref.metadata.processing_cache_key);
+        add(std::to_string(ref.size_bytes));
+    }
+    for (const auto & value : supporting_values) add(value);
+    return std::to_string(hash);
+}
+
+static std::string continuation_link_identity(const common_plan_workflow_continuation_link & link) {
+    return link.source_transition_id + "@" + link.source_terminal_state + "->" +
+        link.target_workflow_ref + "@" + link.target_workflow_revision;
+}
+
+static std::string workflow_step_transition_id(const common_plan_step & step) {
+    if (!step.semantic_alias || step.semantic_alias->rfind("workflow-transition:", 0) != 0) return {};
+    auto aliases = step.semantic_alias->substr(std::string("workflow-transition:").size());
+    const auto comma = aliases.rfind(',');
+    if (comma != std::string::npos) aliases = aliases.substr(comma + 1);
+    const auto equals = aliases.find('=');
+    if (equals != std::string::npos) aliases.resize(equals);
+    return aliases;
+}
+
+static const common_plan_observation * successful_workflow_observation(
+        const common_plan_state & plan,
+        const std::string & source_transition_id,
+        bool require_dataset) {
+    if (!source_transition_id.empty()) {
+        for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
+            if (observation->source != "workflow_choice" || observation->confidence <= 0.0f) continue;
+            const auto choice = json::parse(observation->summary, nullptr, false);
+            if (choice.is_object() && choice.value("transition_id", std::string{}) == source_transition_id &&
+                    choice.value("verified_against_host_candidates", false) && choice.value("choice", std::string{}).size()) {
+                return &*observation;
+            }
+        }
+    }
+    const size_t start_index = plan.route_binding
+        ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+    for (size_t index = plan.steps.size(); index > start_index; --index) {
+        const auto & step = plan.steps[index - 1];
+        if (step.status != common_plan_step_status::completed ||
+                common_plan_step_effective_mode(step) != common_plan_step_mode::tool || !step.tool_call) continue;
+        if (!source_transition_id.empty() &&
+                workflow_step_transition_id(step) != source_transition_id) continue;
+        const std::string prefix = "tool:" + step.id + ":";
+        for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
+            if (observation->id.rfind(prefix, 0) != 0 || observation->confidence <= 0.0f ||
+                    (require_dataset && observation->dataset_refs.empty())) continue;
+            const auto structured = json::parse(observation->summary, nullptr, false);
+            if (structured.is_object() || structured.is_array()) return &*observation;
+        }
+        if (!source_transition_id.empty()) return nullptr;
+    }
+    return nullptr;
+}
+
+static bool transition_to_workflow(
         common_agent_runtime_driver_execution & execution,
         const common_plan_state & plan,
         const std::string & original_prompt,
         std::string & error) {
     error.clear();
-    if (!plan.workflow_definition || plan.workflow_definition->continuation_workflow_targets.empty()) {
+    if (!plan.workflow_definition ||
+            (plan.workflow_definition->continuation_workflow_targets.empty() &&
+             plan.workflow_definition->continuation_links.empty())) {
         error = "workflow handoff has no declared continuation targets";
         return false;
     }
+    const common_plan_observation * legacy_trigger_observation = nullptr;
     std::vector<common_agent_dataset_descriptor> produced;
     for (const auto & observation : plan.observations) {
+        if (!observation.dataset_refs.empty()) {
+            if (observation.confidence > 0.0f &&
+                    (json::parse(observation.summary, nullptr, false).is_object() ||
+                     json::parse(observation.summary, nullptr, false).is_array())) {
+                legacy_trigger_observation = &observation;
+            }
+        }
         for (const auto & ref : observation.dataset_refs) {
             if (ref.uri.empty() || std::any_of(produced.begin(), produced.end(), [&](const auto & value) {
                     return value.ref.uri == ref.uri;
@@ -1082,18 +1165,28 @@ static bool transition_to_dataset_workflow(
             produced.push_back(std::move(descriptor));
         }
     }
-    if (produced.empty()) {
-        error = "workflow requested a dataset handoff without a verified dataset reference";
-        return false;
-    }
+    const std::string source_state = plan.workflow_definition
+        ? common_plan_workflow_completed_state(plan, *plan.workflow_definition) : std::string{};
+    const bool source_graph_terminal = !plan.workflow_definition->transitions.empty() &&
+        std::find(plan.workflow_definition->terminal_states.begin(), plan.workflow_definition->terminal_states.end(),
+            source_state) != plan.workflow_definition->terminal_states.end();
+    const std::string default_transition_id = [&]() {
+        const size_t start_index = plan.route_binding
+            ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+        for (size_t index = plan.steps.size(); index > start_index; --index) {
+            const auto & step = plan.steps[index - 1];
+            if (step.status == common_plan_step_status::completed && step.tool_call) {
+                return workflow_step_transition_id(step);
+            }
+        }
+        return std::string{};
+    }();
     for (auto & descriptor : produced) {
         if (std::none_of(execution.continuation_datasets.begin(), execution.continuation_datasets.end(),
                 [&](const auto & value) { return value.ref.uri == descriptor.ref.uri; })) {
             execution.continuation_datasets.push_back(std::move(descriptor));
         }
     }
-    execution.dataset_handoff_attempted = true;
-
     auto tooling = execution.tooling;
     for (const auto & dataset : execution.continuation_datasets) {
         if (std::none_of(tooling.available_datasets.begin(), tooling.available_datasets.end(),
@@ -1120,22 +1213,121 @@ static bool transition_to_dataset_workflow(
     common_agent_route_catalog catalog;
     if (!compile_agent_route_catalog(request, execution.plan_store, execution.scope,
             execution.installed_blueprint_candidates, tooling, {}, catalog, error)) {
-        error = "dataset continuation route compilation failed: " + error;
+        error = "workflow continuation route compilation failed: " + error;
         return false;
     }
     const auto & targets = plan.workflow_definition->continuation_workflow_targets;
+    const auto & links = plan.workflow_definition->continuation_links;
+    std::set<std::string> eligible_link_ids;
+    std::map<std::string, const common_plan_observation *> link_observations;
+    std::map<std::string, std::string> link_fingerprints;
+    std::vector<std::string> continuation_gaps;
+    for (const auto & link : links) {
+        const std::string link_id = continuation_link_identity(link);
+        const auto * source_observation = successful_workflow_observation(
+            plan, link.source_transition_id, false);
+        const bool state_matches = link.source_terminal_state.empty() || link.source_terminal_state == source_state;
+        const bool transition_matches = link.source_transition_id.empty() || link.source_transition_id == default_transition_id;
+        const bool declared_terminal = link.source_terminal_state.empty() ||
+            std::find(plan.workflow_definition->terminal_states.begin(), plan.workflow_definition->terminal_states.end(),
+                link.source_terminal_state) != plan.workflow_definition->terminal_states.end();
+        const bool actual_terminal = plan.workflow_definition->transitions.empty() || source_graph_terminal;
+        bool bindings_present = true;
+        std::string missing_binding;
+        std::vector<std::string> supporting_values;
+        if (source_observation == nullptr) {
+            bindings_present = false;
+            missing_binding = "successful structured observation for source transition";
+        }
+        for (const auto & binding : link.argument_bindings) {
+            if (!bindings_present) break;
+            const auto * binding_observation = binding.source_transition_id.empty()
+                ? source_observation
+                : successful_workflow_observation(plan, binding.source_transition_id, false);
+            if (binding_observation == nullptr) {
+                if (binding.required) {
+                    bindings_present = false;
+                    missing_binding = "successful observation for transition " + binding.source_transition_id;
+                    break;
+                }
+                continue;
+            }
+            const auto source_json = json::parse(binding_observation->summary, nullptr, false);
+            try {
+                if (!source_json.is_object() && !source_json.is_array()) {
+                    if (binding.required) {
+                        bindings_present = false; missing_binding = "(source observation is not structured JSON)"; break;
+                    }
+                    continue;
+                }
+                const json::json_pointer pointer(binding.source_json_pointer);
+                if (!source_json.contains(pointer)) {
+                    if (binding.required) {
+                        bindings_present = false; missing_binding = binding.source_json_pointer; break;
+                    }
+                    continue;
+                }
+                supporting_values.push_back(binding.source_transition_id + ":" + source_json.at(pointer).dump());
+            } catch (const std::exception &) {
+                bindings_present = false; missing_binding = binding.source_json_pointer + " (invalid pointer)"; break;
+            }
+        }
+        const std::string link_fingerprint = source_observation == nullptr ? std::string{} :
+            continuation_fingerprint(*source_observation, supporting_values);
+        const bool repeated = std::any_of(plan.workflow_continuation_history.begin(),
+            plan.workflow_continuation_history.end(), [&](const auto & record) {
+                return record.link_id == link_id && !link_fingerprint.empty() &&
+                    record.source_fingerprint == link_fingerprint;
+            });
+        if (!bindings_present) continuation_gaps.push_back(link.target_workflow_ref +
+            " missing source binding " + missing_binding);
+        if (state_matches && transition_matches && declared_terminal && actual_terminal &&
+                !repeated && bindings_present) eligible_link_ids.insert(continuation_link_identity(link));
+        if (source_observation != nullptr) {
+            link_observations[link_id] = source_observation;
+            link_fingerprints[link_id] = link_fingerprint;
+        }
+    }
+    const auto link_applies_to_candidate = [&](const common_plan_workflow_continuation_link & link,
+            const common_agent_route_candidate & candidate) {
+        if (!candidate.workflow || !candidate.workflow_definition ||
+                link.target_workflow_ref != candidate.workflow->workflow_ref ||
+                (!link.target_workflow_revision.empty() &&
+                 link.target_workflow_revision != candidate.workflow->workflow_revision) ||
+                !eligible_link_ids.count(continuation_link_identity(link))) return false;
+        return std::all_of(link.argument_bindings.begin(), link.argument_bindings.end(), [&](const auto & binding) {
+            if (!binding.target_transition_id.empty()) {
+                const auto target_transition = std::find_if(candidate.workflow_definition->transitions.begin(),
+                    candidate.workflow_definition->transitions.end(), [&](const auto & transition) {
+                        return transition.id == binding.target_transition_id &&
+                            transition.kind == common_plan_workflow_transition_kind::tool;
+                    });
+                return target_transition != candidate.workflow_definition->transitions.end() &&
+                    (binding.target_tool_name.empty() || binding.target_tool_name == target_transition->tool_name);
+            }
+            return !binding.target_tool_name.empty() &&
+                std::find(candidate.resolved_tools.begin(), candidate.resolved_tools.end(),
+                    binding.target_tool_name) != candidate.resolved_tools.end();
+        });
+    };
     catalog.candidates.erase(std::remove_if(catalog.candidates.begin(), catalog.candidates.end(),
         [&](const auto & candidate) {
-            return candidate.kind == common_agent_route_kind::normal_plan ||
-                !candidate.workflow || std::find(targets.begin(), targets.end(),
-                    candidate.workflow->workflow_ref) == targets.end();
+            if (candidate.kind == common_agent_route_kind::normal_plan || !candidate.workflow) return true;
+            const bool legacy_target = std::find(targets.begin(), targets.end(),
+                candidate.workflow->workflow_ref) != targets.end();
+            const bool linked_target = std::any_of(links.begin(), links.end(), [&](const auto & link) {
+                return link_applies_to_candidate(link, candidate);
+            });
+            const bool legacy_applicable = legacy_target && legacy_trigger_observation != nullptr &&
+                !produced.empty() && (plan.workflow_definition->transitions.empty() || source_graph_terminal);
+            return !legacy_applicable && !linked_target;
         }), catalog.candidates.end());
     if (catalog.candidates.empty()) {
         execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
             common_runtime_trace_kind::decided,
-            "no declared dataset continuation target is eligible; retain the current workflow",
+            "no applicable continuation link/target; retain the current workflow (source state=" + source_state +
+                (continuation_gaps.empty() ? std::string{} : "; gaps=" + continuation_gaps.front()) + ")",
             plan.id, {}, {}, {}, "normal-plan"});
-        execution.dataset_handoff_attempted = true;
         return true;
     }
     common_agent_route_candidate selected;
@@ -1151,42 +1343,64 @@ static bool transition_to_dataset_workflow(
         if (found == catalog.candidates.end()) {
             execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
                 common_runtime_trace_kind::decided,
-                "dataset continuation route selection was inconclusive; retain the current workflow" +
+                "workflow continuation route selection was inconclusive; retain the current workflow" +
                     (selection_error.empty() ? std::string{} : ": " + selection_error),
                 plan.id, {}, {}, {}, "normal-plan"});
             return true;
         }
         selected = *found;
     }
-    if (!selected.workflow_definition || selected.workflow_definition->family != "dataset") {
-        error = "declared continuation target is not a dataset workflow";
+    if (!selected.workflow_definition || !selected.workflow) {
+        error = "declared continuation target has no workflow definition";
+        return false;
+    }
+    const common_plan_workflow_continuation_link * selected_link = nullptr;
+    for (const auto & link : links) {
+        if (link.target_workflow_ref == selected.workflow->workflow_ref &&
+                (link.target_workflow_revision.empty() || link.target_workflow_revision == selected.workflow->workflow_revision) &&
+                link_applies_to_candidate(link, selected)) {
+            selected_link = &link;
+            break;
+        }
+    }
+    const common_plan_observation * trigger_observation = selected_link != nullptr
+        ? link_observations[continuation_link_identity(*selected_link)] : legacy_trigger_observation;
+    const std::string source_fingerprint = selected_link != nullptr
+        ? link_fingerprints[continuation_link_identity(*selected_link)]
+        : (legacy_trigger_observation != nullptr ? continuation_fingerprint(*legacy_trigger_observation) : std::string{});
+    if (trigger_observation == nullptr) {
+        error = "workflow handoff has no successful structured source observation";
         return false;
     }
     common_agent_execution_envelope envelope;
     if (!build_agent_execution_envelope(selected, tooling, envelope, error)) {
-        error = "dataset continuation envelope failed: " + error;
+        error = "workflow continuation envelope failed: " + error;
         return false;
     }
 
-    // Starting a graph-less dataset workflow on an already-running plan must
-    // use the same action selector and A* materializer as initial workflow
-    // planning. A route-binding update alone would leave the old workflow's
-    // final-answer step ready and silently skip dataset work.
+    // A linked continuation must materialize executable target work before
+    // switching the route binding; otherwise the existing final answer could
+    // become ready without doing the linked workflow's work.
+    const common_plan_workflow_transition * target_transition = nullptr;
     if (!selected.workflow_definition->transitions.empty()) {
-        error = "dataset continuation target requires graph entry materialization, which is not available for this workflow";
-        return false;
+        target_transition = common_agent_workflow_next_transition(
+            *selected.workflow_definition, selected.workflow_definition->start_state);
+        if (target_transition == nullptr || target_transition->kind != common_plan_workflow_transition_kind::tool) {
+            error = "linked workflow graph must begin with a host-materializable tool transition";
+            return false;
+        }
     }
     std::vector<common_chat_tool> route_tools;
     for (const auto & tool : tooling.tools) {
         if (std::find(selected.resolved_tools.begin(), selected.resolved_tools.end(), tool.name) !=
-                selected.resolved_tools.end()) {
+                selected.resolved_tools.end() && (target_transition == nullptr || tool.name == target_transition->tool_name)) {
             route_tools.push_back(tool);
         }
     }
     const auto relevant_tools = common_agent_task_relevant_workflow_tools(
         route_tools, selected, original_prompt);
     std::vector<std::string> host_resolved_dataset_tools;
-    for (const auto & tool : relevant_tools) {
+    if (selected.workflow_definition->family == "dataset") for (const auto & tool : relevant_tools) {
         if (tool.name == "data.query" || tool.name == "data.filter" ||
                 tool.name == "data.aggregate" || tool.name == "data.transform" ||
                 tool.name == "statistics.describe" || tool.name == "statistics.outliers" ||
@@ -1201,8 +1415,79 @@ static bool transition_to_dataset_workflow(
             route_bindings.push_back(binding);
         }
     }
+    if (target_transition != nullptr) {
+        const auto graph_tool = std::find_if(route_tools.begin(), route_tools.end(), [&](const auto & tool) {
+            return tool.name == target_transition->tool_name;
+        });
+        if (graph_tool == route_tools.end()) { error = "linked workflow start transition tool is outside its execution envelope"; return false; }
+        std::string normalized_static;
+        std::string static_error;
+        (void) common_agent_workflow_static_tool_arguments(
+            *target_transition, *graph_tool, normalized_static, static_error);
+        if (!static_error.empty()) { error = static_error; return false; }
+        if (!normalized_static.empty()) route_bindings.push_back({
+            target_transition->tool_name, normalized_static,
+            "workflow-transition:" + target_transition->id, false});
+    }
+    if (selected_link != nullptr && !selected_link->argument_bindings.empty()) {
+        std::map<std::string, json> bound_by_tool;
+        for (const auto & binding : selected_link->argument_bindings) {
+            json value;
+            bool present = false;
+            const auto * binding_observation = binding.source_transition_id.empty()
+                ? trigger_observation
+                : successful_workflow_observation(plan, binding.source_transition_id, false);
+            const auto source_json = binding_observation == nullptr ? json{} :
+                json::parse(binding_observation->summary, nullptr, false);
+            try {
+                if (!source_json.is_object() && !source_json.is_array()) {
+                    if (binding.required) {
+                        error = "linked workflow source observation is not structured JSON";
+                        return false;
+                    }
+                    continue;
+                }
+                const json::json_pointer pointer(binding.source_json_pointer);
+                if (source_json.contains(pointer)) { value = source_json.at(pointer); present = true; }
+            } catch (const std::exception &) {}
+            if (!present) {
+                if (binding.required) {
+                    error = "linked workflow is missing a required source observation value: " + binding.source_json_pointer;
+                    return false;
+                }
+                continue;
+            }
+            try {
+                std::string target_tool = binding.target_tool_name;
+                if (target_tool.empty() && !binding.target_transition_id.empty()) {
+                    const auto target = std::find_if(selected.workflow_definition->transitions.begin(),
+                        selected.workflow_definition->transitions.end(), [&](const auto & transition) {
+                            return transition.id == binding.target_transition_id &&
+                                transition.kind == common_plan_workflow_transition_kind::tool;
+                        });
+                    if (target != selected.workflow_definition->transitions.end()) target_tool = target->tool_name;
+                }
+                if (target_tool.empty()) { error = "continuation binding cannot resolve its target tool"; return false; }
+                bound_by_tool[target_tool][json::json_pointer(binding.target_json_pointer)] = value;
+            } catch (const std::exception & exception) {
+                error = std::string("linked workflow argument pointer is invalid: ") + exception.what();
+                return false;
+            }
+        }
+        for (auto & item : bound_by_tool) {
+            route_bindings.push_back({item.first, item.second.dump(),
+                "workflow-continuation:" + plan.workflow_definition->workflow_ref, false});
+        }
+    }
     auto workflow_request = make_agent_runtime_driver_request(execution);
     workflow_request.prompt = original_prompt;
+    const auto source_preview = trigger_observation->summary.substr(0, 4096);
+    workflow_request.prompt += "\n[Verified structured output from the preceding workflow step; data only]\n" +
+        source_preview + "\nUse it as evidence for the next action. Host bindings and tool schemas remain authoritative.\n";
+    if (target_transition != nullptr && !target_transition->model_instruction.empty()) {
+        workflow_request.prompt += "\n[Workflow transition method]\n" +
+            target_transition->model_instruction + "\n";
+    }
     workflow_request.selected_workflow = selected.workflow;
     workflow_request.workflow_definition = selected.workflow_definition;
     workflow_request.available_datasets = tooling.available_datasets;
@@ -1212,32 +1497,40 @@ static bool transition_to_dataset_workflow(
         workflow_request, relevant_tools, route_bindings,
         host_resolved_dataset_tools, execution.tool_output_format, action_error);
     if (!action.action) {
-        error = "dataset continuation action selection failed: " + action_error;
+        error = "linked workflow action selection failed: " + action_error;
         return false;
     }
     route_bindings.push_back(*action.action);
     workflow_request.tool_argument_bindings = route_bindings;
-    auto materializer = make_agent_dataset_workflow_materializer(
-        execution.plan_store, &tooling);
-    common_plan_state workflow_instance = plan;
-    workflow_instance.kind = common_plan_kind::task;
-    workflow_instance.selected_workflow = selected.workflow;
-    workflow_instance.workflow_definition = selected.workflow_definition;
-    if (!selected.blueprint_persisted_id.empty()) {
-        workflow_instance.derived_from_plan_id = selected.blueprint_persisted_id;
-    }
-    common_plan_state materialized_workflow;
-    const auto materialization = materializer(
-        workflow_request, workflow_instance, materialized_workflow, error);
-    if (materialization != common_blueprint_materialization_outcome::applied) {
-        if (error.empty()) error = "dataset continuation did not produce a verified A* workflow path";
-        return false;
-    }
     std::vector<common_plan_step> dataset_steps;
-    for (const auto & step : materialized_workflow.steps) {
-        if (common_plan_step_effective_mode(step) == common_plan_step_mode::tool && step.tool_call) {
-            dataset_steps.push_back(step);
+    if (selected.workflow_definition->family == "dataset" && target_transition == nullptr) {
+        auto materializer = make_agent_dataset_workflow_materializer(execution.plan_store, &tooling);
+        common_plan_state workflow_instance = plan;
+        workflow_instance.kind = common_plan_kind::task;
+        workflow_instance.selected_workflow = selected.workflow;
+        workflow_instance.workflow_definition = selected.workflow_definition;
+        if (!selected.blueprint_persisted_id.empty()) workflow_instance.derived_from_plan_id = selected.blueprint_persisted_id;
+        common_plan_state materialized_workflow;
+        const auto materialization = materializer(workflow_request, workflow_instance, materialized_workflow, error);
+        if (materialization != common_blueprint_materialization_outcome::applied) {
+            if (error.empty()) error = "dataset continuation did not produce a verified A* workflow path";
+            return false;
         }
+        for (const auto & step : materialized_workflow.steps) {
+            if (common_plan_step_effective_mode(step) == common_plan_step_mode::tool && step.tool_call) dataset_steps.push_back(step);
+        }
+    } else {
+        common_plan_step step;
+        step.id = plan.id + ":workflow-link:" + selected.workflow_definition->workflow_ref + ":" + std::to_string(plan.version);
+        step.title = action.action->tool_name;
+        step.objective = "Execute the first action in the linked workflow.";
+        step.intended_contribution = step.objective;
+        step.status = common_plan_step_status::pending;
+        step.mode = common_plan_step_mode::tool;
+        step.selected_tool = action.action->tool_name;
+        step.tool_call = common_plan_tool_call{action.action->tool_name, action.action->arguments_json};
+        if (target_transition != nullptr) step.semantic_alias = "workflow-transition:" + target_transition->id;
+        dataset_steps.push_back(std::move(step));
     }
     if (dataset_steps.empty()) {
         error = "dataset continuation A* materializer returned no executable steps";
@@ -1253,12 +1546,21 @@ static bool transition_to_dataset_workflow(
     binding.graph_revision = selected.graph_revision;
     binding.execution_envelope_fingerprint = envelope.fingerprint;
     binding.policy_revision = envelope.policy_revision;
+    if (selected_link != nullptr) {
+        binding.continuation_link_id = continuation_link_identity(*selected_link);
+        binding.continuation_source_fingerprint = source_fingerprint;
+    }
+    std::optional<common_plan_workflow_continuation_record> continuation_record;
+    if (selected_link != nullptr) continuation_record = common_plan_workflow_continuation_record{
+        continuation_link_identity(*selected_link), source_fingerprint,
+        plan.workflow_definition->workflow_ref, plan.workflow_definition->workflow_revision,
+        source_state, selected.workflow->workflow_ref, selected.workflow->workflow_revision};
     common_plan_state transitioned;
-    const std::string reason = "verified dataset output selected a declared dataset workflow";
+    const std::string reason = "verified workflow output selected a declared continuation link";
     if (!common_plan_request_route_transition(execution.plan_store, plan.id, binding,
             *selected.workflow_definition, selected.required_capabilities,
-            selected.procedure_refs, reason, transitioned, error)) {
-        error = "dataset workflow route transition failed: " + error;
+            selected.procedure_refs, reason, transitioned, error, continuation_record)) {
+        error = "workflow route transition failed: " + error;
         return false;
     }
     const auto prior_tool_step = std::find_if(transitioned.steps.rbegin(), transitioned.steps.rend(),
@@ -1282,7 +1584,9 @@ static bool transition_to_dataset_workflow(
         add.plan_id = transitioned.id;
         add.expected_version = transitioned.version;
         add.step = step;
-        add.reason_summary = "host-materialized A* dataset continuation path";
+        add.reason_summary = selected.workflow_definition->family == "dataset"
+            ? "host-materialized A* dataset continuation path"
+            : "host-selected first action for linked workflow continuation";
         if (!execution.plan_store.apply(add, transitioned, error)) {
             error = "dataset continuation step materialization failed: " + error;
             return false;
@@ -1304,9 +1608,9 @@ static bool transition_to_dataset_workflow(
             reset.plan_id = transitioned.id;
             reset.expected_version = transitioned.version;
             reset.step_id = final_answer_id;
-            reset.reason_summary = "defer final answer until dataset continuation completes";
+            reset.reason_summary = "defer final answer until workflow continuation completes";
             if (!execution.plan_store.apply(reset, transitioned, error)) {
-                error = "dataset continuation could not defer the existing final answer: " + error;
+                error = "workflow continuation could not defer the existing final answer: " + error;
                 return false;
             }
         }
@@ -1318,9 +1622,9 @@ static bool transition_to_dataset_workflow(
             dependency.expected_version = transitioned.version;
             dependency.step_id = final_answer_id;
             dependency.target_id = previous_dataset_step_id;
-            dependency.reason_summary = "final answer waits for the A* dataset continuation";
+            dependency.reason_summary = "final answer waits for the linked workflow continuation";
             if (!execution.plan_store.apply(dependency, transitioned, error)) {
-                error = "dataset continuation could not bind the final answer dependency: " + error;
+                error = "workflow continuation could not bind the final answer dependency: " + error;
                 return false;
             }
         }
@@ -1343,19 +1647,23 @@ static bool transition_to_dataset_workflow(
     }
     execution.orchestration_config.prompt = original_prompt;
     execution.pre_turn_events.push_back({common_agent_event_type::route_selection_evaluated,
-        nlohmann::ordered_json{{"type", "dataset_workflow_handoff"},
+        nlohmann::ordered_json{{"type", "workflow_continuation"},
             {"from_workflow", plan.workflow_definition->workflow_ref},
             {"to_workflow", execution.selected_route.workflow->workflow_ref},
+            {"source_terminal_state", source_state},
+            {"link_id", binding.continuation_link_id},
+            {"source_fingerprint", binding.continuation_source_fingerprint},
             {"dataset_count", tooling.available_datasets.size()},
             {"reason", reason}}.dump(), {}, plan.id});
     execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
         common_runtime_trace_kind::updated,
-        "host transitioned to declared dataset workflow " + execution.selected_route.workflow->workflow_ref,
+        "host transitioned to declared linked workflow " + execution.selected_route.workflow->workflow_ref +
+            " from terminal state " + source_state,
         plan.id, {}, {}, {}, execution.selected_route.id});
     execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
         common_runtime_trace_kind::updated,
-        "A* dataset continuation materialized " + std::to_string(dataset_steps.size()) +
-            " verified steps; selected action=" + action.action->tool_name,
+        "workflow continuation materialized " + std::to_string(dataset_steps.size()) +
+            " executable steps; selected action=" + action.action->tool_name,
         transitioned.id, {}, action.action->tool_name, {}, execution.selected_route.id});
     return true;
 }
@@ -1518,6 +1826,13 @@ bool run_agent_runtime_driver(
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
         if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
             if (continuation_count >= execution.runtime_config.max_continuations) {
+                aggregate.trace.push_back({common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::failed,
+                    "workflow continuation budget exhausted before handoff; used=" +
+                        std::to_string(continuation_count) + " max=" +
+                        std::to_string(execution.runtime_config.max_continuations) +
+                        "; active plan remains resumable and is not marked complete",
+                    execution.current_plan_id, {}, {}, {}, {}});
                 aggregate.limit_reached = true;
                 aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
                 result = std::move(aggregate);
@@ -1647,10 +1962,34 @@ bool run_agent_runtime_driver(
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
-        if (slice.workflow_handoff_requested && !execution.dataset_handoff_attempted) {
+        if (slice.workflow_handoff_requested) {
             if (continuation_count >= execution.runtime_config.max_continuations) {
                 aggregate.limit_reached = true;
                 aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
+                std::string detail = "workflow continuation budget exhausted before route transition; used=" +
+                    std::to_string(continuation_count) + " max=" +
+                    std::to_string(execution.runtime_config.max_continuations) +
+                    "; linked work remains pending and final response was not generated";
+                if (slice.plan_id) {
+                    std::string plan_error;
+                    const auto pending_plan = execution.plan_store.get(*slice.plan_id, plan_error);
+                    if (pending_plan) {
+                        detail += "; plan=" + pending_plan->id;
+                        if (pending_plan->workflow_definition) {
+                            detail += "; workflow=" + pending_plan->workflow_definition->workflow_ref;
+                            detail += "; source_state=" + common_plan_workflow_completed_state(
+                                *pending_plan, *pending_plan->workflow_definition);
+                            const auto target_count = pending_plan->workflow_definition->continuation_links.size() +
+                                pending_plan->workflow_definition->continuation_workflow_targets.size();
+                            detail += "; declared_targets=" + std::to_string(target_count);
+                        }
+                    } else if (!plan_error.empty()) {
+                        detail += "; plan_lookup=" + plan_error;
+                    }
+                }
+                aggregate.trace.push_back({common_runtime_trace_stage::plan,
+                    common_runtime_trace_kind::failed, detail,
+                    slice.plan_id.value_or(execution.current_plan_id), {}, {}, {}, {}});
                 result = std::move(aggregate);
                 break;
             }
@@ -1659,7 +1998,7 @@ bool run_agent_runtime_driver(
                 slice.plan_id.value_or(execution.current_plan_id), plan_error);
             if (!plan) return fail_with_partial_result(plan_error.empty()
                 ? "dataset workflow handoff could not load the active plan" : plan_error);
-            if (!transition_to_dataset_workflow(execution, *plan, original_prompt, error)) {
+            if (!transition_to_workflow(execution, *plan, original_prompt, error)) {
                 return fail_with_partial_result(error);
             }
             ++continuation_count;

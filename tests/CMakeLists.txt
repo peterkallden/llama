@@ -479,6 +479,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-plan-context.cpp
         test-plan-json.cpp
         test-plan-store.cpp
+        test-plan-sqlite-continuation.cpp
         test-plan-cozo.cpp
         test-reflection-json.cpp
         test-tool-adapters.cpp
@@ -506,6 +507,9 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
             continue()
         endif()
+        if (TEST_SOURCE STREQUAL "test-plan-sqlite-continuation.cpp" AND NOT LLAMA_AGENT_STORAGE_SQLITE)
+            continue()
+        endif()
         if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp" AND NOT LLAMA_MEMORY_COZO)
             continue()
         endif()
@@ -523,7 +527,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|tool-catalog|tool-adapters|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()

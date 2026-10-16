@@ -25,3 +25,12 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
 const common_plan_workflow_transition * common_agent_workflow_next_transition(
         const common_plan_workflow_definition & definition,
         const std::string & state);
+
+// Returns true when a workflow's static transition arguments fully satisfy the
+// selected tool schema.  Returns false with an empty error when model-owned
+// required arguments remain; invalid static workflow arguments set error.
+bool common_agent_workflow_static_tool_arguments(
+        const common_plan_workflow_transition & transition,
+        const common_chat_tool & tool,
+        std::string & normalized_arguments_json,
+        std::string & error);

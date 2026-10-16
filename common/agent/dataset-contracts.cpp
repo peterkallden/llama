@@ -125,7 +125,7 @@ bool normalize_condition_value(
             operator_name == "gt" ? ">" : operator_name == "gte" ? ">=" :
             operator_name == "lt" ? "<" : operator_name == "lte" ? "<=" :
             operator_name == "in" ? "in" : operator_name == "is_null" ? "is_null" :
-            operator_name == "not_null" ? "not_null" : nullptr;
+            operator_name == "not_null" ? "not_null" : operator_name == "contains" ? "contains" : nullptr;
         if (canonical_operator == nullptr) {
             error = "unsupported dataset condition operator: " + operator_name;
             return false;
@@ -167,7 +167,8 @@ bool normalize_condition_list(
             const auto canonical = name == "eq" ? "=" : name == "neq" ? "!=" : name == "gt" ? ">" :
                 name == "gte" ? ">=" : name == "lt" ? "<" : name == "lte" ? "<=" : name;
             if (canonical != "=" && canonical != "!=" && canonical != ">" && canonical != ">=" &&
-                    canonical != "<" && canonical != "<=" && canonical != "in" && canonical != "is_null" && canonical != "not_null") {
+                    canonical != "<" && canonical != "<=" && canonical != "in" && canonical != "is_null" &&
+                    canonical != "not_null" && canonical != "contains") {
                 error = "unsupported dataset condition operator: " + name;
                 return false;
             }
@@ -223,7 +224,7 @@ bool normalize_condition_list(
                 operator_name == "lt" || operator_name == "-lt" ? "<" :
                 operator_name == "lte" || operator_name == "-lte" ? "<=" : operator_name;
             if (canonical != "=" && canonical != "!=" && canonical != ">" && canonical != ">=" &&
-                    canonical != "<" && canonical != "<=" && canonical != "in") {
+                    canonical != "<" && canonical != "<=" && canonical != "in" && canonical != "contains") {
                 error = "unsupported dataset condition expression operator: " + operator_name;
                 return false;
             }

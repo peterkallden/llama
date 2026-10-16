@@ -66,8 +66,38 @@
     "families": {
       "openalex": {
         "description": "Search OpenAlex works and entities, inspect metadata and open-access full-text locations"
+      },
+      "eurostat": {
+        "description": "Discover Eurostat datasets and query bounded JSON-stat observations after resolving dataset codes and dimensions"
+      },
+      "eurostat_sdmx": {
+        "description": "Resolve Eurostat dataflows, structures, dimensions, code lists and constraints from SDMX metadata"
       }
     },
+    "providers": [
+      {
+        "type": "openapi",
+        "id": "eurostat-statistics",
+        "enabled": true,
+        "required": true,
+        "spec_path": "eurostat-statistics-openapi.json",
+        "base_url": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
+        "prefix": "eurostat",
+        "policy": {"access": "read_only", "exposure": "auto"},
+        "auth": {"type": "none"}
+      },
+      {
+        "type": "openapi",
+        "id": "eurostat-sdmx-structure",
+        "enabled": true,
+        "required": true,
+        "spec_path": "eurostat-sdmx-openapi.json",
+        "base_url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1",
+        "prefix": "eurostat_sdmx",
+        "policy": {"access": "read_only", "exposure": "auto"},
+        "auth": {"type": "none"}
+      }
+    ],
     "capabilities": {
       "codex.audit.tools": [
         "math.calculate",
@@ -136,6 +166,7 @@
     "worker_count": 2,
     "inference_max_active": 1,
     "tool_timeout_ms": 180000,
-    "mcp_request_timeout_ms": 180000
+    "mcp_request_timeout_ms": 180000,
+    "max_continuations": 4
   }
 }

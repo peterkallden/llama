@@ -23,8 +23,7 @@
           {"name": "references", "in": "query",
            "description": "Bounded SDMX reference expansion such as none or all.",
            "schema": {"type": "string", "enum": ["none", "parents", "parentsandsiblings", "children", "descendants", "all"]}},
-          {"name": "detail", "in": "query", "schema": {"type": "string", "enum": ["full", "allstubs", "referencestubs", "referencepartial"]}},
-          {"name": "lang", "in": "query", "schema": {"type": "string"}}
+          {"name": "detail", "in": "query", "schema": {"type": "string", "enum": ["full", "allstubs", "referencestubs", "referencepartial"]}}
         ],
         "responses": {
           "200": {

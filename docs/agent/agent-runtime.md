@@ -310,6 +310,56 @@ resource-only lookup fails with candidates rather than becoming a filesystem
 path. CSV materialization continues through the
 existing host-owned `dataset_from_resource` callback.
 
+The importer validates worksheet shape and row objects before storage writes,
+then sends bounded row batches through the existing data-store interface.
+SQLite writes each batch in a transaction with a reused prepared statement;
+Cozo writes row JSON, stable row-order entries and scalar indexes as batched
+relations. A descriptor is published only after the worksheet is fully
+written. Materialization identity includes source/content hash, representation,
+sheet selection and importer revision, so a failed or changed re-import cannot
+overwrite a previously published dataset. After `stat` revalidates the
+current resource authority and content fingerprint, a matching complete
+descriptor is reused before reading or normalizing the body. `dataset.inspect`,
+`dataset.schema` and `dataset.sample` share this materialization path; trace
+timings separate resource read, normalization, row batches, descriptor
+publication and cache reuse. Cache hits report zero body-read, normalization
+and row-write time; missing or incomplete descriptors still follow full
+validation and import.
+
+On the 2026-10-16 live Eurostat catalogue run, `dataset.inspect` materialized
+12,241 rows and 9 columns from a 1,968,639-byte TSV resource in 48 batches.
+Trace timings were 1,560 us resource read, 367,773 us normalization,
+7,374,289 us row writes and 5,074 us descriptor publication. This isolates
+local materialization from the preceding network fetch and model latency; the
+batching reduced the importer to 48 row-write waves rather than one store call
+per row. Importer tests also exercise repeat-materialization reuse and changed
+processor revision. The 7.37-second Cozo write phase remains the dominant
+measured local cost and is not hidden by the model smoke's total duration.
+
+First-use materialization can exceed the generic local-read timeout. These
+three dataset entry tools therefore have a 180-second tool budget, while the
+importer remains bounded by source/row limits. The MCP/HTTP request budget must
+be at least as large for the full operation to complete. `dataset.inspect`
+accepts a fetched `resource_ref` in the `resource` field (not `uri`, which is
+used by `resource.inspect`/`resource.read`); its model schema states this
+explicitly. A repeated inspection reuses the validated descriptor and avoids
+the resource body read and parser.
+The compact `dataset.inspect` response reports `columns` as a count; use
+`dataset.schema` when actual column names and types are needed.
+`data.query` returns positional row arrays plus a `columns` array in matching
+order, and its MCP input schema explicitly accepts either predicate arrays or
+the supported simple filter string. Both transport schemas reflect these
+runtime shapes, so MCP-side validation does not reject a predicate before the
+data adapter runs.
+
+`web.fetch` keeps the authoritative body in the resource store when available
+and returns at most a 1,024-byte UTF-8 text preview inline. `text_length` is the
+available extracted-text byte length, `preview_truncated` says the inline
+preview was shortened, and `truncated` continues to mean the fetched body hit
+the requested `max_bytes` ceiling. If no resource store is configured, the
+same bounded preview is returned without an authoritative `resource_ref`; the
+tool never falls back to embedding a multi-megabyte body in its response.
+
 All structured-data inputs use the same scope rule. This includes the single
 `dataset` input used by query, aggregate and statistics operations and both
 `left` and `right` inputs used by joins. Descriptor inspection, selection and
@@ -1760,6 +1810,23 @@ and:
 population -gt 100000 and country in ["Sweden", "Norway"]
 ```
 
+For the model-facing compact DSL, `data.query` renders both predicate and
+ordering object arrays as repeated flat directives. It must not construct
+indexed nested paths such as `where[0].field` or `order_by[0].direction`:
+
+```text
+open! data.query
+dataset: $catalog.dataset
+select: code, title
+where: title contains "population density"
+order_by: code asc
+limit: 32
+```
+
+The host turns each `where` and `order_by` line into a typed object, then runs
+the same schema validation and backend query as native/JSON callers. Repeating
+`where:` or `order_by:` adds another predicate or sort key in order.
+
 The object form means an `AND` list of equality or one-operator predicates.
 The expression form supports only bounded `AND` predicates with `eq`/`-eq`,
 `neq`/`-neq`, `gt`/`-gt`, `gte`/`-gte`, `lt`/`-lt`, `lte`/`-lte` and `in`.
@@ -1768,6 +1835,23 @@ Canonical predicates remain the authoritative contract; tracing, repair and
 backend calls use the canonical representation. The normalizer is shared by
 native and MCP tool paths and does not turn the expression form into a general
 SQL or scripting language.
+
+For compact-DSL model calls, `where` and `conditions` are also rendered as
+flat repeated directives rather than indexed nested paths. For example:
+
+```text
+open! data.query
+dataset: dataset://import/...
+select: code, title
+where: title contains "population density"
+limit: 64
+```
+
+Each `where:` line maps to one canonical predicate with ordered slots
+`field`, `operator`, and `value`; list-valued operands such as `in` remain one
+bracketed list value. The host normalizes this flat surface to the canonical
+object-array schema before validation and execution. Models should not emit
+synthetic paths such as `where[0].field`.
 
 Ordering, grouping, aggregation, inner joins and left joins use the structured
 relation as well. Cozo-backed rows now have a host-owned per-dataset ordinal,
@@ -2134,6 +2218,15 @@ replace the canonical plan or observation store.
 the existing driver may run after a bounded generation limit. The default is
 two; zero disables automatic continuation. It is an operation limit, not a
 second queue or session, and the host rejects values above 16.
+
+The same bounded counter also governs automatic cross-workflow handoffs. A
+chain requiring more than two route transitions must configure a larger value
+explicitly (for example, the Codex MCP tool-audit profile uses four). If a
+handoff reaches the limit, the driver now emits a failed plan trace with the
+used/maximum count, source workflow/state, declared target count, and an
+explicit note that linked work remains pending and no final answer was
+generated. The active plan remains resumable; the limit is not treated as
+successful completion.
 
 `context_size` is the model token context and should be configured separately
 from the character budgets. CLI and daemon defaults use `3072` tokens so the
@@ -3288,6 +3381,16 @@ filesystem access: `artifact_write` remains an explicit host policy choice.
 catalog/schema and adapter; callers may request a smaller `max_bytes`, while
 the research runtime leaves the field unset so the same catalog default
 applies.
+The optional `accept` argument selects the representation using an HTTP
+`Accept` media-range (for example `application/json` or `application/xml`);
+it defaults to `*/*`. Workflows should set it when the endpoint's representation
+is known. No other model-supplied headers are accepted, and control characters
+are rejected to prevent header injection.
+For a fully specified workflow start transition, the host validates and uses
+the declared argument object directly; it does not ask the model to reconstruct
+the URL or `accept` value. The Eurostat catalogue graph therefore fetches its
+TOC as `text/plain`, while ordinary model-selected `web.fetch` calls continue
+to use the tool's model-facing schema and default `*/*` when omitted.
 
 `resource.read` returns one caller-bounded range at a time (up to 32 KiB per
 call, subject to the runtime tool-result budget). The runtime's automatic

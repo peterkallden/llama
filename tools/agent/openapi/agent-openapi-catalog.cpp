@@ -432,17 +432,53 @@ bool operation_result_schema(
         return true;
     }
     const auto content = response.value("content", nlohmann::json::object());
-    if (!content.is_object() || !content.contains("application/json") ||
-            !content["application/json"].is_object()) {
+    if (!content.is_object() || content.empty()) {
         output = R"({"type":"object"})";
         return true;
     }
-    auto schema = content["application/json"].value("schema", nlohmann::json({{"type", "object"}}));
+    auto media = content.find("application/json");
+    if (media == content.end()) media = content.begin();
+    if (!media->is_object()) {
+        output = R"({"type":"object"})";
+        return true;
+    }
+    auto schema = media->value("schema", nlohmann::json({{"type", "object"}}));
     std::set<std::string> active_refs;
     if (!resolve_local_refs(document, schema, active_refs, error)) {
         return false;
     }
     output = schema.dump();
+    return true;
+}
+
+bool operation_response_media_types(
+        const nlohmann::json & operation,
+        std::vector<std::string> & output) {
+    output.clear();
+    if (!operation.contains("responses") || !operation["responses"].is_object()) return true;
+    nlohmann::json response;
+    for (const auto code : {"200", "201", "202", "default"}) {
+        const auto it = operation["responses"].find(code);
+        if (it != operation["responses"].end() && it->is_object()) {
+            response = *it;
+            break;
+        }
+    }
+    const auto content = response.value("content", nlohmann::json::object());
+    if (!content.is_object()) return true;
+    // Prefer JSON when it is declared, otherwise preserve the spec's
+    // representations (for example SDMX-ML XML) in its declared order.
+    if (content.contains("application/json")) output.push_back("application/json");
+    std::vector<std::string> remaining;
+    for (auto it = content.begin(); it != content.end(); ++it) {
+        if (!it.value().is_object() || it.key() == "application/json") continue;
+        const auto & media_type = it.key();
+        if (media_type.empty() || media_type.size() > 128 ||
+                media_type.find_first_of("\r\n\t ") != std::string::npos) continue;
+        remaining.push_back(media_type);
+    }
+    std::sort(remaining.begin(), remaining.end());
+    output.insert(output.end(), remaining.begin(), remaining.end());
     return true;
 }
 
@@ -708,6 +744,7 @@ bool build_agent_openapi_catalog(
                     !operation_result_schema(document, value, error, operation.result_schema_json)) {
                 return false;
             }
+            operation_response_media_types(value, operation.response_media_types);
             operation.paging = classify_paging_contract(operation.query_parameters);
             if (!configure_paging_response(value, operation, error)) return false;
 

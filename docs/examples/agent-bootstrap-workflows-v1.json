@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "agent-workflows-starter",
-  "version": "v14",
+  "version": "v22",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -123,9 +123,16 @@
       "confidence": 1.0
     },
     {
+      "id": "eurostat-catalog-discovery-v2",
+      "summary": "Eurostat catalogue discovery and query scope",
+      "content": "Use the host-fetched Eurostat table-of-contents resource and its materialized schema to find candidate codes. For the catalogue query, use one case-insensitive title contains predicate for the core statistical concept only; omit geography, period, unit, category guesses, extra predicates, sorting and distinct unless the workflow explicitly requires them. Geography, period, unit and availability are verified later from SDMX metadata. Select a dataset code only from returned catalogue rows; catalogue presence is not proof of compatibility.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
       "id": "eurostat-sdmx-metadata-resolution-v1",
       "summary": "Eurostat SDMX metadata resolution",
-      "content": "Use the configured read-only Eurostat SDMX provider to inspect the selected dataflow, data structure, dimensions, code lists and content constraints. Bind dataset and dimension codes only from returned metadata; verify labels, allowed values, units and availability before the Statistics API request. If the metadata response is incomplete or a code is absent, stop and report the unresolved field instead of guessing.",
+      "content": "Use the configured read-only Eurostat SDMX provider to inspect the selected dataflow, data structure, dimensions, code lists and content constraints. Match the dataflow title and scope to every requested geography and period; reject regional or country-group tables unless they match. In SDMX XML, dimension values are short codes under KeyValue/Value (for example geo=SE, TIME_PERIOD=2020), not URLs, labels or metadata links. Bind dataset and dimension codes only from returned metadata; verify labels, allowed values, units and availability before the Statistics API request. If a requested value is absent from a content constraint, do not call the Statistics API; report that this candidate cannot answer the request and continue with another catalogue candidate when available. If metadata is incomplete or no compatible candidate remains, stop and report the unresolved field instead of guessing.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -343,54 +350,85 @@
       ]
     },
     {
-      "id": "eurostat-catalog-discovery-path-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "id": "eurostat-catalog-discovery-path-v3",
+      "source_revision": "agent-workflows-starter@v22",
       "workflow_ref": "workflow://eurostat/catalog-discovery",
-      "workflow_revision": "v2",
+      "workflow_revision": "v5",
       "family": "dataset",
-      "graph_revision": "eurostat-catalog-discovery-graph@v2",
-      "required_capabilities": ["web.fetch", "dataset.inspect", "dataset.sample"],
+      "graph_revision": "eurostat-catalog-discovery-graph@v5",
+      "required_capabilities": ["web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality"],
+      "continuation_links": [{"from_transition": "inspect-toc-schema", "from_terminal_state": "catalog_schema_ready", "workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v7", "bindings": [
+        {"transition": "search-catalogue", "tool": "data.query", "target": "/dataset", "source": "/result/dataset"}
+      ]}],
       "required_context": ["context.network.allowed"],
       "start_state": "catalog_pending",
-      "terminal_states": ["catalog_dataset_ready"],
+      "terminal_states": ["catalog_schema_ready"],
       "transitions": [
-        {"id": "fetch-toc", "from": "catalog_pending", "to": "catalog_fetched", "tool": "web.fetch", "arguments": "{\"url\":\"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc?lang=en\",\"max_bytes\":4194304}"},
+        {"id": "fetch-toc", "from": "catalog_pending", "to": "catalog_fetched", "tool": "web.fetch", "arguments": "{\"url\":\"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en\",\"accept\":\"text/plain\",\"max_bytes\":4194304}"},
         {"id": "materialize-toc", "from": "catalog_fetched", "to": "catalog_dataset_ready", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
           {"target": "/resource", "from": "fetch-toc", "source": "/resources/0/uri"}
+        ]},
+        {"id": "inspect-toc-schema", "from": "catalog_dataset_ready", "to": "catalog_schema_ready", "tool": "dataset.schema", "arguments": "{}", "bindings": [
+          {"target": "/dataset", "from": "materialize-toc", "source": "/result/dataset"}
         ]}
       ]
     },
     {
       "id": "eurostat-metadata-resolution-path-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "source_revision": "agent-workflows-starter@v21",
       "workflow_ref": "workflow://eurostat/metadata-resolution",
-      "workflow_revision": "v2",
+      "workflow_revision": "v7",
       "family": "openapi",
-      "graph_revision": "eurostat-metadata-resolution-graph@v2",
-      "allowed_tools": ["eurostat_sdmx.getStructure", "dataset.inspect", "dataset.sample", "artifact.export"],
-      "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
+      "graph_revision": "eurostat-metadata-resolution-graph@v7",
+      "allowed_tools": ["eurostat_sdmx.getStructure", "dataset.inspect", "dataset.sample", "data.query"],
+      "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample", "data.query"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality"],
+      "continuation_links": [{"from_transition": "inspect-content-constraint", "from_terminal_state": "dimensions_and_codes_verified", "workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v7", "bindings": [
+        {"transition": "request-observations", "tool": "eurostat.getData", "target": "/datasetCode", "source": "/choice", "from_transition": "choose-dataflow"}
+      ]}],
       "required_context": ["context.openapi.available"],
       "start_state": "dataflow_candidate_selected",
-      "terminal_states": ["dimensions_and_codes_verified"]
+      "terminal_states": ["dimensions_and_codes_verified"],
+      "transitions": [
+        {"id": "search-catalogue", "from": "dataflow_candidate_selected", "to": "catalogue_searched", "tool": "data.query", "arguments": "{\"select\":[\"code\",\"title\",\"type\",\"data start\",\"data end\"],\"limit\":64,\"max_result_rows\":64}", "model_supplies_arguments": true, "model_instruction": "Search only for the core statistical concept in the catalogue title. Use one case-insensitive title contains predicate. Do not add geography, period, unit, category or availability filters, sorting, or distinct; verify those later from SDMX metadata."},
+        {"id": "choose-dataflow", "from": "catalogue_searched", "to": "dataflow_code_selected", "kind": "model_choice", "candidates": "/result/rows", "candidate_id": "/code", "model_instruction": "Prefer the unqualified national table whose title directly matches the requested measure. Do not select titles specifying NUTS regions, metropolitan areas, country groups, or another specialized population unless the user asked for that scope. If no candidate clearly matches, stop rather than guessing."},
+        {"id": "get-dataflow-structure", "from": "dataflow_code_selected", "to": "dataflow_structure_resource", "tool": "eurostat_sdmx.getStructure", "arguments": "{\"artifactType\":\"dataflow\",\"agencyID\":\"ESTAT\",\"resourceID\":\"$choice\",\"version\":\"1.0\",\"references\":\"children\",\"detail\":\"full\"}"},
+        {"id": "inspect-dataflow-structure", "from": "dataflow_structure_resource", "to": "dataflow_structure_resolved", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
+          {"target": "/resource", "from": "get-dataflow-structure", "source": "/resources/0/uri"}
+        ]},
+        {"id": "get-content-constraint", "from": "dataflow_structure_resolved", "to": "content_constraint_resource", "tool": "eurostat_sdmx.getStructure", "arguments": "{\"artifactType\":\"contentconstraint\",\"agencyID\":\"ESTAT\",\"version\":\"1.0\"}", "bindings": [
+          {"target": "/resourceID", "from": "choose-dataflow", "source": "/choice"}
+        ]},
+        {"id": "inspect-content-constraint", "from": "content_constraint_resource", "to": "dimensions_and_codes_verified", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
+          {"target": "/resource", "from": "get-content-constraint", "source": "/resources/0/uri"}
+        ]}
+      ]
     },
     {
       "id": "eurostat-data-retrieval-path-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "source_revision": "agent-workflows-starter@v21",
       "workflow_ref": "workflow://eurostat/data-retrieval",
-      "workflow_revision": "v2",
+      "workflow_revision": "v7",
       "family": "openapi",
-      "graph_revision": "eurostat-data-retrieval-graph@v2",
-      "allowed_tools": ["eurostat.getData", "dataset.inspect", "dataset.sample", "artifact.export"],
+      "graph_revision": "eurostat-data-retrieval-graph@v7",
+      "allowed_tools": ["eurostat.getData", "dataset.inspect", "dataset.sample"],
       "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
+      "continuation_links": [
+        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"},
+        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
+        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
+      ],
       "required_context": ["context.openapi.available"],
       "start_state": "verified_query_ready",
-      "terminal_states": ["json_stat_dataset_ready"]
+      "terminal_states": ["json_stat_dataset_ready"],
+      "transitions": [
+        {"id": "request-observations", "from": "verified_query_ready", "to": "observations_retrieved", "tool": "eurostat.getData", "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}", "model_supplies_arguments": true},
+        {"id": "materialize-json-stat", "from": "observations_retrieved", "to": "json_stat_dataset_ready", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
+          {"target": "/resource", "from": "request-observations", "source": "/resources/0/uri"}
+        ]}
+      ]
     },
     {
       "id": "repository-regression-repair-path-v1",
@@ -761,16 +799,16 @@
       ]
     },
     {
-      "id": "eurostat-catalog-discovery-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "id": "eurostat-catalog-discovery-v3",
+      "source_revision": "agent-workflows-starter@v22",
       "selection_description": "Find candidate Eurostat tables by statistical concept and inspect the host-materialized catalogue rows.",
       "purpose": "Resolve a user's statistical measure and coverage into candidate Eurostat table codes without guessing codes.",
       "goal": "Select a table whose returned title, category and coverage plausibly match the requested measure.",
       "success_criteria": "The statistical intent is explicit and every candidate code comes from the fetched Eurostat catalogue resource.",
       "required_capabilities": ["tool.web", "tool.dataset", "workflow.dataset"],
       "workflow_policy": "required",
-      "procedure_refs": ["statistical-intent-and-measure-v1", "eurostat-catalog-discovery-v1", "structured-resource-dataset-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v2"}],
+      "procedure_refs": ["statistical-intent-and-measure-v1", "eurostat-catalog-discovery-v2", "structured-resource-dataset-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v5"}],
       "next_action": "clarify-statistical-intent",
       "constraints": [
         {"id": "returned-code-only", "description": "Use only a table code returned by the host-materialized Eurostat catalogue.", "hard": true},
@@ -778,7 +816,7 @@
       ],
       "steps": [
         {"id": "clarify-statistical-intent", "title": "Clarify statistical intent", "objective": "Establish measure, population, geography, period, unit and comparison before searching."},
-        {"id": "fetch-catalogue", "title": "Fetch catalogue", "objective": "Fetch the official Eurostat table-of-contents XML through web.fetch." , "depends_on": ["clarify-statistical-intent"]},
+        {"id": "fetch-catalogue", "title": "Fetch catalogue", "objective": "Fetch the bounded English Eurostat table-of-contents TSV through web.fetch." , "depends_on": ["clarify-statistical-intent"]},
         {"id": "materialize-catalogue", "title": "Materialize catalogue", "objective": "Pass the returned resource reference to dataset.inspect or dataset.sample; do not parse or invent rows manually.", "depends_on": ["fetch-catalogue"]},
         {"id": "select-candidate", "title": "Select candidate", "objective": "Compare returned table codes, titles, category paths and coverage against the request.", "depends_on": ["materialize-catalogue"]},
         {"id": "validate-metadata", "title": "Validate metadata", "objective": "Continue to the SDMX metadata workflow before constructing a Statistics API query.", "depends_on": ["select-candidate"]}
@@ -786,7 +824,7 @@
     },
     {
       "id": "eurostat-metadata-resolution-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "source_revision": "agent-workflows-starter@v20",
       "selection_description": "Resolve a returned Eurostat dataflow against its SDMX structure, dimensions, code lists and constraints.",
       "purpose": "Validate candidate identifiers and dimension codes before requesting observations.",
       "goal": "Establish a metadata-backed Eurostat query with compatible measure, geography, time and unit.",
@@ -794,7 +832,7 @@
       "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["eurostat-sdmx-metadata-resolution-v1", "statistical-intent-and-measure-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v2"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v7"}],
       "next_action": "resolve-dataflow-structure",
       "constraints": [
         {"id": "metadata-grounded-parameters", "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.", "hard": true},
@@ -810,7 +848,7 @@
     },
     {
       "id": "eurostat-data-retrieval-v2",
-      "source_revision": "agent-workflows-starter@v14",
+      "source_revision": "agent-workflows-starter@v20",
       "selection_description": "Fetch a metadata-validated Eurostat JSON-stat response and continue with standard dataset analysis.",
       "purpose": "Retrieve bounded observations while preserving Eurostat query provenance and status metadata.",
       "goal": "Create a host dataset from JSON-stat and answer the statistical question using the ordinary dataset workflows.",
@@ -818,14 +856,14 @@
       "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
       "workflow_policy": "required",
       "procedure_refs": ["json-stat-dataset-interpretation-v1", "structured-resource-dataset-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v2"}],
+      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v7"}],
       "next_action": "request-observations",
       "constraints": [
         {"id": "validated-query-only", "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.", "hard": true},
         {"id": "preserve-status", "description": "Do not discard JSON-stat status or confuse codes with labels.", "hard": true}
       ],
       "steps": [
-        {"id": "request-observations", "title": "Request observations", "objective": "Call eurostat.getData with the validated dataset code and repeated geography/time plus dimension-map filters."},
+        {"id": "request-observations", "title": "Request observations", "objective": "Call eurostat.getData with the validated dataset code and repeated geo and time code fields."},
         {"id": "materialize-json-stat", "title": "Materialize JSON-stat", "objective": "Use the host dataset importer to convert JSON-stat cells to bounded long-form rows with code, label, value and status columns.", "depends_on": ["request-observations"]},
         {"id": "inspect-dataset", "title": "Inspect dataset", "objective": "Inspect the created dataset and preserve the source resource and exact query provenance.", "depends_on": ["materialize-json-stat"]},
         {"id": "continue-analysis", "title": "Continue analysis", "objective": "Continue through workflow://dataset/analysis or workflow://dataset/quality for follow-up questions.", "depends_on": ["inspect-dataset"]},

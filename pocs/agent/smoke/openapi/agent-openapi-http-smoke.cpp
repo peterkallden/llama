@@ -55,6 +55,16 @@ agent_openapi_catalog make_get_sale_catalog(const agent_host_openapi_provider_co
     get_eurostat.access = agent_openapi_access::read;
     get_eurostat.read_only = true;
     catalog.operations.push_back(std::move(get_eurostat));
+    agent_openapi_operation get_sdmx;
+    get_sdmx.operation_id = "getSdmxStructure";
+    get_sdmx.method = "get";
+    get_sdmx.path = "/structure";
+    get_sdmx.summary = "Get SDMX structure";
+    get_sdmx.description = get_sdmx.summary;
+    get_sdmx.response_media_types = {"application/vnd.sdmx.structure+xml", "application/xml"};
+    get_sdmx.access = agent_openapi_access::read;
+    get_sdmx.read_only = true;
+    catalog.operations.push_back(std::move(get_sdmx));
     agent_openapi_operation get_error;
     get_error.operation_id = "getHttpError";
     get_error.method = "get";
@@ -115,6 +125,12 @@ int main() {
         assert(request.get_param_value("age") == "TOTAL");
         assert(request.get_param_value("filters[age]") == "TOTAL");
         response.set_content(R"({"ok":true})", "application/json");
+    });
+    server.Get("/structure", [](const httplib::Request & request, httplib::Response & response) {
+        const auto accept = request.get_header_value("Accept");
+        assert(accept.find("application/vnd.sdmx.structure+xml") != std::string::npos);
+        assert(accept.find("application/xml") != std::string::npos);
+        response.set_content("<Structure/>", "application/vnd.sdmx.structure+xml");
     });
     server.Get("/basic", [](const httplib::Request & request, httplib::Response & response) {
         assert(request.get_header_value("Authorization") == "Basic dXNlcjpwYXNz");
@@ -181,6 +197,10 @@ int main() {
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);
     assert(observed_mime == "application/json");
+    const auto sdmx = view->call({"sdmx-structure", "sales.getSdmxStructure", "{}"}, error);
+    assert(sdmx.ok);
+    assert(observed_mime == "application/vnd.sdmx.structure+xml");
+    assert(sdmx.content_json.find("<Structure/>") != std::string::npos);
     const auto eurostat = view->call({"eurostat-query", "sales.getEurostatData",
         R"({"datasetCode":"DEMO_R_D3DENS","geo":["SE","NO"],"time":["2020","2021"],"filters":{"age":"TOTAL"},"dimensions":{"unit":["P_KM2","P_M2"],"age":"TOTAL"}})"}, error);
     assert(eurostat.ok);

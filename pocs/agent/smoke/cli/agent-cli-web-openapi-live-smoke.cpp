@@ -10,8 +10,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <string>
 
 namespace {
@@ -24,20 +26,87 @@ constexpr const char * k_default_openalex_host_config =
 
 class live_smoke_data_store final : public common_agent_data_store {
 public:
-    bool list_dataset_descriptors(
-            std::vector<common_agent_dataset_descriptor> & descriptors,
+    bool put_row(const std::string & dataset, const std::string & row_id,
+            const std::string & row_json, std::string & error) override {
+        rows[dataset][row_id] = row_json;
+        error.clear();
+        ++rows_written;
+        return true;
+    }
+
+    bool put_rows(const std::string & dataset,
+            const std::vector<std::pair<std::string, std::string>> & batch,
             std::string & error) override {
-        descriptors.clear();
+        ++batches_written;
+        for (const auto & row : batch) rows[dataset][row.first] = row.second;
+        rows_written += batch.size();
         error.clear();
         return true;
     }
 
-    bool execute(const std::string &, const std::string &, std::string & result,
+    bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor,
             std::string & error) override {
-        result.clear();
-        error = "dataset operations are outside this live smoke";
-        return false;
+        descriptors[descriptor.ref.uri] = descriptor;
+        error.clear();
+        return true;
     }
+
+    bool get_dataset_descriptor(const std::string & uri,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        const auto found = descriptors.find(uri);
+        if (found == descriptors.end()) {
+            error = "dataset descriptor not found";
+            return false;
+        }
+        descriptor = found->second;
+        error.clear();
+        return true;
+    }
+
+    bool list_dataset_descriptors(
+            std::vector<common_agent_dataset_descriptor> & descriptors,
+            std::string & error) override {
+        descriptors.clear();
+        for (const auto & item : this->descriptors) descriptors.push_back(item.second);
+        error.clear();
+        return true;
+    }
+
+    bool execute(const std::string & operation, const std::string & request_json, std::string & result,
+            std::string & error) override {
+        if (operation != "data.query") {
+            result.clear();
+            error = "only bounded data.query is supported by this live smoke store";
+            return false;
+        }
+        const auto request = nlohmann::json::parse(request_json, nullptr, false);
+        const auto dataset = request.is_object() ? request.value("dataset", std::string{}) : std::string{};
+        const auto descriptor = descriptors.find(dataset);
+        const auto dataset_rows = rows.find(dataset);
+        if (descriptor == descriptors.end() || dataset_rows == rows.end()) {
+            result.clear();
+            error = "dataset is unavailable in the live smoke store";
+            return false;
+        }
+        const size_t limit = std::min<size_t>(request.value("max_result_rows", request.value("limit", size_t(20))), 100);
+        nlohmann::json columns = nlohmann::json::array();
+        for (const auto & column : descriptor->second.columns) columns.push_back(column.name);
+        nlohmann::json output_rows = nlohmann::json::array();
+        for (const auto & row : dataset_rows->second) {
+            if (output_rows.size() >= limit) break;
+            output_rows.push_back(nlohmann::json::parse(row.second));
+        }
+        result = nlohmann::json({{"dataset", dataset}, {"columns", columns},
+            {"rows", output_rows}, {"row_count", output_rows.size()},
+            {"result_truncated", dataset_rows->second.size() > output_rows.size()}}).dump();
+        error.clear();
+        return true;
+    }
+
+    std::map<std::string, common_agent_dataset_descriptor> descriptors;
+    std::map<std::string, std::map<std::string, std::string>> rows;
+    size_t rows_written = 0;
+    size_t batches_written = 0;
 };
 
 bool resolve_selection(
@@ -59,6 +128,7 @@ bool configure_request(agent_host_tool_selection_request & request) {
     request.resource_store_config.metadata_backend = "in-memory";
     request.tool_context.profile_id = "web-openapi-live";
     request.tool_context.allow_network = true;
+    request.tool_context.max_calls = 16;
     request.tool_context.default_timeout_ms = 60000;
     request.tool_context.scope.namespace_id = "local";
     request.tool_context.scope.session_id = "web-openapi-live-session";
@@ -71,6 +141,8 @@ bool configure_request(agent_host_tool_selection_request & request) {
         {"web.fetch", 1, true, "{}"},
         {"resource.read", 1, true, "{}"},
         {"openapi.connect", 1, true, "{}"},
+        {"dataset.inspect", 1, true, "{}"},
+        {"dataset.sample", 1, true, "{}"},
     };
     profile.allow_network = true;
     request.tool_profiles.emplace(profile.id, std::move(profile));
@@ -107,7 +179,132 @@ bool run_resource_fetch_smoke(
                   << read.content_json.substr(0, 600) << "\n";
         return false;
     }
+
+    const auto eurostat = selection.tool_view->call({
+        "web-eurostat-jsonstat-live", "web.fetch",
+        R"({"url":"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/DEMO_R_D3DENS?lang=EN&geo=SE&time=2020","accept":"application/json","max_bytes":1048576})"}, error);
+    if (!eurostat.ok || eurostat.resource_refs.size() != 1 ||
+            eurostat.content_json.find("application/json") == std::string::npos) {
+        std::cerr << "web.fetch could not acquire Eurostat JSON-stat: " << error << " "
+                  << "ok=" << (eurostat.ok ? "true" : "false")
+                  << " resource_refs=" << eurostat.resource_refs.size()
+                  << " json_mime=" << (eurostat.content_json.find("application/json") != std::string::npos ? "true" : "false") << " "
+                  << eurostat.content_json.substr(0, 600) << "\n";
+        return false;
+    }
+    const auto eurostat_read = selection.tool_view->call({
+        "web-eurostat-jsonstat-read", "resource.read",
+        nlohmann::json({{"uri", eurostat.resource_refs.front().uri},
+            {"representation", "text"}, {"max_bytes", 32768}}).dump()}, error);
+    const auto eurostat_read_json = nlohmann::json::parse(eurostat_read.content_json, nullptr, false);
+    const std::string eurostat_body = eurostat_read_json.is_object() &&
+            eurostat_read_json.contains("result") && eurostat_read_json["result"].is_object() &&
+            eurostat_read_json["result"].contains("content") && eurostat_read_json["result"]["content"].is_string()
+        ? eurostat_read_json["result"]["content"].get<std::string>()
+        : std::string{};
+    if (!eurostat_read.ok || eurostat_body.find(R"("version":"2.0")") == std::string::npos ||
+            eurostat_body.find(R"("dimension")") == std::string::npos) {
+        std::cerr << "web.fetch Eurostat resource did not preserve JSON-stat: " << error << " "
+                  << eurostat_read.content_json.substr(0, 600) << "\n";
+        return false;
+    }
+    const auto eurostat_catalog = selection.tool_view->call({
+        "web-eurostat-catalogue-live", "web.fetch",
+        R"({"url":"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en","accept":"text/plain","max_bytes":4194304})"}, error);
+    if (!eurostat_catalog.ok || eurostat_catalog.resource_refs.size() != 1 ||
+            eurostat_catalog.content_json.find("text/plain") == std::string::npos) {
+        std::cerr << "web.fetch could not acquire Eurostat catalogue TSV: " << error << " "
+                  << eurostat_catalog.safe_summary << " " << eurostat_catalog.raw_diagnostic << "\n";
+        return false;
+    }
+    const auto catalogue_read = selection.tool_view->call({
+        "web-eurostat-catalogue-read", "resource.read",
+        nlohmann::json({{"uri", eurostat_catalog.resource_refs.front().uri},
+            {"representation", "text"}, {"max_bytes", 4096}}).dump()}, error);
+    const auto catalogue_read_json = nlohmann::json::parse(catalogue_read.content_json, nullptr, false);
+    const std::string catalogue_body = catalogue_read_json.is_object() &&
+            catalogue_read_json.contains("result") && catalogue_read_json["result"].is_object() &&
+            catalogue_read_json["result"].contains("content") && catalogue_read_json["result"]["content"].is_string()
+        ? catalogue_read_json["result"]["content"].get<std::string>()
+        : std::string{};
+    if (!catalogue_read.ok || catalogue_body.find("\"title\"\t\"code\"\t\"type\"") == std::string::npos) {
+        std::cerr << "Eurostat catalogue resource did not return the expected bounded TSV: " << error << " "
+                  << catalogue_read.content_json.substr(0, 600) << "\n";
+        return false;
+    }
+
+    const std::string catalogue_resource = eurostat_catalog.resource_refs.front().uri;
+    const size_t eurostat_catalogue_resource_size = eurostat_catalog.resource_refs.front().size_bytes;
+    const size_t rows_before_catalogue = data.rows_written;
+    const size_t batches_before_catalogue = data.batches_written;
+    const auto first_inspect_start = std::chrono::steady_clock::now();
+    const auto first_inspect = selection.tool_view->call({
+        "dataset-inspect-eurostat-catalogue", "dataset.inspect",
+        nlohmann::json({{"resource", catalogue_resource}}).dump()}, error);
+    const auto first_inspect_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - first_inspect_start).count();
+    auto first_inspect_json = nlohmann::json::parse(first_inspect.content_json, nullptr, false);
+    if (first_inspect_json.is_object() && first_inspect_json.contains("result")) {
+        first_inspect_json = first_inspect_json["result"];
+    }
+    if (!first_inspect.ok || !first_inspect_json.is_object() ||
+            !first_inspect_json.contains("dataset") || !first_inspect_json["dataset"].is_string() ||
+            !first_inspect_json.contains("rows") || !first_inspect_json["rows"].is_number_integer() ||
+            first_inspect_json["rows"].get<size_t>() < 1000 || data.rows_written == rows_before_catalogue ||
+            data.batches_written == batches_before_catalogue) {
+        std::cerr << "production dataset.inspect did not materialize the fetched Eurostat catalogue: "
+                  << first_inspect.safe_summary << " " << first_inspect.raw_diagnostic << " "
+                  << first_inspect.content_json.substr(0, 800) << "\n";
+        return false;
+    }
+    const auto imported_dataset = first_inspect_json["dataset"].get<std::string>();
+    const size_t catalogue_row_count = first_inspect_json["rows"].get<size_t>();
+    const size_t initial_rows_written = data.rows_written;
+    const size_t initial_batches_written = data.batches_written;
+
+    const auto second_inspect_start = std::chrono::steady_clock::now();
+    const auto second_inspect = selection.tool_view->call({
+        "dataset-inspect-eurostat-catalogue-repeat", "dataset.inspect",
+        nlohmann::json({{"resource", catalogue_resource}}).dump()}, error);
+    const auto second_inspect_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - second_inspect_start).count();
+    auto second_inspect_json = nlohmann::json::parse(second_inspect.content_json, nullptr, false);
+    if (second_inspect_json.is_object() && second_inspect_json.contains("result")) {
+        second_inspect_json = second_inspect_json["result"];
+    }
+    if (!second_inspect.ok || !second_inspect_json.is_object() ||
+            second_inspect_json.value("dataset", std::string{}) != imported_dataset ||
+            data.rows_written != initial_rows_written || data.batches_written != initial_batches_written) {
+        std::cerr << "repeat dataset.inspect failed to reuse the complete catalogue materialization: "
+                  << second_inspect.safe_summary << " " << second_inspect.raw_diagnostic << " "
+                  << second_inspect.content_json.substr(0, 800) << "\n";
+        return false;
+    }
+
+    const auto sample = selection.tool_view->call({
+        "dataset-sample-eurostat-catalogue", "dataset.sample",
+        nlohmann::json({{"resource", catalogue_resource}, {"rows", 3}}).dump()}, error);
+    auto sample_json = nlohmann::json::parse(sample.content_json, nullptr, false);
+    if (sample_json.is_object() && sample_json.contains("result")) sample_json = sample_json["result"];
+    if (!sample.ok || !sample_json.is_object() || !sample_json.contains("rows") ||
+            !sample_json["rows"].is_array() || sample_json["rows"].empty() ||
+            !sample_json["rows"][0].contains("code")) {
+        std::cerr << "dataset.sample could not query the shared Eurostat materialization: "
+                  << sample.safe_summary << " " << sample.raw_diagnostic << " "
+                  << sample.content_json.substr(0, 800) << "\n";
+        return false;
+    }
     std::cout << "web_resource_fetch_and_read=passed\n";
+    std::cout << "web_eurostat_jsonstat_fetch_and_read=passed\n";
+    std::cout << "web_eurostat_catalogue_tsv_fetch_and_read=passed\n";
+    std::cout << "eurostat_catalogue_resource_bytes=" << eurostat_catalogue_resource_size << "\n";
+    std::cout << "eurostat_catalogue_rows=" << catalogue_row_count << "\n";
+    std::cout << "eurostat_catalogue_first_import_rows=" << initial_rows_written - rows_before_catalogue << "\n";
+    std::cout << "eurostat_catalogue_first_import_batches=" << initial_batches_written - batches_before_catalogue << "\n";
+    std::cout << "eurostat_catalogue_first_inspect_us=" << first_inspect_us << "\n";
+    std::cout << "eurostat_catalogue_repeat_inspect_us=" << second_inspect_us << "\n";
+    std::cout << "eurostat_catalogue_repeat_import_rows=0\n";
+    std::cout << "eurostat_catalogue_sample=passed\n";
     return true;
 }
 

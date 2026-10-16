@@ -42,6 +42,17 @@ std::string flat_directive_contract(const json & schema) {
             if (slot.is_string()) out << " <" << slot.get<std::string>() << ">";
         }
         out << " (repeat for each item; named slots also accepted)";
+        const auto item_schema = property.value()["items"];
+        const auto item_properties = item_schema.value("properties", json::object());
+        for (const auto & slot : slots) {
+            if (!slot.is_string() || !item_properties.contains(slot.get<std::string>())) continue;
+            const auto & slot_schema = item_properties[slot.get<std::string>()];
+            out << "\n    " << slot.get<std::string>() << ": " << scalar_type(slot_schema, 1);
+            if (slot_schema.is_object() && slot_schema.contains("description") &&
+                    slot_schema["description"].is_string()) {
+                out << " (" << slot_schema["description"].get<std::string>() << ')';
+            }
+        }
         out << "\n  named form: " << directive << ":";
         for (size_t i = 0; i < slots.size(); ++i) {
             if (slots[i].is_string()) out << " " << slots[i].get<std::string>() << "=<value>";

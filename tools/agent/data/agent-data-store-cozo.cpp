@@ -210,6 +210,55 @@ bool common_agent_cozo_data_store::put_row(const std::string & dataset, const st
     return true;
 }
 
+bool common_agent_cozo_data_store::put_rows(
+        const std::string & dataset,
+        const std::vector<std::pair<std::string, std::string>> & rows,
+        std::string & error) {
+    if (dataset.empty()) { error = "data row batch requires a dataset"; return false; }
+    if (rows.empty()) { error.clear(); return true; }
+    std::string order_raw;
+    if (!run("?[row_id, row_seq] := *agent_data_row_order[$dataset, row_id, row_seq]",
+            json({{"dataset", dataset}}).dump(), order_raw, error)) return false;
+    const auto order = json::parse(order_raw, nullptr, false);
+    if (!order.is_object() || !order.contains("rows") || !order["rows"].is_array()) {
+        error = "Cozo row-order query returned invalid rows"; return false;
+    }
+    std::map<std::string, int64_t> sequences;
+    int64_t next_sequence = 1;
+    for (const auto & record : order["rows"]) {
+        if (record.is_array() && record.size() == 2 && record[0].is_string() && record[1].is_number_integer()) {
+            sequences[record[0].get<std::string>()] = record[1].get<int64_t>();
+            next_sequence = std::max(next_sequence, record[1].get<int64_t>() + 1);
+        }
+    }
+    json data_rows = json::array();
+    json order_rows = json::array();
+    json value_rows = json::array();
+    std::set<std::string> seen;
+    for (const auto & item : rows) {
+        const auto parsed = json::parse(item.second, nullptr, false);
+        if (item.first.empty() || !parsed.is_object() || !seen.insert(item.first).second) {
+            error = "data row batch contains an invalid or duplicate row"; return false;
+        }
+        data_rows.push_back({dataset, item.first, item.second});
+        auto sequence = sequences.find(item.first);
+        if (sequence == sequences.end()) {
+            order_rows.push_back({dataset, item.first, next_sequence++});
+        }
+        const auto encoded = agent_cozo_encode_row_values(dataset, item.first, parsed);
+        for (const auto & value : encoded) value_rows.push_back(value);
+    }
+    std::string result;
+    if (!run("?[dataset, row_id, row_json] <- $rows :put agent_data_rows { dataset, row_id => row_json }",
+            json({{"rows", data_rows}}).dump(), result, error)) return false;
+    if (!order_rows.empty() && !run("?[dataset, row_id, row_seq] <- $rows :put agent_data_row_order { dataset, row_id => row_seq }",
+            json({{"rows", order_rows}}).dump(), result, error)) return false;
+    if (!value_rows.empty() && !run("?[dataset, row_id, field, value_kind, value_text, value_number] <- $rows :put agent_data_values { dataset, row_id, field => value_kind, value_text, value_number }",
+            json({{"rows", value_rows}}).dump(), result, error)) return false;
+    error.clear();
+    return true;
+}
+
 bool common_agent_cozo_data_store::put_dataset_descriptor(
         const common_agent_dataset_descriptor & descriptor,
         std::string & error) {

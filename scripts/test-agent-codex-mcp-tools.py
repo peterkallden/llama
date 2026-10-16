@@ -144,7 +144,7 @@ def main():
     parser.add_argument("--probe-clangd", action="store_true",
                         help="Exercise clangd-backed symbol and call-hierarchy calls with a known source location")
     parser.add_argument("--suite", choices=("connection", "tools"), default="connection")
-    parser.add_argument("--group", choices=("openalex", "resources", "data", "repository", "diagnostics", "memory"))
+    parser.add_argument("--group", choices=("openalex", "eurostat", "resources", "data", "repository", "diagnostics", "memory"))
     parser.add_argument("--prompt-file", type=Path, help="Use a reviewed task prompt for one selected group")
     parser.add_argument("--require-pdf-text", action="store_true", help="Require successful PDF fetch and derived text read")
     parser.add_argument("--model", default="gpt-5.6-luna")
@@ -194,12 +194,25 @@ For tools lacking required host fixtures, state precisely which input or capabil
 Every advertised tool must have a recorded call or an explicit not_tested reason. Do not call a catalog-only check a successful tool test.
 End with one row per tool: name, pass/fail/not_tested, expected versus actual, and actionable deficiency.
 """
+    eurostat_prompt = """Use only the llama-agent-tool-audit MCP server for this end-to-end Eurostat evaluation. Do not use shell, browser, files, or other servers.
+User request: Find a Eurostat table about population density, verify its metadata, then retrieve Sweden's 2020 observation and inspect the resulting dataset.
+
+Follow the evidence chain; do not begin with a hard-coded dataset code or API URL:
+1. Call web.fetch on https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en with accept text/plain and max_bytes 4194304. Use its returned resource_ref (not uri) with dataset.inspect to materialize the catalogue. The inline preview is intentionally bounded; query the materialized dataset rather than trying to read the full TSV into the model.
+2. Use data.query on that returned dataset, selecting code/title and filtering title for population density. Prefer this exact canonical predicate: `where: [{"field":"title","operator":"contains","value":"density"}]`. If the MCP validator rejects that documented shape, retry using the simple expression `where: "title contains \"density\""` and report the schema/validator mismatch. Rows are positional arrays: map them using the returned columns array. Choose only a code/title actually returned by the catalogue; report the evidence supporting the choice.
+3. Call eurostat_sdmx.getStructure for the returned candidate code (artifactType dataflow, agencyID ESTAT, version 1.0, references children, detail full). Do not send `lang`: the live SDMX endpoint rejects that query parameter. Keep reference expansion at `children` so the structural response remains within the tool-result budget; use versions returned by the dataflow for versioned structures. Verify the English dataflow title/description and dimension/codelist references.
+4. Call eurostat_sdmx.getStructure again for that same catalogue-returned code with artifactType contentconstraint, agencyID ESTAT, version 1.0. Use the returned constraint values and the dataflow's overall period annotations to verify whether geography SE and year 2020 are actually available. Do not fetch the global GEO code list; it is large and the dataset-specific constraint is the relevant evidence.
+5. Only if these metadata responses verify the concept and both requested codes, call eurostat.getData with the selected datasetCode and verified geography/time dimensions. Inspect the returned resource using dataset.inspect, then dataset.schema and dataset.sample using the returned dataset reference. Report actual row/column counts, relevant values and retained source/dimension/value provenance. Otherwise report exactly which metadata condition was absent and stop rather than guessing.
+
+Keep calls bounded. Report each tool, arguments, result or exact error, and distinguish verified facts from unresolved metadata. Never invent a returned reference or claim success from a preview alone.
+"""
     calls = []
     groups = [("connection", {"math.calculate", "openalex.listWorks"})]
     if args.suite == "tools":
         groups = [(group, {name for name in names if any(name.startswith(prefix) for prefix in prefixes)})
                   for group, prefixes in (
                       ("openalex", ("openalex.",)),
+                      ("eurostat", ("eurostat.", "eurostat_sdmx.")),
                       ("resources", ("web.", "resource.", "document.")),
                       ("data", ("dataset.", "data.", "statistics.")),
                       ("repository", ("repository.", "workspace.")),
@@ -210,6 +223,8 @@ End with one row per tool: name, pass/fail/not_tested, expected versus actual, a
             groups.append(("other", names - assigned))
         dependencies = {
             "openalex": {"dataset.sample", "resource.read"},
+            "eurostat": {"web.fetch", "resource.inspect", "resource.read",
+                         "dataset.inspect", "dataset.schema", "dataset.sample", "data.query"},
             "resources": {"openalex.listWorks", "openalex.getWork", "dataset.sample"},
         }
         groups = [(group, group_names | (dependencies.get(group, set()) & names))
@@ -218,7 +233,8 @@ End with one row per tool: name, pass/fail/not_tested, expected versus actual, a
     for group, group_names in groups:
         group_dir = workdir if args.suite == "connection" else workdir / group
         group_dir.mkdir(exist_ok=True)
-        prompt = connection_prompt if args.suite == "connection" else audit_prompt
+        prompt = (connection_prompt if args.suite == "connection" else
+                  eurostat_prompt if group == "eurostat" else audit_prompt)
         if args.prompt_file:
             prompt = args.prompt_file.read_text()
         prompt += "\nAdvertised tools for this group:\n" + "\n".join(sorted(group_names)) + "\n"

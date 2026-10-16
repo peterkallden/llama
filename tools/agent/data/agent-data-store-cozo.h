@@ -19,6 +19,7 @@ public:
     bool open(const std::string & path, std::string & error);
     void close();
     bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) override;
+    bool put_rows(const std::string & dataset, const std::vector<std::pair<std::string, std::string>> & rows, std::string & error) override;
     bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor, std::string & error) override;
     bool get_dataset_descriptor(const std::string & dataset_uri, common_agent_dataset_descriptor & descriptor, std::string & error) override;
     bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & descriptors, std::string & error) override;

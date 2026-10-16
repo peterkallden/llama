@@ -43,12 +43,6 @@ std::string lowercase(std::string value) {
     return value;
 }
 
-bool tool_has_required_arguments(const common_chat_tool & tool) {
-    const auto schema = nlohmann::ordered_json::parse(tool.parameters, nullptr, false);
-    return schema.is_object() && schema.contains("required") && schema["required"].is_array() &&
-        !schema["required"].empty();
-}
-
 std::vector<common_chat_tool> task_relevant_workflow_tools_impl(
         const std::vector<common_chat_tool> & route_tools,
         const common_agent_route_candidate & route,
@@ -597,20 +591,28 @@ bool maybe_select_agent_route(
             }
         }
         const auto selected_tools = graph_entry_tools.empty() ? route_tools : graph_entry_tools;
-        const bool deterministic_graph_entry = graph_entry_tools.size() == 1 &&
-            selected_route.workflow_definition &&
-            std::any_of(selected_route.workflow_definition->transitions.begin(),
-                selected_route.workflow_definition->transitions.end(), [&](const auto & transition) {
-                    const auto arguments = nlohmann::ordered_json::parse(
-                        transition.arguments_template_json, nullptr, false);
-                    return transition.from_state == selected_route.workflow_definition->start_state &&
-                        transition.kind == common_plan_workflow_transition_kind::tool &&
-                        transition.tool_name == graph_entry_tools.front().name && arguments.is_object() &&
-                        arguments.empty();
-                }) && !tool_has_required_arguments(graph_entry_tools.front());
+        std::string deterministic_entry_arguments;
+        bool deterministic_graph_entry = false;
+        if (graph_entry_tools.size() == 1 && selected_route.workflow_definition) {
+            const auto transition = std::find_if(selected_route.workflow_definition->transitions.begin(),
+                selected_route.workflow_definition->transitions.end(), [&](const auto & value) {
+                    return value.from_state == selected_route.workflow_definition->start_state &&
+                        value.kind == common_plan_workflow_transition_kind::tool &&
+                        value.tool_name == graph_entry_tools.front().name;
+                });
+            if (transition != selected_route.workflow_definition->transitions.end()) {
+                std::string argument_error;
+                deterministic_graph_entry = common_agent_workflow_static_tool_arguments(
+                    *transition, graph_entry_tools.front(), deterministic_entry_arguments, argument_error);
+                if (!argument_error.empty()) {
+                    error = std::move(argument_error);
+                    return false;
+                }
+            }
+        }
         if (deterministic_graph_entry) {
             workflow_action = common_agent_tool_argument_binding{
-                graph_entry_tools.front().name, "{}", "workflow-graph-entry", false};
+                graph_entry_tools.front().name, deterministic_entry_arguments, "workflow-graph-entry", false};
         } else {
             std::string action_error;
             const auto action = select_llama_cli_workflow_action(

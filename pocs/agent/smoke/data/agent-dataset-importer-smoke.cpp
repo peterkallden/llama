@@ -5,6 +5,7 @@
 #endif
 #include <cassert>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -20,6 +21,15 @@ public:
         return true;
     }
 
+    bool put_rows(const std::string & dataset,
+            const std::vector<std::pair<std::string, std::string>> & batch,
+            std::string & error) override {
+        ++batch_calls;
+        for (const auto & row : batch) if (!put_row(dataset, row.first, row.second, error)) return false;
+        error.clear();
+        return true;
+    }
+
     bool execute(const std::string &, const std::string &, std::string &, std::string & error) override {
         error = "not used by importer smoke";
         return false;
@@ -28,6 +38,16 @@ public:
     bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor,
             std::string & error) override {
         descriptors.push_back(descriptor);
+        descriptors_by_uri[descriptor.ref.uri] = descriptor;
+        error.clear();
+        return true;
+    }
+
+    bool get_dataset_descriptor(const std::string & uri,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        const auto found = descriptors_by_uri.find(uri);
+        if (found == descriptors_by_uri.end()) { error = "dataset descriptor was not found"; return false; }
+        descriptor = found->second;
         error.clear();
         return true;
     }
@@ -36,6 +56,8 @@ public:
     std::vector<std::string> row_ids;
     std::vector<std::string> rows;
     std::vector<common_agent_dataset_descriptor> descriptors;
+    std::map<std::string, common_agent_dataset_descriptor> descriptors_by_uri;
+    size_t batch_calls = 0;
 };
 
 int main() {
@@ -45,6 +67,8 @@ int main() {
     request.source_workbook_name = "sales.xlsx";
     request.import_processor_id = "xlsx-workbook-json-v1";
     request.import_processor_version = "pandoc-3.10.1";
+    request.source_content_hash = "fixture-sha256";
+    request.row_batch_size = 2;
     std::string error;
 
     // Minimal Pandoc 1.23 AST shape: header, table head, one table body.
@@ -70,7 +94,8 @@ int main() {
     request.worksheet_json = normalized;
 
     std::vector<common_agent_dataset_descriptor> imported;
-    assert(import_agent_worksheet_envelope(store, request, imported, error));
+    agent_dataset_import_stats import_stats;
+    assert(import_agent_worksheet_envelope(store, request, imported, error, &import_stats));
     assert(imported.size() == 2);
     assert(imported[0].ref.name == "Sales");
     assert(imported[0].ref.row_count == 2);
@@ -84,6 +109,27 @@ int main() {
     assert(imported[1].ref.name == "Customers");
     assert(store.descriptors.size() == 2);
     assert(store.datasets[0] == imported[0].ref.uri);
+    assert(import_stats.rows_imported == 3 && import_stats.batches_written == 2 && !import_stats.reused_existing);
+    const auto recorded_rows = store.rows.size();
+    const auto recorded_batches = store.batch_calls;
+    assert(import_agent_worksheet_envelope(store, request, imported, error, &import_stats));
+    assert(import_stats.reused_existing && import_stats.rows_imported == 0 && import_stats.batches_written == 0);
+    assert(store.rows.size() == recorded_rows && store.batch_calls == recorded_batches);
+
+    const auto original_dataset_uri = imported[0].ref.uri;
+    agent_dataset_import_request upgraded_request = request;
+    upgraded_request.import_processor_version = "pandoc-next";
+    assert(import_agent_worksheet_envelope(store, upgraded_request, imported, error, &import_stats));
+    assert(!import_stats.reused_existing && imported[0].ref.uri != original_dataset_uri);
+    const auto before_bad_import_rows = store.rows.size();
+    const auto before_bad_import_descriptors = store.descriptors.size();
+    auto malformed = nlohmann::ordered_json::parse(request.worksheet_json);
+    malformed["worksheets"][1]["rows"][0] = "not-a-row-object";
+    agent_dataset_import_request malformed_request = request;
+    malformed_request.worksheet_json = malformed.dump();
+    assert(!import_agent_worksheet_envelope(store, malformed_request, imported, error));
+    assert(store.rows.size() == before_bad_import_rows &&
+        store.descriptors.size() == before_bad_import_descriptors);
 
     agent_dataset_import_request document_request = request;
     document_request.source_resource_uri = "agent-resource://uploads/report.docx";
@@ -125,6 +171,24 @@ int main() {
            imported[0].columns[0].type == common_agent_dataset_column_type::string &&
            imported[0].columns[1].type == common_agent_dataset_column_type::integer &&
            imported[0].columns[2].type == common_agent_dataset_column_type::boolean);
+
+    std::string eurostat_toc_normalized;
+    const std::string eurostat_toc_tsv =
+        "\"title\"\t\"code\"\t\"type\"\t\"last update of data\"\t\"last table structure change\"\t\"data start\"\t\"data end\"\t\"values\"\n"
+        "\"Database by themes\"\t\"data\"\t\"folder\"\t\" \"\t\" \"\t\" \"\t\" \"\t\n"
+        "\"    General and regional statistics\"\t\"general\"\t\"folder\"\t\" \"\t\" \"\t\" \"\t\" \"\t\n"
+        "\"        Population density\"\t\"DEMO_R_D3DENS\"\t\"dataset\"\t\"15.10.2026\"\t\"10.10.2026\"\t\"1960\"\t\"2025\"\t1234\n";
+    assert(normalize_agent_eurostat_toc_text(eurostat_toc_tsv, eurostat_toc_normalized, error));
+    const auto eurostat_toc_sheet = nlohmann::json::parse(eurostat_toc_normalized).at("worksheets").at(0);
+    assert(eurostat_toc_sheet.at("source_format") == "eurostat-catalogue-tsv");
+    assert(eurostat_toc_sheet.at("rows").size() == 3);
+    assert(eurostat_toc_sheet.at("rows").at(2).at("code") == "DEMO_R_D3DENS");
+    assert(eurostat_toc_sheet.at("rows").at(2).at("title") == "Population density");
+    assert(eurostat_toc_sheet.at("rows").at(2).at("category_path") ==
+        "Database by themes / General and regional statistics");
+    assert(eurostat_toc_sheet.at("rows").at(2).at("values") == 1234);
+    std::string rejected_toc;
+    assert(!normalize_agent_eurostat_toc_text("unrelated\tplain text\nrow\tvalue\n", rejected_toc, error));
 
     const std::string json_stat = R"({
       "class":"dataset","id":["geo","time"],"size":[2,2],
@@ -246,6 +310,6 @@ int main() {
     request.sheet_name.reset();
     request.limits.max_rows = 1;
     assert(!import_agent_worksheet_envelope(store, request, imported, error));
-    assert(error == "worksheet shape exceeds host limits");
+    assert(error == "worksheet shape exceeds host limits or is incomplete");
     return 0;
 }

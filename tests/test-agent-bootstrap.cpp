@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v14");
+        checked_in_starter.version == "v22");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -250,11 +250,36 @@ int main() {
     assert(has_workflow("workflow://eurostat/catalog-discovery"));
     assert(has_workflow("workflow://eurostat/metadata-resolution"));
     assert(has_workflow("workflow://eurostat/data-retrieval"));
+    const auto eurostat_metadata = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(eurostat_metadata != checked_in_starter.workflows.end());
+    const auto & metadata_definition = eurostat_metadata->definition;
+    const auto find_transition = [&](const std::string & id) {
+        return std::find_if(metadata_definition.transitions.begin(), metadata_definition.transitions.end(),
+            [&](const auto & transition) { return transition.id == id; });
+    };
+    const auto inspect_structure = find_transition("inspect-dataflow-structure");
+    const auto inspect_constraint = find_transition("inspect-content-constraint");
+    assert(inspect_structure != metadata_definition.transitions.end());
+    assert(inspect_constraint != metadata_definition.transitions.end());
+    assert(inspect_structure->tool_name == "dataset.inspect");
+    assert(inspect_constraint->tool_name == "dataset.inspect");
+    assert(inspect_structure->argument_bindings.size() == 1);
+    assert(inspect_constraint->argument_bindings.size() == 1);
+    assert(inspect_structure->argument_bindings.front().source_transition_id == "get-dataflow-structure");
+    assert(inspect_constraint->argument_bindings.front().source_transition_id == "get-content-constraint");
+    assert(metadata_definition.continuation_links.size() == 1);
+    assert(metadata_definition.continuation_links.front().source_transition_id == "inspect-content-constraint");
+    assert(metadata_definition.continuation_links.front().source_terminal_state == "dimensions_and_codes_verified");
     const auto has_procedure = [&](const std::string & id) {
         return std::any_of(checked_in_starter.procedures.begin(), checked_in_starter.procedures.end(),
             [&](const auto & procedure) { return procedure.id == id; });
     };
     assert(has_procedure("eurostat-catalog-discovery-v1"));
+    assert(has_procedure("eurostat-catalog-discovery-v2"));
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
     assert(has_procedure("json-stat-dataset-interpretation-v1"));
     std::string checked_in_roundtrip_json;
@@ -273,6 +298,14 @@ int main() {
     assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
     assert(roundtrip_full_text_workflow->definition.workflow_revision == "v3");
+    const auto roundtrip_eurostat_metadata = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(roundtrip_eurostat_metadata != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_metadata->definition.workflow_revision == "v7");
+    assert(roundtrip_eurostat_metadata->definition.transitions.size() == metadata_definition.transitions.size());
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
     const auto roundtrip_eurostat_catalog = std::find_if(
@@ -281,8 +314,32 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
         });
     assert(roundtrip_eurostat_catalog != checked_in_roundtrip.workflows.end());
-    assert(roundtrip_eurostat_catalog->definition.transitions.size() == 2);
+    assert(roundtrip_eurostat_catalog->definition.workflow_revision == "v5");
+    assert(roundtrip_eurostat_catalog->definition.transitions.size() == 3);
     assert(roundtrip_eurostat_catalog->definition.transitions[1].argument_bindings.size() == 1);
+    assert(roundtrip_eurostat_catalog->definition.transitions[2].tool_name == "dataset.schema");
+    assert(roundtrip_eurostat_catalog->definition.transitions[2].argument_bindings.size() == 1);
+    assert(roundtrip_eurostat_catalog->definition.continuation_links.front().target_workflow_revision == "v7");
+    const auto roundtrip_eurostat_data = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/data-retrieval";
+        });
+    assert(roundtrip_eurostat_data != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_data->definition.workflow_revision == "v7");
+    assert(roundtrip_eurostat_data->definition.transitions.size() == 2);
+    assert(roundtrip_eurostat_data->definition.transitions[0].id == "request-observations");
+    assert(roundtrip_eurostat_data->definition.transitions[0].model_supplies_arguments);
+    assert(roundtrip_eurostat_data->definition.transitions[1].argument_bindings.front().source_transition_id ==
+        "request-observations");
+    assert(roundtrip_eurostat_data->definition.continuation_workflow_targets.empty());
+    assert(roundtrip_eurostat_data->definition.continuation_links.size() == 3);
+    assert(std::all_of(roundtrip_eurostat_data->definition.continuation_links.begin(),
+        roundtrip_eurostat_data->definition.continuation_links.end(), [](const auto & link) {
+            return link.source_transition_id == "materialize-json-stat" &&
+                link.source_terminal_state == "json_stat_dataset_ready" &&
+                !link.target_workflow_revision.empty();
+        }));
     const auto roundtrip_search_workflow = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -305,7 +362,7 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 20 &&
+    assert(checked_in_starter.procedures.size() == 21 &&
         checked_in_starter.blueprints.size() == 16);
     assert(checked_in_starter.workflows.size() == 17);
     assert(checked_in_starter.workflows[0].definition.workflow_ref ==
@@ -403,6 +460,71 @@ int main() {
         std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     assert(resource_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
+    const auto eurostat_catalog_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(eurostat_catalog_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_catalog_workflow->definition.workflow_revision == "v5");
+    assert(eurostat_catalog_workflow->definition.continuation_links.size() == 1);
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().source_transition_id == "inspect-toc-schema");
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().source_terminal_state == "catalog_schema_ready");
+    assert(eurostat_catalog_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample"}));
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().target_workflow_ref ==
+        "workflow://eurostat/metadata-resolution");
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().argument_bindings.front().source_json_pointer ==
+        "/result/dataset");
+    const auto eurostat_metadata_workflow = std::find_if(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution"; });
+    assert(eurostat_metadata_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_metadata_workflow->definition.workflow_revision == "v7");
+    assert(eurostat_metadata_workflow->definition.transitions.size() == 6);
+    assert(eurostat_metadata_workflow->definition.transitions[0].id == "search-catalogue");
+    assert(eurostat_metadata_workflow->definition.transitions[0].model_supplies_arguments);
+    assert(eurostat_metadata_workflow->definition.transitions[0].tool_name == "data.query");
+    assert(!eurostat_metadata_workflow->definition.transitions[0].model_instruction.empty());
+    assert(!eurostat_metadata_workflow->definition.transitions[1].model_instruction.empty());
+    const auto eurostat_catalog_query_arguments = nlohmann::ordered_json::parse(
+        eurostat_metadata_workflow->definition.transitions[0].arguments_template_json);
+    assert(eurostat_catalog_query_arguments.value("max_result_rows", 0) == 64);
+    assert(!eurostat_catalog_query_arguments.contains("max_scan_rows"));
+    assert(eurostat_metadata_workflow->definition.transitions[1].candidate_json_pointer == "/result/rows");
+    assert(eurostat_metadata_workflow->definition.transitions[1].candidate_id_json_pointer == "/code");
+    assert(eurostat_metadata_workflow->definition.transitions[2].id == "get-dataflow-structure");
+    assert(eurostat_metadata_workflow->definition.transitions[2].to_state == "dataflow_structure_resource");
+    assert(eurostat_metadata_workflow->definition.transitions[3].id == "inspect-dataflow-structure");
+    assert(eurostat_metadata_workflow->definition.transitions[3].tool_name == "dataset.inspect");
+    assert(eurostat_metadata_workflow->definition.transitions[4].id == "get-content-constraint");
+    assert(eurostat_metadata_workflow->definition.transitions[4].tool_name == "eurostat_sdmx.getStructure");
+    const auto eurostat_constraint_arguments = nlohmann::ordered_json::parse(
+        eurostat_metadata_workflow->definition.transitions[4].arguments_template_json);
+    assert(eurostat_constraint_arguments.value("artifactType", std::string{}) == "contentconstraint");
+    assert(eurostat_constraint_arguments.value("version", std::string{}) == "1.0");
+    assert(eurostat_metadata_workflow->definition.continuation_links.front().source_transition_id == "inspect-content-constraint");
+    assert(eurostat_metadata_workflow->definition.continuation_links.front().argument_bindings.front().source_transition_id == "choose-dataflow");
+    const auto eurostat_data_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/data-retrieval";
+        });
+    assert(eurostat_data_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_data_workflow->definition.continuation_workflow_targets.empty());
+    assert(eurostat_data_workflow->definition.continuation_links.size() == 3);
+    assert(std::all_of(eurostat_data_workflow->definition.continuation_links.begin(),
+        eurostat_data_workflow->definition.continuation_links.end(), [](const auto & link) {
+            return link.source_transition_id == "materialize-json-stat" &&
+                link.source_terminal_state == "json_stat_dataset_ready";
+        }));
+    const auto eurostat_structure_transition = std::find_if(
+        eurostat_metadata_workflow->definition.transitions.begin(), eurostat_metadata_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "get-dataflow-structure"; });
+    assert(eurostat_structure_transition != eurostat_metadata_workflow->definition.transitions.end());
+    const auto eurostat_structure_arguments = nlohmann::ordered_json::parse(
+        eurostat_structure_transition->arguments_template_json);
+    assert(eurostat_structure_arguments.value("version", std::string{}) == "1.0");
+    assert(eurostat_structure_arguments.value("references", std::string{}) == "children");
+    assert(eurostat_structure_arguments.value("detail", std::string{}) == "full");
+    assert(!eurostat_structure_arguments.contains("lang"));
     const auto web_workflow = std::find_if(checked_in_starter.workflows.begin(),
         checked_in_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://web/research";
@@ -503,7 +625,7 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 20 &&
+    assert(checked_in_import.installed_memory_ids.size() == 21 &&
         checked_in_import.installed_blueprint_ids.size() == 16);
     assert(checked_in_import.installed_workflow_ids.size() == 17);
     const auto checked_in_openapi_blueprint = checked_in_plans.get(
@@ -537,6 +659,21 @@ int main() {
     assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
     assert(reparsed_starter.blueprints[3].selection_description ==
         checked_in_starter.blueprints[3].selection_description);
+    const auto reparsed_eurostat_link_source = std::find_if(
+        reparsed_starter.workflows.begin(), reparsed_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(reparsed_eurostat_link_source != reparsed_starter.workflows.end() &&
+        reparsed_eurostat_link_source->definition.continuation_links.size() == 1 &&
+        reparsed_eurostat_link_source->definition.continuation_links.front().source_transition_id == "inspect-toc-schema" &&
+        reparsed_eurostat_link_source->definition.continuation_links.front().source_terminal_state == "catalog_schema_ready");
+    const auto reparsed_eurostat_metadata = std::find_if(
+        reparsed_starter.workflows.begin(), reparsed_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(reparsed_eurostat_metadata != reparsed_starter.workflows.end() &&
+        reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
+            eurostat_metadata_workflow->definition.transitions.front().model_instruction);
     assert(reparsed_starter.workflows.size() == 17 &&
         reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==

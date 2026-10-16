@@ -11,16 +11,16 @@
         "summary": "Get a Eurostat JSON-stat dataset",
         "parameters": [
           {"name": "datasetCode", "in": "path", "required": true,
+           "description": "Eurostat dataflow/dataset code returned by catalogue and verified against SDMX metadata.",
            "schema": {"type": "string"}},
           {"name": "lang", "in": "query", "schema": {"type": "string"}},
           {"name": "geo", "in": "query", "style": "form", "explode": true,
-           "description": "Optional repeated geographic codes returned by Eurostat metadata.",
+           "description": "Optional repeated short geographic codes returned by the selected dataset's SDMX metadata (for example SE). Pass codes only, never URLs or labels.",
            "schema": {"type": "array", "items": {"type": "string"}}},
           {"name": "time", "in": "query", "style": "form", "explode": true,
-           "description": "Optional repeated time codes returned by Eurostat metadata.",
+           "description": "Optional repeated time-period codes returned by the selected dataset's SDMX metadata (for example 2020). Pass codes only, never labels or URLs.",
            "schema": {"type": "array", "items": {"type": "string"}}}
         ],
-        "x-agent-query-parameter-map": "dimensions",
         "responses": {
           "200": {
             "description": "JSON-stat 2.0 dataset",

@@ -13,6 +13,7 @@
 #include "plan/plan-memory.h"
 #include "plan/plan-scheduler.h"
 #include "plan/plan-context.h"
+#include "plan/plan-workflow-state.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -1524,6 +1525,46 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             observed.reason_summary = "registered tool result";
             observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0, execution.dataset_refs};
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+            // A model-selected workflow choice is accepted only after the
+            // host has checked it against the preceding bounded candidate
+            // set. Persist that accepted choice as structured evidence tied
+            // to the successful transition, so a later workflow link can
+            // bind it without scraping model prose or tool-call arguments.
+            const auto completed_tool_step = std::find_if(plan.steps.begin(), plan.steps.end(),
+                [&](const auto & candidate) { return candidate.id == tool_step_id; });
+            if (completed_tool_step != plan.steps.end() && completed_tool_step->semantic_alias &&
+                    completed_tool_step->semantic_alias->rfind("workflow-transition:", 0) == 0) {
+                auto aliases = completed_tool_step->semantic_alias->substr(
+                    std::string("workflow-transition:").size());
+                size_t begin = 0;
+                while (begin < aliases.size()) {
+                    const auto end = aliases.find(',', begin);
+                    auto token = aliases.substr(begin,
+                        end == std::string::npos ? std::string::npos : end - begin);
+                    const auto separator = token.find('=');
+                    if (separator != std::string::npos && separator > 0 && separator + 1 < token.size()) {
+                        const auto transition_id = token.substr(0, separator);
+                        const auto choice_id = token.substr(separator + 1);
+                        common_plan_operation choice_observed;
+                        choice_observed.kind = common_plan_operation_kind::record_observation;
+                        choice_observed.plan_id = plan.id;
+                        choice_observed.expected_version = plan.version;
+                        choice_observed.reason_summary = "host-validated workflow candidate choice recorded";
+                        choice_observed.observation = common_plan_observation{
+                            "workflow_choice:" + tool_step_id + ":" + transition_id,
+                            "workflow_choice",
+                            json{{"transition_id", transition_id}, {"choice", choice_id},
+                                {"verified_against_host_candidates", true}}.dump(),
+                            1.0f,
+                            {tool_observation_id},
+                            {},
+                            0};
+                        if (!store.apply(choice_observed, plan, error)) { result.error = error; return result; }
+                    }
+                    if (end == std::string::npos) break;
+                    begin = end + 1;
+                }
+            }
             if (tool_step_id == "request") executed_request_tool = true; else {
                 executed_step_ids.insert(tool_step_id);
                 common_plan_operation complete;
@@ -1616,17 +1657,33 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             if (plan.workflow_definition &&
-                    !plan.workflow_definition->continuation_workflow_targets.empty()) {
+                    (!plan.workflow_definition->continuation_workflow_targets.empty() ||
+                     !plan.workflow_definition->continuation_links.empty())) {
                 append_trace(result, common_runtime_trace_stage::plan,
                     common_runtime_trace_kind::decided,
-                    "dataset continuation gate dataset_refs=" +
+                    "workflow continuation gate dataset_refs=" +
                         std::to_string(observed.observation->dataset_refs.size()) +
+                        " resource_refs=" + std::to_string(observed.observation->resource_refs.size()) +
                         " declared_targets=" + std::to_string(
-                            plan.workflow_definition->continuation_workflow_targets.size()),
+                            plan.workflow_definition->continuation_workflow_targets.size() +
+                            plan.workflow_definition->continuation_links.size()),
                     plan.id, tool_step_id, tool_call->name, observed.observation->id);
             }
-            if (!observed.observation->dataset_refs.empty() && plan.workflow_definition &&
-                    !plan.workflow_definition->continuation_workflow_targets.empty()) {
+            const auto structured_observation = json::parse(
+                observed.observation->summary, nullptr, false);
+            const bool structured_success = observed.observation->confidence > 0.0f &&
+                (structured_observation.is_object() || structured_observation.is_array());
+            const bool workflow_terminal = plan.workflow_definition &&
+                (plan.workflow_definition->transitions.empty() ||
+                 common_plan_workflow_is_terminal(plan, *plan.workflow_definition));
+            const bool linked_handoff = plan.workflow_definition && structured_success &&
+                !plan.workflow_definition->continuation_links.empty() &&
+                workflow_terminal;
+            const bool legacy_dataset_handoff = plan.workflow_definition &&
+                !observed.observation->dataset_refs.empty() &&
+                !plan.workflow_definition->continuation_workflow_targets.empty() &&
+                workflow_terminal;
+            if ((linked_handoff || legacy_dataset_handoff) && plan.workflow_definition) {
                 result.workflow_handoff_requested = true;
                 result.plan_id = plan.id;
                 result.plan_version = plan.version;
@@ -1635,7 +1692,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 result.response_stop_reason = common_agent_generation_stop_reason::limit;
                 append_trace(result, common_runtime_trace_stage::plan,
                     common_runtime_trace_kind::decided,
-                    "yielding to host route selection for a declared dataset continuation",
+                    linked_handoff
+                        ? "yielding successful structured workflow output to declared continuation-link resolution"
+                        : "yielding verified dataset output to legacy continuation-target resolution",
                     plan.id, tool_step_id, tool_call->name, observed.observation->id);
                 return result;
             }

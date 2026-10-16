@@ -2,7 +2,9 @@
 
 #include "memory/memory-types.h"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
+#include <utility>
 
 using json = nlohmann::ordered_json;
 
@@ -115,9 +117,36 @@ json common_tool_web_fetch_inline_result_to_json(
         {"text_excerpt", result.text_excerpt},
         {"text_length", result.text_length},
         {"truncated", result.truncated},
+        {"preview_truncated", result.preview_truncated},
     };
     if (!result.resource_ref.empty()) payload["resource_ref"] = result.resource_ref;
     return payload;
+}
+
+common_tool_web_fetch_inline_result common_tool_web_fetch_make_inline_result(
+        const common_tool_web_fetch_result & result,
+        std::string resource_ref,
+        size_t max_preview_bytes) {
+    size_t preview_bytes = std::min(max_preview_bytes, result.text.size());
+    if (preview_bytes < result.text.size()) {
+        // Do not return a partial UTF-8 code point in a JSON string.
+        while (preview_bytes > 0 &&
+                (static_cast<unsigned char>(result.text[preview_bytes]) & 0xc0) == 0x80) {
+            --preview_bytes;
+        }
+    }
+    return {
+        result.url,
+        result.final_url,
+        result.status,
+        result.content_type,
+        result.title,
+        result.text.substr(0, preview_bytes),
+        result.text.size(),
+        result.truncated,
+        std::move(resource_ref),
+        preview_bytes < result.text.size(),
+    };
 }
 
 json common_tool_memory_record_to_json(

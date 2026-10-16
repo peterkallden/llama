@@ -35,6 +35,7 @@ int main() {
         common_plan_workflow_transition choose_depth{
             "choose-depth", "record", "full", common_plan_workflow_transition_kind::model_choice,
             {}, "{}", {}, 1.0f};
+        choose_depth.candidate_id_json_pointer = "/code";
         choose_depth.choices = {
             {"abstract", "Use the abstract", "complete", {}},
             {"full-text", "Read full text", "full", {"/result/best_oa_location/pdf_url"}},
@@ -64,6 +65,9 @@ int main() {
         transitioned_workflow.optional_capabilities = {"data.aggregate"};
         transitioned_workflow.required_context = {"context.dataset.available"};
         transitioned_workflow.continuation_workflow_targets = {"workflow://dataset/analysis"};
+        transitioned_workflow.continuation_links = {{
+            "fetch-full-text", "complete", "workflow://resource/document-analysis", "v5",
+            {{"read-resource", "resource.read", "/uri", "/resources/0/uri", true, "choose-depth"}}}};
         transitioned_workflow.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
         transitioned_workflow.start_state = "record";
         transitioned_workflow.terminal_states = {"complete"};
@@ -81,6 +85,10 @@ int main() {
         transition.workflow_definition = transitioned_workflow;
         transition.route_required_capabilities = {"dataset.resolve", "dataset.inspect"};
         transition.route_procedure_refs = {"data-quality-v1"};
+        transition.workflow_continuation_record = common_plan_workflow_continuation_record{
+            "fetch-full-text@complete->workflow://resource/document-analysis@v5", "fingerprint-1",
+            "workflow://dataset/analysis", "v1", "complete",
+            "workflow://dataset/quality", "v2"};
         transition.host_authorized = true;
         assert(store.apply(transition, plan, error));
 
@@ -121,8 +129,16 @@ int main() {
                 std::vector<std::string>({"context.dataset.available"}) &&
             plan->workflow_definition->continuation_workflow_targets ==
                 std::vector<std::string>({"workflow://dataset/analysis"}));
+        assert(plan->workflow_definition->continuation_links.size() == 1 &&
+            plan->workflow_definition->continuation_links.front().source_transition_id == "fetch-full-text" &&
+            plan->workflow_definition->continuation_links.front().source_terminal_state == "complete" &&
+            plan->workflow_definition->continuation_links.front().argument_bindings.front().target_transition_id == "read-resource" &&
+            plan->workflow_definition->continuation_links.front().argument_bindings.front().source_transition_id == "choose-depth");
+        assert(plan->workflow_continuation_history.size() == 1 &&
+            plan->workflow_continuation_history.front().source_fingerprint == "fingerprint-1");
         assert(plan->workflow_definition->transitions.size() == 2 &&
             plan->workflow_definition->transitions[0].choices.size() == 2 &&
+            plan->workflow_definition->transitions[0].candidate_id_json_pointer == "/code" &&
             plan->workflow_definition->transitions[0].choices[1].id == "full-text" &&
             plan->workflow_definition->transitions[1].argument_bindings.size() == 1 &&
             plan->workflow_definition->transitions[1].argument_bindings[0].source_transition_id == "get-work");

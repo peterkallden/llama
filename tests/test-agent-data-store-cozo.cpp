@@ -12,7 +12,7 @@ using json = nlohmann::ordered_json;
 #define TEST_ASSERT(expr) do { \
     const bool test_result = static_cast<bool>(expr); \
     assert(test_result); \
-    if (!test_result) return 1; \
+    if (!test_result) { std::fprintf(stderr, "test assertion failed at line %d: %s (error=%s)\n", __LINE__, #expr, error.c_str()); return 1; } \
 } while (false)
 
 int main() {
@@ -37,6 +37,26 @@ int main() {
     TEST_ASSERT(store.put_row("dataset://local/metrics", "4", R"({"region":"all","value":13})", error));
     TEST_ASSERT(store.put_row("dataset://local/metrics", "5", R"({"region":"all","value":100})", error));
     TEST_ASSERT(store.put_row("dataset://local/customers", "10", R"({"customer_id":10,"name":"Ada"})", error));
+    TEST_ASSERT(store.put_rows("dataset://local/batch", {
+        {"batch-0", R"({"value":10})"}, {"batch-1", R"({"value":20})"}}, error));
+    common_agent_dataset_descriptor batch_descriptor;
+    batch_descriptor.ref = {"dataset://local/batch", "Batch", 2, 1, {}, "tabular-dataset"};
+    batch_descriptor.ref.source_resource_uri = "resource://test/batch.json";
+    batch_descriptor.ref.content_hash = "sha256:batch-content";
+    batch_descriptor.import_processor_id = "test-importer";
+    batch_descriptor.import_processor_version = "v1";
+    batch_descriptor.columns = {{"value", common_agent_dataset_column_type::integer, false}};
+    TEST_ASSERT(store.put_dataset_descriptor(batch_descriptor, error));
+    common_agent_dataset_descriptor cached_batch;
+    TEST_ASSERT(store.find_dataset_materialization("resource://test/batch.json", "sha256:batch-content", "v1", cached_batch, error));
+    TEST_ASSERT(cached_batch.ref.uri == batch_descriptor.ref.uri);
+    TEST_ASSERT(!store.find_dataset_materialization("resource://test/batch.json", "sha256:changed", "v1", cached_batch, error));
+    TEST_ASSERT(error.empty());
+    std::string batch_output;
+    TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/batch","max_result_rows":10})", batch_output, error));
+    const auto batch_result = json::parse(batch_output);
+    TEST_ASSERT(batch_result["rows"].size() == 2 &&
+        batch_result["rows"][0]["value"] == 10 && batch_result["rows"][1]["value"] == 20);
     common_agent_dataset_descriptor orders_descriptor;
     orders_descriptor.ref = {"dataset://local/orders", "Orders", 3, 4, "resource://uploads/orders.csv", "tabular-dataset"};
     orders_descriptor.columns = {{"id", common_agent_dataset_column_type::integer, false},
@@ -82,6 +102,11 @@ int main() {
     TEST_ASSERT(store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[{"field":"region","operator":"=","value":"north"}],"max_scan_rows":10})", output, error));
     auto filtered = json::parse(output);
     TEST_ASSERT(filtered["row_count"] == 2 && filtered["rows"][0]["region"] == "north");
+    TEST_ASSERT(store.put_row("dataset://local/catalogue", "1", R"({"code":"DEMO_R_D3DENS","title":"Population density by NUTS 3 region"})", error));
+    TEST_ASSERT(store.put_row("dataset://local/catalogue", "2", R"({"code":"GDP","title":"Gross domestic product"})", error));
+    TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/catalogue","where":[{"field":"title","operator":"contains","value":"POPULATION DENSITY"}],"max_scan_rows":10})", output, error));
+    const auto catalogue_matches = json::parse(output);
+    TEST_ASSERT(catalogue_matches["row_count"] == 1 && catalogue_matches["rows"][0]["code"] == "DEMO_R_D3DENS");
     for (const auto * operation : {"data.query", "data.filter"}) {
         const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
         const json membership = {{"dataset", "dataset://local/orders"},

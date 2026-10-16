@@ -1,6 +1,7 @@
 #include "agent-data-store-cozo-query.h"
 
 #include <algorithm>
+#include <cctype>
 
 bool agent_cozo_match_condition(const agent_cozo_json & row, const agent_cozo_json & condition) {
     if (!condition.is_object() || !condition.value("field", std::string()).size()) return false;
@@ -13,6 +14,15 @@ bool agent_cozo_match_condition(const agent_cozo_json & row, const agent_cozo_js
     const auto expected = condition.value("value", agent_cozo_json());
     if (op == "in") return expected.is_array() &&
         std::find(expected.begin(), expected.end(), value) != expected.end();
+    if (op == "contains" && value.is_string() && expected.is_string()) {
+        auto lower = [](std::string text) {
+            std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return text;
+        };
+        return lower(value.get<std::string>()).find(lower(expected.get<std::string>())) != std::string::npos;
+    }
     if (op == "=") return value == expected;
     if (op == "!=") return value != expected;
     if ((op == ">" || op == ">=" || op == "<" || op == "<=") && value.is_number() && expected.is_number()) {

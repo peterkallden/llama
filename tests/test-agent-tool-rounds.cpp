@@ -98,6 +98,75 @@ public:
     }
 };
 
+class linked_workflow_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        auto & plan = proposal.plan;
+        plan.id = "linked-workflow-terminal-gate";
+        plan.goal = "Complete both workflow steps before handing off";
+        common_plan_workflow_definition workflow;
+        workflow.workflow_ref = "workflow://test/linked-source";
+        workflow.workflow_revision = "v1";
+        workflow.graph_revision = "graph-v1";
+        workflow.start_state = "start";
+        workflow.terminal_states = {"done"};
+        common_plan_workflow_transition first;
+        first.id = "catalog";
+        first.from_state = "start";
+        first.to_state = "catalogued";
+        first.tool_name = "structured-lookup";
+        common_plan_workflow_transition last;
+        last.id = "finish";
+        last.from_state = "catalogued";
+        last.to_state = "done";
+        last.tool_name = "structured-lookup";
+        workflow.transitions = {first, last};
+        common_plan_workflow_continuation_link link;
+        link.source_transition_id = "finish";
+        link.source_terminal_state = "done";
+        link.target_workflow_ref = "workflow://test/next";
+        workflow.continuation_links.push_back(link);
+        plan.workflow_definition = workflow;
+        plan.selected_workflow = common_plan_workflow_binding{workflow.workflow_ref, workflow.workflow_revision};
+        plan.route_binding = common_plan_route_binding{
+            "route:linked-source", "", "", workflow.workflow_ref,
+            workflow.workflow_revision, workflow.graph_revision, "env", "policy"};
+        common_plan_step first_step{"catalog-step", "Catalogue", "Read catalogue"};
+        first_step.status = common_plan_step_status::active;
+        first_step.selected_tool = "structured-lookup";
+        first_step.tool_call = common_plan_tool_call{"structured-lookup", R"({"id":"catalog"})"};
+        first_step.semantic_alias = "workflow-transition:catalog";
+        common_plan_step answer{"answer", "Answer", "Synthesize result"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {first_step.id};
+        plan.steps = {first_step, answer};
+        plan.active_step_id = first_step.id;
+        plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
+class verified_choice_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "verified-workflow-choice";
+        proposal.plan.goal = "Carry a host-validated candidate into the next transition";
+        common_plan_step action{"fetch-metadata", "Fetch selected metadata", "Execute the selected code"};
+        action.status = common_plan_step_status::active;
+        action.selected_tool = "lookup";
+        action.tool_call = common_plan_tool_call{"lookup", R"({"id":"DE123"})"};
+        action.semantic_alias = "workflow-transition:choose-code=DE123,fetch-metadata";
+        proposal.plan.steps = {action};
+        proposal.plan.active_step_id = action.id;
+        proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
 class paginated_workflow_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
@@ -201,6 +270,15 @@ int main() {
         return common_tool_execution_result::success(input.find("second") == std::string::npos ? "first result" : "second result");
     };
     assert(registry.register_tool(std::move(tool), error));
+    size_t structured_lookup_calls = 0;
+    common_registered_tool structured_tool;
+    structured_tool.name = "structured-lookup";
+    structured_tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
+    structured_tool.handler = [&structured_lookup_calls](const std::string &) {
+        ++structured_lookup_calls;
+        return common_tool_execution_result::success(R"({"ok":true,"result":{"found":true}})");
+    };
+    assert(registry.register_tool(std::move(structured_tool), error));
     planner p; executor e; reflector r;
     test_tool_runtime_registry_adapter tool_runtime(registry);
     common_agent_runtime runtime(store, p, e, r, &tool_runtime);
@@ -214,6 +292,33 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+
+    // A choice accepted from a host-bounded candidate list is persisted as
+    // structured evidence only after the following tool action succeeds.
+    common_plan_in_memory_store choice_store;
+    assert(choice_store.open("", error));
+    verified_choice_planner choice_planner;
+    executor choice_executor;
+    single_observation_reflector choice_reflector;
+    test_tool_runtime_registry_adapter choice_runtime(registry);
+    common_agent_runtime choice_agent_runtime(choice_store, choice_planner,
+        choice_executor, choice_reflector, &choice_runtime);
+    common_agent_request choice_request;
+    choice_request.prompt = "Resolve the selected Eurostat code";
+    choice_request.max_iterations = 2;
+    choice_request.max_reflection_rounds = 1;
+    choice_request.max_tool_batches = 1;
+    const auto choice_result = choice_agent_runtime.run(choice_request);
+    assert(choice_result.error.empty());
+    const auto choice_plan = choice_store.get("verified-workflow-choice", error);
+    assert(choice_plan);
+    const auto recorded_choice = std::find_if(choice_plan->observations.begin(), choice_plan->observations.end(),
+        [](const auto & observation) { return observation.source == "workflow_choice"; });
+    assert(recorded_choice != choice_plan->observations.end());
+    const auto choice_json = nlohmann::json::parse(recorded_choice->summary);
+    assert(choice_json.value("transition_id", std::string{}) == "choose-code");
+    assert(choice_json.value("choice", std::string{}) == "DE123");
+    assert(recorded_choice->evidence_ids.size() == 1 && recorded_choice->evidence_ids.front().rfind("tool:", 0) == 0);
 
     // Pagination remains host-owned: only the matching workflow transition
     // attaches its bounded page limit to the provider call.
@@ -345,6 +450,51 @@ int main() {
     assert(continued_plan->steps[2].id == "aggregate" &&
         continued_plan->steps[2].status == common_plan_step_status::completed &&
         continued_plan->steps[2].depends_on == std::vector<std::string>{"lookup"});
+
+    // A declared route link must not interrupt an intermediate successful
+    // tool result. The linked workflow handoff becomes eligible only after
+    // the source graph reaches its declared terminal state.
+    common_plan_in_memory_store linked_store;
+    assert(linked_store.open("", error));
+    linked_workflow_planner linked_planner;
+    executor linked_executor;
+    single_observation_reflector linked_reflector;
+    test_tool_runtime_registry_adapter linked_runtime(registry);
+    common_agent_runtime linked_agent_runtime(linked_store, linked_planner,
+        linked_executor, linked_reflector, &linked_runtime);
+    common_agent_request linked_request;
+    linked_request.prompt = "Follow the source workflow before its handoff";
+    linked_request.max_iterations = 3;
+    linked_request.max_reflection_rounds = 1;
+    linked_request.max_tool_batches = 3;
+    size_t linked_continuations = 0;
+    linked_request.workflow_continuation = [&linked_continuations](
+            const common_plan_state &, const std::string & completed_step_id,
+            const common_plan_observation &, std::vector<common_plan_step> & steps,
+            std::string & continuation_error) {
+        continuation_error.clear();
+        ++linked_continuations;
+        if (completed_step_id == "catalog-step") {
+            common_plan_step step{"finish-step", "Finish", "Complete metadata lookup"};
+            step.selected_tool = "structured-lookup";
+            step.tool_call = common_plan_tool_call{"structured-lookup", R"({"id":"finish"})"};
+            step.semantic_alias = "workflow-transition:finish";
+            steps.push_back(std::move(step));
+        }
+        return true;
+    };
+    const auto linked_result = linked_agent_runtime.run(linked_request);
+    if (!linked_result.error.empty()) {
+        std::fprintf(stderr, "linked workflow runtime error: %s\n", linked_result.error.c_str());
+        return 205;
+    }
+    assert(linked_result.workflow_handoff_requested);
+    assert(linked_continuations == 2);
+    assert(structured_lookup_calls == 2);
+    const auto linked_plan = linked_store.get("linked-workflow-terminal-gate", error);
+    assert(linked_plan && linked_plan->steps.size() == 3);
+    assert(linked_plan->steps[0].status == common_plan_step_status::completed);
+    assert(linked_plan->steps[2].status == common_plan_step_status::completed);
 
     // A caller that requires tool execution must never receive a plain draft
     // when the runtime has no tool budget left to execute the planned step.

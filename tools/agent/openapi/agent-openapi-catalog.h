@@ -60,6 +60,9 @@ struct agent_openapi_operation {
     // Used for APIs such as Eurostat where dimension names depend on the
     // selected dataset's DSD rather than a fixed OpenAPI parameter list.
     std::string query_parameter_map;
+    // Response representations advertised by the selected OpenAPI response.
+    // The host uses these to negotiate Accept; callers cannot override it.
+    std::vector<std::string> response_media_types;
     std::map<std::string, std::string> query_parameter_styles;
     std::map<std::string, bool> query_parameter_explode;
     // Host-use policy, separate from the OpenAPI schema's required list.
