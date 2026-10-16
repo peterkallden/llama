@@ -523,7 +523,8 @@ bool common_agent_artifact_section_from_stored_json(const std::string & text,
 }
 
 bool common_agent_artifact_document_to_json(const common_agent_artifact_document & d, std::string & out, std::string & error) {
-    json value = {{"schema_version",1},{"id",d.id},{"title",d.title},{"purpose",d.purpose},
+    json value = {{"schema_version",1},{"markdown_renderer_version",d.markdown_renderer_version},
+        {"id",d.id},{"title",d.title},{"purpose",d.purpose},
         {"profile_id",d.profile_id},{"profile_revision",d.profile_revision},{"revision",d.revision},
         {"previous_revision_uri",d.previous_revision_uri},{"snapshot_uri",d.snapshot_uri},
         {"snapshot_fingerprint",d.snapshot_fingerprint},
@@ -921,7 +922,23 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
         if(!evidence.source_location.empty()&&std::find(citation.locations.begin(),citation.locations.end(),evidence.source_location)==citation.locations.end())citation.locations.push_back(evidence.source_location);
     }
     for(const auto & observation:snapshot.observations){
-        for(const auto & resource:observation.resource_refs){auto & citation=citations[resource.uri];citation.source_id=resource.uri;
+        for(const auto & resource:observation.resource_refs){
+            // The workspace source remains authoritative when the plan also
+            // carries its resource. Do not publish a second citation for it.
+            const auto existing=std::find_if(citations.begin(),citations.end(),[&](const auto & entry){
+                return entry.second.resource_uri==resource.uri &&
+                    (entry.second.content_hash.empty() || resource.metadata.content_hash.empty() ||
+                     entry.second.content_hash==resource.metadata.content_hash);
+            });
+            if(existing!=citations.end()){
+                auto & citation=existing->second;
+                if(citation.title.empty())citation.title=resource.name;
+                if(citation.content_hash.empty())citation.content_hash=resource.metadata.content_hash;
+                if(citation.retrieved_at.empty()&&resource.metadata.retrieved_at>0)
+                    citation.retrieved_at=std::to_string(resource.metadata.retrieved_at);
+                continue;
+            }
+            auto & citation=citations[resource.uri];citation.source_id=resource.uri;
             if(citation.title.empty())citation.title=resource.name;
             citation.resource_uri=resource.uri;
             if(resource.metadata.retrieved_at>0)citation.retrieved_at=std::to_string(resource.metadata.retrieved_at);
@@ -960,9 +977,42 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
                     value.value("section_id",profile_section.id)!=profile_section.id)continue;
             ++binding_matches;if(binding_matches>1){error="multiple stored section results match one artifact binding";return false;}
             found=true;section.no_findings=value.value("no_findings",false);
+            if(section.no_findings&&!value["blocks"].empty()){
+                error="stored no_findings section contains blocks";return false;
+            }
             section.out_of_scope_refs=value.value("out_of_scope_source_refs",std::vector<std::string>{});
             for(const auto & ref:value.value("omitted_source_refs",json::array()))if(ref.is_string()){report_coverage=false;out.unresolved_gaps.push_back("context_omission:"+profile_section.id+":"+ref.get<std::string>());}
-            for(const auto & bj:value["blocks"]){common_agent_artifact_block b;b.id=bj.value("id",std::string{});b.text=bj.value("text",std::string{});b.validation_note=bj.value("validation_note",std::string{});const auto kind=bj.value("kind",std::string("observation"));if(!parse_kind(kind,b.kind)){error="stored artifact block kind is invalid";return false;}for(const auto & x:bj.value("evidence_ids",json::array()))if(x.is_string())b.evidence_ids.push_back(x.get<std::string>());for(const auto & x:bj.value("source_refs",json::array()))if(x.is_string())b.source_refs.push_back(x.get<std::string>());common_agent_artifact_block checked;if(!common_agent_artifact_validate_block(b,snapshot,checked,error))return false;if(checked.validation!=common_agent_artifact_validation::references_resolve){report_coverage=false;out.unresolved_gaps.push_back("section_reference_gap:"+profile_section.id);}section.blocks.push_back(std::move(checked));}}
+            const auto included=value.value("included_source_refs",std::vector<std::string>{});
+            for(const auto & bj:value["blocks"]){
+                if(!bj.is_object()){error="stored artifact block is malformed";return false;}
+                common_agent_artifact_block b;
+                b.id=bj.value("id",std::string{});b.text=bj.value("text",std::string{});
+                const auto kind=bj.value("kind",std::string("observation"));
+                if(!parse_kind(kind,b.kind)||std::find(profile_section.allowed_block_kinds.begin(),
+                        profile_section.allowed_block_kinds.end(),block_kind(b.kind))==profile_section.allowed_block_kinds.end()){
+                    error="stored artifact block kind is invalid for its section";return false;
+                }
+                for(const auto & x:bj.value("evidence_ids",json::array())){
+                    if(!x.is_string()){error="stored evidence reference is malformed";return false;}
+                    b.evidence_ids.push_back(x.get<std::string>());
+                }
+                for(const auto & x:bj.value("source_refs",json::array())){
+                    if(!x.is_string()){error="stored source reference is malformed";return false;}
+                    b.source_refs.push_back(x.get<std::string>());
+                }
+                common_agent_artifact_block checked;
+                if(!common_agent_artifact_validate_block(b,snapshot,checked,error,included,
+                        value.contains("included_source_refs")))return false;
+                if(checked.validation==common_agent_artifact_validation::gap&&
+                        (!b.evidence_ids.empty()||!b.source_refs.empty())){
+                    error="stored artifact references do not resolve in this section";return false;
+                }
+                if(checked.validation!=common_agent_artifact_validation::references_resolve){
+                    report_coverage=false;out.unresolved_gaps.push_back("section_reference_gap:"+profile_section.id);
+                }
+                section.blocks.push_back(std::move(checked));
+            }
+        }
         if(!found||(!section.no_findings&&section.blocks.empty())){common_agent_artifact_block gap;gap.id=profile_section.id+":gap";gap.kind=common_agent_artifact_block_kind::observation;gap.text="No validated content was produced for this section.";gap.validation=common_agent_artifact_validation::gap;gap.validation_note="Section synthesis is missing from the source plan.";gap.origin="host";section.blocks.push_back(std::move(gap));if(profile_section.required){report_coverage=false;out.unresolved_gaps.push_back("missing_section:"+profile_section.id);}}
         else if(section.no_findings&&profile_section.required){
             report_coverage=false;out.unresolved_gaps.push_back("required_section_no_findings:"+profile_section.id);
@@ -979,6 +1029,13 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
     const auto v=json::parse(text,nullptr,false);
     if (!v.is_object() || v.value("schema_version",0)!=1 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
     d={}; d.id=v.value("id",std::string{}); d.title=v.value("title",std::string{}); d.purpose=v.value("purpose",std::string{});
+    if(v.contains("markdown_renderer_version")&&!v["markdown_renderer_version"].is_number_unsigned()){
+        error="artifact Markdown renderer version is malformed";return false;
+    }
+    d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
+    if(d.markdown_renderer_version<1||d.markdown_renderer_version>2){
+        error="unsupported artifact Markdown renderer version";return false;
+    }
     d.profile_id=v.value("profile_id",std::string{}); d.profile_revision=v.value("profile_revision",std::string{});
     d.revision=v.value("revision",uint64_t(1)); d.previous_revision_uri=v.value("previous_revision_uri",std::string{});
     d.snapshot_uri=v.value("snapshot_uri",std::string{});d.snapshot_fingerprint=v.value("snapshot_fingerprint",std::string{}); d.source_plan_id=v.value("source_plan_id",std::string{}); d.source_plan_version=v.value("source_plan_version",uint64_t(0));
@@ -1014,7 +1071,9 @@ bool common_agent_artifact_render_markdown(const common_agent_artifact_document 
     out="# "+d.title+"\n\n";
     if(!d.purpose.empty()) out+="> "+d.purpose+"\n\n";
     if(!d.coverage_complete){out+="**Coverage incomplete.** The source snapshot does not establish complete coverage.";for(const auto & gap:d.unresolved_gaps)out+="\n- Unresolved: "+gap;out+="\n\n";}
-    for(const auto & s:d.sections){out+="## "+s.title+"\n\n";for(const auto & b:s.blocks){
+    for(const auto & s:d.sections){out+="## "+s.title+"\n\n";
+        if(d.markdown_renderer_version>=2&&s.no_findings&&s.blocks.empty())out+="No findings were produced for this section. This does not establish absence.\n\n";
+        for(const auto & b:s.blocks){
         out+=(b.kind==common_agent_artifact_block_kind::observation?"- ":b.kind==common_agent_artifact_block_kind::conclusion?"**Conclusion.** ":"**Recommendation.** ")+b.text;
         if(!b.evidence_ids.empty()||!b.source_refs.empty()){out+="  \n  Sources: ";bool first=true;for(const auto & x:b.evidence_ids){if(!first)out+=", ";out+=x;first=false;}for(const auto & x:b.source_refs){if(!first)out+=", ";out+=x;first=false;}}
         if(b.validation==common_agent_artifact_validation::gap||b.validation==common_agent_artifact_validation::contradicted) out+="  \n  **Reference status: "+std::string(validation_name(b.validation))+" — "+b.validation_note+"**";

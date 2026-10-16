@@ -554,6 +554,7 @@ common_tool_execution_result export_plan_report(
     const auto manifest_prefix="artifact-export:"+report_id+":r";
     uint64_t latest_revision=0;std::string latest_report_uri;bool same_snapshot=false;
     std::optional<nlohmann::json> verified_same_snapshot_manifest;
+    std::optional<std::string> verified_document_json;
     std::string verified_same_snapshot_manifest_uri;
     for(const auto & candidate:existing_resources){const auto & key=candidate.metadata.processing_cache_key;
         if(key.rfind(manifest_prefix,0)!=0||key.size()<9||key.substr(key.size()-9)!=":manifest")continue;
@@ -607,7 +608,9 @@ common_tool_execution_result export_plan_report(
         }
         if(prior_revision>latest_revision){latest_revision=prior_revision;latest_report_uri=prior_report_uri;}
         if(manifest.value("snapshot_fingerprint",std::string{})==snapshot.fingerprint){
-            same_snapshot=true;document.revision=prior_revision;document.previous_revision_uri=manifest.value("previous_revision_uri",std::string{});
+            // A format change exports the published immutable document,
+            // including its renderer version and original bibliography.
+            same_snapshot=true;document=prior_document;verified_document_json=prior_report_text;
             if(prior_format==format){verified_same_snapshot_manifest=manifest;verified_same_snapshot_manifest_uri=candidate.uri;}
         }
     }
@@ -615,6 +618,7 @@ common_tool_execution_result export_plan_report(
     std::string document_json,markdown;
     if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
         return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
+    if(verified_document_json)document_json=*verified_document_json;
     const auto content_export_id=report_id+":r"+std::to_string(document.revision)+":"+snapshot.fingerprint;
     const auto export_id=content_export_id+":"+format;
     auto cache_key=[&](const std::string & part){
@@ -686,6 +690,7 @@ common_tool_execution_result export_plan_report(
     document.snapshot_uri=snapshot_resource.uri;
     if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
         return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
+    if(verified_document_json)document_json=*verified_document_json;
     common_runtime_resource_ref report_resource;
     if(!put_scoped(base_name+"-r"+std::to_string(document.revision)+"-report.json","Structured report document", "application/vnd.llama-agent.report+json",document_json,snapshot_resource.uri,"artifact.report:v2",cache_key("report"),report_resource))
         return tool_execution_failure("tool.artifact.export.report_store_failed",std::move(error),"The structured report could not be stored.");

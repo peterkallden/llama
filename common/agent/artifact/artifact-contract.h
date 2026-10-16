@@ -70,6 +70,8 @@ struct common_agent_artifact_snapshot {
 };
 
 struct common_agent_artifact_document {
+    // Stored documents retain their renderer semantics for manifest readback.
+    uint32_t markdown_renderer_version = 2;
     std::string id;
     std::string title;
     std::string purpose;

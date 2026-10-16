@@ -226,6 +226,43 @@ int main() {
         common_agent_artifact_support::linked_support);
     assert(!common_agent_artifact_section_from_stored_json(stored_grounded_json,profile.sections.front(),
         research_snapshot,{"evidence-1"},restored_grounded,error));
+    // Publication must enforce the same section selection as generation and
+    // resume, even when an excluded reference exists in the full snapshot.
+    auto publication_plan=plan;
+    std::string publication_snapshot_json;
+    assert(common_agent_artifact_snapshot_to_json(research_snapshot,publication_snapshot_json,error));
+    publication_plan.observations.push_back({"artifact-snapshot:"+plan.id,"artifact_snapshot",
+        publication_snapshot_json,1.0f,{}, {},0,{}});
+    common_plan_step publication_step;publication_step.id="publish-findings";
+    publication_step.artifact_binding=common_plan_artifact_binding{
+        "compose",profile.id,profile.revision,"findings","snapshot"};
+    publication_plan.steps.push_back(publication_step);
+    auto publication_section=json::parse(stored_grounded_json);
+    publication_section["snapshot_fingerprint"]=research_snapshot.fingerprint;
+    publication_section["included_source_refs"]=json::array({"evidence-1",source.uri});
+    publication_plan.observations.push_back({"artifact-section:publish-findings","artifact_section",
+        publication_section.dump(),1.0f,{}, {},0,{}});
+    common_agent_artifact_document publication_document;
+    assert(common_agent_artifact_document_from_plan(publication_plan,profile,"snapshot",
+        publication_document,error));
+    assert(publication_document.source_bibliography.size()==1);
+    assert(publication_document.source_bibliography.front().source_id=="source-1");
+    publication_section["included_source_refs"]=json::array({"evidence-1"});
+    publication_plan.observations.back().summary=publication_section.dump();
+    assert(!common_agent_artifact_document_from_plan(publication_plan,profile,"snapshot",
+        publication_document,error));
+    publication_section["included_source_refs"]=json::array({"evidence-1",source.uri});
+    publication_section["no_findings"]=true;
+    publication_plan.observations.back().summary=publication_section.dump();
+    assert(!common_agent_artifact_document_from_plan(publication_plan,profile,"snapshot",
+        publication_document,error));
+    publication_section["no_findings"]=false;
+    auto observation_only_profile=profile;
+    observation_only_profile.sections.front().allowed_block_kinds={"observation"};
+    publication_section["blocks"][0]["kind"]="recommendation";
+    publication_plan.observations.back().summary=publication_section.dump();
+    assert(!common_agent_artifact_document_from_plan(publication_plan,observation_only_profile,"snapshot",
+        publication_document,error));
     common_agent_artifact_section grounded_json;
     assert(common_agent_artifact_parse_section_json(
         R"({"status":"findings","blocks":[{"kind":"observation","text":"A result.","evidence":["E1"],"source":["S1"]}]})",
@@ -380,6 +417,21 @@ int main() {
     common_agent_artifact_document optional_empty_document;
     assert(common_agent_artifact_document_from_plan(no_findings_plan,no_findings_profile,"snapshot-uri",optional_empty_document,error));
     assert(optional_empty_document.coverage_complete);
+    assert(common_agent_artifact_render_markdown(optional_empty_document,markdown,error));
+    assert(markdown.find("No findings were produced for this section. This does not establish absence.")!=std::string::npos);
+    std::string current_document_json;
+    assert(common_agent_artifact_document_to_json(optional_empty_document,current_document_json,error));
+    common_agent_artifact_document renderer_roundtrip;
+    assert(common_agent_artifact_document_from_json(current_document_json,renderer_roundtrip,error));
+    assert(renderer_roundtrip.markdown_renderer_version==2);
+    auto legacy_document_json=json::parse(current_document_json);
+    legacy_document_json.erase("markdown_renderer_version");
+    assert(common_agent_artifact_document_from_json(legacy_document_json.dump(),renderer_roundtrip,error));
+    assert(renderer_roundtrip.markdown_renderer_version==1);
+    assert(common_agent_artifact_render_markdown(renderer_roundtrip,markdown,error));
+    assert(markdown.find("No findings were produced for this section.")==std::string::npos);
+    legacy_document_json["markdown_renderer_version"]=99;
+    assert(!common_agent_artifact_document_from_json(legacy_document_json.dump(),renderer_roundtrip,error));
 
     common_plan_state empty_plan;
     empty_plan.id = "plan-empty";

@@ -770,6 +770,12 @@ int main() {
         foundation_resources.requests[3].text.find("Coverage incomplete") != std::string::npos &&
         foundation_resources.requests[4].text.find(report_export.value("export_id", std::string{})) != std::string::npos);
     const auto writes_before_retry=foundation_resources.requests.size();
+    // Simulate a publication predating renderer versioning. Retry and format
+    // changes must preserve that stored document rather than rebuilding it.
+    const auto published_report_uri=report_export.value("report_resource",std::string{});
+    auto legacy_report=nlohmann::json::parse(foundation_resources.contents.at(published_report_uri));
+    legacy_report.erase("markdown_renderer_version");
+    foundation_resources.contents[published_report_uri]=legacy_report.dump();
     result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
     assert(result.ok);
     const auto retried_report=nlohmann::json::parse(result.output);
@@ -785,6 +791,8 @@ int main() {
     const auto docx_export = nlohmann::json::parse(result.output);
     assert(docx_export.value("format", std::string{}) == "docx" &&
         docx_export.value("mime_type", std::string{}) == "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert(docx_export.value("report_resource",std::string{})==published_report_uri);
+    assert(foundation_resources.contents.at(published_report_uri)==legacy_report.dump());
     assert(std::any_of(foundation_resources.requests.begin(), foundation_resources.requests.end(), [](const auto & request) {
         return request.source_tool == "artifact.export" &&
             request.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&

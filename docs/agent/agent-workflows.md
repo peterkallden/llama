@@ -663,6 +663,18 @@ adding model-planner variability. The generation trace and MCP wire readback
 are saved separately in the smoke work directory. The synthetic fixtures are
 not historical authorities.
 
+Publication rechecks stored blocks against each section's included references
+and allowed block types. A canonical reference in the wider snapshot cannot
+bypass that selection. Stored `no_findings` results cannot also contain blocks.
+The bibliography reuses a research source when a plan observation refers to the
+same resource with a compatible fingerprint, retaining the research metadata
+instead of emitting a duplicate resource citation. Empty optional sections state
+that no findings were produced; they do not assert that a phenomenon is absent.
+Documents record `markdown_renderer_version` (currently 2). Documents without
+that field retain version 1 rendering, so existing publication manifests remain
+verifiable. Format changes reuse the published document, including its renderer
+version and bibliography, rather than reconstructing an existing revision.
+
 The populated smoke also checks that the model context contains paired `S`/`E`
 handles and requires both fixture evidence records to be cited with their
 corresponding host handles (`E1`/`S1` and `E2`/`S3` in the current fixture
