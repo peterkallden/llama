@@ -130,9 +130,13 @@ intended indicator. Independent corroboration also requires actual source
 comparison; multiple responses from one authority are not independent proof.
 
 See [Workflow grounding](agent-workflow-grounding.md) for JSON, draft DSL,
-scope/resume rules and the pending verification checklist. This implementation
-has intentionally not been built or tested yet; historical smoke results do
-not validate these new paths.
+scope/resume rules and the current validation record. The implementation and
+direct model-free regression executables have been built and run; the connected
+Codex MCP server has verified selected tools and existing materialized data.
+That MCP surface does not expose agent workflow invocation or Eurostat API
+operations, so it does not establish live route/gate/handoff behavior. A
+workflow-level daemon run and Qwen model smoke remain outstanding. Historical
+smoke results do not validate these new paths.
 
 ## Bounded workflow graphs
 

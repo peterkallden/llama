@@ -1,8 +1,35 @@
 # Workflow grounding
 
-Implementation status: source and regression cases added; build, CTests,
-MCP checks and model smokes deliberately deferred to the next validation sweep.
-The earlier Eurostat run22 trace predates this implementation.
+Implementation status: implemented and partially verified. The validation
+record below separates direct model-free tests and MCP tool checks from the
+still-pending live workflow and model-smoke evidence. The earlier Eurostat
+run22 trace predates this implementation and is not counted as validation.
+
+## Validation record (2026-10-16)
+
+- A CPU/Cozo build completed with `BUILD_TESTING=OFF`. The directly invoked
+  binaries `test-agent-workflow-grounding`, `test-agent-bootstrap`,
+  `test-agent-route-compiler`, `test-plan-cozo`,
+  `test-agent-runtime-contract`, `test-plan-json`, and `test-plan-store` all
+  passed. These were direct executable runs, not a registered CTest run.
+- The connected Codex MCP tool-audit server exposed the expected working tree
+  and commit `d7e310583`. Repository search/read and dataset inspection,
+  schema, sample, query (projection without a predicate), and statistics calls
+  succeeded. The inspected Eurostat materialization contained one observation:
+  Sweden (`geo=SE`), 2020, `PER_KM2`, value `25.2`; grouped statistics returned
+  the same value. This checks the dataset/MCP tools against existing materialized
+  data, not execution of the Eurostat workflow graph.
+- An OpenAlex MCP chain also succeeded: `openalex.listWorks` returned a bounded
+  result materialized as a dataset, the selected work ID was passed to
+  `openalex.getWork`, and the returned host resource was inspectable. This
+  verifies tool-to-tool identifier use and resource publication, not automatic
+  workflow transition binding.
+- The attached MCP catalog did not expose `eurostat.*` operations or an agent
+  session/workflow invocation endpoint. Consequently, it could not exercise
+  route selection, `preferred_thinking_mode`, verification gates, continuation
+  handoff, or declared-claim enforcement through the live workflow runtime.
+  No Qwen model smoke was run. Do not treat the MCP tool checks above as
+  end-to-end workflow or model validation.
 
 ## Execution preference
 
@@ -141,17 +168,20 @@ Draft revision uses the existing bounded iteration/reflection budgets.
 Only the declarations are checked: arbitrary claims in prose are not thereby
 certified, and a correctly quoted data point does not prove a causal explanation.
 
-## Pending validation
+## Remaining end-to-end validation
 
-The prepared `test-agent-workflow-grounding` cases cover preference precedence,
-codec validation, handoff isolation, tuple membership, coverage, DSL/JSON claims
-and forged proof rejection. Existing bootstrap and SQLite/Cozo roundtrip cases
-are extended. Build and execute these only in the next validation sweep.
+The direct model-free test executables listed above pass, but they do not replace
+a daemon-level workflow run. Still to verify through a workflow-capable runtime
+are route/mode selection and resume, missing-argument clarification, a successful
+tool result followed by a failed required postcondition, stale-source
+revalidation, guarded plan mutation, continuation/budget exhaustion, and declared
+claims across a handoff. The current MCP tool-audit connection exposes tools but
+not the agent workflow invocation surface, so it cannot perform those checks.
 
-That sweep must also exercise the daemon's dataset reader, missing-argument
-clarification/resume, tool success followed by a failed postcondition, stale
-sources, guarded plan mutation, budget exhaustion and bounded claim revisions.
-Then run MCP and Qwen with full trace/GPU auto-fit, contrasting supported SE/2020
-with absent codes, wrong unit/status and unsupported declarations. The earlier
-context-pressure stop still requires investigation before claiming model E2E
-completion. No tests or performance claims are implied by this source delivery.
+The next full validation should use the daemon's actual workflow entrypoint and
+full trace, then run Qwen with GPU auto-fit. Include supported SE/2020 data and
+negative cases for absent codes, wrong unit/status, and unsupported declarations.
+Record model input/output, host verification observations, route/mode changes,
+handoffs, and final answer separately. Until that run completes, workflow-level
+model behavior remains unverified; the direct tests and MCP tool checks above
+must not be summarized as model E2E success.
