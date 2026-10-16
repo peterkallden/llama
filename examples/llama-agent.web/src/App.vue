@@ -2,6 +2,9 @@
 import { nextTick, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "./session";
 import type { DaemonProviderStatus } from "./types/agent";
+import DataExplorer from "./components/DataExplorer.vue";
+import WorkflowInspector from "./components/WorkflowInspector.vue";
+import McpAppHost from "./components/McpAppHost.vue";
 
 const session = useAgentSession();
 const prompt = ref("");
@@ -11,6 +14,17 @@ const expandedTools = ref<Set<string>>(new Set());
 const sessionsExpanded = ref(false);
 const webClientExpanded = ref(true);
 const eventsViewport = ref<HTMLElement | null>(null);
+const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
+const activeAppTool = ref("");
+const mcpApps = () => {
+  const apps = new Map<string, (typeof session.tools)[number]>();
+  for (const tool of session.tools) {
+    const ui = tool._meta?.ui;
+    const uri = ui?.resourceUri;
+    if (uri && (ui?.visibility ?? []).includes("app") && !apps.has(uri)) apps.set(uri, tool);
+  }
+  return [...apps.values()];
+};
 
 const connectionLabel = {
   connecting: "connecting",
@@ -130,7 +144,18 @@ function isArtifactEvent(event: Record<string, unknown>) {
 
     <section class="notice">This is an example client for the daemon's HTTP/SSE adapter. Agent planning, tools, MCP and policy remain in the daemon.</section>
 
-    <section class="grid">
+    <nav class="workspace-nav" aria-label="Agent workspace">
+      <button :class="{ selected: activeView === 'chat' }" @click="activeView = 'chat'">Chat</button>
+      <button :class="{ selected: activeView === 'data' }" @click="activeView = 'data'">Data Explorer</button>
+      <button :class="{ selected: activeView === 'workflow' }" @click="activeView = 'workflow'">Workflow Inspector</button>
+      <button v-for="tool in mcpApps()" :key="tool.name" :class="{ selected: activeAppTool === tool.name }" @click="activeView = 'app'; activeAppTool = tool.name">{{ tool.name }} app</button>
+    </nav>
+
+    <DataExplorer v-if="activeView === 'data'" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
+    <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
+    <McpAppHost v-else-if="activeView === 'app' && mcpApps().find((tool) => tool.name === activeAppTool)" :tool="mcpApps().find((tool) => tool.name === activeAppTool)!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" />
+
+    <section v-else class="grid">
       <div class="primary">
         <section class="card chat">
           <div class="card-title"><h2>Chat</h2></div>

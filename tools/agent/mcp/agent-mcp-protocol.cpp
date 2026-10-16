@@ -189,9 +189,13 @@ json make_mcp_jsonrpc_notification(
 }
 
 json make_mcp_initialize_params() {
+    json capabilities = json::object();
+    capabilities["extensions"]["io.modelcontextprotocol/ui"] = {
+        {"mimeTypes", json::array({"text/html;profile=mcp-app"})},
+    };
     return {
         {"protocolVersion", common_mcp_default_protocol_version()},
-        {"capabilities", json::object()},
+        {"capabilities", std::move(capabilities)},
         {"clientInfo", {
             {"name", "llama-agent"},
             {"version", "0.1"},
@@ -238,9 +242,24 @@ bool parse_mcp_tool_definition(
         definition.result_schema_json = item["outputSchema"].dump();
         definition.model_result_schema_json = definition.result_schema_json;
     }
+    if (item.contains("_meta") && item["_meta"].is_object() &&
+            item["_meta"].contains("ui") && item["_meta"]["ui"].is_object()) {
+        const auto & ui = item["_meta"]["ui"];
+        definition.ui_metadata_json = ui.dump();
+        definition.ui_resource_uri = ui.value("resourceUri", "");
+        if (ui.contains("visibility") && ui["visibility"].is_array()) {
+            for (const auto & visibility : ui["visibility"]) {
+                if (visibility.is_string()) definition.ui_visibility.push_back(visibility.get<std::string>());
+            }
+        }
+    }
 
     if (item.contains("annotations") && item["annotations"].is_object()) {
-        definition.read_only = item["annotations"].value("readOnlyHint", definition.read_only);
+        const auto & annotations = item["annotations"];
+        if (annotations.contains("readOnlyHint") && annotations["readOnlyHint"].is_boolean()) {
+            definition.read_only_declared = true;
+            definition.read_only = annotations["readOnlyHint"].get<bool>();
+        }
     }
     if (item.contains("hostPolicy") && item["hostPolicy"].is_object()) {
         const auto & policy = item["hostPolicy"];
@@ -341,10 +360,16 @@ bool parse_mcp_resource_read_result(
         error = "MCP resource read content is invalid";
         return false;
     }
-    if (!first.contains("text") || !first["text"].is_string()) {
-        error = "MCP resource read content did not contain text";
+    if (first.contains("text") && first["text"].is_string()) {
+        result.text_content = first["text"].get<std::string>();
+    } else if (first.contains("blob") && first["blob"].is_string()) {
+        result.blob_content_base64 = first["blob"].get<std::string>();
+    } else {
+        error = "MCP resource read content did not contain text or blob";
         return false;
     }
-    result.text_content = first["text"].get<std::string>();
+    if (first.contains("_meta") && first["_meta"].is_object()) {
+        result.ui_metadata_json = first["_meta"].dump();
+    }
     return true;
 }

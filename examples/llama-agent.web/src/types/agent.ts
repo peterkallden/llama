@@ -40,6 +40,11 @@ export type DaemonToolStatus = {
   description?: string;
   source?: string;
   state?: "active" | "degraded" | "disabled" | string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  read_only?: boolean;
+  policy_gated?: boolean;
+  _meta?: { ui?: { resourceUri?: string; visibility?: string[]; [key: string]: unknown } };
 };
 
 export type DaemonProviderStatus = {
@@ -87,6 +92,20 @@ export type TurnResult = {
   error?: string;
   turn_id?: string;
   [key: string]: unknown;
+};
+
+export type ToolCallResult = {
+  ok?: boolean;
+  tool?: {
+    ok?: boolean;
+    tool_name?: string;
+    content_summary?: string;
+    structured_content?: unknown;
+    resource_refs?: Array<{ uri?: string; name?: string; mime_type?: string }>;
+    dataset_refs?: unknown[];
+    error?: { code?: string; class?: string; retryable?: boolean; safe_summary?: string };
+  };
+  error?: string;
 };
 
 export type PutResourceResult = {

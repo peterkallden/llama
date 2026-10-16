@@ -5,6 +5,23 @@ button { cursor: pointer; } .shell { width: min(1180px, calc(100% - 32px)); marg
 .eyebrow { color: #7dd3fc; letter-spacing: .12em; font-size: 11px; margin: 0; } h1 { margin: 0; font-size: 30px; } h2 { font-size: 17px; margin: 0; }
 .connection { color: #9aa9bf; } .connection-connected { color: #86efac; } .connection-connecting { color: #fbbf24; } .connection-error, .connection-auth-error { color: #fca5a5; } .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
 .notice { margin: 24px 0; padding: 12px 14px; border: 1px solid #25405b; border-radius: 10px; color: #b9c7da; background: #101c2d; }
+.workspace-nav { display: flex; gap: 8px; margin: 0 0 16px; border-bottom: 1px solid #25405b; }
+.workspace-nav button, .explorer-actions button, .handoff-button { border: 1px solid #30445f; border-radius: 7px 7px 0 0; padding: 8px 12px; color: #b9c7da; background: #111b2b; }
+.workspace-nav button.selected { color: #07111d; border-color: #7dd3fc; background: #7dd3fc; font-weight: 700; }
+.explorer-card, .workflow-card { min-height: 360px; }
+.explorer-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.explorer-actions label { display: grid; gap: 4px; color: #a9bdd5; font-size: 12px; }
+.explorer-actions label input { width: 100px; }
+.explorer-actions button, .handoff-button { border-radius: 7px; color: #c6d6eb; background: #1a2c43; }
+.explorer-actions button:disabled { opacity: .5; cursor: default; }
+.explorer-result { max-height: 360px; overflow: auto; margin: 16px 0; padding: 12px; border-radius: 7px; background: #0a111d; color: #b9d5f2; }
+.workflow-list { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
+.workflow-list li { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; padding: 11px; border: 1px solid #263951; border-radius: 8px; background: #0d1726; }
+.workflow-state { align-self: start; color: #fbbf24; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }
+.workflow-completed .workflow-state { color: #86efac; } .workflow-failed .workflow-state { color: #fca5a5; }
+.workflow-list p { margin: 4px 0 8px; color: #a9bdd5; }
+.workflow-list summary { color: #7dd3fc; cursor: pointer; font-size: 12px; }
+.mcp-app-card iframe { display: block; width: 100%; min-height: 620px; border: 1px solid #263951; border-radius: 8px; background: #101827; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; } .primary { display: grid; gap: 18px; } .card { background: #111b2b; border: 1px solid #22334b; border-radius: 12px; padding: 18px; }
 .chat { min-height: 300px; } .empty, .muted { color: #8494aa; } .message { position: relative; width: fit-content; max-width: 82%; white-space: pre-wrap; margin: 27px 0 17px; padding: 14px 15px 12px; border-radius: 11px; } .message.user { margin-left: auto; background: #1e4264; text-align: right; } .message.assistant { margin-right: auto; background: #0c1524; text-align: left; } .message.assistant.agent-error { color: #fca5a5; border: 1px solid #713f46; background: #24151d; } .message-role { position: absolute; display: block; min-width: 42px; padding: 3px 8px 4px; color: #7dd3fc; background: inherit; font-size: 10px; font-weight: 700; line-height: 1; text-transform: uppercase; letter-spacing: .08em; } .message.user .message-role { right: 12px; bottom: -17px; border-radius: 0 0 6px 6px; text-align: right; } .message.assistant .message-role { left: 12px; top: -17px; border-radius: 6px 6px 0 0; text-align: left; } .message.assistant.agent-error .message-role { color: #fca5a5; } .message-role::after { content: ""; position: absolute; width: 0; height: 0; border-style: solid; } .message.user .message-role::after { right: 7px; top: -5px; border-width: 0 5px 5px; border-color: transparent transparent #1e4264; } .message.assistant .message-role::after { left: 7px; bottom: -5px; border-width: 5px 5px 0; border-color: #0c1524 transparent transparent; } .message.assistant.agent-error .message-role::after { border-color: #24151d transparent transparent; } .message-body { min-height: 18px; } .working { color: #fbbf24; }
 .composer { margin-top: 24px; } textarea, input { width: 100%; border: 1px solid #30445f; border-radius: 8px; color: #e7edf7; background: #0c1524; padding: 10px 12px; } textarea { resize: vertical; }

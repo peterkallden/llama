@@ -410,6 +410,32 @@ public:
         return execute_sync(call, error);
     }
 
+    bool call_mcp_app_tool(
+            const std::string & app_tool_name,
+            const agent_tool_call & call,
+            agent_tool_result & result,
+            std::string & error) override {
+        const auto find_ui_resource = [&](const std::string & name) {
+            const auto it = std::find_if(chat_tool_list.begin(), chat_tool_list.end(), [&](const common_chat_tool & tool) {
+                return tool.name == name;
+            });
+            if (it == chat_tool_list.end()) return std::string();
+            const auto metadata = json::parse(it->mcp_ui_metadata, nullptr, false);
+            if (!metadata.is_object() || !metadata.contains("resourceUri")) return std::string();
+            const auto visibility = metadata.value("visibility", json::array());
+            if (!visibility.is_array() || std::find(visibility.begin(), visibility.end(), "app") == visibility.end()) return std::string();
+            return metadata.value("resourceUri", std::string());
+        };
+        const auto app_uri = find_ui_resource(app_tool_name);
+        const auto target_uri = find_ui_resource(call.name);
+        if (app_uri.empty() || app_uri != target_uri || !registry.is_read_only(call.name) || registry.is_policy_gated(call.name)) {
+            error = "MCP App may call only an app-visible read-only native tool attached to its UI";
+            return false;
+        }
+        result = execute_sync(call, error);
+        return result.ok;
+    }
+
     bool supports_async_call(const std::string & name) const override {
         return exposes_tool(name) && tool_async_enabled(context, name);
     }
@@ -706,6 +732,60 @@ public:
             const agent_tool_call & call,
             std::string & error) override {
         return execute_sync(call, error);
+    }
+
+    bool read_mcp_app_resource(
+            const std::string & tool_name,
+            const std::string & uri,
+            agent_tool_result & result,
+            std::string & error) override {
+        const auto it = definitions.find(tool_name);
+        if (it == definitions.end() || it->second.ui_resource_uri.empty() ||
+                it->second.ui_resource_uri != uri ||
+                std::find(it->second.ui_visibility.begin(), it->second.ui_visibility.end(), "app") == it->second.ui_visibility.end()) {
+            error = "MCP App resource is not linked to this exposed tool";
+            return false;
+        }
+        mcp_agent_resource_read_result read;
+        if (!client.read_resource(uri, read, error)) return false;
+        json payload = {
+            {"uri", read.resource.uri},
+            {"name", read.resource.name},
+            {"mime_type", read.resource.mime_type},
+        };
+        if (!read.text_content.empty()) payload["text"] = read.text_content;
+        if (!read.blob_content_base64.empty()) payload["blob_base64"] = read.blob_content_base64;
+        if (!read.ui_metadata_json.empty()) {
+            const auto metadata = json::parse(read.ui_metadata_json, nullptr, false);
+            if (metadata.is_object()) payload["_meta"] = metadata;
+        }
+        result = {};
+        result.ok = true;
+        result.tool_name = tool_name;
+        result.content_json = payload.dump();
+        result.content_summary = "MCP App UI resource loaded";
+        error.clear();
+        return true;
+    }
+
+    bool call_mcp_app_tool(
+            const std::string & app_tool_name,
+            const agent_tool_call & call,
+            agent_tool_result & result,
+            std::string & error) override {
+        const auto app_it = definitions.find(app_tool_name);
+        const auto it = definitions.find(call.name);
+        if (app_it == definitions.end() || app_it->second.ui_resource_uri.empty() ||
+                std::find(app_it->second.ui_visibility.begin(), app_it->second.ui_visibility.end(), "app") == app_it->second.ui_visibility.end() ||
+                it == definitions.end() || it->second.provider_id != app_it->second.provider_id ||
+                !it->second.read_only || !it->second.read_only_declared ||
+                it->second.requires_confirmation || it->second.writes_memory || it->second.writes_plan ||
+                std::find(it->second.ui_visibility.begin(), it->second.ui_visibility.end(), "app") == it->second.ui_visibility.end()) {
+            error = "MCP App may call only an app-visible read-only tool from its owning provider";
+            return false;
+        }
+        result = execute_sync(call, error);
+        return result.ok;
     }
 
     bool supports_async_call(const std::string & name) const override {
@@ -1045,6 +1125,29 @@ public:
         return view->call(call, error);
     }
 
+    bool read_mcp_app_resource(
+            const std::string & tool_name,
+            const std::string & uri,
+            agent_tool_result & result,
+            std::string & error) override {
+        auto * view = find_owner(tool_name);
+        return view != nullptr && view->read_mcp_app_resource(tool_name, uri, result, error);
+    }
+
+    bool call_mcp_app_tool(
+            const std::string & app_tool_name,
+            const agent_tool_call & call,
+            agent_tool_result & result,
+            std::string & error) override {
+        auto * view = find_owner(call.name);
+        const auto * app_view = find_owner(app_tool_name);
+        if (view == nullptr || app_view == nullptr || view != app_view) {
+            error = "MCP App cannot invoke a tool outside its owning provider";
+            return false;
+        }
+        return view->call_mcp_app_tool(app_tool_name, call, result, error);
+    }
+
     bool supports_async_call(const std::string & name) const override {
         const auto * view = find_owner(name);
         return view != nullptr && view->supports_async_call(name);
@@ -1193,6 +1296,11 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             common_tool_model_result_schema(definition),
             definition.result_schema_json,
         });
+        if (definition.name == "dataset.schema" || definition.name == "dataset.sample" || definition.name == "dataset.inspect") {
+            chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/data-explorer","visibility":["model","app"]})";
+        } else if (definition.name == "plan.get") {
+            chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/workflow-inspector","visibility":["model","app"]})";
+        }
         resolved_definitions.emplace(definition.name, definition);
     }
 
@@ -1260,6 +1368,8 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
             model_result_schema,
             definition.result_schema_json,
         });
+        chat_tools.back().host_input_schema = definition.input_schema_json;
+        chat_tools.back().mcp_ui_metadata = definition.ui_metadata_json;
         resolved_definitions.emplace(exposed_name, std::move(definition));
     }
 

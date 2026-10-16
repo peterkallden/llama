@@ -33,6 +33,7 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
             common_tool_model_input_schema(definition),
             common_tool_model_result_schema(definition),
             definition.result_schema_json});
+        tools.back().host_input_schema = definition.input_schema_json;
     }
     error.clear();
     return true;

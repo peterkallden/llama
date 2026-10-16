@@ -981,6 +981,16 @@ int main(int argc, char ** argv) {
         http_options.max_body_bytes = options.http_max_body_bytes;
         http_options.max_result_bytes = options.http_max_result_bytes;
         http_options.server_name = "llama-agent-daemon-mcp";
+        http_options.list_resources = [](agent_mcp_json & result, std::string & callback_error) {
+            result = agent_mcp_first_party_app_resources();
+            callback_error.clear();
+            return true;
+        };
+        http_options.read_resource = [](const agent_mcp_json & params, agent_mcp_json & result, std::string & callback_error) {
+            const std::string uri = params.value("uri", "");
+            if (uri.empty()) { callback_error = "resources/read requires a uri"; return false; }
+            return agent_mcp_read_first_party_app_resource(uri, result, callback_error);
+        };
         http_options.agent_tools_enabled = options.http_agent_tools_enabled;
         http_options.tasks_enabled = options.http_agent_tools_enabled;
         if (http_options.tasks_enabled) {

@@ -219,11 +219,15 @@ bool agent_mcp_http_server::handle_message(
             response = json_rpc_error(id, -32602, "unsupported MCP protocol version");
             return true;
         }
+        const agent_mcp_json ui_extension = {
+            {"mimeTypes", agent_mcp_json::array({"text/html;profile=mcp-app"})},
+        };
         response = agent_mcp_make_json_rpc_result(id, {
             {"protocolVersion", negotiated_version},
             {"capabilities", {
                 {"tools", agent_mcp_json::object()},
                 {"resources", options_.list_resources ? agent_mcp_json::object() : agent_mcp_json()},
+                {"extensions", {{"io.modelcontextprotocol/ui", ui_extension}}},
                 {"tasks", options_.tasks_enabled && negotiated_version == "2025-11-25"
                     ? agent_mcp_json{{"requests", {{"tools", {{"call", agent_mcp_json::object()}}}}}}
                     : agent_mcp_json()},

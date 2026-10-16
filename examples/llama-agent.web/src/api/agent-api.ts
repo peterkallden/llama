@@ -1,4 +1,4 @@
-import type { AgentEvent, DaemonStatus, TurnRequest, UploadedResource } from "../types/agent";
+import type { AgentEvent, DaemonStatus, ToolCallResult, TurnRequest, UploadedResource } from "../types/agent";
 
 export type EventSink = (event: AgentEvent) => void;
 
@@ -57,6 +57,24 @@ export class AgentApi {
     return this.request("/turns", { method: "POST", body: JSON.stringify(turn) });
   }
 
+  callReadOnlyTool(input: {
+    tool_name: string;
+    arguments: Record<string, unknown>;
+    namespace_id: string;
+    session_id: string;
+    project_id: string;
+  }): Promise<ToolCallResult> {
+    return this.request("/tools/call", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  readMcpAppResource(input: { app_tool_name: string; resource_uri: string; session_id: string }): Promise<ToolCallResult> {
+    return this.request("/mcp-apps/resource", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  callMcpAppTool(input: { app_tool_name: string; tool_name: string; arguments: Record<string, unknown>; session_id: string }): Promise<ToolCallResult> {
+    return this.request("/mcp-apps/call", { method: "POST", body: JSON.stringify(input) });
+  }
+
   cancelTurn(turnId: string): Promise<unknown> {
     return this.request(`/turns/${encodeURIComponent(turnId)}/cancel`, { method: "POST", body: "{}" });
   }
@@ -100,7 +118,9 @@ export class AgentApi {
             // nested `event` value. Pass that value to the UI so category,
             // type and detail are rendered from the event itself rather than
             // falling back to the envelope's generic message type.
-            const event = payload.event && typeof payload.event === "object" ? payload.event : payload;
+            const event = payload.event && typeof payload.event === "object"
+              ? { ...payload, ...payload.event }
+              : payload;
             sink(event);
           } catch { /* ignore malformed event */ }
         }

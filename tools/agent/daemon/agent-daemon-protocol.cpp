@@ -100,6 +100,31 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
+    if (command_name == "execute_tool") {
+        command.type = common_agent_daemon_command_type::execute_tool;
+        common_agent_daemon_tool_payload payload;
+        payload.session.namespace_id = parsed.value("namespace_id", "default-namespace");
+        payload.session.session_id = parsed.value("session_id", "default-session");
+        payload.project_id = parsed.value("project_id", "");
+        payload.tool_profile = parsed.value("tool_profile", "");
+        payload.tool_name = parsed.value("tool_name", "");
+        payload.read_only_only = parsed.value("read_only_only", false);
+        payload.mcp_app_call = parsed.value("mcp_app_call", false);
+        payload.mcp_app_tool_name = parsed.value("mcp_app_tool_name", "");
+        payload.mcp_app_resource_uri = parsed.value("mcp_app_resource_uri", "");
+        payload.allow_policy_gated_writes = false;
+        const auto arguments = parsed.value("arguments", json::object());
+        if (payload.tool_name.empty() || (!arguments.is_object() && payload.mcp_app_resource_uri.empty()) ||
+                (payload.mcp_app_call && payload.mcp_app_tool_name.empty()) ||
+                (payload.mcp_app_call && !payload.mcp_app_resource_uri.empty())) {
+            error = "execute_tool requires tool_name and object arguments or an MCP App resource URI";
+            return false;
+        }
+        payload.arguments_json = arguments.is_object() ? arguments.dump() : "{}";
+        command.tool = std::move(payload);
+        error.clear();
+        return true;
+    }
     if (command_name == "list_sessions") {
         command.type = common_agent_daemon_command_type::list_sessions;
         error.clear();
@@ -607,12 +632,27 @@ void append_agent_daemon_status_snapshot(
     };
     json tools = json::array();
     for (const auto & tool : status.readiness.tools) {
-        tools.push_back({
+        json item = {
             {"name", tool.name},
             {"description", tool.description},
             {"source", tool.source},
             {"state", tool.state},
-        });
+            {"read_only", tool.read_only},
+            {"policy_gated", tool.policy_gated},
+        };
+        if (!tool.input_schema.empty()) {
+            const auto schema = json::parse(tool.input_schema, nullptr, false);
+            if (schema.is_object()) item["input_schema"] = schema;
+        }
+        if (!tool.output_schema.empty()) {
+            const auto schema = json::parse(tool.output_schema, nullptr, false);
+            if (schema.is_object()) item["output_schema"] = schema;
+        }
+        if (!tool.ui_metadata.empty()) {
+            const auto ui = json::parse(tool.ui_metadata, nullptr, false);
+            if (ui.is_object()) item["_meta"] = {{"ui", ui}};
+        }
+        tools.push_back(std::move(item));
     }
     response["readiness"]["tools"] = std::move(tools);
     json providers = json::array();
@@ -1051,6 +1091,36 @@ json make_agent_daemon_command_response(const common_agent_daemon_command_result
             response = make_agent_daemon_listing_response(result); break;
         case common_agent_daemon_response_kind::turn:
             response = make_agent_daemon_turn_response(result); break;
+        case common_agent_daemon_response_kind::tool: {
+            response = make_agent_daemon_base_response(result);
+            const auto & tool = result.tool_result;
+            response["tool"] = {
+                {"ok", tool.ok},
+                {"tool_call_id", tool.tool_call_id},
+                {"tool_name", tool.tool_name},
+                {"content_summary", tool.content_summary},
+                {"resource_refs", json::array()},
+                {"dataset_refs", json::array()},
+            };
+            const auto content = json::parse(tool.content_json, nullptr, false);
+            response["tool"]["structured_content"] = content.is_discarded()
+                ? json::object() : content;
+            for (const auto & ref : tool.resource_refs) {
+                response["tool"]["resource_refs"].push_back({{"uri", ref.uri}, {"name", ref.name}, {"mime_type", ref.mime_type}});
+            }
+            for (const auto & ref : tool.dataset_refs) {
+                response["tool"]["dataset_refs"].push_back(common_agent_dataset_ref_to_json(ref));
+            }
+            if (!tool.ok) {
+                response["tool"]["error"] = {
+                    {"code", tool.failure_code},
+                    {"class", common_tool_failure_class_name(tool.failure_class)},
+                    {"retryable", tool.retryable},
+                    {"safe_summary", tool.safe_summary},
+                };
+            }
+            break;
+        }
     }
     if (!result.payload_json.empty()) {
         const auto payload = json::parse(result.payload_json, nullptr, false);

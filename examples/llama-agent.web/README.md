@@ -117,3 +117,32 @@ The client is intentionally an example and does not yet provide production
 features such as login, event replay or full routing. Artifact downloads are
 supported through the authenticated daemon endpoint, but deployment-specific
 authorization and retention remain outside this example.
+
+## Data and MCP Apps
+
+The example client includes a read-only Data Explorer (`dataset.schema` and
+bounded `dataset.sample`) and a Workflow Inspector over the daemon's structured
+runtime events. Direct data calls go through `POST /api/v1/tools/call`; the web
+adapter asks the daemon to resolve and execute the selected tool and forces
+read-only policy. Tool input/output schemas and MCP UI metadata are carried in
+`/api/v1/status`.
+
+Tools that advertise an MCP App UI can be opened in the app tabs. The browser
+host fetches the UI resource through `POST /api/v1/mcp-apps/resource` and brokers
+app requests through `/api/v1/mcp-apps/call`. The host negotiates
+`io.modelcontextprotocol/ui` with the HTML app MIME type and follows the
+`ui/initialize` / `ui/notifications/initialized` handshake. A data-origin
+sandbox proxy separates the host page from the app view; the app view itself is
+sandboxed without same-origin privileges, has a restrictive CSP, and receives
+no bearer token or provider credentials. The daemon verifies that the requested URI belongs to
+the advertised app tool, and that app calls target app-visible read-only tools
+owned by the same provider. Links and arbitrary network access are not brokered.
+
+The bounded web host supports initialization, `tools/call`, reads of the app's
+own declared UI resource, and a displayed `ui/message`. Unsupported app RPC
+methods are explicitly rejected. The daemon's MCP server also publishes
+first-party Data Explorer and Workflow Inspector resources
+(`ui://llama-agent/apps/...`) and attaches them to the
+corresponding dataset and `plan.get` tools. `resources/read` serves only those
+known first-party URIs for these bundled apps; external app resources remain
+provider-owned and are fetched through that provider.

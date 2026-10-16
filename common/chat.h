@@ -245,6 +245,12 @@ struct common_chat_tool {
     // Canonical tool output schema. Unlike result_schema, this is not the
     // model-facing projection and is suitable for exposing over MCP.
     std::string output_schema;
+    // Canonical host-facing input schema; parameters may be a smaller
+    // model-facing projection.
+    std::string host_input_schema;
+    // Optional MCP Apps presentation metadata. It is transport metadata only;
+    // the tool runtime and policy remain authoritative for execution.
+    std::string mcp_ui_metadata;
 };
 
 enum common_chat_tool_choice {

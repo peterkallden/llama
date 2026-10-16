@@ -652,7 +652,7 @@ bool register_resolved_profile_tools(
         const auto definition_it = definitions_by_name.find(tool.name);
         const bool has_definition = definition_it != definitions_by_name.end();
         const common_tool_definition definition = has_definition ? definition_it->second : common_tool_definition{};
-        if (!registry.register_tool({
+        agent_mcp_server_tool server_tool{
                 tool.name,
                 has_definition ? definition.description
                     : (tool.description.empty() ? tool.name : tool.description),
@@ -692,7 +692,9 @@ bool register_resolved_profile_tools(
                 },
                 tool.output_schema.empty() ? std::string()
                     : make_agent_tool_success_payload_schema_json(tool.output_schema).dump(),
-            }, error)) {
+            };
+        server_tool.ui_metadata = agent_mcp_first_party_app_metadata(tool.name);
+        if (!registry.register_tool(std::move(server_tool), error)) {
             return false;
         }
     }
@@ -810,6 +812,8 @@ int main(int argc, char ** argv) {
                 for (const auto & descriptor : descriptors) {
                     result["resources"].push_back(render_mcp_resource(descriptor));
                 }
+                const auto apps = agent_mcp_first_party_app_resources();
+                for (const auto & app : apps["resources"]) result["resources"].push_back(app);
                 callback_error.clear();
                 return true;
             };
@@ -818,6 +822,10 @@ int main(int argc, char ** argv) {
                 if (uri.empty()) {
                     callback_error = "resources/read requires a uri";
                     return false;
+                }
+
+                if (uri.rfind("ui://llama-agent/apps/", 0) == 0) {
+                    return agent_mcp_read_first_party_app_resource(uri, result, callback_error);
                 }
 
                 agent_resource_descriptor descriptor;

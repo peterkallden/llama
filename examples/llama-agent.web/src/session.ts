@@ -70,6 +70,27 @@ function observe(event: AgentEvent) {
 
 async function refreshStatus() { status.value = await api.value.status(); }
 
+async function callReadOnlyTool(toolName: string, args: Record<string, unknown>) {
+  if (!tools.value.some((tool) => tool.name === toolName && tool.read_only && !tool.policy_gated)) {
+    throw new Error(`${toolName} is not exposed as an approved read-only tool.`);
+  }
+  return api.value.callReadOnlyTool({
+    tool_name: toolName,
+    arguments: args,
+    namespace_id: "web",
+    session_id: sessionId.value,
+    project_id: "web-example",
+  });
+}
+
+async function readMcpAppResource(appToolName: string, uri: string) {
+  return api.value.readMcpAppResource({ app_tool_name: appToolName, resource_uri: uri, session_id: sessionId.value });
+}
+
+async function callMcpAppTool(appToolName: string, toolName: string, args: Record<string, unknown>) {
+  return api.value.callMcpAppTool({ app_tool_name: appToolName, tool_name: toolName, arguments: args, session_id: sessionId.value });
+}
+
 async function connect() {
   abortController.value?.abort();
   const controller = new AbortController();
@@ -247,5 +268,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, callReadOnlyTool, readMcpAppResource, callMcpAppTool, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

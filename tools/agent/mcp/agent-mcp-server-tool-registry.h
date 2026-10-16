@@ -34,6 +34,7 @@ struct agent_mcp_server_tool {
         agent_mcp_server_tool_result & result,
         std::string & error)> handler;
     std::string output_schema_json;
+    agent_mcp_json ui_metadata = agent_mcp_json::object();
 };
 
 class agent_mcp_server_tool_registry {
@@ -83,3 +84,12 @@ void agent_mcp_set_tool_call_result(
         bool retryable,
         std::string raw_diagnostic,
         agent_mcp_json content = agent_mcp_json::array());
+
+// Small first-party MCP Apps are shipped as MCP UI resources, not ordinary
+// model-facing tools. The resource URI is also attached to its owning tools.
+agent_mcp_json agent_mcp_first_party_app_resources();
+bool agent_mcp_read_first_party_app_resource(
+        const std::string & uri,
+        agent_mcp_json & content,
+        std::string & error);
+agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name);

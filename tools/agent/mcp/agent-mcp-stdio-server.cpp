@@ -46,6 +46,9 @@ int agent_mcp_stdio_server::run(FILE * input, FILE * output, FILE * diagnostics)
             }
             agent_mcp_json capabilities = {{"tools", agent_mcp_json::object()}};
             if (options_.list_resources) capabilities["resources"] = agent_mcp_json::object();
+            capabilities["extensions"]["io.modelcontextprotocol/ui"] = {
+                {"mimeTypes", agent_mcp_json::array({"text/html;profile=mcp-app"})},
+            };
             response = agent_mcp_make_json_rpc_result(id, {
                 {"protocolVersion", version},
                 {"capabilities", std::move(capabilities)},

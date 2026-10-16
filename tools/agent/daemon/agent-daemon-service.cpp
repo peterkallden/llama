@@ -374,7 +374,26 @@ common_agent_daemon_readiness make_daemon_readiness(
                     profile_error)) {
                 for (const auto & definition : profile_snapshot.tools) {
                     if (!definition.enabled) continue;
-                    readiness.tools.push_back({definition.name, definition.description, "profile", "active"});
+                    common_agent_daemon_tool_status tool{
+                        definition.name, definition.description, "profile", "active"};
+                    tool.input_schema = definition.input_schema_json;
+                    tool.output_schema = definition.result_schema_json;
+                    tool.read_only = definition.risk_class == common_tool_risk_class::local_read;
+                    tool.policy_gated = definition.requires_confirmation;
+                    const auto resolved = std::find_if(
+                        runtime.provider_probe_tooling.tools.begin(),
+                        runtime.provider_probe_tooling.tools.end(),
+                        [&](const common_chat_tool & candidate) { return candidate.name == definition.name; });
+                    if (resolved != runtime.provider_probe_tooling.tools.end()) {
+                        if (!resolved->host_input_schema.empty()) tool.input_schema = resolved->host_input_schema;
+                        if (!resolved->output_schema.empty()) tool.output_schema = resolved->output_schema;
+                        tool.ui_metadata = resolved->mcp_ui_metadata;
+                        if (runtime.provider_probe_tooling.tool_view != nullptr) {
+                            tool.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(definition.name);
+                            tool.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(definition.name);
+                        }
+                    }
+                    readiness.tools.push_back(std::move(tool));
                 }
             }
         }
@@ -384,7 +403,15 @@ common_agent_daemon_readiness make_daemon_readiness(
     for (const auto & tool : readiness.tools) known_tool_names.insert(tool.name);
     for (const auto & tool : runtime.provider_probe_tooling.tools) {
         if (known_tool_names.insert(tool.name).second) {
-            readiness.tools.push_back({tool.name, tool.description, "mcp", "active"});
+            common_agent_daemon_tool_status status{tool.name, tool.description, "mcp", "active"};
+            status.input_schema = tool.host_input_schema.empty() ? tool.parameters : tool.host_input_schema;
+            status.output_schema = tool.output_schema;
+            status.ui_metadata = tool.mcp_ui_metadata;
+            if (runtime.provider_probe_tooling.tool_view != nullptr) {
+                status.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(tool.name);
+                status.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(tool.name);
+            }
+            readiness.tools.push_back(std::move(status));
         }
     }
 
@@ -1939,6 +1966,14 @@ bool common_agent_daemon_service::execute_outcome(
                 outcome.tool_result.failure_class = common_tool_failure_class::execution;
                 outcome.tool_result.retryable = false;
                 outcome.tool_result.safe_summary = "The tool failed unexpectedly.";
+                outcome.tool_result.raw_diagnostic = error;
+            }
+            if (!outcome.ok && outcome.tool_result.failure_code.empty()) {
+                outcome.tool_result.ok = false;
+                outcome.tool_result.failure_code = "tool.execution_failed";
+                outcome.tool_result.failure_class = common_tool_failure_class::execution;
+                outcome.tool_result.retryable = false;
+                outcome.tool_result.safe_summary = "The requested tool or MCP App operation was rejected by the host.";
                 outcome.tool_result.raw_diagnostic = error;
             }
             outcome.event = outcome.ok ? "tool_completed" : "tool_failed";

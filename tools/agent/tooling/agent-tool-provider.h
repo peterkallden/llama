@@ -125,6 +125,19 @@ public:
         const agent_tool_call & call,
         std::string & error) = 0;
 
+    // MCP App UI resources are host-fetched and must be tied to the tool that
+    // advertised them. Implementations reject arbitrary URIs by default.
+    virtual bool read_mcp_app_resource(
+        const std::string &, const std::string &, agent_tool_result &, std::string & error) {
+        error = "MCP App resource is unavailable in this tool view";
+        return false;
+    }
+    virtual bool call_mcp_app_tool(
+        const std::string &, const agent_tool_call &, agent_tool_result &, std::string & error) {
+        error = "MCP App tool call is unavailable in this tool view";
+        return false;
+    }
+
     virtual bool supports_async_call(const std::string & name) const = 0;
 
     virtual bool begin_call_async(
@@ -182,6 +195,9 @@ struct mcp_agent_tool_definition {
     // host-known required inputs so normal planning does not depend on repair.
     std::string model_input_schema_json;
     bool read_only = true;
+    // MCP's readOnlyHint is advisory; app calls require an explicit declaration
+    // in addition to the host's read-only policy.
+    bool read_only_declared = false;
     bool requires_confirmation = false;
     bool uses_network = false;
     bool writes_memory = false;
@@ -191,6 +207,9 @@ struct mcp_agent_tool_definition {
     // Optional model-facing result projection. Host execution keeps the
     // canonical result_schema_json; planner bindings use this bounded view.
     std::string model_result_schema_json;
+    std::string ui_resource_uri;
+    std::vector<std::string> ui_visibility;
+    std::string ui_metadata_json;
 };
 
 struct mcp_agent_tool_call_result {
@@ -214,6 +233,8 @@ struct mcp_agent_resource_definition {
 struct mcp_agent_resource_read_result {
     common_runtime_resource_ref resource;
     std::string text_content;
+    std::string blob_content_base64;
+    std::string ui_metadata_json;
 };
 
 class agent_mcp_tool_client {
@@ -231,6 +252,12 @@ public:
         const std::string & arguments_json,
         mcp_agent_tool_call_result & result,
         std::string & error) = 0;
+
+    virtual bool read_resource(
+        const std::string &, mcp_agent_resource_read_result &, std::string & error) {
+        error = "MCP provider does not support resources/read";
+        return false;
+    }
 
     // Providers that understand host-only workflow directives can override
     // this without exposing those directives in the model-facing schema.
@@ -307,13 +334,13 @@ public:
         mcp_agent_tool_call_result & result,
         std::string & error) override;
 
-    bool list_resources(
-        std::vector<mcp_agent_resource_definition> & resources,
-        std::string & error);
-
     bool read_resource(
         const std::string & uri,
         mcp_agent_resource_read_result & result,
+        std::string & error) override;
+
+    bool list_resources(
+        std::vector<mcp_agent_resource_definition> & resources,
         std::string & error);
 
 private:
@@ -371,13 +398,13 @@ public:
         mcp_agent_tool_call_result & result,
         std::string & error) override;
 
-    bool list_resources(
-        std::vector<mcp_agent_resource_definition> & resources,
-        std::string & error);
-
     bool read_resource(
         const std::string & uri,
         mcp_agent_resource_read_result & result,
+        std::string & error) override;
+
+    bool list_resources(
+        std::vector<mcp_agent_resource_definition> & resources,
         std::string & error);
 
 private:

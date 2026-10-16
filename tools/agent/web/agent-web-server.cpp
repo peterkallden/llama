@@ -337,6 +337,91 @@ bool run_agent_web_server(
         response.set_content(result.dump(), "application/json");
     });
 
+    server.Post("/api/v1/tools/call", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
+        if (!authorize(request, response)) return;
+        auto input = json::parse(request.body, nullptr, false);
+        if (input.is_discarded() || !input.is_object() ||
+                !input.contains("tool_name") || !input["tool_name"].is_string() ||
+                !input.contains("arguments") || !input["arguments"].is_object()) {
+            set_json_error(response, 400, "tool call requires tool_name and object arguments");
+            return;
+        }
+        json command = {
+            {"command", "execute_tool"},
+            {"request_id", web_request_id(input)},
+            {"tool_name", input["tool_name"]},
+            {"arguments", input["arguments"]},
+            {"read_only_only", true},
+            {"namespace_id", "web"},
+            {"session_id", input.value("session_id", "web-session")},
+            {"project_id", "web-example"},
+        };
+        json result;
+        std::string command_error;
+        if (!send_daemon_command(options, command, result, command_error)) {
+            set_json_error(response, 502, command_error);
+            return;
+        }
+        response.status = result.value("ok", false) ? 200 : 422;
+        response.set_content(result.dump(), "application/json");
+    });
+
+    server.Post("/api/v1/mcp-apps/resource", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
+        if (!authorize(request, response)) return;
+        auto input = json::parse(request.body, nullptr, false);
+        if (input.is_discarded() || !input.is_object() ||
+                !input.contains("tool_name") || !input["tool_name"].is_string() ||
+                !input.contains("resource_uri") || !input["resource_uri"].is_string()) {
+            set_json_error(response, 400, "MCP App resource read requires tool_name and resource_uri");
+            return;
+        }
+        json command = {
+            {"command", "execute_tool"},
+            {"request_id", web_request_id(input)},
+            {"tool_name", input["tool_name"]},
+            {"arguments", json::object()},
+            {"mcp_app_resource_uri", input["resource_uri"]},
+            {"namespace_id", "web"},
+            {"session_id", input.value("session_id", "web-session")},
+            {"project_id", "web-example"},
+        };
+        json result; std::string command_error;
+        if (!send_daemon_command(options, command, result, command_error)) {
+            set_json_error(response, 502, command_error); return;
+        }
+        response.status = result.value("ok", false) ? 200 : 422;
+        response.set_content(result.dump(), "application/json");
+    });
+
+    server.Post("/api/v1/mcp-apps/call", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
+        if (!authorize(request, response)) return;
+        auto input = json::parse(request.body, nullptr, false);
+        if (input.is_discarded() || !input.is_object() ||
+                !input.contains("tool_name") || !input["tool_name"].is_string() ||
+                !input.contains("app_tool_name") || !input["app_tool_name"].is_string() ||
+                !input.contains("arguments") || !input["arguments"].is_object()) {
+            set_json_error(response, 400, "MCP App tool call requires app_tool_name, tool_name and object arguments");
+            return;
+        }
+        json command = {
+            {"command", "execute_tool"},
+            {"request_id", web_request_id(input)},
+            {"tool_name", input["tool_name"]},
+            {"arguments", input["arguments"]},
+            {"mcp_app_call", true},
+            {"mcp_app_tool_name", input["app_tool_name"]},
+            {"namespace_id", "web"},
+            {"session_id", input.value("session_id", "web-session")},
+            {"project_id", "web-example"},
+        };
+        json result; std::string command_error;
+        if (!send_daemon_command(options, command, result, command_error)) {
+            set_json_error(response, 502, command_error); return;
+        }
+        response.status = result.value("ok", false) ? 200 : 422;
+        response.set_content(result.dump(), "application/json");
+    });
+
     server.Post("/api/v1/resources", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
         if (!authorize(request, response)) return;
         auto command = json::parse(request.body, nullptr, false);

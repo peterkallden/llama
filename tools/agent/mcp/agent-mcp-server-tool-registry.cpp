@@ -33,6 +33,69 @@ agent_mcp_json agent_mcp_canonical_output_schema(const std::string & result_sche
     return schema.is_object() ? schema : agent_mcp_json::object();
 }
 
+agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name) {
+    if (tool_name == "dataset.schema" || tool_name == "dataset.sample" || tool_name == "dataset.inspect") {
+        return {{"resourceUri", "ui://llama-agent/apps/data-explorer"}, {"visibility", {"model", "app"}}};
+    }
+    if (tool_name == "plan.get") {
+        return {{"resourceUri", "ui://llama-agent/apps/workflow-inspector"}, {"visibility", {"model", "app"}}};
+    }
+    return agent_mcp_json::object();
+}
+
+agent_mcp_json agent_mcp_first_party_app_resources() {
+    const auto make_resource = [](const std::string & uri, const std::string & name, const std::string & description) {
+        const agent_mcp_json ui_metadata = {
+            {"csp", {
+                {"connectDomains", agent_mcp_json::array()},
+                {"resourceDomains", agent_mcp_json::array()},
+                {"frameDomains", agent_mcp_json::array()},
+            }},
+        };
+        return agent_mcp_json{
+            {"uri", uri}, {"name", name}, {"description", description},
+            {"mimeType", "text/html;profile=mcp-app"},
+            {"_meta", {{"ui", ui_metadata}}},
+        };
+    };
+    return {{"resources", agent_mcp_json::array({
+        make_resource("ui://llama-agent/apps/data-explorer", "Data Explorer", "Read-only dataset schema and sample viewer."),
+        make_resource("ui://llama-agent/apps/workflow-inspector", "Workflow Inspector", "Read-only view of the active plan."),
+    })}};
+}
+
+bool agent_mcp_read_first_party_app_resource(
+        const std::string & uri,
+        agent_mcp_json & content,
+        std::string & error) {
+    const std::string data_app = R"HTML(<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>body{font:14px system-ui;background:#101827;color:#e5edf7;padding:18px}input,button{padding:8px;margin:4px;background:#1b2b40;color:inherit;border:1px solid #55708e;border-radius:6px}pre{white-space:pre-wrap;background:#09111d;padding:10px}</style></head><body><h2>Data Explorer</h2><p>Read a host-authorized dataset schema or bounded sample.</p><input id="dataset" placeholder="dataset://local/name"><button onclick="run('dataset.schema')">Schema</button><button onclick="run('dataset.sample')">Sample</button><pre id="out">Enter a dataset reference.</pre><script>let seq=1;function send(method,params){const id=seq++;parent.postMessage({jsonrpc:'2.0',id,method,params},'*');return id}addEventListener('message',e=>{const m=e.data;if(m?.id===1&&m.result?.protocolVersion){send('ui/notifications/initialized',{});return}if(m?.result?.structuredContent)document.querySelector('#out').textContent=JSON.stringify(m.result.structuredContent,null,2);if(m?.error)document.querySelector('#out').textContent=m.error.message});send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-data-explorer',version:'0.1'},appCapabilities:{tools:{}}});function run(name){const dataset=document.querySelector('#dataset').value;send('tools/call',{name,arguments:name==='dataset.sample'?{dataset,rows:8}:{dataset}})}</script></body></html>)HTML";
+    const std::string workflow_app = R"HTML(<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>body{font:14px system-ui;background:#101827;color:#e5edf7;padding:18px}input,button{padding:8px;margin:4px;background:#1b2b40;color:inherit;border:1px solid #55708e;border-radius:6px}pre{white-space:pre-wrap;background:#09111d;padding:10px}</style></head><body><h2>Workflow Inspector</h2><p>Load a host-owned plan by its plan ID. Missing verification fields are not treated as success.</p><input id="plan" placeholder="plan ID"><button onclick="loadPlan()">Load plan</button><pre id="out">Enter a plan ID.</pre><script>let seq=1;function send(method,params){const id=seq++;parent.postMessage({jsonrpc:'2.0',id,method,params},'*');return id}addEventListener('message',e=>{const m=e.data;if(m?.id===1&&m.result?.protocolVersion){send('ui/notifications/initialized',{});return}if(m?.result?.structuredContent)document.querySelector('#out').textContent=JSON.stringify(m.result.structuredContent,null,2);if(m?.error)document.querySelector('#out').textContent=m.error.message});send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-workflow-inspector',version:'0.1'},appCapabilities:{tools:{}}});function loadPlan(){send('tools/call',{name:'plan.get',arguments:{plan_id:document.querySelector('#plan').value}})}</script></body></html>)HTML";
+    const char * text = nullptr;
+    if (uri == "ui://llama-agent/apps/data-explorer") text = data_app.c_str();
+    else if (uri == "ui://llama-agent/apps/workflow-inspector") text = workflow_app.c_str();
+    else {
+        error = "unknown first-party MCP App resource URI";
+        return false;
+    }
+    const agent_mcp_json ui_metadata = {
+        {"csp", {
+            {"connectDomains", agent_mcp_json::array()},
+            {"resourceDomains", agent_mcp_json::array()},
+            {"frameDomains", agent_mcp_json::array()},
+        }},
+    };
+    const agent_mcp_json resource_content = {
+        {"uri", uri},
+        {"name", uri.find("data-explorer") != std::string::npos ? "Data Explorer" : "Workflow Inspector"},
+        {"mimeType", "text/html;profile=mcp-app"},
+        {"text", text},
+        {"_meta", {{"ui", ui_metadata}}},
+    };
+    content = {{"contents", agent_mcp_json::array({resource_content})}};
+    error.clear();
+    return true;
+}
+
 bool agent_mcp_server_tool_registry::register_tool(
         agent_mcp_server_tool tool,
         std::string & error) {
@@ -195,6 +258,9 @@ agent_mcp_json agent_mcp_render_tools_list_result(
                     tool.output_schema_json);
             }
         }
+        if (tool.ui_metadata.is_object() && !tool.ui_metadata.empty()) {
+            tools.back()["_meta"] = {{"ui", tool.ui_metadata}};
+        }
     }
     return {{"tools", std::move(tools)}};
 }
@@ -225,6 +291,13 @@ bool agent_mcp_register_native_tool_view(
                 },
             };
         server_tool.output_schema_json = tool.output_schema;
+        if (!tool.mcp_ui_metadata.empty()) {
+            const auto ui = agent_mcp_json::parse(tool.mcp_ui_metadata, nullptr, false);
+            if (ui.is_object()) server_tool.ui_metadata = ui;
+        }
+        if (server_tool.ui_metadata.empty()) {
+            server_tool.ui_metadata = agent_mcp_first_party_app_metadata(tool.name);
+        }
         if (!registry.register_tool(std::move(server_tool), error)) {
             return false;
         }

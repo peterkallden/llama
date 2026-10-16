@@ -246,6 +246,10 @@ struct common_agent_daemon_tool_payload {
     // Set by an authenticated caller when its write authority is narrower
     // than the daemon's configured profile. Empty preserves native defaults.
     std::optional<bool> allow_policy_gated_writes;
+    bool read_only_only = false;
+    bool mcp_app_call = false;
+    std::string mcp_app_tool_name;
+    std::string mcp_app_resource_uri;
 };
 
 struct common_agent_daemon_session_payload {
@@ -354,6 +358,11 @@ struct common_agent_daemon_tool_status {
     std::string description;
     std::string source;
     std::string state = "active";
+    std::string input_schema;
+    std::string output_schema;
+    std::string ui_metadata;
+    bool read_only = false;
+    bool policy_gated = false;
 };
 
 struct common_agent_daemon_readiness {

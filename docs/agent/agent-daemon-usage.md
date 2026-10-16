@@ -419,6 +419,14 @@ resolved tool view. Inbound MCP `tools/list` publishes the same canonical
 schema as `outputSchema`, describing the tool's `structuredContent` rather than
 the surrounding MCP response envelope. Planner bindings use the schema field
 types; compact result descriptions shown to a model are a separate projection.
+MCP UI metadata is preserved alongside the schema. The daemon publishes the
+first-party Data Explorer and Workflow Inspector as `text/html;profile=mcp-app`
+resources and links them to dataset inspection and `plan.get` tools. The web
+adapter exposes a sandboxed MCP App host: it fetches each UI resource through
+its owning provider and brokers app tool calls through the daemon. App calls
+are limited to app-visible read-only tools from that same provider; the iframe
+does not receive bearer tokens or provider credentials. The web client's
+direct Data Explorer uses the same host-side read-only enforcement.
 Executor exceptions and transport failures retain their stable error code,
 failure class and retryability while exposing only a safe summary to the
 caller. Raw diagnostics stay on the daemon side, and failed calls do not stop
@@ -1381,6 +1389,19 @@ operations; provider readiness is evaluated at daemon startup and a reload
 that changes providers requires a restart for a fresh probe.
 
 ## Current limitations
+
+The web client includes a bounded MCP Apps host for app resources advertised by
+the daemon. It negotiates `io.modelcontextprotocol/ui` with the HTML app MIME
+type, follows the `ui/initialize` handshake, and uses a data-origin sandbox
+proxy between the host page and the app view. It brokers `tools/call` only to
+explicitly app-visible read-only tools from the owning provider and permits
+`resources/read` only for the app's own declared UI resource. It also displays
+`ui/message`; unsupported app RPC methods are rejected. An app cannot select a
+provider, access a credential, invoke a write/policy-gated tool, or fetch
+arbitrary resources. MCP `readOnlyHint` is treated as an eligibility
+declaration, not as authority: the daemon still applies its own read-only and
+policy checks. The view receives no daemon token; network access is denied
+unless a sanitized resource-domain policy explicitly allows static content.
 
 - foreground process only;
 - stdin/stdout remains the local administrative transport; JSONL TCP is

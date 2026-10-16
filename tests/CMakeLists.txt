@@ -502,6 +502,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-workflow-grounding.cpp
         test-agent-execution-envelope.cpp
         test-agent-daemon-scope.cpp
+        test-agent-mcp-app-bridge.cpp
     )
         # The Cozo plan-store test references the optional implementation,
         # which is only compiled when the plan Cozo backend is enabled.
@@ -586,6 +587,15 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-execution-envelope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tool-provider)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-mcp-app-bridge")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-tool-provider llama-agent-mcp-server)
+            if (MSVC)
+                target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+            endif()
         endif()
         if (TEST_NAME STREQUAL "test-agent-prepared-generation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/runtime)

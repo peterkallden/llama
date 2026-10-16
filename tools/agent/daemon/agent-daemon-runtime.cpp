@@ -9,6 +9,7 @@
 #include "../runtime/agent-server-context-host.h"
 #include "hash/hash.h"
 #include "tools/server/server-context.h"
+#include "../mcp/agent-mcp-server-tool-registry.h"
 #include "llama.h"
 #include "agent/agent-scope.h"
 #include "agent/agent-bootstrap.h"
@@ -1518,11 +1519,64 @@ bool initialize_agent_daemon_environment(
             callback_error = "daemon tool executor resolved no tool view";
             return false;
         }
+        if (!payload.mcp_app_resource_uri.empty()) {
+            if (payload.mcp_app_resource_uri.rfind("ui://llama-agent/apps/", 0) == 0) {
+                const auto & chat_tools = tooling.tool_view->chat_tools();
+                const auto tool = std::find_if(chat_tools.begin(), chat_tools.end(), [&](const common_chat_tool & candidate) {
+                    return candidate.name == payload.tool_name;
+                });
+                if (tool == chat_tools.end()) {
+                    callback_error = "MCP App resource owner tool is unavailable";
+                    return false;
+                }
+                const auto metadata = nlohmann::ordered_json::parse(tool->mcp_ui_metadata, nullptr, false);
+                const auto visibility = metadata.is_object()
+                    ? metadata.value("visibility", nlohmann::ordered_json::array())
+                    : nlohmann::ordered_json::array();
+                if (!metadata.is_object() || metadata.value("resourceUri", std::string()) != payload.mcp_app_resource_uri ||
+                        !visibility.is_array() || std::find(visibility.begin(), visibility.end(), "app") == visibility.end()) {
+                    callback_error = "first-party MCP App resource is not linked to the requested tool";
+                    return false;
+                }
+                nlohmann::ordered_json resource;
+                if (!agent_mcp_read_first_party_app_resource(payload.mcp_app_resource_uri, resource, callback_error)) return false;
+                const auto & item = resource["contents"][0];
+                nlohmann::ordered_json normalized = {
+                    {"uri", item.value("uri", std::string())},
+                    {"name", item.value("name", std::string())},
+                    {"mime_type", item.value("mimeType", std::string())},
+                    {"text", item.value("text", std::string())},
+                    {"_meta", item.value("_meta", nlohmann::ordered_json::object())},
+                };
+                result = {};
+                result.ok = true;
+                result.tool_name = payload.tool_name;
+                result.content_json = normalized.dump();
+                result.content_summary = "MCP App UI resource loaded";
+                callback_error.clear();
+                return true;
+            }
+            if (!tooling.tool_view->read_mcp_app_resource(
+                    payload.tool_name, payload.mcp_app_resource_uri, result, callback_error)) {
+                return false;
+            }
+            return result.ok;
+        }
         agent_tool_call call{"daemon-mcp-tool", payload.tool_name, payload.arguments_json};
         if (!tooling.tool_view->validate(call, callback_error)) {
             return false;
         }
-        result = tooling.tool_view->call(call, callback_error);
+        if (payload.read_only_only &&
+                (!tooling.tool_view->is_read_only(payload.tool_name) ||
+                 tooling.tool_view->is_policy_gated(payload.tool_name))) {
+            callback_error = "tool is not available through the read-only web tool endpoint";
+            return false;
+        }
+        if (payload.mcp_app_call) {
+            if (!tooling.tool_view->call_mcp_app_tool(payload.mcp_app_tool_name, call, result, callback_error)) return false;
+        } else {
+            result = tooling.tool_view->call(call, callback_error);
+        }
         return result.ok;
     };
     configure_agent_daemon_provider_probe(options, runtime);

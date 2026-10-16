@@ -840,6 +840,7 @@ target_link_libraries(llama-agent-mcp-server
     PRIVATE
         cpp-httplib
 )
+target_link_libraries(llama-agent-runtime-support PUBLIC llama-agent-mcp-server)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-mcp-server PROPERTIES
         POSITION_INDEPENDENT_CODE ON
