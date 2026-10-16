@@ -1,4 +1,5 @@
 #include "agent/tooling/adapters/tool-adapters.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "agent/artifact/artifact-contract.h"
@@ -31,6 +32,7 @@ public:
         out.size_bytes = request.text.size();
         out.sha256 = std::to_string(request.text.size());
         resources[out.uri] = out;
+        available_uris.insert(out.uri);
         contents[out.uri] = request.bytes_are_authoritative ? request.bytes : request.text;
         return true;
     }
@@ -55,6 +57,11 @@ public:
         return read_text(uri,authority,max_bytes,out,error);
     }
     bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
+        const auto stored = resources.find(uri);
+        if (stored != resources.end()) {
+            out = stored->second;
+            return true;
+        }
         if (available_uris.count(uri) == 0) {
             error = "resource was not found";
             return false;
@@ -75,6 +82,45 @@ public:
     std::set<std::string> available_uris;
     std::map<std::string,agent_resource_descriptor> resources;
     std::map<std::string,std::string> contents;
+};
+
+class test_docx_processing_provider final : public agent_resource_processing_provider {
+public:
+    test_docx_processing_provider(
+            test_resource_store & store,
+            bool & called,
+            agent_resource_processing_binding_request & observed_request)
+        : store_(store), called_(called), observed_request_(observed_request) {}
+
+    agent_resource_processing_result process(
+            const agent_resource_processing_binding_request & request) const override {
+        called_ = true;
+        observed_request_ = request;
+        agent_resource_processing_result result;
+        result.success = true;
+        agent_resource_put_request put;
+        put.name = "pandoc-output.docx";
+        put.mime_type = request.target_media_type;
+        put.bytes = "test-docx-bytes";
+        put.bytes_are_authoritative = true;
+        put.scope = common_runtime_resource_scope::session;
+        put.namespace_id = request.authority.namespace_id;
+        put.session_id = request.authority.session_id;
+        put.project_id = request.authority.project_id;
+        put.turn_id = request.authority.turn_id;
+        put.source_provider = "resource_processor";
+        put.source_tool = "pandoc-markdown-docx-v1";
+        agent_resource_descriptor descriptor;
+        std::string error;
+        assert(store_.put_bytes(put, descriptor, error));
+        result.resources.push_back(descriptor);
+        return result;
+    }
+
+private:
+    test_resource_store & store_;
+    bool & called_;
+    agent_resource_processing_binding_request & observed_request_;
 };
 
 class test_data_store final : public common_agent_data_store {
@@ -145,6 +191,20 @@ public:
 };
 
 int main() {
+    // Report export feeds Markdown to the processor and requests DOCX. The
+    // configured DOCX policy must therefore be selected for text/markdown,
+    // not only for DOCX inputs that are being read.
+    std::map<std::string, agent_resource_processor_execution_policy> pandoc_policies;
+    agent_resource_processor_execution_policy pandoc_policy;
+    pandoc_policy.execution = "local_required";
+    pandoc_policy.backend = "local";
+    pandoc_policy.executable = "pandoc";
+    pandoc_policies.emplace("docx.text", pandoc_policy);
+    const auto markdown_to_docx_dispatch = resolve_agent_resource_processor_dispatch({
+        pandoc_policies, "text/markdown", "", true, false});
+    assert(markdown_to_docx_dispatch.has_policy(agent_resource_processor_kind::pandoc));
+    assert(markdown_to_docx_dispatch.wants_local_for(agent_resource_processor_kind::pandoc));
+
     const auto fetched_payload = common_tool_web_fetch_inline_result_to_json({
         "https://example.test/openapi.json", "https://example.test/openapi.json", 200,
         "application/json", "spec", "{}", 2, false, "resource://session/spec-1"});
@@ -438,6 +498,12 @@ int main() {
     foundation_bindings.plan_store = &plans;
     std::string active_report_plan_id = report_plan.id;
     foundation_bindings.plan_id = &active_report_plan_id;
+    bool docx_processing_called = false;
+    agent_resource_processing_binding_request docx_processing_request;
+    foundation_bindings.resource_processing_provider_factory = [&](const auto &) {
+        return std::make_shared<test_docx_processing_provider>(foundation_resources,
+            docx_processing_called, docx_processing_request);
+    };
     foundation_bindings.diagnostics_symbol = [](const std::string &) {
         return common_tool_execution_result::success(
             R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
@@ -709,6 +775,21 @@ int main() {
     const auto retried_report=nlohmann::json::parse(result.output);
     assert(retried_report.value("manifest_resource",std::string{})==report_export.value("manifest_resource",std::string{}));
     assert(foundation_resources.requests.size()==writes_before_retry);
+    result = foundation_registry.execute({"artifact.export", R"({"format":"docx","name":"grounded-report"})"});
+    assert(result.ok);
+    assert(docx_processing_called);
+    assert(docx_processing_request.source_uri == retried_report.value("markdown_resource", std::string{}));
+    assert(docx_processing_request.target_representation == "docx");
+    assert(docx_processing_request.target_media_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert(docx_processing_request.purpose == agent_resource_processing_purpose::artifact_generation);
+    const auto docx_export = nlohmann::json::parse(result.output);
+    assert(docx_export.value("format", std::string{}) == "docx" &&
+        docx_export.value("mime_type", std::string{}) == "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert(std::any_of(foundation_resources.requests.begin(), foundation_resources.requests.end(), [](const auto & request) {
+        return request.source_tool == "artifact.export" &&
+            request.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+            request.text == "test-docx-bytes";
+    }));
     result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
     assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
            foundation_resources.last_request.mime_type == "text/csv" &&

@@ -59,6 +59,9 @@ common_agent_sandbox_policy make_sandbox_policy(
                 class_default != 0) {
             policy.limits.timeout_ms = class_default;
         }
+        if (agent_resource_processor_default_sandbox_artifact_write(execution_class)) {
+            policy.filesystem = common_agent_sandbox_filesystem_scope::artifact_write;
+        }
     }
     policy.execution_class = execution_class;
     if (!image.empty()) policy.image = image;
@@ -86,7 +89,11 @@ std::shared_ptr<agent_resource_processing_host> make_processing_host(
 
 agent_pandoc_options pandoc_options_for_source(const std::string & source_type) {
     agent_pandoc_options options;
-    if (source_type == "application/vnd.oasis.opendocument.text") {
+    if (source_type == "text/markdown") {
+        options.input_format = "markdown";
+        options.output_format = "docx";
+        options.output_extension = "docx";
+    } else if (source_type == "application/vnd.oasis.opendocument.text") {
         options.input_format = "odt";
         options.output_format = "markdown";
         options.output_extension = "md";

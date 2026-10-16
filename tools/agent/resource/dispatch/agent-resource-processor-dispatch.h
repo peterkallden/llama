@@ -118,7 +118,7 @@ inline agent_resource_processor_dispatch_selection resolve_agent_resource_proces
         result.policies[result.index(agent_resource_processor_kind::pandoc)] = odt_policy;
     } else if (request.source_type == "text/html") {
         result.policies[result.index(agent_resource_processor_kind::pandoc)] = html_policy;
-    } else if (request.source_type ==
+    } else if (request.source_type == "text/markdown" || request.source_type ==
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
             request.source_type.empty()) {
         result.policies[result.index(agent_resource_processor_kind::pandoc)] = docx_policy;

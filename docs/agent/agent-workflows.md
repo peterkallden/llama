@@ -586,6 +586,15 @@ active project exists, otherwise session scope, and lineage links snapshot,
 report and rendered output. Export is explicit in the workflow; it does not
 happen merely because a profile exists.
 
+DOCX export is available only when the host enables `resources.processor_policies.docx.text`,
+Pandoc is installed at the configured executable, and `sandbox.workspace.root`
+points to a writable host workspace. The processor runs as the bounded
+`resource.processor.pandoc` class with artifact-only filesystem access and no
+network; an explicit sandbox class can further restrict its limits. Without
+this host setup, Markdown and structured JSON publication remain available,
+but a requested DOCX export fails as unavailable rather than silently
+publishing Markdown in its place.
+
 Profiles define presentation and coverage, not tool authority. Workflows
 orchestrate and resume sections; blueprints/routes select the method;
 `artifact.export` publishes the composed result. A published report revision is
