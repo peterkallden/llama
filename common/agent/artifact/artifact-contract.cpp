@@ -1,4 +1,5 @@
 #include "artifact-contract.h"
+#include "artifact-sources.h"
 #include "hash/hash.h"
 
 #include <nlohmann/json.hpp>
@@ -93,7 +94,8 @@ json snapshot_material(const common_agent_artifact_snapshot & s) {
     }
     for (const auto & a:s.assumptions) material["assumptions"].push_back({{"id",a.id},{"statement",a.statement},
         {"valid",a.valid},{"confidence",a.confidence},{"evidence_ids",a.evidence_ids}});
-    for (const auto & s0:s.research_sources) material["research_sources"].push_back({{"id",s0.source_id},
+    for (const auto & s0:s.research_sources) {
+        material["research_sources"].push_back({{"id",s0.source_id},
         {"title",s0.title},{"origin",s0.origin},{"authority",s0.authority},{"retrieved_at",s0.retrieved_at},
         {"content_hash",s0.content_hash},{"kind",static_cast<int>(s0.kind)},
         {"resource_ref",s0.resource_ref?json{{"uri",s0.resource_ref->uri},{"name",s0.resource_ref->name},
@@ -105,6 +107,15 @@ json snapshot_material(const common_agent_artifact_snapshot & s) {
         {"quality_score",s0.quality_score},
         {"primary_source",s0.primary_source},{"memory_id",s0.memory_id},{"availability",static_cast<int>(s0.availability)},
         {"role",s0.role},{"required",s0.required}});
+        // V1–V3 keep their original canonical form and fingerprints. V4
+        // preserves the provenance already present on workspace resources.
+        if(s.schema_version>=4&&s0.resource_ref){
+            auto & ref=material["research_sources"].back()["resource_ref"];
+            ref["source_provider"]=s0.resource_ref->metadata.source_provider;
+            ref["source_operation"]=s0.resource_ref->metadata.source_operation;
+            ref["source_request_json"]=s0.resource_ref->metadata.source_request_json;
+        }
+    }
     for (const auto & e:s.research_evidence) material["research_evidence"].push_back({{"id",e.evidence_id},
         {"source_id",e.source_id},{"claim_id",e.claim_id},{"statement",e.statement},{"source_location",e.source_location},
         {"relation",research_relation(e.relation)},{"origin",research_origin(e.origin)},{"relevance",e.relevance},
@@ -262,7 +273,7 @@ bool common_agent_artifact_snapshot_from_plan(const common_plan_state & plan,
         return true;
     }
     out = {};
-    out.schema_version = 3;
+    out.schema_version = 4;
     out.id = "snapshot:" + plan.id;
     out.source_plan_id = plan.id; out.plan_version = plan.version;
     out.profile_id = profile.id; out.profile_revision = profile.revision;
@@ -543,7 +554,10 @@ bool common_agent_artifact_document_to_json(const common_agent_artifact_document
     for(const auto & source:d.source_bibliography)value["source_bibliography"].push_back({{"source_id",source.source_id},
         {"title",source.title},{"origin",source.origin},{"resource_uri",source.resource_uri},
         {"retrieved_at",source.retrieved_at},{"content_hash",source.content_hash},
-        {"evidence_ids",source.evidence_ids},{"locations",source.locations}});
+        {"evidence_ids",source.evidence_ids},{"locations",source.locations},
+        {"original_uri",source.original_uri},{"resolved_uri",source.resolved_uri},{"file_name",source.file_name},
+        {"source_provider",source.source_provider},{"source_operation",source.source_operation},
+        {"request_summary",source.request_summary}});
     out=value.dump(); error.clear(); return true;
 }
 
@@ -771,7 +785,7 @@ bool common_agent_artifact_snapshot_from_json(const std::string & text,
         common_agent_artifact_snapshot & s, std::string & error) {
     const auto value = json::parse(text, nullptr, false);
     const int schema_version=value.is_object()?value.value("schema_version",0):0;
-    if (!value.is_object() || (schema_version != 1 && schema_version != 2 && schema_version != 3) ||
+    if (!value.is_object() || (schema_version != 1 && schema_version != 2 && schema_version != 3 && schema_version != 4) ||
             !value.contains("observations") || !value["observations"].is_array() ||
             !value.contains("assumptions") || !value["assumptions"].is_array()) {
         error = "unsupported or malformed artifact snapshot";
@@ -877,6 +891,12 @@ bool common_agent_artifact_snapshot_from_json(const std::string & text,
         source.availability=static_cast<common_agent_research_source_availability>(item.value("availability",1));source.role=item.value("role",std::string("reference"));source.required=item.value("required",false);
         if(item.contains("resource_ref")&&item["resource_ref"].is_object()){const auto & r=item["resource_ref"];common_runtime_resource_ref ref;ref.uri=r.value("uri",std::string{});ref.name=r.value("name",std::string{});ref.description=r.value("description",std::string{});ref.mime_type=r.value("mime_type",std::string{});ref.size_bytes=r.value("size_bytes",size_t(0));ref.scope=static_cast<common_runtime_resource_scope>(r.value("scope",0));ref.metadata.content_hash=r.value("content_hash",std::string{});ref.metadata.retrieved_at=r.value("retrieved_at",int64_t(0));ref.metadata.processing_cache_key=r.value("processing_cache_key",std::string{});ref.lineage.parent_uri=r.value("parent_uri",std::string{});ref.lineage.derivation=r.value("derivation",std::string{});if(!ref.uri.empty())source.resource_ref=std::move(ref);}
         else {const auto uri=item.value("resource_uri",std::string{});if(!uri.empty()){common_runtime_resource_ref ref;ref.uri=uri;source.resource_ref=ref;}}
+        if(source.resource_ref&&item.contains("resource_ref")&&item["resource_ref"].is_object()){
+            const auto & ref=item["resource_ref"];
+            source.resource_ref->metadata.source_provider=ref.value("source_provider",std::string{});
+            source.resource_ref->metadata.source_operation=ref.value("source_operation",std::string{});
+            source.resource_ref->metadata.source_request_json=ref.value("source_request_json",std::string{});
+        }
         s.research_sources.push_back(std::move(source));
     }
     for(const auto & item:value.value("research_evidence",json::array())) if(item.is_object()) {
@@ -910,46 +930,7 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
     if(!common_agent_artifact_snapshot_from_plan(plan,profile,snapshot,error))return false;
     out={};out.id=requested_report_id.empty()?"report:"+plan.id:requested_report_id;out.title=profile.title;out.purpose=profile.purpose;out.profile_id=profile.id;
     out.profile_revision=profile.revision;out.snapshot_uri=snapshot_uri;out.snapshot_fingerprint=snapshot.fingerprint;out.source_plan_id=plan.id;out.source_plan_version=snapshot.plan_version;
-    std::map<std::string,common_agent_artifact_source_citation> citations;
-    for(const auto & source:snapshot.research_sources){
-        auto & citation=citations[source.source_id];citation.source_id=source.source_id;citation.title=source.title;
-        citation.origin=source.origin;citation.retrieved_at=source.retrieved_at;citation.content_hash=source.content_hash;
-        if(source.resource_ref)citation.resource_uri=source.resource_ref->uri;
-    }
-    for(const auto & evidence:snapshot.research_evidence){
-        auto & citation=citations[evidence.source_id];citation.source_id=evidence.source_id;
-        if(std::find(citation.evidence_ids.begin(),citation.evidence_ids.end(),evidence.evidence_id)==citation.evidence_ids.end())citation.evidence_ids.push_back(evidence.evidence_id);
-        if(!evidence.source_location.empty()&&std::find(citation.locations.begin(),citation.locations.end(),evidence.source_location)==citation.locations.end())citation.locations.push_back(evidence.source_location);
-    }
-    for(const auto & observation:snapshot.observations){
-        for(const auto & resource:observation.resource_refs){
-            // The workspace source remains authoritative when the plan also
-            // carries its resource. Do not publish a second citation for it.
-            const auto existing=std::find_if(citations.begin(),citations.end(),[&](const auto & entry){
-                return entry.second.resource_uri==resource.uri &&
-                    (entry.second.content_hash.empty() || resource.metadata.content_hash.empty() ||
-                     entry.second.content_hash==resource.metadata.content_hash);
-            });
-            if(existing!=citations.end()){
-                auto & citation=existing->second;
-                if(citation.title.empty())citation.title=resource.name;
-                if(citation.content_hash.empty())citation.content_hash=resource.metadata.content_hash;
-                if(citation.retrieved_at.empty()&&resource.metadata.retrieved_at>0)
-                    citation.retrieved_at=std::to_string(resource.metadata.retrieved_at);
-                continue;
-            }
-            auto & citation=citations[resource.uri];citation.source_id=resource.uri;
-            if(citation.title.empty())citation.title=resource.name;
-            citation.resource_uri=resource.uri;
-            if(resource.metadata.retrieved_at>0)citation.retrieved_at=std::to_string(resource.metadata.retrieved_at);
-            if(!resource.metadata.content_hash.empty())citation.content_hash=resource.metadata.content_hash;}
-        for(const auto & dataset:observation.dataset_refs){auto & citation=citations[dataset.uri];citation.source_id=dataset.uri;
-            if(citation.title.empty())citation.title=dataset.name;
-            citation.resource_uri=dataset.uri;
-            if(dataset.retrieved_at>0)citation.retrieved_at=std::to_string(dataset.retrieved_at);
-            if(!dataset.content_hash.empty())citation.content_hash=dataset.content_hash;}
-    }
-    for(auto & entry:citations)out.source_bibliography.push_back(std::move(entry.second));
+    out.source_bibliography=common_agent_artifact_collect_sources(snapshot);
     uint64_t max_revision=0;std::string latest_report_uri;bool same_snapshot_found=false;
     for(const auto & observation:plan.observations){if(observation.source!="artifact.export")continue;const auto prior=json::parse(observation.summary,nullptr,false);if(!prior.is_object()||prior.value("report_id",std::string{})!=out.id)continue;
         const auto revision=prior.value("revision",uint64_t(0));if(revision<1)continue;
@@ -1033,7 +1014,7 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
         error="artifact Markdown renderer version is malformed";return false;
     }
     d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
-    if(d.markdown_renderer_version<1||d.markdown_renderer_version>2){
+    if(d.markdown_renderer_version<1||d.markdown_renderer_version>3){
         error="unsupported artifact Markdown renderer version";return false;
     }
     d.profile_id=v.value("profile_id",std::string{}); d.profile_revision=v.value("profile_revision",std::string{});
@@ -1046,6 +1027,9 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
         common_agent_artifact_source_citation source;source.source_id=item.value("source_id",std::string{});source.title=item.value("title",std::string{});
         source.origin=item.value("origin",std::string{});source.resource_uri=item.value("resource_uri",std::string{});source.retrieved_at=item.value("retrieved_at",std::string{});
         source.content_hash=item.value("content_hash",std::string{});source.evidence_ids=item.value("evidence_ids",std::vector<std::string>{});source.locations=item.value("locations",std::vector<std::string>{});
+        source.original_uri=item.value("original_uri",std::string{});source.resolved_uri=item.value("resolved_uri",std::string{});
+        source.file_name=item.value("file_name",std::string{});source.source_provider=item.value("source_provider",std::string{});
+        source.source_operation=item.value("source_operation",std::string{});source.request_summary=item.value("request_summary",std::string{});
         d.source_bibliography.push_back(std::move(source));
     }
     for (const auto & sj : v["sections"]) {
@@ -1082,6 +1066,7 @@ bool common_agent_artifact_render_markdown(const common_agent_artifact_document 
     if(!d.source_bibliography.empty()){
         out+="## Sources\n\n";
         for(const auto & source:d.source_bibliography){
+            if(d.markdown_renderer_version>=3){out+=common_agent_artifact_render_source(source);continue;}
             out+="- "+(source.title.empty()?source.source_id:source.title);
             if(!source.origin.empty())out+=" ("+source.origin+")";
             if(!source.resource_uri.empty())out+=" — "+source.resource_uri;

@@ -3,7 +3,8 @@ set(TARGET llama-agent-core)
 # Shared report contracts are consumed by both the runtime core and native
 # artifact adapters. Keep them in a small dependency below both targets rather
 # than introducing a core <-> tooling link cycle.
-add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifact-contract.h)
+add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifact-contract.h
+    artifact/artifact-sources.cpp artifact/artifact-sources.h)
 target_include_directories(llama-agent-artifact PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-artifact PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan PRIVATE vendor::hash)

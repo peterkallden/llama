@@ -1,5 +1,6 @@
 #include "plan-sqlite.h"
 #include "plan/plan-workflow-verification.h"
+#include "plan/plan-resource-provenance-json.h"
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
@@ -43,18 +44,16 @@ common_plan_operation_kind parse_operation_kind(const std::string & value) {
 }
 
 json serialize_plan_resource_ref(const common_runtime_resource_ref & resource) {
-    return {{"uri", resource.uri}, {"name", resource.name},
+    json value={{"uri", resource.uri}, {"name", resource.name},
         {"description", resource.description}, {"mime_type", resource.mime_type},
         {"size_bytes", resource.size_bytes},
         {"scope", common_runtime_resource_scope_name(resource.scope)},
         {"metadata", {{"purpose", resource.metadata.purpose},
             {"content_summary", resource.metadata.content_summary},
             {"usage_hint", resource.metadata.usage_hint}, {"limitations", resource.metadata.limitations},
-            {"keywords", resource.metadata.keywords}, {"entities", resource.metadata.entities}}},
-        {"lineage", {{"parent_uri", resource.lineage.parent_uri},
-            {"chunk_index", resource.lineage.chunk_index}, {"chunk_count", resource.lineage.chunk_count},
-            {"byte_offset", resource.lineage.byte_offset}, {"byte_length", resource.lineage.byte_length},
-            {"overlap_bytes", resource.lineage.overlap_bytes}, {"derivation", resource.lineage.derivation}}}};
+            {"keywords", resource.metadata.keywords}, {"entities", resource.metadata.entities}}}};
+    common_plan_resource_provenance_to_json(resource,value);
+    return value;
 }
 
 common_runtime_resource_ref parse_plan_resource_ref(const json & value) {
@@ -76,16 +75,7 @@ common_runtime_resource_ref parse_plan_resource_ref(const json & value) {
         resource.metadata.keywords = metadata.value("keywords", std::vector<std::string>{});
         resource.metadata.entities = metadata.value("entities", std::vector<std::string>{});
     }
-    if (value.contains("lineage") && value["lineage"].is_object()) {
-        const auto & lineage = value["lineage"];
-        resource.lineage.parent_uri = lineage.value("parent_uri", std::string{});
-        resource.lineage.chunk_index = lineage.value("chunk_index", size_t(0));
-        resource.lineage.chunk_count = lineage.value("chunk_count", size_t(0));
-        resource.lineage.byte_offset = lineage.value("byte_offset", size_t(0));
-        resource.lineage.byte_length = lineage.value("byte_length", size_t(0));
-        resource.lineage.overlap_bytes = lineage.value("overlap_bytes", size_t(0));
-        resource.lineage.derivation = lineage.value("derivation", std::string{});
-    }
+    common_plan_resource_provenance_from_json(value,resource);
     return resource;
 }
 

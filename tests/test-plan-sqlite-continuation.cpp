@@ -34,6 +34,11 @@ int main() {
     observation.dataset_refs.push_back({"dataset://import/one", "catalogue", 250, 8,
         "resource://eurostat/toc", "text/tab-separated-values", "", "", "", 0, "hash-1"});
     observation.resource_refs.push_back({"resource://eurostat/toc", "toc", "", "text/plain", 4096});
+    observation.resource_refs.back().metadata.source_provider="native";
+    observation.resource_refs.back().metadata.source_operation="web.fetch";
+    observation.resource_refs.back().metadata.source_request_json=R"({"url":"https://example.org/catalogue"})";
+    observation.resource_refs.back().metadata.retrieved_at=1234;
+    observation.resource_refs.back().metadata.content_hash="sha256:catalogue";
     plan.observations.push_back(observation);
     plan.workflow_definition = common_plan_workflow_definition{};
     plan.workflow_definition->workflow_ref = "workflow://eurostat/catalog";
@@ -106,6 +111,10 @@ int main() {
     assert(restored->observations.front().dataset_refs.front().content_hash == "hash-1");
     assert(restored->observations.front().resource_refs.size() == 1 &&
         restored->observations.front().resource_refs.front().uri == "resource://eurostat/toc");
+    const auto & metadata=restored->observations.front().resource_refs.front().metadata;
+    assert(metadata.source_provider=="native"&&metadata.source_operation=="web.fetch");
+    assert(metadata.source_request_json==R"({"url":"https://example.org/catalogue"})");
+    assert(metadata.retrieved_at==1234&&metadata.content_hash=="sha256:catalogue");
     assert(restored->workflow_definition && restored->workflow_definition->workflow_ref == "workflow://eurostat/metadata");
     assert(restored->workflow_definition->preferred_thinking_mode == "deliberate");
     assert(restored->workflow_definition->require_declared_claims);

@@ -39,7 +39,7 @@ int main() {
     common_agent_artifact_snapshot snapshot;
     assert(common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error));
     assert(snapshot.plan_version == 7 && snapshot.observations.size() == 1);
-    assert(snapshot.schema_version==3&&snapshot.fingerprint.rfind("sha256:",0)==0);
+    assert(snapshot.schema_version==4&&snapshot.fingerprint.rfind("sha256:",0)==0);
     std::string serialized;
     assert(common_agent_artifact_snapshot_to_json(snapshot, serialized, error));
     const std::string original_snapshot_json=serialized;
@@ -65,6 +65,9 @@ int main() {
     research.sources.back().required = true;
     research.sources.back().availability = common_agent_research_source_availability::materialized_context;
     research.sources.back().resource_ref = source;
+    research.sources.back().resource_ref->metadata.source_provider="public-api";
+    research.sources.back().resource_ref->metadata.source_operation="search";
+    research.sources.back().resource_ref->metadata.source_request_json=R"({"search":"measured result","year":2026})";
     common_agent_research_evidence research_evidence;
     research_evidence.evidence_id = "evidence-1";
     research_evidence.source_id = "source-1";
@@ -98,6 +101,11 @@ int main() {
     common_agent_artifact_snapshot research_restored;
     assert(common_agent_artifact_snapshot_from_json(serialized, research_restored, error));
     assert(research_restored.research_evidence.front().source_location == "Results, paragraph 2");
+    assert(research_restored.research_sources.front().resource_ref->metadata.source_request_json==
+        research.sources.front().resource_ref->metadata.source_request_json);
+    auto provenance_tampered=json::parse(serialized);
+    provenance_tampered["research_sources"][0]["resource_ref"]["source_request_json"]="{}";
+    assert(!common_agent_artifact_snapshot_from_json(provenance_tampered.dump(),research_restored,error));
     auto tampered = json::parse(serialized);
     tampered["research_evidence"][0]["statement"] = "tampered";
     assert(!common_agent_artifact_snapshot_from_json(tampered.dump(), research_restored, error));
@@ -423,7 +431,7 @@ int main() {
     assert(common_agent_artifact_document_to_json(optional_empty_document,current_document_json,error));
     common_agent_artifact_document renderer_roundtrip;
     assert(common_agent_artifact_document_from_json(current_document_json,renderer_roundtrip,error));
-    assert(renderer_roundtrip.markdown_renderer_version==2);
+    assert(renderer_roundtrip.markdown_renderer_version==3);
     auto legacy_document_json=json::parse(current_document_json);
     legacy_document_json.erase("markdown_renderer_version");
     assert(common_agent_artifact_document_from_json(legacy_document_json.dump(),renderer_roundtrip,error));

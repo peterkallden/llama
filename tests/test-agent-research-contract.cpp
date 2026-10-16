@@ -49,9 +49,12 @@ public:
     common_tool_execution_result execute(const common_agent_tool_call & call) const override {
         last_executed_name = call.name;
         last_executed_arguments = call.arguments_json;
-        return common_tool_execution_result::success(
+        auto result=common_tool_execution_result::success(
             R"({"ok":true,"result":{"content":"Host-read exact source sentence."}})",
-            "Readable text resource materialized.", {resource});
+            "Readable text resource materialized.", resource.uri.empty()?
+                std::vector<common_runtime_resource_ref>{}:std::vector<common_runtime_resource_ref>{resource});
+        if(call.name=="web.fetch")result.http.requested_url="https://example.test/paper.pdf?token=not-for-export";
+        return result;
     }
 
     common_runtime_resource_ref resource;
@@ -226,6 +229,9 @@ int main() {
     assert(canonical_event.type == common_agent_research_event_type::task_completed);
 
     canonical_action.task_id = "fetch-task";
+    canonical_runtime.resource.uri="agent-resource://new-fetch";
+    canonical_runtime.resource.metadata.content_hash="sha256:source-content";
+    canonical_runtime.resource.metadata.retrieved_at=1234;
     canonical_action.instruction = "https://example.test/paper.pdf";
     canonical_action.preferred_tools = {"web.fetch"};
     assert(canonical_adapter.execute(canonical_action, canonical_workspace, canonical_event, factory_error));
@@ -234,6 +240,24 @@ int main() {
     const auto research_fetch_arguments = nlohmann::json::parse(canonical_runtime.last_executed_arguments);
     assert(research_fetch_arguments.at("url") == "https://example.test/paper.pdf");
     assert(!research_fetch_arguments.contains("max_bytes"));
+    assert(canonical_workspace.sources.back().origin=="https://example.test/paper.pdf");
+    assert(canonical_workspace.sources.back().content_hash=="sha256:source-content");
+    assert(canonical_workspace.sources.back().retrieved_at=="1234");
+
+    // Different requests returning identical inline content must have the
+    // same content fingerprint, rather than manufacturing source diversity.
+    auto inline_workspace=factory_workspace;
+    inline_workspace.sources.clear();inline_workspace.evidence.clear();
+    inline_workspace.gaps.front().evidence_ids.clear();
+    canonical_runtime.resource={};
+    canonical_action.task_id="inline-first";
+    assert(canonical_adapter.execute(canonical_action,inline_workspace,canonical_event,factory_error));
+    canonical_action.task_id="inline-second";
+    canonical_action.instruction="https://example.test/other-request";
+    assert(canonical_adapter.execute(canonical_action,inline_workspace,canonical_event,factory_error));
+    assert(inline_workspace.sources.size()==2);
+    assert(inline_workspace.sources[0].content_hash.rfind("sha256:",0)==0);
+    assert(inline_workspace.sources[0].content_hash==inline_workspace.sources[1].content_hash);
 
     factory_workspace.gaps.front().status = common_agent_research_gap_status::open;
     factory_workspace.tasks.clear();

@@ -670,10 +670,33 @@ The bibliography reuses a research source when a plan observation refers to the
 same resource with a compatible fingerprint, retaining the research metadata
 instead of emitting a duplicate resource citation. Empty optional sections state
 that no findings were produced; they do not assert that a phenomenon is absent.
-Documents record `markdown_renderer_version` (currently 2). Documents without
+Documents record `markdown_renderer_version` (currently 3). Documents without
 that field retain version 1 rendering, so existing publication manifests remain
 verifiable. Format changes reuse the published document, including its renderer
 version and bibliography, rather than reconstructing an existing revision.
+
+New source bibliographies retain separate `original_uri`, `resolved_uri`,
+`resource_uri`, `file_name`, `source_provider`, `source_operation` and
+`request_summary` fields. Markdown and its derived DOCX show separate Original,
+Retrieved from (when redirected), and Saved source links. Titles fall back to
+the available filename, provider/operation, original URI, then source identity.
+No external address is inferred from a provider name. An API endpoint is shown
+when retained by the host; otherwise the saved result and available request
+arguments remain the reference. File names do not imply an external URI.
+
+The bounded request summary comes from host-retained executed arguments,
+including nested filters, search terms and periods. Pagination cursors, transport
+limits, headers and credentials are excluded. Omitted oversized arguments are
+identified; the full provenance remains in the source snapshot. Existing
+resource parent links connect PDF/OCR/chunk representations to captured original
+URLs without fetching them again. Missing ancestry remains unknown.
+Both persistent plan backends preserve resource request provenance and parent
+lineage across resume; Cozo also preserves the full dataset request provenance.
+
+Snapshot V4 includes the existing resource provider/operation/request metadata
+for research sources, so it survives export and readback. V1–V3 retain their
+original canonical forms and fingerprints. Markdown renderer versions 1 and 2
+also retain their earlier output when verifying published resources.
 
 The populated smoke also checks that the model context contains paired `S`/`E`
 handles and requires both fixture evidence records to be cited with their

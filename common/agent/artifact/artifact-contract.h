@@ -38,6 +38,7 @@ struct common_agent_artifact_section {
 struct common_agent_artifact_source_citation {
     std::string source_id, title, origin, resource_uri, retrieved_at, content_hash;
     std::vector<std::string> evidence_ids, locations;
+    std::string original_uri, resolved_uri, file_name, source_provider, source_operation, request_summary;
 };
 
 struct common_agent_artifact_section_context {
@@ -47,7 +48,7 @@ struct common_agent_artifact_section_context {
 };
 
 struct common_agent_artifact_snapshot {
-    int schema_version = 3;
+    int schema_version = 4;
     std::string id;
     std::string source_plan_id;
     uint64_t plan_version = 0;
@@ -71,7 +72,7 @@ struct common_agent_artifact_snapshot {
 
 struct common_agent_artifact_document {
     // Stored documents retain their renderer semantics for manifest readback.
-    uint32_t markdown_renderer_version = 2;
+    uint32_t markdown_renderer_version = 3;
     std::string id;
     std::string title;
     std::string purpose;

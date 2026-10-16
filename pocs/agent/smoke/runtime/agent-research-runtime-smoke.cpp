@@ -5,6 +5,7 @@
 #include "runtime/runtime-operation.h"
 
 #include <cstdio>
+#include <nlohmann/json.hpp>
 
 class deterministic_research_tools final : public common_agent_tool_runtime {
 public:
@@ -29,8 +30,14 @@ public:
                 "memory.get returned one deterministic memory record");
         }
         ++repository_search_calls;
+        // An independent-source query returns a distinct fixture source.
+        // Repeating identical matches must not manufacture source diversity.
+        const auto args=nlohmann::json::parse(call.arguments_json);
+        const auto query=args.value("query",std::string{});
+        const auto path=query.rfind("Find an authoritative source for:",0)==0
+            ? "common/runtime/runtime-operation.h" : "common/agent/agent-runtime.cpp";
         return common_tool_execution_result::success(
-            "{\"matches\":[{\"path\":\"common/agent\",\"line\":1}]}",
+            nlohmann::json{{"matches",nlohmann::json::array({{{"path",path},{"line",1}}})}}.dump(),
             "repository.search returned one deterministic repository match");
     }
 

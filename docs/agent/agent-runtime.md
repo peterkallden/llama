@@ -894,7 +894,7 @@ objective, source records, evidence relations and locations, comparisons,
 gaps and source coverage. Plan observations retain resource and dataset
 references, timestamps and confidence. Later sections reuse this snapshot.
 
-New snapshots use schema v3 and a versioned SHA-256 fingerprint; v1/v2
+New snapshots use schema v4 and a versioned SHA-256 fingerprint; v1/v2/v3
 snapshots retain their historical fingerprint verification and identity when
 read. Snapshot creation persists a real validated Research Workspace
 checkpoint reference before freezing the snapshot; it does not manufacture a
@@ -975,6 +975,24 @@ content revision. The host emits a deterministic source bibliography from the
 frozen snapshot, including available title, origin, resource URI, retrieval
 time, content hash, evidence IDs and source locations, in both report JSON and
 Markdown. DOCX is converted from that same Markdown revision.
+
+New report documents use Markdown renderer version 3. Sources show independent
+links to the original URI, any captured redirect destination, and the saved
+resource or dataset. Missing titles fall back to the available filename and
+provider/operation; absent external addresses remain unknown. Host-retained
+executed arguments provide a bounded API request summary (search terms, filters,
+periods and sort order), excluding pagination cursors and transport/auth fields.
+Resource ancestry connects PDF/OCR/chunk representations to captured source
+addresses without another fetch. The bibliography projection lives in
+`common/agent/artifact/artifact-sources.cpp` and is shared by report JSON and
+Markdown/DOCX export.
+
+Snapshot v4 preserves research-resource provider/operation/request metadata.
+Both plan backends retain resource provenance through reopen/resume, and Cozo
+also retains dataset request provenance. Research uses known resource content
+hashes or SHA-256 of actual inline results; request text and internal URIs are
+not content hashes. Previously published documents retain their renderer
+version and exact stored JSON across retries and format changes.
 
 The first common contract slice is implemented in
 `common/agent/dataset-contracts.h`. It validates dataset references and

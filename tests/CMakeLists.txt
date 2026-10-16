@@ -500,6 +500,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-artifact.cpp
+        test-agent-artifact-sources.cpp
         test-agent-route-compiler.cpp
         test-agent-workflow-grounding.cpp
         test-agent-execution-envelope.cpp
@@ -520,6 +521,9 @@ test-agent-flydelta-alpha-response-search.cpp
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_NAME STREQUAL "test-agent-artifact-sources")
+            target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-openapi-provider")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_compile_definitions(${TEST_NAME} PRIVATE LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -1411,6 +1411,17 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         keywords.push_back(title);
                     }
 
+                    auto fetch_metadata=make_tool_resource_metadata(
+                        "Preserve the authoritative bounded fetched body outside the inline model context.",
+                        title.empty()?"Fetched bounded content from "+url+".":"Fetched bounded content for \""+title+"\".",
+                        "Use this resource for bounded reads or host-provided document text processing; the inline result is only a preview.",
+                        truncated?"The fetched body was truncated by the configured byte limit; do not treat it as a complete source.":
+                            "The resource is the fetched response body; derived text remains subject to the selected host processor.",
+                        std::move(keywords));
+                    fetch_metadata.source_provider="native";
+                    fetch_metadata.source_operation="web.fetch";
+                    fetch_metadata.source_request_json=arguments.dump();
+
                     common_runtime_resource_ref resource_ref;
                     if (!persist_tool_bytes(
                             bindings,
@@ -1419,16 +1430,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                             fetch_result.content_type,
                             raw_body,
                             "web_fetch",
-                            make_tool_resource_metadata(
-                                "Preserve the authoritative bounded fetched body outside the inline model context.",
-                                title.empty()
-                                    ? "Fetched bounded content from " + url + "."
-                                    : "Fetched bounded content for \"" + title + "\".",
-                                "Use this resource for bounded reads or host-provided document text processing; the inline result is only a preview.",
-                                truncated
-                                    ? "The fetched body was truncated by the configured byte limit; do not treat it as a complete source."
-                                    : "The resource is the fetched response body; derived text remains subject to the selected host processor.",
-                                std::move(keywords)),
+                            std::move(fetch_metadata),
                             resource_ref,
                             err)) {
                         return tool_execution_failure("tool.web_fetch.resource_store_failed", std::move(err), "Web fetch result could not be materialized as a host resource.");

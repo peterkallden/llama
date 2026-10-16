@@ -53,6 +53,19 @@ int main() {
             "blueprint:dataset-analysis:workflow:workflow://dataset/analysis@v1",
             "dataset-analysis", "bp-v1", "workflow://dataset/analysis", "v1",
             "graph-v1", "env-v1", "route-policy-v1"};
+        common_plan_observation observation;observation.id="source";observation.source="web.fetch";
+        observation.summary="Host retained source provenance.";observation.confidence=1.0f;
+        common_runtime_resource_ref ref;ref.uri="agent-resource://derived";ref.name="paper.txt";
+        ref.metadata.source_provider="native";ref.metadata.source_operation="web.fetch";
+        ref.metadata.source_request_json=R"({"url":"https://example.org/paper.pdf"})";
+        ref.metadata.content_hash="sha256:text";ref.metadata.retrieved_at=1234;
+        ref.lineage.parent_uri="agent-resource://original";ref.lineage.chunk_count=1;
+        ref.lineage.derivation="resource.process:pdf";
+        observation.resource_refs.push_back(ref);
+        common_agent_dataset_ref dataset;dataset.uri="dataset://source";dataset.source_provider="public-api";
+        dataset.source_operation="list";dataset.source_request_json=R"({"search":"battery recycling"})";
+        dataset.content_hash="sha256:data";dataset.retrieved_at=1234;
+        observation.dataset_refs.push_back(dataset);plan.observations.push_back(observation);
         assert(store.create(plan, error));
 
         common_plan_workflow_definition transitioned_workflow;
@@ -124,6 +137,15 @@ int main() {
         assert(store.open((dir / "plan.db").string(), error));
         auto plan = store.get("p", error);
         assert(plan);
+        assert(plan->observations.size()==1);
+        const auto & ref=plan->observations.front().resource_refs.front();
+        assert(ref.metadata.source_request_json==R"({"url":"https://example.org/paper.pdf"})");
+        assert(ref.metadata.content_hash=="sha256:text"&&ref.metadata.retrieved_at==1234);
+        assert(ref.lineage.parent_uri=="agent-resource://original"&&ref.lineage.derivation=="resource.process:pdf");
+        const auto & dataset=plan->observations.front().dataset_refs.front();
+        assert(dataset.source_provider=="public-api"&&dataset.source_operation=="list");
+        assert(dataset.source_request_json==R"({"search":"battery recycling"})");
+        assert(dataset.content_hash=="sha256:data"&&dataset.retrieved_at==1234);
         assert(plan->scope == common_plan_scope::global && plan->purpose == "persist and resume");
         assert(plan->steps.size() == 2 &&
             plan->steps[0].intended_contribution == "preserve the persisted evidence" &&

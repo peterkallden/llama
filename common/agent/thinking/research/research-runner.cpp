@@ -1,6 +1,8 @@
 #include "agent/thinking/research/research-runner.h"
 
 #include "agent/thinking/research/research-workspace.h"
+#include "runtime/runtime-trace.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <chrono>
@@ -229,6 +231,7 @@ bool common_agent_research_runtime_adapter::execute(
         source.source_id = source_id;
         source.title = resolved_tool_name;
         source.origin = resolved_tool_name;
+        if(!result.http.requested_url.empty())source.origin=common_runtime_trace_safe_url(result.http.requested_url);
         source.authority = "host-tool-runtime";
         source.kind = (resolved_tool_name == "web.search" || resolved_tool_name == "web.fetch")
             ? common_agent_research_source_kind::web_page
@@ -240,9 +243,11 @@ bool common_agent_research_runtime_adapter::execute(
         source.primary_source = true;
         if (!result.resource_refs.empty()) {
             source.resource_ref = result.resource_refs.front();
-            source.content_hash = result.resource_refs.front().uri;
-        } else {
-            source.content_hash = resolved_tool_name + ":" + action.instruction;
+            source.content_hash = result.resource_refs.front().metadata.content_hash;
+            if(result.resource_refs.front().metadata.retrieved_at>0)
+                source.retrieved_at=std::to_string(result.resource_refs.front().metadata.retrieved_at);
+        }else if(!result.output.empty()){
+            source.content_hash="sha256:"+hash_sha256_hex(result.output.data(),result.output.size());
         }
         if (!common_agent_research_add_source(workspace, source, error)) return false;
 
