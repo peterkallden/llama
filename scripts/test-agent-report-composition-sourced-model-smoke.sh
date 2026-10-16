@@ -17,6 +17,14 @@ gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
 log_path="$work_dir/report-composition-sourced.log"
 fixture_a="$repo_root/tests/fixtures/report-research-smoke.txt"
 fixture_b="$repo_root/tests/fixtures/report-research-smoke-second.txt"
+session_id="report-composition-sourced-smoke"
+storage_args=(
+    --backend cozo --memory-db "$work_dir/memory.db"
+    --plan-backend cozo --plan-db "$work_dir/plans.db" --plan-scope session
+    --memory-scope session --memory-session "$session_id"
+    --resource-blob-backend fs --resource-blob-root "$work_dir/resource-blobs"
+    --resource-metadata-backend cozo --resource-metadata-db "$work_dir/resource-metadata.db"
+)
 
 agent_smoke_require_file "$model" "Qwen Instruct model"
 agent_smoke_require_file "$embedding_model" "embedding model"
@@ -29,7 +37,7 @@ prompt='Using only the two supplied synthetic records, report the date they both
 LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
     LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
     agent_smoke_run_logged "$log_path" "$agent_bin" run \
-    --backend in-memory --plan-backend in-memory \
+    "${storage_args[@]}" \
     --model "$model" --embedding-model "$embedding_model" \
     --agent-profile research --tool-profile research \
     --agent-bootstrap none --agent-import "$repo_root/docs/examples/agent-bootstrap-workflows-v1.json" \
@@ -102,5 +110,46 @@ grep -Eq '(markdown_resource: "|Markdown: )agent-resource://resource/[^"[:space:
     echo "sourced report smoke did not expose the persisted Markdown resource; log=$log_path" >&2
     exit 1
 }
+report_uri=$(grep -oE '(report_resource: "|Structured report: )agent-resource://resource/[^"[:space:]]+' "$log_path" | head -n1 | sed -E 's/^[^:]+: "?//')
+markdown_uri=$(grep -oE '(markdown_resource: "|Markdown: )agent-resource://resource/[^"[:space:]]+' "$log_path" | head -n1 | sed -E 's/^[^:]+: "?//')
+readback_logs=()
+mcp_server=$(agent_smoke_binary "$build_dir" llama-agent-mcp-stdio-server)
+agent_smoke_require_executable "$mcp_server" "llama-agent-mcp-stdio-server"
+readback_log="$work_dir/report-composition-mcp-readback.log"
+readback_logs+=("$readback_log")
+{
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"report-smoke-readback","version":"1"}}}'
+    printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    printf '{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"%s"}}\n' "$report_uri"
+    printf '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"%s"}}\n' "$markdown_uri"
+    printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"shutdown"}' '{"jsonrpc":"2.0","method":"exit"}'
+} | timeout --foreground "${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" "$mcp_server" \
+    --backend cozo --memory-db "$work_dir/memory.db" \
+    --memory-namespace local --memory-session "$session_id" \
+    --resource-blob-backend fs --resource-blob-root "$work_dir/resource-blobs" \
+    --resource-metadata-backend cozo --resource-metadata-db "$work_dir/resource-metadata.db" \
+    >"$readback_log" 2>&1 || {
+        echo "persistent report smoke MCP resource readback failed; log=$readback_log" >&2
+        exit 1
+    }
+report_text=$(jq -R -s -r --arg uri "$report_uri" 'split("\n") | map(fromjson? | select(.id == 2 and .result.contents[0].uri == $uri))[0].result.contents[0].text' "$readback_log")
+markdown_text=$(jq -R -s -r --arg uri "$markdown_uri" 'split("\n") | map(fromjson? | select(.id == 3 and .result.contents[0].uri == $uri))[0].result.contents[0].text' "$readback_log")
+grep -Fq '20 July 1969' <<<"$report_text" || {
+    echo "persistent report smoke readback did not expose the fixture-supported date; log=$readback_log" >&2
+    exit 1
+}
+grep -Fq 'source_bibliography' <<<"$report_text" || {
+    echo "persistent report smoke readback did not expose the deterministic bibliography; log=$readback_log" >&2
+    exit 1
+}
+grep -Fq '20 July 1969' <<<"$markdown_text" || {
+    echo "persistent Markdown readback did not expose the fixture-supported date; log=$readback_log" >&2
+    exit 1
+}
+grep -Fq '## Sources' <<<"$markdown_text" || {
+    echo "persistent Markdown readback did not expose its source bibliography; log=$readback_log" >&2
+    exit 1
+}
 echo "agent_report_composition_sourced_model_smoke=passed"
 echo "log=$log_path"
+printf 'readback_log=%s\n' "${readback_logs[@]}"

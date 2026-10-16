@@ -47,6 +47,9 @@ struct common_agent_generated_text_result {
     std::string error_message;
     std::vector<std::string> artifact_included_refs;
     std::vector<std::string> artifact_omitted_refs;
+    std::vector<std::string> artifact_relevant_refs;
+    std::vector<std::string> artifact_out_of_scope_refs;
+    std::string artifact_omitted_reason;
 };
 
 enum class common_agent_generation_stage {

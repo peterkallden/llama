@@ -268,7 +268,7 @@ bool common_agent_install_bootstrap_package(
                 });
                 if (profile == package.artifact_profiles.end()) { error = "workflow references an unavailable artifact profile revision"; return false; }
                 nlohmann::ordered_json profile_json = {{"id",profile->id},{"revision",profile->revision},{"title",profile->title},{"purpose",profile->purpose},{"sections",nlohmann::ordered_json::array()}};
-                for (const auto & section : profile->sections) profile_json["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources},{"allowed_block_kinds",section.allowed_block_kinds}});
+                for (const auto & section : profile->sections) profile_json["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources},{"allowed_block_kinds",section.allowed_block_kinds},{"required",section.required},{"evidence_relations",section.evidence_relations}});
                 transition.artifact_profile_json = profile_json.dump();
             }
             common_plan_state workflow;

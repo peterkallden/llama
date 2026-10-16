@@ -1253,6 +1253,115 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return error.empty();
     };
 
+    const auto ensure_artifact_continuation = [&](const common_plan_step & completed_step,
+            const common_plan_observation & observation) -> bool {
+        if (!request.workflow_continuation || !plan.route_binding || !plan.workflow_definition) return true;
+        const auto marker_id="artifact-continuation:"+completed_step.id;
+        const auto marker=std::find_if(plan.observations.begin(),plan.observations.end(),[&](const auto & item){
+            return item.id==marker_id&&item.source=="artifact_continuation";
+        });
+        std::vector<std::string> expected_ids;
+        if(marker!=plan.observations.end()){
+            const auto saved=json::parse(marker->summary,nullptr,false);
+            if(!saved.is_object()||saved.value("source_observation_id",std::string{})!=observation.id||
+                    !saved.contains("step_ids")||!saved["step_ids"].is_array()){
+                result.error="saved artifact continuation marker is malformed or stale";return false;
+            }
+            for(const auto & id:saved["step_ids"]){if(!id.is_string()){result.error="saved artifact continuation step id is malformed";return false;}expected_ids.push_back(id.get<std::string>());}
+            if(std::all_of(expected_ids.begin(),expected_ids.end(),[&](const auto & id){return std::any_of(plan.steps.begin(),plan.steps.end(),[&](const auto & step){return step.id==id;});}))return true;
+        }
+        std::vector<common_plan_step> continuation_steps;
+        if(!request.workflow_continuation(plan,completed_step.id,observation,continuation_steps,error)){
+            result.error="artifact workflow continuation failed: "+error;return false;
+        }
+        // Plans written before stable transition IDs were introduced may
+        // already contain the same continuation under a version-derived ID.
+        // Reuse that step when its workflow contract and dependency match;
+        // otherwise a resume would materialize a duplicate route branch.
+        if(marker==plan.observations.end()){
+            std::string prior_id=completed_step.id;
+            for(auto & candidate:continuation_steps){
+                if(candidate.depends_on.empty())candidate.depends_on.push_back(prior_id);
+                const auto same_id=std::find_if(plan.steps.begin(),plan.steps.end(),[&](const auto & step){return step.id==candidate.id;});
+                if(same_id==plan.steps.end()){
+                    const auto equivalent=std::find_if(plan.steps.begin(),plan.steps.end(),[&](const auto & step){
+                        if(common_plan_step_effective_mode(step)!=common_plan_step_effective_mode(candidate)||
+                                step.title!=candidate.title||step.objective!=candidate.objective||
+                                std::find(step.depends_on.begin(),step.depends_on.end(),prior_id)==step.depends_on.end()||
+                                step.tool_call.has_value()!=candidate.tool_call.has_value())return false;
+                        return !step.tool_call||(step.tool_call->name==candidate.tool_call->name&&
+                            step.tool_call->arguments_json==candidate.tool_call->arguments_json);
+                    });
+                    if(equivalent!=plan.steps.end())candidate.id=equivalent->id;
+                }
+                prior_id=candidate.id;
+            }
+        }
+        std::vector<std::string> actual_ids;for(const auto & step:continuation_steps)actual_ids.push_back(step.id);
+        if(marker!=plan.observations.end()&&actual_ids!=expected_ids){
+            result.error="artifact continuation replay produced identities different from its persisted marker";return false;
+        }
+        if(marker==plan.observations.end()){
+            common_plan_operation record;record.kind=common_plan_operation_kind::record_observation;record.plan_id=plan.id;
+            record.expected_version=plan.version;record.host_authorized=true;record.reason_summary="artifact continuation intent persisted before step materialization";
+            record.observation=common_plan_observation{marker_id,"artifact_continuation",
+                json{{"source_observation_id",observation.id},{"step_ids",actual_ids}}.dump(),1.0f,{}, {},0};
+            if(!store.apply(record,plan,error)){result.error="artifact continuation intent could not be persisted: "+error;return false;}
+        }
+        std::string previous_step_id=completed_step.id;
+        for(auto & continuation_step:continuation_steps){
+            const auto mode=common_plan_step_effective_mode(continuation_step);
+            if(continuation_step.id.empty()||(mode==common_plan_step_mode::tool&&!continuation_step.tool_call)||
+                    (mode!=common_plan_step_mode::tool&&mode!=common_plan_step_mode::artifact_compose)){
+                result.error="workflow continuation returned an invalid step";return false;
+            }
+            if(continuation_step.depends_on.empty())continuation_step.depends_on.push_back(previous_step_id);
+            const auto existing=std::find_if(plan.steps.begin(),plan.steps.end(),[&](const auto & step){return step.id==continuation_step.id;});
+            if(existing!=plan.steps.end()){
+                const bool same=common_plan_step_effective_mode(*existing)==mode&&existing->title==continuation_step.title&&
+                    existing->objective==continuation_step.objective&&existing->tool_call.has_value()==continuation_step.tool_call.has_value()&&
+                    (!existing->tool_call||(existing->tool_call->name==continuation_step.tool_call->name&&existing->tool_call->arguments_json==continuation_step.tool_call->arguments_json))&&
+                    std::find(existing->depends_on.begin(),existing->depends_on.end(),previous_step_id)!=existing->depends_on.end();
+                if(!same){result.error="persisted workflow continuation step conflicts with deterministic replay";return false;}
+            }else{
+                common_plan_operation add;add.kind=common_plan_operation_kind::add_step;add.plan_id=plan.id;
+                add.expected_version=plan.version;add.step=continuation_step;add.reason_summary="host-verified artifact workflow continuation added";
+                if(!store.apply(add,plan,error)){result.error=error;return false;}
+                append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
+                    "artifact workflow continuation materialized",plan.id,continuation_step.id,
+                    continuation_step.tool_call?continuation_step.tool_call->name:std::string{});
+            }
+            previous_step_id=continuation_step.id;
+        }
+        if(!continuation_steps.empty()){
+            for(const auto & final_step:plan.steps){
+                if(common_plan_step_effective_mode(final_step)!=common_plan_step_mode::final_response||
+                        final_step.status==common_plan_step_status::completed||final_step.status==common_plan_step_status::skipped||
+                        std::find(final_step.depends_on.begin(),final_step.depends_on.end(),previous_step_id)!=final_step.depends_on.end())continue;
+                common_plan_operation dependency;dependency.kind=common_plan_operation_kind::add_dependency;dependency.plan_id=plan.id;
+                dependency.expected_version=plan.version;dependency.step_id=final_step.id;dependency.target_id=previous_step_id;
+                dependency.reason_summary="final answer waits for artifact workflow continuation";
+                if(!store.apply(dependency,plan,error)){result.error=error;return false;}
+            }
+            if(tools&&!tools->validate_plan(plan,error)){result.error="artifact workflow continuation violates the route envelope: "+error;return false;}
+        }
+        return true;
+    };
+
+    // A crash can occur after the section step is completed but before the
+    // next workflow transition is materialized. Reconcile those durable
+    // intents before scheduling more work.
+    std::vector<common_plan_step> completed_artifact_steps;
+    for(const auto & step:plan.steps)if(step.status==common_plan_step_status::completed&&
+            common_plan_step_effective_mode(step)==common_plan_step_mode::artifact_compose)completed_artifact_steps.push_back(step);
+    for(const auto & completed_step:completed_artifact_steps){
+        const auto observation=std::find_if(plan.observations.begin(),plan.observations.end(),[&](const auto & item){
+            return item.id=="artifact-section:"+completed_step.id&&item.source=="artifact_section";
+        });
+        if(observation==plan.observations.end())continue;
+        if(!ensure_artifact_continuation(completed_step,*observation))return result;
+    }
+
     // Apply the same dependency gate before the first execution slice as on
     // every later transition. Restored or model-authored plans may contain
     // more than one active step; a dependent active step must be reset before
@@ -1304,8 +1413,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 const auto active_mode = common_plan_step_effective_mode(active_step);
                 common_agent_artifact_snapshot artifact_snapshot_for_step;
                 bool have_artifact_snapshot_for_step = false;
-                std::optional<std::string> recovered_artifact_section;
-                std::vector<std::string> recovered_artifact_included_refs,recovered_artifact_omitted_refs;
+                std::optional<common_agent_artifact_section> recovered_artifact_section;
+                std::vector<std::string> recovered_artifact_included_refs,recovered_artifact_omitted_refs,
+                    recovered_artifact_relevant_refs,recovered_artifact_out_of_scope_refs;
+                std::string recovered_artifact_omitted_reason;
                 if (active_mode == common_plan_step_mode::artifact_compose) {
                     const auto binding = common_plan_artifact_binding_effective(active_step);
                     if (!plan.workflow_definition || !binding || binding->transition_id.empty()) {
@@ -1321,10 +1432,31 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     common_agent_artifact_profile profile;
                     common_agent_artifact_snapshot snapshot;
                     std::string snapshot_json;
+                    std::string research_checkpoint_id;
+                    if(turn.research_workspace){
+                        const auto sequence=static_cast<size_t>(std::max(1,turn.research_workspace->iterations_completed+1));
+                        const auto checkpoint=make_common_agent_research_workspace_checkpoint(*turn.research_workspace,sequence,error);
+                        if(checkpoint.checkpoint_id.empty()){result.error="research workspace checkpoint validation failed: "+error;return result;}
+                        research_checkpoint_id=checkpoint.checkpoint_id;
+                        const auto checkpoint_json=json{{"checkpoint_id",checkpoint.checkpoint_id},{"workspace_id",checkpoint.workspace_id},
+                            {"request_id",checkpoint.request_id},{"turn_id",checkpoint.turn_id},{"session_id",checkpoint.session_id},
+                            {"plan_id",checkpoint.plan_id},{"sequence",checkpoint.sequence},
+                            {"iterations_completed",checkpoint.workspace.iterations_completed},
+                            {"source_count",checkpoint.workspace.sources.size()},{"evidence_count",checkpoint.workspace.evidence.size()},
+                            {"gap_count",checkpoint.workspace.gaps.size()}}.dump();
+                        const auto found=std::find_if(plan.observations.begin(),plan.observations.end(),[&](const auto & observation){return observation.id==checkpoint.checkpoint_id&&observation.source=="research_checkpoint";});
+                        if(found!=plan.observations.end()&&found->summary!=checkpoint_json){result.error="research workspace checkpoint identity conflicts with persisted content";return result;}
+                        if(found==plan.observations.end()){
+                            common_plan_operation persist_checkpoint;persist_checkpoint.kind=common_plan_operation_kind::record_observation;
+                            persist_checkpoint.plan_id=plan.id;persist_checkpoint.expected_version=plan.version;persist_checkpoint.host_authorized=true;
+                            persist_checkpoint.reason_summary="validated research workspace checkpoint recorded before artifact snapshot";
+                            persist_checkpoint.observation=common_plan_observation{checkpoint.checkpoint_id,"research_checkpoint",checkpoint_json,1.0f,{}, {},0};
+                            if(!store.apply(persist_checkpoint,plan,error)){result.error="research workspace checkpoint could not be persisted: "+error;return result;}
+                        }
+                    }
                     if (!common_agent_artifact_profile_from_json(transition->artifact_profile_json, profile, error) ||
                             !common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error,
-                                turn.research_workspace ? &*turn.research_workspace : nullptr,
-                                turn.research_workspace ? ("research-checkpoint:" + turn.research_workspace->workspace_id + ":" + std::to_string(turn.research_workspace->iterations_completed)) : std::string{}) ||
+                                turn.research_workspace ? &*turn.research_workspace : nullptr,research_checkpoint_id) ||
                             !common_agent_artifact_snapshot_to_json(snapshot, snapshot_json, error)) {
                         result.error = "artifact source snapshot could not be frozen: " + error; return result;
                     }
@@ -1347,19 +1479,33 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                             "artifact source snapshot captured before report composition",
                             plan.id, active_step_id, {}, "artifact-snapshot:" + plan.id);
                     }
+                    size_t matching_sections=0;
                     for(const auto & observation:plan.observations){
                         if(observation.id!="artifact-section:"+active_step.id||observation.source!="artifact_section")continue;
                         const auto stored=json::parse(observation.summary,nullptr,false);
-                        if(!stored.is_object()||stored.value("snapshot_fingerprint",std::string{})!=snapshot.fingerprint||!stored.contains("blocks")||!stored["blocks"].is_array())continue;
-                        json model_view={{"status",stored.value("no_findings",false)?"no_findings":"findings"}};
+                        if(!stored.is_object()||stored.value("snapshot_fingerprint",std::string{})!=snapshot.fingerprint||
+                                (stored.contains("transition_id")&&stored.value("transition_id",std::string{})!=binding->transition_id)||
+                                (stored.contains("profile_id")&&stored.value("profile_id",std::string{})!=binding->profile_ref)||
+                                (stored.contains("profile_revision")&&stored.value("profile_revision",std::string{})!=binding->profile_revision)||
+                                (stored.contains("section_id")&&stored.value("section_id",std::string{})!=binding->section_id))continue;
+                        const auto section_profile=std::find_if(profile.sections.begin(),profile.sections.end(),[&](const auto & candidate){return candidate.id==binding->section_id;});
+                        if(section_profile==profile.sections.end()){result.error="stored artifact section profile is unavailable";return result;}
                         recovered_artifact_included_refs=stored.value("included_source_refs",std::vector<std::string>{});
                         recovered_artifact_omitted_refs=stored.value("omitted_source_refs",std::vector<std::string>{});
-                        if(!stored.value("no_findings",false)){model_view["blocks"]=json::array();for(const auto & block:stored["blocks"])model_view["blocks"].push_back({{"kind",block.value("kind",std::string("observation"))},{"text",block.value("text",std::string{})},{"evidence",block.value("evidence_ids",json::array())},{"source",block.value("source_refs",json::array())}});}
-                        recovered_artifact_section=model_view.dump();break;
+                        recovered_artifact_relevant_refs=stored.value("relevant_source_refs",std::vector<std::string>{});
+                        recovered_artifact_out_of_scope_refs=stored.value("out_of_scope_source_refs",std::vector<std::string>{});
+                        recovered_artifact_omitted_reason=stored.value("omitted_reason",std::string{});
+                        common_agent_artifact_section restored_section;
+                        if(!common_agent_artifact_section_from_stored_json(observation.summary,*section_profile,snapshot,
+                                recovered_artifact_included_refs,restored_section,error)){
+                            result.error="saved artifact section failed host validation: "+error;return result;
+                        }
+                        recovered_artifact_section=std::move(restored_section);++matching_sections;
                     }
+                    if(matching_sections>1){result.error="multiple saved artifact results match one section binding";return result;}
                 }
                 common_agent_generated_text_result reasoning_result;
-                if(recovered_artifact_section){reasoning_result.content=*recovered_artifact_section;reasoning_result.status=common_agent_generation_status::completed;reasoning_result.stop_reason=common_agent_generation_stop_reason::eos;reasoning_result.artifact_included_refs=std::move(recovered_artifact_included_refs);reasoning_result.artifact_omitted_refs=std::move(recovered_artifact_omitted_refs);}
+                if(recovered_artifact_section){reasoning_result.status=common_agent_generation_status::completed;reasoning_result.stop_reason=common_agent_generation_stop_reason::eos;reasoning_result.artifact_included_refs=std::move(recovered_artifact_included_refs);reasoning_result.artifact_omitted_refs=std::move(recovered_artifact_omitted_refs);reasoning_result.artifact_relevant_refs=std::move(recovered_artifact_relevant_refs);reasoning_result.artifact_out_of_scope_refs=std::move(recovered_artifact_out_of_scope_refs);reasoning_result.artifact_omitted_reason=std::move(recovered_artifact_omitted_reason);}
                 else reasoning_result = executor.generate_reasoning_result(request, plan, active_step, error);
                 std::string reasoning = reasoning_result.content;
                 if (!error.empty()) { result.error = "reasoning step failed: " + error; return result; }
@@ -1392,7 +1538,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     const auto selected_section = std::find_if(profile.sections.begin(), profile.sections.end(), [&](const auto & s) { return s.id == binding->section_id && s.id == transition->artifact_section_id; });
                     if (selected_section == profile.sections.end()) { result.error = "artifact profile section disappeared"; return result; }
                     common_agent_artifact_section section;
-                    bool parsed_section = request.tool_output_format == common_agent_tool_output_format::compact_dsl
+                    bool parsed_section = false;
+                    if(recovered_artifact_section){section=*recovered_artifact_section;parsed_section=true;error.clear();}
+                    else parsed_section = request.tool_output_format == common_agent_tool_output_format::compact_dsl
                         ? common_agent_artifact_parse_section_dsl(reasoning, *selected_section, snapshot, section, error,
                             reasoning_result.artifact_included_refs, true)
                         : common_agent_artifact_parse_section_json(reasoning, *selected_section, snapshot, section, error,
@@ -1409,12 +1557,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     if (!parsed_section) {
                         const std::string first_error = error;
                         common_plan_step repair_step = active_step;
-                        // Artifact context intentionally bounds the section purpose.
-                        // Appending repair guidance to objective would be silently
-                        // truncated by that bound, so put a short, visible repair
-                        // cue in the independently bounded section title instead.
-                        repair_step.title = active_step.title.substr(0, 16) +
-                            " repair: correct DSL; add valid evidence/source refs";
+                        repair_step.title = "repair: " + first_error.substr(0, 52);
                         error.clear();
                         auto repaired = executor.generate_reasoning_result(request, plan, repair_step, error);
                         if (!error.empty()) {
@@ -1449,8 +1592,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         }
                     }
                     json section_json={{"id",section.id},{"title",section.title},{"no_findings",section.no_findings},
+                        {"section_id",binding->section_id},{"transition_id",binding->transition_id},
+                        {"profile_id",binding->profile_ref},{"profile_revision",binding->profile_revision},
                         {"snapshot_fingerprint",snapshot.fingerprint},{"included_source_refs",reasoning_result.artifact_included_refs},
-                        {"omitted_source_refs",reasoning_result.artifact_omitted_refs},{"blocks",json::array()}};
+                        {"relevant_source_refs",reasoning_result.artifact_relevant_refs},
+                        {"out_of_scope_source_refs",reasoning_result.artifact_out_of_scope_refs},
+                        {"omitted_source_refs",reasoning_result.artifact_omitted_refs},
+                        {"omitted_reason",reasoning_result.artifact_omitted_reason},{"blocks",json::array()}};
                     std::vector<std::string> evidence_ids;
                     for (const auto & block : section.blocks) {
                         section_json["blocks"].push_back({{"id",block.id},{"kind",block.kind==common_agent_artifact_block_kind::observation?"observation":block.kind==common_agent_artifact_block_kind::conclusion?"conclusion":"recommendation"},{"text",block.text},{"evidence_ids",block.evidence_ids},{"source_refs",block.source_refs},{"validation",block.validation==common_agent_artifact_validation::references_resolve?"references_resolve":"gap"},{"validation_note",block.validation_note}});
@@ -1496,42 +1644,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         return o.id == "artifact-section:" + active_step.id;
                     });
                     if (observation == plan.observations.rend()) { result.error = "validated artifact section observation was not persisted"; return result; }
-                    std::vector<common_plan_step> continuation_steps;
-                    if (!request.workflow_continuation(plan, active_step.id, *observation, continuation_steps, error)) {
-                        result.error = "artifact workflow continuation failed: " + error; return result;
-                    }
-                    std::string previous_step_id = active_step.id;
-                    for (auto & continuation_step : continuation_steps) {
-                        const auto mode = common_plan_step_effective_mode(continuation_step);
-                        if (continuation_step.id.empty() ||
-                                (mode == common_plan_step_mode::tool && !continuation_step.tool_call) ||
-                                (mode != common_plan_step_mode::tool && mode != common_plan_step_mode::artifact_compose) ||
-                                std::any_of(plan.steps.begin(), plan.steps.end(), [&](const auto & existing) { return existing.id == continuation_step.id; })) {
-                            result.error = "workflow continuation returned an invalid or duplicate step"; return result;
-                        }
-                        if (continuation_step.depends_on.empty()) continuation_step.depends_on.push_back(previous_step_id);
-                        common_plan_operation add; add.kind=common_plan_operation_kind::add_step; add.plan_id=plan.id;
-                        add.expected_version=plan.version; add.step=continuation_step; add.reason_summary="host-verified artifact workflow continuation added";
-                        if (!store.apply(add,plan,error)){result.error=error;return result;}
-                        previous_step_id=continuation_step.id;
-                        append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
-                            "artifact workflow continuation materialized",plan.id,continuation_step.id,
-                            continuation_step.tool_call?continuation_step.tool_call->name:std::string{});
-                    }
-                    if (!continuation_steps.empty()) {
-                        for (const auto & final_step : plan.steps) {
-                            if (common_plan_step_effective_mode(final_step)!=common_plan_step_mode::final_response ||
-                                    final_step.status==common_plan_step_status::completed || final_step.status==common_plan_step_status::skipped) continue;
-                            common_plan_operation dependency;dependency.kind=common_plan_operation_kind::add_dependency;dependency.plan_id=plan.id;
-                            dependency.expected_version=plan.version;dependency.step_id=final_step.id;dependency.target_id=previous_step_id;
-                            dependency.reason_summary="final answer waits for artifact workflow continuation";
-                            if(!store.apply(dependency,plan,error)){result.error=error;return result;}
-                        }
-                        if (tools && !tools->validate_plan(plan, error)) {
-                            result.error = "artifact workflow continuation violates the route envelope: " + error;
-                            return result;
-                        }
-                    }
+                    const auto completed=std::find_if(plan.steps.begin(),plan.steps.end(),[&](const auto & candidate){return candidate.id==active_step.id;});
+                    if(completed==plan.steps.end())return result;
+                    const auto completed_copy=*completed;
+                    const auto observation_copy=*observation;
+                    if(!ensure_artifact_continuation(completed_copy,observation_copy))return result;
                 }
                 executed_step_ids.insert(active_step_id);
                 append_event(result, request, common_agent_event_type::plan_updated,

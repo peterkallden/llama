@@ -894,6 +894,20 @@ objective, source records, evidence relations and locations, comparisons,
 gaps and source coverage. Plan observations retain resource and dataset
 references, timestamps and confidence. Later sections reuse this snapshot.
 
+New snapshots use schema v3 and a versioned SHA-256 fingerprint; v1/v2
+snapshots retain their historical fingerprint verification and identity when
+read. Snapshot creation persists a real validated Research Workspace
+checkpoint reference before freezing the snapshot; it does not manufacture a
+checkpoint identifier from iteration counters. Section profiles default
+`required` to true and may restrict `evidence_relations`. Required
+`no_findings` records a coverage gap, while an optional empty section does not
+by itself make coverage incomplete. Neither result claims that a phenomenon
+is absent. The host records relevant, included and omitted references and
+reasons, preserves whole evidence excerpts, and marks relevant budget/access
+omissions incomplete. A per-section reference index admits only included
+handles or canonical references and checks evidence/source provenance and
+dataset references.
+
 Each generation receives a budgeted JSON data view of the snapshot. Handles
 such as `E1`, `S1` and `O1` are host-owned aliases for canonical evidence,
 source and observation references. The selected model-facing format is used:
@@ -917,6 +931,14 @@ Workspace/checkpoint/snapshot identities, fingerprint, full gap details and
 the complete omitted-reference list stay host-side in the immutable snapshot.
 This lets a small section budget carry actual evidence instead of spending it
 on duplicated provenance metadata, without weakening export coverage checks.
+
+On resume, the host restores a stored typed section result and validates its
+snapshot, transition, profile revision and section binding. It does not render
+that result back into model-facing DSL/JSON and parse it again, and it does not
+append a second copy of the section. Workflow continuation materialization is
+also idempotently reconciled from a host-owned continuation marker and stable
+step IDs, so interruption after a completed section can recover without
+duplicating the next steps.
 
 `artifact.export` materializes a structured report JSON resource plus
 deterministic Markdown, optionally converting Markdown to DOCX through the
@@ -942,6 +964,17 @@ manifest is stored last and is the durable completeness marker; partial outputs
 are not included in the successful result. The manifest plus normal tool
 observation make retries idempotent. Other workflows keep the ordinary
 draft/reflection path.
+
+Export resolves the document revision and previous-report link once, then
+updates only the saved snapshot URI after snapshot publication. The decision is
+shared by the report JSON, resource names, export ID, cache identities,
+manifest and tool result. An existing manifest is reused only after its
+snapshot, report, Markdown and any DOCX resources are read and checked against
+the bound report revision; a retry or format-only export does not increment the
+content revision. The host emits a deterministic source bibliography from the
+frozen snapshot, including available title, origin, resource URI, retrieval
+time, content hash, evidence IDs and source locations, in both report JSON and
+Markdown. DOCX is converted from that same Markdown revision.
 
 The first common contract slice is implemented in
 `common/agent/dataset-contracts.h`. It validates dataset references and

@@ -23,6 +23,9 @@ struct common_plan_artifact_section_profile {
     std::string id, title, purpose;
     std::vector<std::string> required_observation_sources;
     std::vector<std::string> allowed_block_kinds{"observation", "conclusion", "recommendation"};
+    bool required = true;
+    // When empty, every research relation is eligible for this section.
+    std::vector<std::string> evidence_relations;
 };
 struct common_plan_artifact_profile {
     std::string id, revision, title, purpose;

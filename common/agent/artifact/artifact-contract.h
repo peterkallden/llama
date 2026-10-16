@@ -32,9 +32,22 @@ struct common_agent_artifact_section {
     std::string title;
     bool no_findings = false;
     std::vector<common_agent_artifact_block> blocks;
+    std::vector<std::string> out_of_scope_refs;
+};
+
+struct common_agent_artifact_source_citation {
+    std::string source_id, title, origin, resource_uri, retrieved_at, content_hash;
+    std::vector<std::string> evidence_ids, locations;
+};
+
+struct common_agent_artifact_section_context {
+    std::string rendered_json;
+    std::vector<std::string> relevant_refs, included_refs, omitted_refs, out_of_scope_refs;
+    std::string omitted_reason;
 };
 
 struct common_agent_artifact_snapshot {
+    int schema_version = 3;
     std::string id;
     std::string source_plan_id;
     uint64_t plan_version = 0;
@@ -70,6 +83,7 @@ struct common_agent_artifact_document {
     uint64_t source_plan_version = 0;
     bool coverage_complete = false;
     std::vector<std::string> unresolved_gaps;
+    std::vector<common_agent_artifact_source_citation> source_bibliography;
     std::vector<common_agent_artifact_section> sections;
 };
 
@@ -84,7 +98,8 @@ bool common_agent_artifact_snapshot_from_json(
     const std::string &, common_agent_artifact_snapshot &, std::string & error);
 bool common_agent_artifact_validate_block(
     const common_agent_artifact_block &, const common_agent_artifact_snapshot &,
-    common_agent_artifact_block & validated, std::string & error);
+    common_agent_artifact_block & validated, std::string & error,
+    const std::vector<std::string> & included_refs = {}, bool restrict_to_included_refs = false);
 bool common_agent_artifact_parse_section_dsl(
     const std::string & text, const common_agent_artifact_section_profile & profile,
     const common_agent_artifact_snapshot & snapshot, common_agent_artifact_section & out,
@@ -95,6 +110,12 @@ bool common_agent_artifact_parse_section_json(
     const common_agent_artifact_snapshot & snapshot, common_agent_artifact_section & out,
     std::string & error, const std::vector<std::string> & included_refs = {},
     bool restrict_to_included_refs = false);
+// Restore host-persisted typed output. Unlike model parsers this accepts only
+// canonical IDs and never treats stored content as a fresh model response.
+bool common_agent_artifact_section_from_stored_json(
+    const std::string &, const common_agent_artifact_section_profile &,
+    const common_agent_artifact_snapshot &, const std::vector<std::string> & included_refs,
+    common_agent_artifact_section &, std::string & error);
 bool common_agent_artifact_document_to_json(const common_agent_artifact_document &, std::string & out, std::string & error);
 bool common_agent_artifact_document_from_json(const std::string &, common_agent_artifact_document &, std::string & error);
 bool common_agent_artifact_snapshot_to_json(const common_agent_artifact_snapshot &, std::string & out, std::string & error);
@@ -102,7 +123,10 @@ bool common_agent_artifact_render_section_context(
     const common_agent_artifact_snapshot &, const std::vector<std::string> & required_sources,
     size_t char_budget, std::string & context_json,
     std::vector<std::string> & included_refs, std::vector<std::string> & omitted_refs,
-    std::string & error);
+    std::string & error, const std::vector<std::string> & evidence_relations = {});
+bool common_agent_artifact_prepare_section_context(
+    const common_agent_artifact_snapshot &, const common_agent_artifact_section_profile &,
+    size_t char_budget, common_agent_artifact_section_context &, std::string & error);
 std::string common_agent_artifact_section_dsl_grammar(
     const common_agent_artifact_section_profile &, const std::string & rendered_context_json);
 bool common_agent_artifact_completion_summary(const common_plan_state &, std::string & out);

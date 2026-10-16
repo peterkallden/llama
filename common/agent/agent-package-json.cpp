@@ -472,6 +472,8 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                     section.id=sj.value("id",std::string{}); section.title=sj.value("title",std::string{}); section.purpose=sj.value("purpose",std::string{});
                     if (sj.contains("required_observation_sources") && !strings(sj["required_observation_sources"],section.required_observation_sources)) { error="artifact section sources must be strings";return false; }
                     if (sj.contains("allowed_block_kinds") && !strings(sj["allowed_block_kinds"],section.allowed_block_kinds)) { error="artifact allowed_block_kinds must be strings";return false; }
+                    section.required=sj.value("required",true);
+                    if (sj.contains("evidence_relations") && !strings(sj["evidence_relations"],section.evidence_relations)) { error="artifact evidence_relations must be strings";return false; }
                     profile.sections.push_back(std::move(section));
                 }
                 package.artifact_profiles.push_back(std::move(profile));
@@ -576,7 +578,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
     for (const auto & procedure : package.procedures) root["procedures"].push_back({{"id", procedure.id}, {"summary", procedure.summary}, {"content", procedure.content}, {"importance", procedure.importance}, {"confidence", procedure.confidence}});
     for (const auto & profile : package.artifact_profiles) {
         json value={{"id",profile.id},{"revision",profile.revision},{"title",profile.title},{"purpose",profile.purpose},{"sections",json::array()}};
-        for(const auto & section:profile.sections) value["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources},{"allowed_block_kinds",section.allowed_block_kinds}});
+        for(const auto & section:profile.sections) value["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources},{"allowed_block_kinds",section.allowed_block_kinds},{"required",section.required},{"evidence_relations",section.evidence_relations}});
         root["artifact_profiles"].push_back(std::move(value));
     }
     for (const auto & blueprint : package.blueprints) {

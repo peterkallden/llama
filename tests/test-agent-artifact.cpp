@@ -15,10 +15,16 @@ int main() {
     profile.revision = "v1";
     profile.title = "Research report";
     profile.purpose = "Grounded findings and explicit gaps.";
-    profile.sections = {{"findings", "Findings", "Summarize supported findings.", {"web.search"}},
-        {"limitations", "Limitations", "Record unresolved coverage.", {}}};
+    profile.sections = {{"findings", "Findings", "Summarize supported findings.", {"web.search"},
+            {"observation", "conclusion", "recommendation"}, true, {}},
+        {"limitations", "Limitations", "Record unresolved coverage.", {},
+            {"observation", "conclusion", "recommendation"}, true, {}}};
     std::string error;
     assert(common_agent_artifact_profile_valid(profile, error));
+    common_agent_artifact_profile malformed_profile;
+    assert(!common_agent_artifact_profile_from_json(
+        R"({"id":"p","revision":"v1","title":"P","purpose":"P","sections":[{"id":"s","required":"yes"}]})",
+        malformed_profile,error));
 
     common_plan_state plan;
     plan.id = "plan-1";
@@ -33,6 +39,7 @@ int main() {
     common_agent_artifact_snapshot snapshot;
     assert(common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error));
     assert(snapshot.plan_version == 7 && snapshot.observations.size() == 1);
+    assert(snapshot.schema_version==3&&snapshot.fingerprint.rfind("sha256:",0)==0);
     std::string serialized;
     assert(common_agent_artifact_snapshot_to_json(snapshot, serialized, error));
     const std::string original_snapshot_json=serialized;
@@ -166,6 +173,22 @@ int main() {
     assert(std::find(tight_omitted.begin(),tight_omitted.end(),"completion-1")==tight_omitted.end());
     assert(tight_context.find("A measured result")!=std::string::npos);
     assert(tight_context.size()<=601);
+    auto filtered_snapshot=paired_snapshot;
+    filtered_snapshot.research_evidence[1].relation=common_agent_research_evidence_relation::contradicts;
+    auto unrelated_source=second_source;unrelated_source.source_id="source-3";unrelated_source.required=false;
+    unrelated_source.resource_ref->uri="resource://session/article-3";
+    filtered_snapshot.research_sources.push_back(unrelated_source);
+    auto unrelated_evidence=second_evidence;unrelated_evidence.evidence_id="evidence-3";
+    unrelated_evidence.source_id="source-3";unrelated_evidence.claim_id="unrelated-claim";
+    unrelated_evidence.relation=common_agent_research_evidence_relation::contextualizes;
+    filtered_snapshot.research_evidence.push_back(unrelated_evidence);
+    common_agent_artifact_section_profile filtered_profile=profile.sections.front();
+    filtered_profile.evidence_relations={"supports"};
+    common_agent_artifact_section_context filtered_context;
+    assert(common_agent_artifact_prepare_section_context(filtered_snapshot,filtered_profile,4096,filtered_context,error));
+    assert(std::find(filtered_context.included_refs.begin(),filtered_context.included_refs.end(),"evidence-1")!=filtered_context.included_refs.end());
+    assert(std::find(filtered_context.included_refs.begin(),filtered_context.included_refs.end(),"evidence-2")!=filtered_context.included_refs.end());
+    assert(std::find(filtered_context.out_of_scope_refs.begin(),filtered_context.out_of_scope_refs.end(),"evidence-3")!=filtered_context.out_of_scope_refs.end());
     const auto dsl_grammar=common_agent_artifact_section_dsl_grammar(profile.sections.front(),tight_context);
     assert(dsl_grammar.find("status: findings")!=std::string::npos);
     assert(dsl_grammar.find("block ::= entry | entry")!=std::string::npos);
@@ -193,6 +216,16 @@ int main() {
     assert(grounded.blocks.front().evidence_ids.front() == "evidence-1");
     assert(grounded.blocks.front().source_refs.front() == source.uri);
     assert(grounded.blocks.front().support == common_agent_artifact_support::linked_support);
+    common_agent_artifact_section restored_grounded;
+    const auto stored_grounded_json=json{{"id","findings"},{"no_findings",false},{"blocks",json::array({
+        json{{"id","findings:1"},{"kind","observation"},{"text","The source reports a measured result."},
+            {"evidence_ids",json::array({"evidence-1"})},{"source_refs",json::array({source.uri})}}})}}.dump();
+    assert(common_agent_artifact_section_from_stored_json(stored_grounded_json,profile.sections.front(),
+        research_snapshot,{"evidence-1",source.uri},restored_grounded,error));
+    assert(restored_grounded.blocks.size()==1&&restored_grounded.blocks.front().support==
+        common_agent_artifact_support::linked_support);
+    assert(!common_agent_artifact_section_from_stored_json(stored_grounded_json,profile.sections.front(),
+        research_snapshot,{"evidence-1"},restored_grounded,error));
     common_agent_artifact_section grounded_json;
     assert(common_agent_artifact_parse_section_json(
         R"({"status":"findings","blocks":[{"kind":"observation","text":"A result.","evidence":["E1"],"source":["S1"]}]})",
@@ -229,6 +262,32 @@ int main() {
     assert(std::any_of(empty_context_handle.blocks.begin(),empty_context_handle.blocks.end(),[](const auto & b){
         return b.validation==common_agent_artifact_validation::gap;
     }));
+    common_agent_artifact_section omitted_canonical;
+    assert(common_agent_artifact_parse_section_dsl(
+        "block: observation\ntext: This cites an omitted canonical item.\nevidence: evidence-1\nsource: resource://session/article",
+        profile.sections.front(),research_snapshot,omitted_canonical,error,bounded_included,true));
+    assert(omitted_canonical.blocks.front().validation==common_agent_artifact_validation::gap);
+
+    auto long_excerpt_snapshot=research_snapshot;
+    long_excerpt_snapshot.research_evidence.front().supporting_excerpt=std::string(256,'x');
+    assert(common_agent_artifact_render_section_context(long_excerpt_snapshot,{},4096,
+        bounded_context,bounded_included,bounded_omitted,error));
+    assert(json::parse(bounded_context)["records"][1]["text"].get<std::string>()==std::string(256,'x'));
+
+    auto dataset_snapshot=snapshot;
+    dataset_snapshot.observations.front().dataset_refs.push_back({"dataset://session/source","fixture",2,1,
+        source.uri,"text/csv","native","dataset.inspect","{}",1,"sha256:fixture"});
+    common_agent_artifact_block dataset_block;dataset_block.id="dataset";dataset_block.text="Dataset result.";
+    dataset_block.source_refs={"dataset://session/source"};
+    common_agent_artifact_block dataset_validated;
+    assert(common_agent_artifact_validate_block(dataset_block,dataset_snapshot,dataset_validated,error));
+    assert(dataset_validated.validation==common_agent_artifact_validation::references_resolve);
+
+    common_agent_artifact_block mismatched_pair;mismatched_pair.id="pair";mismatched_pair.text="Unrelated source pair.";
+    mismatched_pair.evidence_ids={"evidence-1"};mismatched_pair.source_refs={"resource://session/article-2"};
+    common_agent_artifact_block mismatched_validated;
+    assert(common_agent_artifact_validate_block(mismatched_pair,paired_snapshot,mismatched_validated,error));
+    assert(mismatched_validated.validation==common_agent_artifact_validation::gap);
 
     auto conflicted_research = research;
     conflicted_research.evidence.front().relation = common_agent_research_evidence_relation::contradicts;
@@ -290,6 +349,37 @@ int main() {
     assert(markdown.find("## Findings") != std::string::npos);
     assert(markdown.find("No validated content was produced") != std::string::npos);
     assert(markdown.find("Reference status: gap") != std::string::npos);
+
+    auto no_findings_profile=profile;no_findings_profile.sections.resize(1);
+    common_plan_state no_findings_plan;no_findings_plan.id="plan-no-findings";no_findings_plan.version=1;
+    no_findings_plan.observations.push_back({"input","web.search","{}",1.0f,{}, {},0,{}});
+    common_plan_step compose;compose.id="compose-findings";compose.artifact_binding=common_plan_artifact_binding{
+        "compose-findings-transition",no_findings_profile.id,no_findings_profile.revision,"findings","snapshot:plan-no-findings"};
+    no_findings_plan.steps.push_back(compose);
+    common_agent_artifact_snapshot no_findings_snapshot;
+    assert(common_agent_artifact_snapshot_from_plan(no_findings_plan,no_findings_profile,no_findings_snapshot,error));
+    no_findings_plan.observations.push_back({"artifact-section:compose-findings","artifact_section",
+        json{{"id","findings"},{"title","Findings"},{"no_findings",true},{"blocks",json::array()},
+            {"snapshot_fingerprint",no_findings_snapshot.fingerprint},{"transition_id","compose-findings-transition"},
+            {"profile_id","research"},{"profile_revision","v1"},{"section_id","findings"},
+            {"included_source_refs",json::array()},{"omitted_source_refs",json::array()},
+            {"out_of_scope_source_refs",json::array({"filtered-evidence"})}}.dump(),1.0f,{}, {},0,{}});
+    common_agent_artifact_document required_empty_document;
+    assert(common_agent_artifact_document_from_plan(no_findings_plan,no_findings_profile,"snapshot-uri",required_empty_document,error));
+    assert(!required_empty_document.coverage_complete);
+    assert(std::find(required_empty_document.unresolved_gaps.begin(),required_empty_document.unresolved_gaps.end(),
+        "required_section_no_findings:findings")!=required_empty_document.unresolved_gaps.end());
+    assert(required_empty_document.sections.front().out_of_scope_refs==std::vector<std::string>{"filtered-evidence"});
+    std::string document_json;common_agent_artifact_document restored_document;
+    assert(common_agent_artifact_document_to_json(required_empty_document,document_json,error));
+    assert(common_agent_artifact_document_from_json(document_json,restored_document,error));
+    assert(restored_document.sections.front().out_of_scope_refs==required_empty_document.sections.front().out_of_scope_refs);
+    assert(common_agent_artifact_render_markdown(required_empty_document,markdown,error));
+    assert(markdown.find("not evidence that the phenomenon is absent")!=std::string::npos);
+    no_findings_profile.sections.front().required=false;
+    common_agent_artifact_document optional_empty_document;
+    assert(common_agent_artifact_document_from_plan(no_findings_plan,no_findings_profile,"snapshot-uri",optional_empty_document,error));
+    assert(optional_empty_document.coverage_complete);
 
     common_plan_state empty_plan;
     empty_plan.id = "plan-empty";

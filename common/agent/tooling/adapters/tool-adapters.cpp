@@ -553,16 +553,63 @@ common_tool_execution_result export_plan_report(
         return tool_execution_failure("tool.artifact.export.revision_index_failed",std::move(error),"The existing report revision index could not be read safely.");
     const auto manifest_prefix="artifact-export:"+report_id+":r";
     uint64_t latest_revision=0;std::string latest_report_uri;bool same_snapshot=false;
+    std::optional<nlohmann::json> verified_same_snapshot_manifest;
+    std::string verified_same_snapshot_manifest_uri;
     for(const auto & candidate:existing_resources){const auto & key=candidate.metadata.processing_cache_key;
         if(key.rfind(manifest_prefix,0)!=0||key.size()<9||key.substr(key.size()-9)!=":manifest")continue;
         std::string manifest_text;
         if(!bindings.resource_runtime.store->read_text(candidate.uri,authority,1024*1024,manifest_text,error))
             return tool_execution_failure("tool.artifact.export.manifest_read_failed",std::move(error),"An existing report manifest could not be verified.");
         const auto manifest=nlohmann::json::parse(manifest_text,nullptr,false);
-        if(!manifest.is_object()||manifest.value("report_id",std::string{})!=report_id)continue;
-        const auto prior_revision=manifest.value("revision",uint64_t(0));if(prior_revision==0)continue;
-        if(prior_revision>latest_revision){latest_revision=prior_revision;latest_report_uri=manifest.value("report_resource",std::string{});}
-        if(manifest.value("snapshot_fingerprint",std::string{})==snapshot.fingerprint){same_snapshot=true;document.revision=prior_revision;document.previous_revision_uri=manifest.value("previous_revision_uri",std::string{});}
+        if(!manifest.is_object()||manifest.value("schema_version",0)!=1||manifest.value("report_id",std::string{})!=report_id)continue;
+        const auto prior_revision=manifest.value("revision",uint64_t(0));
+        const auto prior_export_id=manifest.value("export_id",std::string{});
+        const auto prior_format=manifest.value("format",std::string{});
+        const auto prior_snapshot_uri=manifest.value("snapshot_resource",std::string{});
+        const auto prior_report_uri=manifest.value("report_resource",std::string{});
+        const auto prior_markdown_uri=manifest.value("markdown_resource",std::string{});
+        const auto prior_final_uri=manifest.value("resource",std::string{});
+        if(prior_revision==0||prior_export_id.empty()||(prior_format!="markdown"&&prior_format!="docx")||
+                prior_snapshot_uri.empty()||prior_report_uri.empty()||prior_markdown_uri.empty()||prior_final_uri.empty()||
+                key!="artifact-export:"+prior_export_id+":manifest")continue;
+        agent_resource_descriptor prior_snapshot_descriptor,prior_report_descriptor,prior_markdown_descriptor,prior_final_descriptor;
+        if(!bindings.resource_runtime.store->stat(prior_snapshot_uri,authority,prior_snapshot_descriptor,error)||
+                !bindings.resource_runtime.store->stat(prior_report_uri,authority,prior_report_descriptor,error)||
+                !bindings.resource_runtime.store->stat(prior_markdown_uri,authority,prior_markdown_descriptor,error)||
+                !bindings.resource_runtime.store->stat(prior_final_uri,authority,prior_final_descriptor,error)){
+            error.clear();continue;
+        }
+        std::string prior_snapshot_text,prior_report_text,prior_markdown_text;
+        if(!bindings.resource_runtime.store->read_text(prior_snapshot_uri,authority,4*1024*1024,prior_snapshot_text,error)||
+                !bindings.resource_runtime.store->read_text(prior_report_uri,authority,4*1024*1024,prior_report_text,error)||
+                !bindings.resource_runtime.store->read_text(prior_markdown_uri,authority,4*1024*1024,prior_markdown_text,error)){
+            error.clear();continue;
+        }
+        common_agent_artifact_snapshot prior_snapshot;common_agent_artifact_document prior_document;std::string validation_error;
+        if(!common_agent_artifact_snapshot_from_json(prior_snapshot_text,prior_snapshot,validation_error)||
+                !common_agent_artifact_document_from_json(prior_report_text,prior_document,validation_error)||
+                prior_snapshot.fingerprint!=manifest.value("snapshot_fingerprint",std::string{})||
+                prior_document.id!=report_id||prior_document.revision!=prior_revision||
+                prior_document.snapshot_fingerprint!=prior_snapshot.fingerprint||prior_document.snapshot_uri!=prior_snapshot_uri||
+                prior_document.profile_id!=manifest.value("profile_id",std::string{})||
+                prior_document.profile_revision!=manifest.value("profile_revision",std::string{}))continue;
+        std::string expected_prior_markdown;
+        if(!common_agent_artifact_render_markdown(prior_document,expected_prior_markdown,validation_error)||
+                expected_prior_markdown!=prior_markdown_text||
+                prior_markdown_descriptor.mime_type!="text/markdown"||
+                (prior_format=="markdown"&&prior_final_uri!=prior_markdown_uri)||
+                (prior_format=="docx"&&prior_final_descriptor.mime_type!="application/vnd.openxmlformats-officedocument.wordprocessingml.document"))continue;
+        if(prior_format=="docx"){
+            std::string prior_docx;
+            if(!bindings.resource_runtime.store->read_bytes(prior_final_uri,authority,8*1024*1024,prior_docx,error)||prior_docx.empty()){
+                error.clear();continue;
+            }
+        }
+        if(prior_revision>latest_revision){latest_revision=prior_revision;latest_report_uri=prior_report_uri;}
+        if(manifest.value("snapshot_fingerprint",std::string{})==snapshot.fingerprint){
+            same_snapshot=true;document.revision=prior_revision;document.previous_revision_uri=manifest.value("previous_revision_uri",std::string{});
+            if(prior_format==format){verified_same_snapshot_manifest=manifest;verified_same_snapshot_manifest_uri=candidate.uri;}
+        }
     }
     if(!same_snapshot&&latest_revision>0){document.revision=latest_revision+1;document.previous_revision_uri=latest_report_uri;}
     std::string document_json,markdown;
@@ -587,6 +634,27 @@ common_tool_execution_result export_plan_report(
         }
         error.clear();return true;
     };
+    if(verified_same_snapshot_manifest&&
+            verified_same_snapshot_manifest->value("export_id",std::string{})==export_id){
+        std::vector<common_runtime_resource_ref> refs;
+        agent_resource_descriptor final_descriptor,report_descriptor,snapshot_descriptor,markdown_descriptor,manifest_descriptor;
+        const auto & manifest=*verified_same_snapshot_manifest;
+        if(!bindings.resource_runtime.store->stat(manifest.value("resource",std::string{}),authority,final_descriptor,error)||
+                !bindings.resource_runtime.store->stat(manifest.value("report_resource",std::string{}),authority,report_descriptor,error)||
+                !bindings.resource_runtime.store->stat(manifest.value("snapshot_resource",std::string{}),authority,snapshot_descriptor,error)||
+                !bindings.resource_runtime.store->stat(manifest.value("markdown_resource",std::string{}),authority,markdown_descriptor,error)||
+                !bindings.resource_runtime.store->stat(verified_same_snapshot_manifest_uri,authority,manifest_descriptor,error))
+            return tool_execution_failure("tool.artifact.export.manifest_read_failed",std::move(error),"The completed report publication could not be restored safely.");
+        refs={final_descriptor,report_descriptor,snapshot_descriptor,markdown_descriptor,manifest_descriptor};
+        const auto output=json{{"resource",final_descriptor.uri},{"name",final_descriptor.name},{"mime_type",final_descriptor.mime_type},
+            {"report_resource",report_descriptor.uri},{"snapshot_resource",snapshot_descriptor.uri},{"markdown_resource",markdown_descriptor.uri},
+            {"manifest_resource",manifest_descriptor.uri},{"report_id",document.id},{"snapshot_fingerprint",snapshot.fingerprint},
+            {"previous_revision_uri",document.previous_revision_uri},{"export_id",export_id},{"revision",document.revision},
+            {"profile_id",document.profile_id},{"profile_revision",document.profile_revision},
+            {"source_plan_id",document.source_plan_id},{"source_plan_version",document.source_plan_version},
+            {"coverage_complete",document.coverage_complete},{"format",format}}.dump();
+        return common_tool_execution_result::success(output,"Reused a verified completed report publication.",std::move(refs));
+    }
     auto put_scoped = [&](const std::string & name, const std::string & summary, const std::string & mime,
             const std::string & text, const std::string & parent, const std::string & derivation,
             const std::string & key, common_runtime_resource_ref & out) -> bool {
@@ -612,8 +680,10 @@ common_tool_execution_result export_plan_report(
     common_runtime_resource_ref snapshot_resource;
     if(!put_scoped(base_name+"-sources.json","Immutable report source snapshot","application/json",snapshot_json,{},"artifact.snapshot:v2",cache_key("snapshot"),snapshot_resource))
         return tool_execution_failure("tool.artifact.export.snapshot_store_failed",std::move(error),"The report source snapshot could not be stored.");
-    if(!common_agent_artifact_document_from_plan(*plan,profile,snapshot_resource.uri,document,error,report_id))
-        return tool_execution_failure("tool.artifact.export.document_failed",std::move(error),"The report could not be assembled from validated sections.");
+    // The revision/previous-revision decision above is authoritative for this
+    // export attempt. Changing the snapshot URI must not rebuild the document
+    // from plan observations and overwrite that decision.
+    document.snapshot_uri=snapshot_resource.uri;
     if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
         return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
     common_runtime_resource_ref report_resource;

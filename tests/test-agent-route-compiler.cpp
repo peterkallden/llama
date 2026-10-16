@@ -820,6 +820,18 @@ int main() {
     package_text << package_file.rdbuf();
     assert(common_agent_package_parse_json(package_text.str(), package, error));
     assert(package.artifact_profiles.size() >= 3);
+    const auto report_profile=std::find_if(package.artifact_profiles.begin(),package.artifact_profiles.end(),[](const auto & item){return item.id=="research";});
+    assert(report_profile!=package.artifact_profiles.end()&&report_profile->sections.size()==2);
+    assert(report_profile->sections[0].required&&
+        std::find(report_profile->sections[0].evidence_relations.begin(),report_profile->sections[0].evidence_relations.end(),"supports")!=report_profile->sections[0].evidence_relations.end());
+    assert(!report_profile->sections[1].required);
+    std::string roundtrip_package_json;
+    assert(common_agent_package_to_json(package,roundtrip_package_json,error));
+    common_agent_bootstrap_package roundtrip_package;
+    assert(common_agent_package_parse_json(roundtrip_package_json,roundtrip_package,error));
+    const auto roundtrip_report=std::find_if(roundtrip_package.artifact_profiles.begin(),roundtrip_package.artifact_profiles.end(),[](const auto & item){return item.id=="research";});
+    assert(roundtrip_report!=roundtrip_package.artifact_profiles.end()&&
+        roundtrip_report->sections.front().required&&roundtrip_report->sections.back().evidence_relations.size()==3);
     common_memory_in_memory_store package_memory;
     common_plan_in_memory_store package_plans;
     assert(package_memory.open("", error) && package_plans.open("", error));
@@ -839,7 +851,7 @@ int main() {
             if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
                 report_profile_installed = !transition.artifact_profile_json.empty() &&
                     transition.artifact_profile_ref == "research" &&
-                    transition.artifact_profile_revision == "v1";
+                    transition.artifact_profile_revision == "v2";
             }
         }
     }

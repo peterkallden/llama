@@ -568,6 +568,27 @@ make report coverage incomplete. Sections are stored as host-authorized plan
 observations with the snapshot fingerprint, so resume reuses validated output
 without generating or appending it twice.
 
+Profiles may set `required` (default `true`) and `evidence_relations` per
+section. A required `no_findings` result completes the section but adds an
+explicit coverage gap; it does not assert that the phenomenon is absent. An
+optional empty section does not itself reduce coverage. Starter research
+profiles require `findings` and make `limitations` optional. Contradictions,
+critical source gaps and other report-level coverage issues still count even
+when the optional limitations section is empty.
+
+Section preparation records relevant, included and omitted references, with a
+host-owned omission reason. With no relation filter, all workspace evidence is
+relevant. A configured filter selects related claims/evidence and retains
+contradicting or qualifying evidence for selected claims. Relevant records
+omitted for budget or access make coverage incomplete; records outside the
+declared section filter are reported separately and do not. Evidence excerpts
+are kept as complete records rather than silently clipped; records that do not
+fit become explicit omissions. The same scoped reference index validates both
+handles and canonical IDs, so a model cannot cite a snapshot record that was
+not included in its section input. Evidence/source pairs must also agree with
+the frozen provenance relation. Dataset references are recognized by the same
+index and validator.
+
 Only handles whose records fit in the section context are accepted for that
 generation. `no_findings` remains available when evidence supports another
 section but does not directly address this section's purpose. Generated block
@@ -629,11 +650,21 @@ report/Markdown resources and host-built completion summary. This remains a
 grounding-boundary check, not evidence of report quality on populated research
 data.
 
-`scripts/test-agent-report-composition-sourced-model-smoke.sh` is the populated
-workspace companion. It reads two explicitly synthetic text fixtures through
-the normal `resource.read` research path, checks that the model context contains
-paired `S`/`E` handles, and expects the shared fixture date in the exported
-report. The fixture is test data, not a historical source; this smoke validates
+`scripts/test-agent-report-composition-sourced-model-smoke.sh` exercises the
+populated path with two synthetic source files. It uses persistent Cozo plan,
+memory and resource-metadata databases plus filesystem-backed resource blobs,
+then starts the MCP stdio server as a separate process against those same stores
+and issues the standard `resources/read` requests for both the structured
+report and Markdown. The smoke checks the returned URIs, the fixture date, and
+the report's structured source bibliography / Markdown `Sources` section. This
+readback uses the MCP resource endpoint directly rather than asking a second
+model turn to plan a read, so it tests persistence and authorization without
+adding model-planner variability. The generation trace and MCP wire readback
+are saved separately in the smoke work directory. The synthetic fixtures are
+not historical authorities.
+
+The populated smoke also checks that the model context contains paired `S`/`E`
+handles and expects the shared fixture date in the exported report. It validates
 the acquisition-to-citation seam, not external factual accuracy. Web search
 results alone are discovery candidates and do not close research gaps or become
 supporting evidence before a source is read. Contradiction behavior is covered

@@ -6,7 +6,7 @@ set(TARGET llama-agent-core)
 add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifact-contract.h)
 target_include_directories(llama-agent-artifact PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-artifact PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan)
+target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan PRIVATE vendor::hash)
 
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
 # mobile clients can share the wire contract without linking agent semantics.

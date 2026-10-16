@@ -2022,7 +2022,8 @@ public:
             derive_request_policy_pack(request),
             derive_plan_policy_pack(plan));
         if (!policy.empty()) user.content = policy + "\n" + user.content;
-        std::vector<std::string> artifact_included_refs, artifact_omitted_refs;
+        std::vector<std::string> artifact_included_refs, artifact_omitted_refs, artifact_relevant_refs, artifact_out_of_scope_refs;
+        std::string artifact_omitted_reason;
         std::string artifact_dsl_grammar;
         std::vector<std::string> artifact_allowed_kinds;
         if (artifact_section) {
@@ -2048,8 +2049,6 @@ public:
             const size_t fixed_chars = user.content.size() + section_header.size() + context_intro.size() + context_suffix.size() + 48;
             const size_t section_budget = generation_config.context_budgets.step_chars > fixed_chars
                 ? generation_config.context_budgets.step_chars - fixed_chars : 0;
-            if (!common_agent_artifact_render_section_context(frozen_snapshot, step.required_evidence,
-                    section_budget, context_json, artifact_included_refs, artifact_omitted_refs, error)) return {};
             const auto binding=common_plan_artifact_binding_effective(step);
             if(!binding||!plan.workflow_definition){error="artifact generation has no bound workflow profile";return {};}
             bool found_profile_section=false;
@@ -2062,6 +2061,14 @@ public:
                 });
                 if(section==profile.sections.end()){error="artifact section is not in the bound profile";return {};}
                 artifact_allowed_kinds=section->allowed_block_kinds;
+                common_agent_artifact_section_context section_context;
+                if (!common_agent_artifact_prepare_section_context(frozen_snapshot,*section,section_budget,section_context,error)) return {};
+                context_json=std::move(section_context.rendered_json);
+                artifact_included_refs=std::move(section_context.included_refs);
+                artifact_omitted_refs=std::move(section_context.omitted_refs);
+                artifact_relevant_refs=std::move(section_context.relevant_refs);
+                artifact_out_of_scope_refs=std::move(section_context.out_of_scope_refs);
+                artifact_omitted_reason=std::move(section_context.omitted_reason);
                 if(artifact_dsl)artifact_dsl_grammar=common_agent_artifact_section_dsl_grammar(*section,context_json);
                 found_profile_section=true;
                 break;
@@ -2099,6 +2106,9 @@ public:
         auto generated=common_agent_generated_text_result_from_generation_result(generation_result);
         generated.artifact_included_refs=std::move(artifact_included_refs);
         generated.artifact_omitted_refs=std::move(artifact_omitted_refs);
+        generated.artifact_relevant_refs=std::move(artifact_relevant_refs);
+        generated.artifact_out_of_scope_refs=std::move(artifact_out_of_scope_refs);
+        generated.artifact_omitted_reason=std::move(artifact_omitted_reason);
         return generated;
     }
 

@@ -192,7 +192,8 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             (op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
              op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
              op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
-             op.observation->source == "artifact_section" || op.observation->source == "artifact_publication"))
+             op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||
+             op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation"))
         return deny("workflow grounding and artifact publication observations are host-authorized only");
     if (op.kind == common_plan_operation_kind::request_route_transition) {
         if (!op.host_authorized || !op.route_binding || !op.workflow_definition) return deny("route transition is host-authorized only");

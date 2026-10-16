@@ -2,6 +2,7 @@
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/artifact/artifact-contract.h"
 #include "plan/plan-workflow-state.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <limits>
@@ -174,7 +175,9 @@ common_plan_step make_tool_step(const common_plan_state & plan,
     if (!replace_previous(resolved, completed_step_id, choice)) { error = "workflow transition arguments are invalid"; return {}; }
     if (!resolve_argument_bindings(resolved, plan, transition, observation, error)) return {};
     common_plan_step step;
-    step.id = plan.id + ":workflow:" + transition.id + ":" + std::to_string(plan.version);
+    const auto identity=completed_step_id+"\n"+transition.id+"\n"+choice;
+    step.id = plan.id + ":workflow:" + transition.id + ":"+
+        hash_sha256_hex(identity.data(),identity.size()).substr(0,12);
     step.title = transition.tool_name;
     step.objective = "Execute host-approved workflow transition " + transition.id + ".";
     step.intended_contribution = step.objective;
@@ -335,7 +338,8 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
             });
             if (section == profile.sections.end()) { error = "artifact transition references an unknown profile section"; return false; }
             common_plan_step step;
-            step.id = plan.id + ":artifact:" + profile.id + ":" + section->id + ":" + std::to_string(plan.version);
+            const auto source_hash=hash_sha256_hex(completed_step_id.data(),completed_step_id.size()).substr(0,12);
+            step.id = plan.id + ":artifact:" + next->id + ":" + section->id + ":" + source_hash;
             step.title = section->title;
             step.objective = section->purpose;
             step.intended_contribution = section->purpose;
