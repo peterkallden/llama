@@ -664,11 +664,22 @@ are saved separately in the smoke work directory. The synthetic fixtures are
 not historical authorities.
 
 The populated smoke also checks that the model context contains paired `S`/`E`
-handles and expects the shared fixture date in the exported report. It validates
-the acquisition-to-citation seam, not external factual accuracy. Web search
-results alone are discovery candidates and do not close research gaps or become
-supporting evidence before a source is read. Contradiction behavior is covered
-by the model-free snapshot/report tests.
+handles and requires both fixture evidence records to be cited with their
+corresponding host handles (`E1`/`S1` and `E2`/`S3` in the current fixture
+ordering), alongside the shared date in the exported report. Handle names are
+assigned by the host; the smoke assertions pin them only for these fixtures.
+This validates the acquisition-to-citation seam, not external factual accuracy.
+Web search results alone are discovery candidates and do not close research
+gaps or become supporting evidence before a source is read. Contradiction
+behavior is covered by the model-free snapshot/report tests.
+
+Validation on 2026-10-16 with Qwen2.5-1.5B-Instruct Q4_K_M on the NVIDIA
+GeForce 920MX passed both report scenarios: the empty-source run returned an
+incomplete-coverage completion without a free-form second report; the populated
+run produced `20 July 1969` with both evidence/source pairs, then the separate
+MCP `resources/read` process retrieved the persisted report JSON and Markdown
+with the date and bibliography intact. Full traces are retained under
+`$HOME/llama-agent-smokes/report-composition-*` on the test host.
 
 Repository and web workflows currently use the common route compiler and
 execution envelope, with ordinary planning for request-specific paths.

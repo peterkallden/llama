@@ -33,7 +33,7 @@ agent_smoke_require_file "$fixture_b" "second synthetic research fixture"
 agent_smoke_require_executable "$agent_bin" "llama-agent"
 agent_smoke_build_if_requested llama-agent
 
-prompt='Using only the two supplied synthetic records, report the date they both state for the sample mission. Cite the supplied evidence handles. Explicitly treat the records as synthetic fixtures, not historical authorities.'
+prompt='Using only the two supplied synthetic records, report the date they both state for the sample mission. Cite both evidence handles and both source handles for this comparison. Explicitly treat the records as synthetic fixtures, not historical authorities.'
 LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
     LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
     agent_smoke_run_logged "$log_path" "$agent_bin" run \
@@ -94,8 +94,16 @@ grep -Eq 'evidence: E1([,[:space:]]|$)' <<<"$section_outputs" || {
     echo "sourced report smoke did not cite the first host evidence handle; log=$log_path" >&2
     exit 1
 }
+grep -Eq 'evidence: .*E2([,[:space:]]|$)' <<<"$section_outputs" || {
+    echo "sourced report smoke did not cite the second host evidence handle; log=$log_path" >&2
+    exit 1
+}
 grep -Eq 'source: S1([,[:space:]]|$)' <<<"$section_outputs" || {
     echo "sourced report smoke did not cite the first host source handle; log=$log_path" >&2
+    exit 1
+}
+grep -Eq 'source: .*S3([,[:space:]]|$)' <<<"$section_outputs" || {
+    echo "sourced report smoke did not cite the second host source handle; log=$log_path" >&2
     exit 1
 }
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=artifact[.]export' "$log_path" || {
