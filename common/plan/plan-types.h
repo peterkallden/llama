@@ -18,7 +18,15 @@ enum class common_plan_status { proposed, active, completed, blocked, failed, ca
 enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
 // A plan step either invokes one registered tool, asks the model for a bounded
 // intermediate result, or produces the user-visible final response.
-enum class common_plan_step_mode { tool, reasoning, final_response };
+enum class common_plan_step_mode { tool, reasoning, final_response, artifact_compose };
+struct common_plan_artifact_section_profile {
+    std::string id, title, purpose;
+    std::vector<std::string> required_observation_sources;
+};
+struct common_plan_artifact_profile {
+    std::string id, revision, title, purpose;
+    std::vector<common_plan_artifact_section_profile> sections;
+};
 
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
 struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
@@ -151,6 +159,7 @@ struct common_plan_workflow_binding {
 enum class common_plan_workflow_transition_kind {
     tool,
     model_choice,
+    artifact_compose,
 };
 
 struct common_plan_workflow_transition {
@@ -203,6 +212,14 @@ struct common_plan_workflow_transition {
     // Optional bounded guidance for a model-supplied action at this exact
     // transition. It narrows the method, never the tool or host authority.
     std::string model_instruction;
+    // Host-owned, typed report composition; all three refs are immutable
+    // bootstrap/profile identities and are not supplied by the model.
+    std::string artifact_profile_ref;
+    std::string artifact_profile_revision;
+    std::string artifact_section_id;
+    // Canonical profile JSON is host-injected during package installation so
+    // a plan remains bound to the exact immutable profile revision.
+    std::string artifact_profile_json;
 };
 
 // A declared handoff from a completed workflow observation to another

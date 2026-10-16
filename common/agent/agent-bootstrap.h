@@ -74,6 +74,7 @@ struct common_agent_bootstrap_package {
     std::vector<common_agent_bootstrap_procedure> procedures;
     std::vector<common_agent_bootstrap_blueprint> blueprints;
     std::vector<common_agent_bootstrap_workflow> workflows;
+    std::vector<common_plan_artifact_profile> artifact_profiles;
 };
 
 // The built-in package is a fallback. Callers may install a file/package using

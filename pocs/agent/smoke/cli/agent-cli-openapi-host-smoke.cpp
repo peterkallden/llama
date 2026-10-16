@@ -327,8 +327,8 @@ int main() {
     }
     const auto & list_operation = *list_operation_it;
     const auto complex_operation_it = std::find_if(catalog_check.operations.begin(),
-        catalog_check.operations.end(), [&list_operation](const agent_openapi_operation & operation) {
-            return &operation != &list_operation;
+        catalog_check.operations.end(), [](const agent_openapi_operation & operation) {
+            return operation.operation_id == "complex";
         });
     if (complex_operation_it == catalog_check.operations.end()) {
         std::cerr << "catalog did not expose a second operation\n";
@@ -396,9 +396,25 @@ int main() {
 
     const auto complex_tool_name = agent_openapi_exposed_tool_name(catalog_check, complex_operation);
     auto complex = selection.tool_view->call({"complex", complex_tool_name, "{}"}, error);
-    if (!complex.ok || !complex.dataset_refs.empty() || complex.resource_refs.size() != 1 ||
-            complex.content_json.find("items") == std::string::npos) {
-        std::cerr << "complex JSON projection failed: " << error << "\n";
+    const auto complex_payload = nlohmann::json::parse(complex.content_json, nullptr, false);
+    std::string complex_resource_text;
+    auto complex_authority = make_agent_resource_read_authority(
+        selection.tooling.resource_runtime, std::time(nullptr));
+    const bool complex_resource_read = complex.resource_refs.size() == 1 &&
+        resource_store.read_text(complex.resource_refs.front().uri, complex_authority,
+            1024, complex_resource_text, error);
+    const auto complex_resource_json = nlohmann::json::parse(
+        complex_resource_text, nullptr, false);
+    if (!complex.ok || !complex.dataset_refs.empty() || !complex_payload.is_object() ||
+            !complex_payload.contains("result") || !complex_payload["result"].is_object() ||
+            !complex_resource_read || !complex_resource_json.is_object() ||
+            !complex_resource_json.contains("items") ||
+            !complex_resource_json["items"].is_array()) {
+        std::cerr << "complex JSON projection failed: " << error
+                  << " operation=" << complex_operation.operation_id
+                  << " ok=" << complex.ok
+                  << " resources=" << complex.resource_refs.size()
+                  << " payload=" << complex.content_json << "\n";
         return 1;
     }
 

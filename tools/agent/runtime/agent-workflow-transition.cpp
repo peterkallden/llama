@@ -1,5 +1,6 @@
 #include "agent-workflow-transition.h"
 #include "agent/tooling/contracts/schema-contract.h"
+#include "agent/artifact/artifact-contract.h"
 #include "plan/plan-workflow-state.h"
 
 #include <algorithm>
@@ -322,6 +323,30 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
             }
             next = common_agent_workflow_next_transition(definition, state);
             if (next == nullptr) return true;
+        }
+        if (next->kind == common_plan_workflow_transition_kind::artifact_compose) {
+            common_agent_artifact_profile profile;
+            if (!common_agent_artifact_profile_from_json(next->artifact_profile_json, profile, error)) {
+                if (error.empty()) error = "artifact profile was not host-materialized";
+                return false;
+            }
+            const auto section = std::find_if(profile.sections.begin(), profile.sections.end(), [&](const auto & candidate) {
+                return candidate.id == next->artifact_section_id;
+            });
+            if (section == profile.sections.end()) { error = "artifact transition references an unknown profile section"; return false; }
+            common_plan_step step;
+            step.id = plan.id + ":artifact:" + profile.id + ":" + section->id + ":" + std::to_string(plan.version);
+            step.title = section->title;
+            step.objective = section->purpose;
+            step.intended_contribution = section->purpose;
+            step.status = common_plan_step_status::pending;
+            step.mode = common_plan_step_mode::artifact_compose;
+            step.depends_on.push_back(completed_step_id);
+            step.required_evidence = section->required_observation_sources;
+            step.semantic_alias = "workflow-transition:" + next->id + ",artifact-section:" + profile.id + "@" + profile.revision + ":" + section->id;
+            steps.push_back(std::move(step));
+            error.clear();
+            return true;
         }
         if (next->kind != common_plan_workflow_transition_kind::tool ||
                 std::find(route.resolved_tools.begin(), route.resolved_tools.end(), next->tool_name) == route.resolved_tools.end()) {

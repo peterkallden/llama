@@ -7,6 +7,7 @@
 #include "agent/adaptation/adaptation-observer.h"
 #include "agent/thinking/research/research-runner.h"
 #include "agent/thinking/research/research-workspace.h"
+#include "agent/artifact/artifact-contract.h"
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/routing/tool-navigation.h"
 #include "plan/plan-bindings.h"
@@ -1292,10 +1293,57 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // This makes normal plan progression deterministic; reflection remains
         // reserved for repair or replanning.
         while (true) {
+            bool advanced_non_tool_step = false;
             std::optional<common_agent_tool_call> tool_call;
             std::string tool_step_id = "request";
-            if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::reasoning && !executed_step_ids.count(step.id)) {
-                const auto reasoning_result = executor.generate_reasoning_result(request, plan, step, error);
+            if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active &&
+                    (common_plan_step_effective_mode(step) == common_plan_step_mode::reasoning ||
+                     common_plan_step_effective_mode(step) == common_plan_step_mode::artifact_compose) && !executed_step_ids.count(step.id)) {
+                const common_plan_step active_step = step;
+                const std::string active_step_id = active_step.id;
+                const auto active_mode = common_plan_step_effective_mode(active_step);
+                if (active_mode == common_plan_step_mode::artifact_compose) {
+                    if (!plan.workflow_definition || !active_step.semantic_alias ||
+                            active_step.semantic_alias->rfind("workflow-transition:", 0) != 0 ||
+                            active_step.semantic_alias->find(",artifact-section:") == std::string::npos) {
+                        result.error = "artifact composition step has no host-bound profile"; return result;
+                    }
+                    const auto marker = active_step.semantic_alias->find(",artifact-section:");
+                    const auto transition_id = active_step.semantic_alias->substr(
+                        std::string("workflow-transition:").size(), marker - std::string("workflow-transition:").size());
+                    const auto transition = std::find_if(plan.workflow_definition->transitions.begin(),
+                        plan.workflow_definition->transitions.end(), [&](const auto & t) {
+                            return t.kind == common_plan_workflow_transition_kind::artifact_compose && t.id == transition_id;
+                        });
+                    if (transition == plan.workflow_definition->transitions.end()) {
+                        result.error = "artifact composition profile transition is unavailable"; return result;
+                    }
+                    common_agent_artifact_profile profile;
+                    common_agent_artifact_snapshot snapshot;
+                    std::string snapshot_json;
+                    if (!common_agent_artifact_profile_from_json(transition->artifact_profile_json, profile, error) ||
+                            !common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error) ||
+                            !common_agent_artifact_snapshot_to_json(snapshot, snapshot_json, error)) {
+                        result.error = "artifact source snapshot could not be frozen: " + error; return result;
+                    }
+                    const bool already_frozen = std::any_of(plan.observations.begin(), plan.observations.end(),
+                        [](const auto & observation) { return observation.source == "artifact_snapshot"; });
+                    if (!already_frozen) {
+                        common_plan_operation freeze;
+                        freeze.kind = common_plan_operation_kind::record_observation;
+                        freeze.plan_id = plan.id;
+                        freeze.expected_version = plan.version;
+                        freeze.reason_summary = "immutable source snapshot captured before report composition";
+                        freeze.observation = common_plan_observation{
+                            "artifact-snapshot:" + plan.id, "artifact_snapshot", snapshot_json, 1.0f, {}, {}, 0};
+                        if (!store.apply(freeze, plan, error)) { result.error = "artifact source snapshot could not be persisted: " + error; return result; }
+                        append_trace(result, common_runtime_trace_stage::plan,
+                            common_runtime_trace_kind::updated,
+                            "artifact source snapshot captured before report composition",
+                            plan.id, active_step_id, {}, "artifact-snapshot:" + plan.id);
+                    }
+                }
+                const auto reasoning_result = executor.generate_reasoning_result(request, plan, active_step, error);
                 std::string reasoning = reasoning_result.content;
                 if (!error.empty()) { result.error = "reasoning step failed: " + error; return result; }
                 result.generation_records.push_back(common_agent_generation_record_from_result(
@@ -1303,44 +1351,140 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     reasoning_result));
                 result.reasoning_decoded_tokens += reasoning_result.decoded_tokens;
                 result.total_decoded_tokens += reasoning_result.decoded_tokens;
+                if (reasoning.size() > 4096) { result.error = "reasoning step result is too large"; return result; }
                 // Reasoning is evidence only. Small local models occasionally
                 // ignore the requested JSON envelope; preserve that bounded
                 // output as explicitly unstructured evidence instead of
                 // failing an otherwise valid blueprint execution.
-                reasoning = common_agent_runtime_normalize_reasoning_observation_json(reasoning);
-                if (reasoning.size() > 4096) { result.error = "reasoning step result is too large"; return result; }
-                common_plan_operation observed;
-                observed.kind = common_plan_operation_kind::record_observation;
-                observed.plan_id = plan.id;
-                observed.expected_version = plan.version;
-                observed.reason_summary = "reasoning step result";
-                observed.observation = common_plan_observation{"reasoning:" + step.id, "reasoning", reasoning, 1.0f, {}, {}, 0};
-                if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+                if (active_mode == common_plan_step_mode::artifact_compose) {
+                    if (!plan.workflow_definition || !active_step.semantic_alias || active_step.semantic_alias->rfind("workflow-transition:", 0) != 0 || active_step.semantic_alias->find(",artifact-section:") == std::string::npos) {
+                        result.error = "artifact composition step has no host-bound profile"; return result;
+                    }
+                    const auto artifact_marker = active_step.semantic_alias->find(",artifact-section:");
+                    const auto transition_id = active_step.semantic_alias->substr(std::string("workflow-transition:").size(), artifact_marker - std::string("workflow-transition:").size());
+                    const auto transition = std::find_if(plan.workflow_definition->transitions.begin(), plan.workflow_definition->transitions.end(), [&](const auto & t) {
+                        return t.kind == common_plan_workflow_transition_kind::artifact_compose && t.id == transition_id;
+                    });
+                    if (transition == plan.workflow_definition->transitions.end()) { result.error = "artifact composition profile transition is unavailable"; return result; }
+                    common_agent_artifact_profile profile;
+                    common_agent_artifact_snapshot snapshot;
+                    common_agent_artifact_section_profile section_profile;
+                    if (!common_agent_artifact_profile_from_json(transition->artifact_profile_json, profile, error) ||
+                            !common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error)) { result.error = "artifact snapshot could not be validated: " + error; return result; }
+                    const auto selected_section = std::find_if(profile.sections.begin(), profile.sections.end(), [&](const auto & s) { return s.id == transition->artifact_section_id; });
+                    if (selected_section == profile.sections.end()) { result.error = "artifact profile section disappeared"; return result; }
+                    common_agent_artifact_section section;
+                    if (!common_agent_artifact_parse_section_dsl(reasoning, *selected_section, snapshot, section, error)) {
+                        result.error = "artifact section validation failed: " + error; return result;
+                    }
+                    json section_json={{"id",section.id},{"title",section.title},{"blocks",json::array()}};
+                    std::vector<std::string> evidence_ids;
+                    for (const auto & block : section.blocks) {
+                        section_json["blocks"].push_back({{"id",block.id},{"kind",block.kind==common_agent_artifact_block_kind::observation?"observation":block.kind==common_agent_artifact_block_kind::conclusion?"conclusion":"recommendation"},{"text",block.text},{"evidence_ids",block.evidence_ids},{"source_refs",block.source_refs},{"validation",block.validation==common_agent_artifact_validation::references_resolve?"references_resolve":"gap"},{"validation_note",block.validation_note}});
+                        evidence_ids.insert(evidence_ids.end(), block.evidence_ids.begin(), block.evidence_ids.end());
+                    }
+                    reasoning = section_json.dump();
+                    common_plan_operation observed;
+                    observed.kind = common_plan_operation_kind::record_observation;
+                    observed.plan_id = plan.id; observed.expected_version = plan.version;
+                    observed.reason_summary = "artifact section validated against frozen plan snapshot";
+                    observed.observation = common_plan_observation{"artifact-section:" + active_step.id, "artifact_section", reasoning, 1.0f, evidence_ids, {}, 0};
+                    if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+                } else {
+                    reasoning = common_agent_runtime_normalize_reasoning_observation_json(reasoning);
+                    common_plan_operation observed;
+                    observed.kind = common_plan_operation_kind::record_observation;
+                    observed.plan_id = plan.id;
+                    observed.expected_version = plan.version;
+                    observed.reason_summary = "reasoning step result";
+                    observed.observation = common_plan_observation{"reasoning:" + active_step.id, "reasoning", reasoning, 1.0f, {}, {}, 0};
+                    if (!store.apply(observed, plan, error)) { result.error = error; return result; }
+                }
                 common_plan_operation complete;
                 complete.kind = common_plan_operation_kind::complete_step;
                 complete.plan_id = plan.id;
                 complete.expected_version = plan.version;
-                complete.step_id = step.id;
+                complete.step_id = active_step.id;
                 complete.reason_summary = "reasoning step completed";
+                const bool artifact_step = active_mode == common_plan_step_mode::artifact_compose;
+                const std::string observation_id = (artifact_step ? "artifact-section:" : "reasoning:") + active_step_id;
+                if (artifact_step) {
+                    // This host-validated section record proves that the
+                    // composition step completed, including an explicit gap
+                    // result when the frozen snapshot has no supporting
+                    // sources. It is not evidence for the report's claims.
+                    complete.evidence_ids.push_back(observation_id);
+                }
                 if (!store.apply(complete, plan, error)) { result.error = error; return result; }
-                executed_step_ids.insert(step.id);
-                append_event(result, request, common_agent_event_type::plan_updated, "reasoning observation recorded", {}, plan.id);
+                if (active_mode == common_plan_step_mode::artifact_compose &&
+                        request.workflow_continuation && plan.route_binding && plan.workflow_definition) {
+                    const auto observation = std::find_if(plan.observations.rbegin(), plan.observations.rend(), [&](const auto & o) {
+                        return o.id == "artifact-section:" + active_step.id;
+                    });
+                    if (observation == plan.observations.rend()) { result.error = "validated artifact section observation was not persisted"; return result; }
+                    std::vector<common_plan_step> continuation_steps;
+                    if (!request.workflow_continuation(plan, active_step.id, *observation, continuation_steps, error)) {
+                        result.error = "artifact workflow continuation failed: " + error; return result;
+                    }
+                    std::string previous_step_id = active_step.id;
+                    for (auto & continuation_step : continuation_steps) {
+                        const auto mode = common_plan_step_effective_mode(continuation_step);
+                        if (continuation_step.id.empty() ||
+                                (mode == common_plan_step_mode::tool && !continuation_step.tool_call) ||
+                                (mode != common_plan_step_mode::tool && mode != common_plan_step_mode::artifact_compose) ||
+                                std::any_of(plan.steps.begin(), plan.steps.end(), [&](const auto & existing) { return existing.id == continuation_step.id; })) {
+                            result.error = "workflow continuation returned an invalid or duplicate step"; return result;
+                        }
+                        if (continuation_step.depends_on.empty()) continuation_step.depends_on.push_back(previous_step_id);
+                        common_plan_operation add; add.kind=common_plan_operation_kind::add_step; add.plan_id=plan.id;
+                        add.expected_version=plan.version; add.step=continuation_step; add.reason_summary="host-verified artifact workflow continuation added";
+                        if (!store.apply(add,plan,error)){result.error=error;return result;}
+                        previous_step_id=continuation_step.id;
+                        append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
+                            "artifact workflow continuation materialized",plan.id,continuation_step.id,
+                            continuation_step.tool_call?continuation_step.tool_call->name:std::string{});
+                    }
+                    if (!continuation_steps.empty()) {
+                        for (const auto & final_step : plan.steps) {
+                            if (common_plan_step_effective_mode(final_step)!=common_plan_step_mode::final_response ||
+                                    final_step.status==common_plan_step_status::completed || final_step.status==common_plan_step_status::skipped) continue;
+                            common_plan_operation dependency;dependency.kind=common_plan_operation_kind::add_dependency;dependency.plan_id=plan.id;
+                            dependency.expected_version=plan.version;dependency.step_id=final_step.id;dependency.target_id=previous_step_id;
+                            dependency.reason_summary="final answer waits for artifact workflow continuation";
+                            if(!store.apply(dependency,plan,error)){result.error=error;return result;}
+                        }
+                        if (tools && !tools->validate_plan(plan, error)) {
+                            result.error = "artifact workflow continuation violates the route envelope: " + error;
+                            return result;
+                        }
+                    }
+                }
+                executed_step_ids.insert(active_step_id);
+                append_event(result, request, common_agent_event_type::plan_updated,
+                    artifact_step ? "artifact section validated and recorded" : "reasoning observation recorded", {}, plan.id);
                 append_observation_and_resource_events(
                     result,
                     request,
-                    "reasoning observation recorded",
+                    artifact_step ? "artifact section recorded" : "reasoning observation recorded",
                     plan.id,
-                    step.id,
-                    "reasoning:" + step.id,
-                    "reasoning",
+                    active_step_id,
+                    observation_id,
+                    artifact_step ? "artifact_section" : "reasoning",
                     {});
                 append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
-                    "reasoning observation recorded", plan.id, step.id, {}, "reasoning:" + step.id);
+                    artifact_step ? "artifact section validated" : "reasoning observation recorded",
+                    plan.id, active_step_id, {}, observation_id);
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
-                    "reasoning step completed", plan.id, step.id);
+                    artifact_step ? "artifact composition section completed" : "reasoning step completed", plan.id, active_step_id);
                 if (!activate_next_ready_step()) break;
-                continue;
+                // This code is inside the range-for over plan.steps. A bare
+                // continue would inspect the rest of the old snapshot rather
+                // than restart the scheduler loop for the newly activated
+                // continuation step.
+                advanced_non_tool_step = true;
+                break;
             }
+            if (advanced_non_tool_step) continue;
             if (plan.active_step_id) for (const auto & step : plan.steps) if (step.id == *plan.active_step_id && step.status == common_plan_step_status::active && common_plan_step_effective_mode(step) == common_plan_step_mode::tool && !executed_step_ids.count(step.id)) {
                 if (step.selected_tool && *step.selected_tool != step.tool_call->name) { result.error = "active step selected tool does not match its tool call"; return result; }
                 tool_call = common_agent_tool_call{step.tool_call->name, step.tool_call->arguments_json};
@@ -1689,7 +1833,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     }
                     std::string previous_step_id = tool_step_id;
                     for (auto & continuation_step : continuation_steps) {
-                        if (continuation_step.id.empty() || !continuation_step.tool_call ||
+                        const auto mode = common_plan_step_effective_mode(continuation_step);
+                        if (continuation_step.id.empty() ||
+                                (mode == common_plan_step_mode::tool && !continuation_step.tool_call) ||
+                                (mode != common_plan_step_mode::tool && mode != common_plan_step_mode::artifact_compose) ||
                                 std::any_of(plan.steps.begin(), plan.steps.end(), [&](const auto & step) {
                                     return step.id == continuation_step.id;
                                 })) {
@@ -1711,7 +1858,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                             common_runtime_trace_kind::updated,
                             "A* workflow continuation materialized", plan.id,
                             continuation_step.id,
-                            continuation_step.tool_call->name);
+                            continuation_step.tool_call ? continuation_step.tool_call->name : std::string{});
                     }
                     if (!continuation_steps.empty()) {
                         for (const auto & step : plan.steps) {
@@ -1970,12 +2117,25 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
 
         std::string draft;
+        std::string host_artifact_summary;
+        const bool artifact_report_ready = common_agent_artifact_completion_summary(plan, host_artifact_summary);
         std::vector<common_agent_research_verification_claim> declared_claims;
         if (draft_deferred_for_tool_repair) {
             append_trace(result, common_runtime_trace_stage::response,
                 common_runtime_trace_kind::decided,
                 "draft deferred until failed mandatory tool step is repaired and rerun",
                 plan.id);
+        } else if (artifact_report_ready) {
+            // The report sections have already been composed and validated,
+            // and artifact.export returned the persisted resources. Do not
+            // ask a second free-form generation to recreate that report: it
+            // could invent findings that contradict the frozen snapshot.
+            draft = host_artifact_summary;
+            result.response_generation_status = common_agent_generation_status::completed;
+            result.response_stop_reason = common_agent_generation_stop_reason::none;
+            append_trace(result, common_runtime_trace_stage::response,
+                common_runtime_trace_kind::recorded,
+                "host-generated completion summary from verified report export", plan.id);
         } else {
             const auto draft_result = executor.generate_draft_result(request, plan, guidance, error);
             draft = draft_result.content;
@@ -2182,13 +2342,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 result.limit_reached = true;
             }
         }
-        if (!request.enable_reflection || iteration >= request.max_reflection_rounds) {
+        if (artifact_report_ready || !request.enable_reflection || iteration >= request.max_reflection_rounds) {
             if (block_unrepaired_tool_failure()) break;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
-            result.limit_reached = request.enable_reflection;
+            result.limit_reached = !artifact_report_ready && request.enable_reflection;
             append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
-                "response accepted without reflection revision", plan.id);
+                artifact_report_ready ? "report completion returned from verified export metadata" :
+                    "response accepted without reflection revision", plan.id);
             break;
         }
         common_reflection_result reflection;

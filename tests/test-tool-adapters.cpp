@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
+#include "agent/artifact/artifact-contract.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
@@ -20,6 +21,7 @@ class test_resource_store final : public agent_resource_store {
 public:
     bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string &) override {
         last_request = request;
+        requests.push_back(request);
         out.uri = "resource://test/" + request.name;
         out.name = request.name;
         out.mime_type = request.mime_type;
@@ -50,6 +52,7 @@ public:
     }
     bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> &, std::string &) const override { return false; }
     agent_resource_put_request last_request;
+    std::vector<agent_resource_put_request> requests;
     std::set<std::string> available_uris;
 };
 
@@ -363,6 +366,57 @@ int main() {
     foundation_bindings.resource_runtime.namespace_id = "test";
     foundation_bindings.resource_runtime.session_id = "session-1";
     foundation_bindings.resource_runtime.turn_id = "turn-1";
+    common_agent_artifact_profile report_profile;
+    report_profile.id = "research";
+    report_profile.revision = "v1";
+    report_profile.title = "Research report";
+    report_profile.purpose = "Grounded findings and explicit gaps.";
+    report_profile.sections = {{"findings", "Findings", "Supported findings."},
+        {"limitations", "Limitations", "Unresolved gaps."}};
+    std::string report_profile_json;
+    {
+        nlohmann::ordered_json value = {{"id", report_profile.id}, {"revision", report_profile.revision},
+            {"title", report_profile.title}, {"purpose", report_profile.purpose}, {"sections", nlohmann::ordered_json::array()}};
+        for (const auto & section : report_profile.sections) value["sections"].push_back({
+            {"id", section.id}, {"title", section.title}, {"purpose", section.purpose}});
+        report_profile_json = value.dump();
+    }
+    common_plan_state report_plan;
+    report_plan.id = "report-plan";
+    report_plan.namespace_id = "test";
+    report_plan.session_id = "session-1";
+    report_plan.scope = common_plan_scope::session;
+    report_plan.goal = "Compose a source-grounded report";
+    report_plan.success_criteria = "Preserve gaps and provenance.";
+    report_plan.version = 1;
+    common_plan_workflow_definition report_workflow;
+    report_workflow.workflow_ref = "workflow://artifact/research-report";
+    report_workflow.workflow_revision = "v1";
+    common_plan_workflow_transition report_transition;
+    report_transition.id = "compose-findings";
+    report_transition.kind = common_plan_workflow_transition_kind::artifact_compose;
+    report_transition.artifact_profile_ref = report_profile.id;
+    report_transition.artifact_profile_revision = report_profile.revision;
+    report_transition.artifact_profile_json = report_profile_json;
+    report_transition.artifact_section_id = "findings";
+    report_workflow.transitions.push_back(report_transition);
+    report_plan.workflow_definition = report_workflow;
+    common_agent_artifact_snapshot empty_report_snapshot;
+    assert(common_agent_artifact_snapshot_from_plan(report_plan, report_profile, empty_report_snapshot, error));
+    std::string empty_report_snapshot_json;
+    assert(common_agent_artifact_snapshot_to_json(empty_report_snapshot, empty_report_snapshot_json, error));
+    report_plan.observations.push_back({"artifact-snapshot:report-plan", "artifact_snapshot",
+        empty_report_snapshot_json, 1.0f, {}, {}, 1, {}});
+    report_plan.observations.push_back({"artifact-section:findings", "artifact_section",
+        R"({"id":"findings","title":"Findings","blocks":[{"id":"findings:1","kind":"observation","text":"No source evidence was supplied.","validation":"gap","validation_note":"empty snapshot"}]})",
+        1.0f, {}, {}, 2, {}});
+    report_plan.observations.push_back({"artifact-section:limitations", "artifact_section",
+        R"({"id":"limitations","title":"Limitations","blocks":[{"id":"limitations:1","kind":"observation","text":"Coverage is incomplete.","validation":"gap","validation_note":"empty snapshot"}]})",
+        1.0f, {}, {}, 3, {}});
+    assert(plans.create(report_plan, error));
+    foundation_bindings.plan_store = &plans;
+    std::string active_report_plan_id = report_plan.id;
+    foundation_bindings.plan_id = &active_report_plan_id;
     foundation_bindings.diagnostics_symbol = [](const std::string &) {
         return common_tool_execution_result::success(
             R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
@@ -611,6 +665,19 @@ int main() {
            foundation_data.last_request.find(R"("limit":1)" ) != std::string::npos);
     result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
     assert(result.ok && result.output.find("resource://") != std::string::npos);
+    result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
+    assert(result.ok);
+    const auto report_export = nlohmann::json::parse(result.output);
+    assert(!report_export.value("resource", std::string{}).empty() &&
+        !report_export.value("report_resource", std::string{}).empty() &&
+        !report_export.value("snapshot_resource", std::string{}).empty() &&
+        !report_export.value("markdown_resource", std::string{}).empty() &&
+        report_export.contains("coverage_complete") && !report_export["coverage_complete"].get<bool>());
+    assert(foundation_resources.requests.size() == 4 &&
+        foundation_resources.requests[1].mime_type == "application/json" &&
+        foundation_resources.requests[2].mime_type == "application/vnd.llama-agent.report+json" &&
+        foundation_resources.requests[3].mime_type == "text/markdown" &&
+        foundation_resources.requests[3].text.find("Coverage incomplete") != std::string::npos);
     result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
     assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
            foundation_resources.last_request.mime_type == "text/csv" &&

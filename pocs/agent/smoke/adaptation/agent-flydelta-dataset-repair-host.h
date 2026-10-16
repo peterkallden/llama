@@ -227,7 +227,7 @@ private:
             return false;
         }
         common_agent_dataset_descriptor sales;
-        sales.ref = {dataset, "Sales", 4, 5, "resource://fixture/sales", "fixture:rows"};
+        sales.ref = {dataset, "Sales", 4, 5, "resource://fixture/sales.csv", "csv:dataset"};
         sales.columns = {
             {"order_id", common_agent_dataset_column_type::integer, false},
             {"customer_id", common_agent_dataset_column_type::integer, false},
@@ -235,10 +235,11 @@ private:
             {"amount", common_agent_dataset_column_type::integer, false},
             {"units", common_agent_dataset_column_type::integer, false},
         };
-        sales.source_workbook_name = "sales.xlsx";
+        sales.source_workbook_name = "sales.csv";
         sales.source_sheet_name = "Sales";
         sales.source_sheet_index = 0;
-        sales.import_processor_id = "flydelta-dataset-repair-fixture";
+        sales.import_processor_id = "csv-resource-import-v1";
+        sales.import_processor_version = "1";
         if (!store_.put_dataset_descriptor(sales, error)) return false;
         runtime_request_.available_datasets = {sales};
         return true;

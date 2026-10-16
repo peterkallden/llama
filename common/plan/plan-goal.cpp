@@ -14,7 +14,10 @@ common_plan_goal_evaluation common_plan_evaluate_goal(const common_plan_state & 
         if (step.optional || common_plan_step_effective_mode(step) == common_plan_step_mode::final_response) continue;
         ++required;
         const bool observation = std::any_of(plan.observations.begin(), plan.observations.end(), [&](const auto & item) {
-            return item.id == step.id || item.id.rfind("tool:" + step.id + ":", 0) == 0 || item.id == "reasoning:" + step.id;
+            return item.id == step.id || item.id.rfind("tool:" + step.id + ":", 0) == 0 ||
+                item.id == "reasoning:" + step.id ||
+                (common_plan_step_effective_mode(step) == common_plan_step_mode::artifact_compose &&
+                    item.id == "artifact-section:" + step.id);
         });
         if (step.result_summary || observation) ++evidenced;
         else result.unmet_criteria.push_back("step lacks evidence: " + step.id);

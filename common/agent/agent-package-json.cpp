@@ -70,13 +70,15 @@ const char * workflow_policy_name(common_plan_workflow_policy policy) {
 }
 
 const char * workflow_transition_kind_name(common_plan_workflow_transition_kind kind) {
-    return kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool";
+    return kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" :
+        kind == common_plan_workflow_transition_kind::artifact_compose ? "artifact_compose" : "tool";
 }
 
 bool workflow_transition_kind(const json & value, common_plan_workflow_transition_kind & out) {
     if (!value.is_string()) return false;
     if (value.get<std::string>() == "tool") { out = common_plan_workflow_transition_kind::tool; return true; }
     if (value.get<std::string>() == "model_choice") { out = common_plan_workflow_transition_kind::model_choice; return true; }
+    if (value.get<std::string>() == "artifact_compose") { out = common_plan_workflow_transition_kind::artifact_compose; return true; }
     return false;
 }
 
@@ -108,6 +110,9 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.candidate_id_json_pointer = source.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = source.value("model_supplies_arguments", false);
         transition.model_instruction = source.value("model_instruction", std::string{});
+        transition.artifact_profile_ref = source.value("artifact_profile_ref", std::string{});
+        transition.artifact_profile_revision = source.value("artifact_profile_revision", std::string{});
+        transition.artifact_section_id = source.value("artifact_section_id", std::string{});
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
         if (source.contains("max_pages")) {
@@ -148,7 +153,7 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
             }
         }
         if (source.contains("kind") && !workflow_transition_kind(source["kind"], transition.kind)) {
-            error = "workflow transition kind must be tool or model_choice";
+            error = "workflow transition kind must be tool, model_choice or artifact_compose";
             return false;
         }
         definition.transitions.push_back(std::move(transition));
@@ -158,7 +163,19 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
 
 bool validate(const common_agent_bootstrap_package & package, std::string & error) {
     if (package.name.empty() || package.name.size() > 128 || package.version.empty() || package.version.size() > 64) { error = "package name and version are required"; return false; }
-    std::set<std::string> procedures, blueprints, workflows;
+    std::set<std::string> procedures, blueprints, workflows, artifact_profiles;
+    for (const auto & profile : package.artifact_profiles) {
+        if (!valid_id(profile.id) || profile.revision.empty() || profile.revision.size() > 128 ||
+                profile.title.empty() || profile.title.size() > 256 || profile.sections.empty() ||
+                profile.sections.size() > 32 || !artifact_profiles.insert(profile.id + "@" + profile.revision).second) {
+            error = "invalid or duplicate artifact profile"; return false;
+        }
+        std::set<std::string> sections;
+        for (const auto & section : profile.sections) if (!valid_id(section.id) || section.title.empty() ||
+                section.title.size() > 256 || section.purpose.size() > 2048 || !sections.insert(section.id).second) {
+            error = "artifact profile has invalid or duplicate section"; return false;
+        }
+    }
     for (const auto & procedure : package.procedures) {
         if (!valid_id(procedure.id) || procedure.content.empty() || procedure.content.size() > 8192 || procedure.summary.size() > 1024 || procedure.importance < 0 || procedure.importance > 1 || procedure.confidence < 0 || procedure.confidence > 1 || !procedures.insert(procedure.id).second) { error = "invalid or duplicate procedure definition"; return false; }
     }
@@ -302,6 +319,18 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                     error = "workflow pagination requires a tool transition and a page limit from 2 to 5";
                     return false;
                 }
+                if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
+                    const std::string key = transition.artifact_profile_ref + "@" + transition.artifact_profile_revision;
+                    const auto profile = std::find_if(package.artifact_profiles.begin(), package.artifact_profiles.end(), [&](const auto & p) {
+                        return p.id == transition.artifact_profile_ref && p.revision == transition.artifact_profile_revision;
+                    });
+                    if (transition.artifact_profile_ref.empty() || transition.artifact_profile_revision.empty() ||
+                            !artifact_profiles.count(key) || profile == package.artifact_profiles.end() ||
+                            std::none_of(profile->sections.begin(), profile->sections.end(), [&](const auto & s) { return s.id == transition.artifact_section_id; }) ||
+                            !transition.tool_name.empty() || !transition.argument_bindings.empty()) {
+                        error = "artifact_compose transition must bind a declared profile section and no tool"; return false;
+                    }
+                }
                 std::set<std::string> choice_ids;
                 for (const auto & choice : transition.choices) {
                     if (!valid_id(choice.id) || !choice_ids.insert(choice.id).second ||
@@ -430,6 +459,23 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
         package = {};
         package.name = root.value("name", std::string{});
         package.version = root.value("version", std::string{});
+        if (root.contains("artifact_profiles")) {
+            if (!root["artifact_profiles"].is_array()) { error = "artifact_profiles must be an array"; return false; }
+            for (const auto & item : root["artifact_profiles"]) {
+                if (!item.is_object() || !item.contains("sections") || !item["sections"].is_array()) { error = "artifact profile requires sections"; return false; }
+                common_plan_artifact_profile profile;
+                profile.id = item.value("id", std::string{}); profile.revision = item.value("revision", std::string{});
+                profile.title = item.value("title", std::string{}); profile.purpose = item.value("purpose", std::string{});
+                for (const auto & sj : item["sections"]) {
+                    if (!sj.is_object()) { error = "artifact profile section must be an object"; return false; }
+                    common_plan_artifact_section_profile section;
+                    section.id=sj.value("id",std::string{}); section.title=sj.value("title",std::string{}); section.purpose=sj.value("purpose",std::string{});
+                    if (sj.contains("required_observation_sources") && !strings(sj["required_observation_sources"],section.required_observation_sources)) { error="artifact section sources must be strings";return false; }
+                    profile.sections.push_back(std::move(section));
+                }
+                package.artifact_profiles.push_back(std::move(profile));
+            }
+        }
         if (root.contains("procedures")) {
             if (!root["procedures"].is_array()) { error = "package procedures must be an array"; return false; }
             for (const auto & item : root["procedures"]) {
@@ -522,11 +568,16 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
 
 bool common_agent_package_to_json(const common_agent_bootstrap_package & package, std::string & text, std::string & error, bool pretty) {
     if (!validate(package, error)) return false;
-    json root = {{"schema_version", 1}, {"name", package.name}, {"version", package.version}, {"procedures", json::array()}, {"workflows", json::array()}, {"blueprints", json::array()}};
+    json root = {{"schema_version", 1}, {"name", package.name}, {"version", package.version}, {"procedures", json::array()}, {"workflows", json::array()}, {"blueprints", json::array()}, {"artifact_profiles", json::array()}};
     if (std::any_of(package.workflows.begin(), package.workflows.end(), [](const auto & workflow) {
             return workflow.definition.require_declared_claims || !workflow.definition.verification_checks.empty();
         })) root["schema_version"] = 2;
     for (const auto & procedure : package.procedures) root["procedures"].push_back({{"id", procedure.id}, {"summary", procedure.summary}, {"content", procedure.content}, {"importance", procedure.importance}, {"confidence", procedure.confidence}});
+    for (const auto & profile : package.artifact_profiles) {
+        json value={{"id",profile.id},{"revision",profile.revision},{"title",profile.title},{"purpose",profile.purpose},{"sections",json::array()}};
+        for(const auto & section:profile.sections) value["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources}});
+        root["artifact_profiles"].push_back(std::move(value));
+    }
     for (const auto & blueprint : package.blueprints) {
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
         if (!blueprint.source_revision.empty()) value["source_revision"] = blueprint.source_revision;
@@ -587,6 +638,11 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
                 if (transition.model_supplies_arguments) item["model_supplies_arguments"] = true;
                 if (!transition.model_instruction.empty()) item["model_instruction"] = transition.model_instruction;
+                if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
+                    item["artifact_profile_ref"] = transition.artifact_profile_ref;
+                    item["artifact_profile_revision"] = transition.artifact_profile_revision;
+                    item["artifact_section_id"] = transition.artifact_section_id;
+                }
                 if (!transition.candidate_json_pointer.empty()) item["candidates"] = transition.candidate_json_pointer;
                 if (transition.kind == common_plan_workflow_transition_kind::model_choice &&
                         transition.choices.empty() && transition.candidate_id_json_pointer != "/id") {

@@ -4,6 +4,7 @@
 #include "plan/plan-types.h"
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <utility>
 
@@ -259,6 +260,17 @@ bool common_agent_install_bootstrap_package(
                     }
                 }
             }
+            auto workflow_definition = definition.definition;
+            for (auto & transition : workflow_definition.transitions) {
+                if (transition.kind != common_plan_workflow_transition_kind::artifact_compose) continue;
+                const auto profile = std::find_if(package.artifact_profiles.begin(), package.artifact_profiles.end(), [&](const auto & p) {
+                    return p.id == transition.artifact_profile_ref && p.revision == transition.artifact_profile_revision;
+                });
+                if (profile == package.artifact_profiles.end()) { error = "workflow references an unavailable artifact profile revision"; return false; }
+                nlohmann::ordered_json profile_json = {{"id",profile->id},{"revision",profile->revision},{"title",profile->title},{"purpose",profile->purpose},{"sections",nlohmann::ordered_json::array()}};
+                for (const auto & section : profile->sections) profile_json["sections"].push_back({{"id",section.id},{"title",section.title},{"purpose",section.purpose},{"required_observation_sources",section.required_observation_sources}});
+                transition.artifact_profile_json = profile_json.dump();
+            }
             common_plan_state workflow;
             workflow.id = prefix + "workflow:" + definition.id;
             workflow.namespace_id = config.namespace_id;
@@ -271,7 +283,7 @@ bool common_agent_install_bootstrap_package(
             workflow.purpose = "Host-validated " + definition.definition.family + " workflow.";
             workflow.goal = definition.definition.workflow_ref;
             workflow.success_criteria = "Workflow revision remains host-valid before materialization.";
-            workflow.workflow_definition = definition.definition;
+            workflow.workflow_definition = std::move(workflow_definition);
             workflow.created_at = config.now;
             workflow.updated_at = config.now;
             const auto existing = plan_store.get(workflow.id, error);

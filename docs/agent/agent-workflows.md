@@ -514,6 +514,71 @@ host-bound data operation using a typed reference to the completed
 arguments. Without a host-bound operation, ordinary planning continues within
 the same route and envelope.
 
+## Report composition
+
+Report composition is a host-owned workflow transition, not a synchronous
+model tool that hides several generations. A bootstrap package may declare
+versioned `artifact_profiles` and an `artifact_compose` transition for each
+section. The runtime materializes one resumable `artifact_compose` plan step per
+transition; section generation therefore has ordinary step identity, tracing,
+budget handling and resume behavior. The starter example is
+`docs/examples/agent-bootstrap-workflows-v1.json` (`research-report-composition-v1`).
+
+Before the first report section, the host persists one immutable
+`artifact_snapshot` observation from the current plan's host observations,
+resource references, assumptions and coverage indicators. Later sections and
+export reuse that same snapshot and fingerprint rather than silently reading
+newer plan observations. This is a frozen report input, not a replacement for
+the research workspace or source resources.
+
+The model writes each section in the established flat DSL:
+
+```text
+block: observation
+text: A concise statement grounded in the supplied source snapshot.
+evidence: host-evidence-id
+source: resource-uri-or-observation-id
+```
+
+The host owns section/block IDs and checks that evidence and source handles
+exist in the frozen snapshot. A resolved reference is not proof that the text
+is entailed by that reference. Missing or unknown references become visible
+`gap` status in the structured report; they are not upgraded to verified
+claims. Missing section output likewise becomes an explicit host-generated
+gap. Sections are stored as plan observations so the chain remains resumable.
+
+The final declared `artifact.export` transition builds linked resources for
+the frozen source snapshot JSON, structured report JSON and deterministically
+rendered Markdown. DOCX is an optional export through the existing
+Markdown-to-DOCX resource processor. Resources use project scope when the
+active project exists, otherwise session scope, and lineage links snapshot,
+report and rendered output. Export is explicit in the workflow; it does not
+happen merely because a profile exists.
+
+Profiles define presentation and coverage, not tool authority. Workflows
+orchestrate and resume sections; blueprints/routes select the method;
+`artifact.export` publishes the composed result. A future MCP Apps editor can
+use stable section/block IDs and revisions, but this implementation does not
+expose collaborative editing or mutate research evidence.
+
+When a completed `artifact.export` returns the structured report and Markdown
+resource references plus `coverage_complete`, the host also constructs the
+conversation's completion message from those verified fields. It does not run
+a second free-form draft that could replace explicit coverage gaps with a new
+unsupported report. If those fields are absent, normal response generation is
+left unchanged.
+
+The full-trace Qwen smoke for this route is
+`scripts/test-agent-report-composition-model-smoke.sh`. It runs with GPU
+auto-fit and writes its log under `$HOME/llama-agent-smokes/` by default (or
+under `LLAMA_AGENT_SMOKE_WORKDIR` when explicitly set). Its empty-source case
+checks that the host freezes the snapshot, executes every section transition,
+publishes through `artifact.export`, and retains incomplete coverage rather
+than inventing citations. It also verifies that completion uses the host-built
+resource/coverage summary rather than a second model-generated report. This is
+a wiring/grounding-boundary check, not a claim about report quality on a
+populated research workspace.
+
 Repository and web workflows currently use the common route compiler and
 execution envelope, with ordinary planning for request-specific paths.
 Dataset and document continuation remain compatibility bridges while their

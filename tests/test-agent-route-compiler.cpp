@@ -819,6 +819,7 @@ int main() {
     std::stringstream package_text;
     package_text << package_file.rdbuf();
     assert(common_agent_package_parse_json(package_text.str(), package, error));
+    assert(package.artifact_profiles.size() >= 3);
     common_memory_in_memory_store package_memory;
     common_plan_in_memory_store package_plans;
     assert(package_memory.open("", error) && package_plans.open("", error));
@@ -830,6 +831,19 @@ int main() {
         [](const std::string &, std::vector<float> & embedding, std::string & e) {
             embedding = {1.0f, 0.0f}; e.clear(); return true;
         }, installed, error));
+    bool report_profile_installed = false;
+    for (const auto & workflow_id : installed.installed_workflow_ids) {
+        auto workflow = package_plans.get(workflow_id, error);
+        if (!workflow || !workflow->workflow_definition) continue;
+        for (const auto & transition : workflow->workflow_definition->transitions) {
+            if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
+                report_profile_installed = !transition.artifact_profile_json.empty() &&
+                    transition.artifact_profile_ref == "research" &&
+                    transition.artifact_profile_revision == "v1";
+            }
+        }
+    }
+    assert(report_profile_installed);
     std::vector<common_blueprint_candidate> eurostat_candidates;
     for (const auto & id : installed.installed_blueprint_ids) {
         if (id.find("eurostat-") == std::string::npos) continue;

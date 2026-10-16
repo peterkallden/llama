@@ -6,6 +6,7 @@
 #include "agent/tooling/adapters/families/oracle-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
 #include "agent/tooling/adapters/families/resource-adapters.h"
+#include "agent/artifact/artifact-contract.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "base64.hpp"
@@ -495,6 +496,120 @@ common_tool_execution_result export_dataset_csv(
         "Exported a bounded CSV artifact from the dataset.", {std::move(resource)});
 }
 
+common_tool_execution_result export_plan_report(
+        const common_native_tool_bindings & bindings, const json & arguments) {
+    if (bindings.plan_store == nullptr || bindings.plan_id == nullptr || bindings.plan_id->empty())
+        return tool_validation_failure("tool.artifact.export.no_active_plan", "report export requires a host-bound active plan");
+    const std::string requested_plan = arguments.value("source_plan", *bindings.plan_id);
+    if (requested_plan != *bindings.plan_id)
+        return tool_validation_failure("tool.artifact.export.plan_scope", "source_plan must match the active host-bound plan");
+    const auto format=arguments.value("format",std::string("markdown"));
+    if(format!="markdown"&&format!="docx")return tool_validation_failure("tool.artifact.export.unsupported_format","report export supports markdown or docx");
+    std::string error;
+    auto plan = bindings.plan_store->get(requested_plan, error);
+    if (!plan) return tool_not_found_failure("tool.artifact.export.plan_unavailable", std::move(error), "The source plan is unavailable.");
+    if (plan->namespace_id != bindings.resource_runtime.namespace_id ||
+            (!plan->project_id.empty() && plan->project_id != bindings.resource_runtime.project_id) ||
+            (plan->project_id.empty() && plan->session_id != bindings.resource_runtime.session_id))
+        return tool_execution_failure("tool.artifact.export.plan_scope", "source plan is outside the active resource scope", "The source plan is not available in this scope.");
+    if (!plan->workflow_definition)
+        return tool_validation_failure("tool.artifact.export.no_report_profile", "the active plan has no declared artifact profile");
+    const common_plan_workflow_transition * profile_transition = nullptr;
+    for (const auto & transition : plan->workflow_definition->transitions) {
+        if (transition.kind != common_plan_workflow_transition_kind::artifact_compose) continue;
+        if (profile_transition != nullptr && (profile_transition->artifact_profile_ref != transition.artifact_profile_ref ||
+                profile_transition->artifact_profile_revision != transition.artifact_profile_revision ||
+                profile_transition->artifact_profile_json != transition.artifact_profile_json))
+            return tool_validation_failure("tool.artifact.export.multiple_profiles", "one report export cannot combine different artifact profiles");
+        profile_transition = &transition;
+    }
+    if (profile_transition == nullptr)
+        return tool_validation_failure("tool.artifact.export.no_report_profile", "the active plan has no declared artifact profile");
+    common_agent_artifact_profile profile;
+    if (!common_agent_artifact_profile_from_json(profile_transition->artifact_profile_json, profile, error))
+        return tool_execution_failure("tool.artifact.export.invalid_profile", std::move(error), "The report profile could not be validated.");
+
+    common_agent_artifact_snapshot snapshot;
+    if (!common_agent_artifact_snapshot_from_plan(*plan, profile, snapshot, error))
+        return tool_execution_failure("tool.artifact.export.snapshot_failed", std::move(error), "The report source snapshot could not be created.");
+    std::string snapshot_json;
+    if (!common_agent_artifact_snapshot_to_json(snapshot, snapshot_json, error))
+        return tool_execution_failure("tool.artifact.export.snapshot_failed", std::move(error), "The report source snapshot could not be serialized.");
+    auto put_scoped = [&](const std::string & name, const std::string & summary, const std::string & mime,
+            const std::string & text, const std::string & parent, const std::string & derivation,
+            common_runtime_resource_ref & out) -> bool {
+        if (bindings.resource_runtime.store == nullptr) { error="resource store is unavailable"; return false; }
+        agent_resource_put_request put; put.name=name; put.description=summary; put.mime_type=mime; put.text=text;
+        put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
+        put.source_provider="native";put.source_tool="artifact.export";
+        put.metadata=make_tool_resource_metadata("A revisioned report artifact with host-owned provenance.",summary,"Read or download this report resource.","Source observations and evidence remain authoritative.");
+        put.lineage.parent_uri=parent;put.lineage.derivation=derivation;
+        if(!parent.empty()){put.lineage.chunk_count=1;put.lineage.byte_length=text.size();}
+        apply_agent_resource_runtime(bindings.resource_runtime,put);
+        agent_resource_descriptor descriptor;
+        if(!bindings.resource_runtime.store->put_text(put,descriptor,error))return false;
+        out.uri=descriptor.uri;out.name=descriptor.name;out.description=descriptor.description;
+        out.mime_type=descriptor.mime_type;out.size_bytes=descriptor.size_bytes;out.scope=descriptor.scope;
+        out.metadata=descriptor.metadata;out.lineage=descriptor.lineage;
+        return true;
+    };
+    common_runtime_resource_ref snapshot_resource;
+    const auto base_name=arguments.value("name",profile.id+"-report");
+    if(base_name.empty()||base_name.size()>256)return tool_validation_failure("tool.artifact.export.invalid_name","report name is outside bounds");
+    if(!put_scoped(base_name+"-sources.json","Immutable report source snapshot","application/json",snapshot_json,{},"artifact.snapshot:v1",snapshot_resource))
+        return tool_execution_failure("tool.artifact.export.snapshot_store_failed",std::move(error),"The report source snapshot could not be stored.");
+
+    common_agent_artifact_document document;
+    if(!common_agent_artifact_document_from_plan(*plan,profile,snapshot_resource.uri,document,error))
+        return tool_execution_failure("tool.artifact.export.document_failed",std::move(error),"The report could not be assembled from validated sections.");
+    std::string document_json,markdown;
+    if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))
+        return tool_execution_failure("tool.artifact.export.render_failed",std::move(error),"The report could not be rendered.");
+    common_runtime_resource_ref report_resource;
+    if(!put_scoped(base_name+"-report.json","Structured report document", "application/vnd.llama-agent.report+json",document_json,snapshot_resource.uri,"artifact.report:v1",report_resource))
+        return tool_execution_failure("tool.artifact.export.report_store_failed",std::move(error),"The structured report could not be stored.");
+    common_runtime_resource_ref markdown_resource;
+    if(!put_scoped(base_name+".md",profile.title,"text/markdown",markdown,report_resource.uri,"artifact.export:markdown",markdown_resource))
+        return tool_execution_failure("tool.artifact.export.markdown_store_failed",std::move(error),"The Markdown report could not be stored.");
+
+    common_runtime_resource_ref final_resource=markdown_resource;
+    if(format=="docx"){
+        if(bindings.resource_processing_service==nullptr)return tool_execution_failure("tool.artifact.export.docx_unavailable","resource processing is unavailable","DOCX export is unavailable.");
+        agent_resource_processing_binding_request conversion;conversion.source_uri=markdown_resource.uri;conversion.operation_id="artifact-export:"+plan->id;
+        conversion.authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
+        conversion.media_type.declared_type="text/markdown";conversion.media_type.resolved_type="text/markdown";conversion.target_representation="docx";
+        conversion.target_media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        conversion.purpose=agent_resource_processing_purpose::artifact_generation;conversion.limits.max_source_bytes=4*1024*1024;
+        conversion.limits.max_output_bytes=8*1024*1024;conversion.limits.max_duration_ms=180000;conversion.limits.max_generated_resources=1;
+        const auto processed=bindings.resource_processing_service->process(conversion);
+        if(!processed.success||processed.outputs.empty())return tool_execution_failure("tool.artifact.export.docx_failed",processed.failure_code,"The report could not be converted to DOCX.");
+        const auto & output=processed.outputs.front();
+        common_runtime_resource_lineage docx_lineage;docx_lineage.parent_uri=markdown_resource.uri;docx_lineage.chunk_count=1;docx_lineage.byte_length=output.bytes.size();docx_lineage.derivation="artifact.export:docx";
+        agent_resource_put_request put;put.name=base_name+".docx";put.description=profile.title;
+        put.mime_type=output.mime_type.empty()?conversion.target_media_type:output.mime_type;
+        put.bytes=output.bytes;put.bytes_are_authoritative=true;
+        put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
+        put.source_provider="native";put.source_tool="artifact.export";put.metadata=output.metadata;put.lineage=std::move(docx_lineage);
+        apply_agent_resource_runtime(bindings.resource_runtime,put);
+        agent_resource_descriptor descriptor;
+        if(bindings.resource_runtime.store==nullptr||!bindings.resource_runtime.store->put_bytes(put,descriptor,error))
+            return tool_execution_failure("tool.artifact.export.docx_store_failed",std::move(error),"The DOCX report could not be stored.");
+        final_resource=descriptor;
+    }
+    const auto output=json{{"resource",final_resource.uri},{"name",final_resource.name},{"mime_type",final_resource.mime_type},
+        {"report_resource",report_resource.uri},{"snapshot_resource",snapshot_resource.uri},{"markdown_resource",markdown_resource.uri},
+        {"revision",document.revision},{"profile_id",document.profile_id},{"profile_revision",document.profile_revision},
+        {"source_plan_id",document.source_plan_id},{"source_plan_version",document.source_plan_version},
+        {"coverage_complete",document.coverage_complete},{"format",format}}.dump();
+    std::vector<common_runtime_resource_ref> exported_resources;
+    exported_resources.push_back(std::move(final_resource));
+    exported_resources.push_back(std::move(report_resource));
+    exported_resources.push_back(std::move(snapshot_resource));
+    exported_resources.push_back(std::move(markdown_resource));
+    return common_tool_execution_result::success(output,
+        "Exported a report with source snapshot and revision provenance.",std::move(exported_resources));
+}
+
 bool agent_resource_has_text_representation(const agent_resource_descriptor & descriptor) {
     return common_resource_media_type_is_text_like(descriptor.mime_type);
 }
@@ -924,6 +1039,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.artifact.export.invalid_arguments", std::move(err));
                 if (arguments.contains("source_dataset")) return export_dataset_csv(bindings, arguments);
+                if (arguments.contains("source_plan") || arguments.value("format", std::string{}) == "markdown" || arguments.value("format", std::string{}) == "docx") return export_plan_report(bindings, arguments);
                 if (!arguments.contains("name") || !arguments["name"].is_string() || !arguments.contains("content") || !arguments["content"].is_string()) return tool_validation_failure("tool.artifact.export.invalid_arguments", "artifact.export requires name and content, or source_dataset");
                 common_runtime_resource_ref resource;
                 const auto mime = arguments.value("mime_type", std::string("text/plain"));

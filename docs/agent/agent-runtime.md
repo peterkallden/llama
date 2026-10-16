@@ -674,7 +674,7 @@ do not select implementations or host paths.
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
 | `diagnostics.native_crash` | Host-native analysis | Analyzes an executable plus a post-mortem core/dump through the configured debugger provider | Contract-level | GDB/MI and CDB providers, symbol quality, bounded stacks and crash smokes |
-| `artifact.export` | Store-backed artifact | Publishes bounded text or dataset results through the host resource store | Limited | Binary formats and richer provenance/retention policy |
+| `artifact.export` | Store-backed artifact | Publishes bounded text, dataset CSV, or a workflow-composed report with snapshot lineage; report output supports Markdown and optional DOCX conversion | Limited | Collaborative report editing and richer retention policy |
 
 Maturity is a capability status, not a quality rating:
 
@@ -879,6 +879,30 @@ bounded CSV, and stores it as a derived `text/csv` resource. Inline text export
 continues to use the same tool. The exported resource carries a lineage parent
 of the dataset URI, while the dataset remains authoritative. XLSX export,
 larger streaming exports and chart artifacts are intentionally later work.
+
+Report export is another mode of the same host tool. Workflow
+`artifact_compose` transitions create one resumable model step per declared
+section. The host freezes a plan-observation snapshot before the first section
+and persists its JSON and fingerprint in the plan; later section generations
+and export reuse that snapshot. Model output uses flat
+`block`/`text`/`evidence`/`source` DSL records. The host assigns IDs and checks
+reference existence, but reference resolution is not a semantic entailment
+proof. Missing or out-of-snapshot references remain visible as report gaps.
+
+`artifact.export` materializes a structured report JSON resource plus
+deterministic Markdown, optionally converting Markdown to DOCX through the
+configured resource processor. The report and outputs link to the frozen
+snapshot; project-scoped plans publish project-scoped artifacts and
+session-scoped plans publish session-scoped artifacts. This composition path
+does not overwrite the research workspace and does not currently implement
+interactive MCP Apps editing. See [Agent workflows](agent-workflows.md#report-composition)
+and the report profile/workflow in
+[`agent-bootstrap-workflows-v1.json`](../examples/agent-bootstrap-workflows-v1.json).
+The export result includes `coverage_complete`. For a successful report export,
+the host builds the final conversational status from that flag and the returned
+resource references instead of asking the model to generate the report a second
+time. This prevents a final free-form answer from erasing the report's explicit
+coverage gaps. Other workflows keep the ordinary draft/reflection path.
 
 The first common contract slice is implemented in
 `common/agent/dataset-contracts.h`. It validates dataset references and

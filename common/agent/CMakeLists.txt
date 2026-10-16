@@ -1,5 +1,13 @@
 set(TARGET llama-agent-core)
 
+# Shared report contracts are consumed by both the runtime core and native
+# artifact adapters. Keep them in a small dependency below both targets rather
+# than introducing a core <-> tooling link cycle.
+add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifact-contract.h)
+target_include_directories(llama-agent-artifact PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-artifact PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan)
+
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
 # mobile clients can share the wire contract without linking agent semantics.
 add_library(llama-agent-protocol STATIC
@@ -248,7 +256,7 @@ add_library(llama-agent-tooling ${AGENT_TOOLING_SOURCES})
 target_include_directories(llama-agent-tooling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-tooling
-    PUBLIC llama-common llama-agent-dataset-contracts llama-agent-plan llama-agent-memory
+    PUBLIC llama-common llama-agent-artifact llama-agent-dataset-contracts llama-agent-plan llama-agent-memory
     PRIVATE cpp-httplib
 )
 if (LLAMA_AGENT_SANDBOX)
@@ -285,6 +293,7 @@ target_include_directories(${TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(${TARGET} PUBLIC cxx_std_17)
 target_link_libraries(${TARGET}
     PUBLIC
+        llama-agent-artifact
         llama-agent-dataset-contracts
         llama-agent-plan
         llama-agent-memory

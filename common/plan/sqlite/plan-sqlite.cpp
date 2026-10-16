@@ -20,8 +20,8 @@ const char * status_name(common_plan_status value) { switch (value) { case commo
 common_plan_status parse_status(const std::string & value) { if (value == "active") return common_plan_status::active; if (value == "completed") return common_plan_status::completed; if (value == "blocked") return common_plan_status::blocked; if (value == "failed") return common_plan_status::failed; if (value == "cancelled") return common_plan_status::cancelled; return common_plan_status::proposed; }
 const char * step_status_name(common_plan_step_status value) { switch (value) { case common_plan_step_status::pending: return "pending"; case common_plan_step_status::active: return "active"; case common_plan_step_status::completed: return "completed"; case common_plan_step_status::blocked: return "blocked"; case common_plan_step_status::skipped: return "skipped"; case common_plan_step_status::failed: return "failed"; } return "pending"; }
 common_plan_step_status parse_step_status(const std::string & value) { if (value == "active") return common_plan_step_status::active; if (value == "completed") return common_plan_step_status::completed; if (value == "blocked") return common_plan_step_status::blocked; if (value == "skipped") return common_plan_step_status::skipped; if (value == "failed") return common_plan_step_status::failed; return common_plan_step_status::pending; }
-const char * step_mode_name(common_plan_step_mode value) { return value == common_plan_step_mode::tool ? "tool" : value == common_plan_step_mode::reasoning ? "reasoning" : "final_response"; }
-common_plan_step_mode parse_step_mode(const std::string & value) { return value == "tool" ? common_plan_step_mode::tool : value == "reasoning" ? common_plan_step_mode::reasoning : common_plan_step_mode::final_response; }
+const char * step_mode_name(common_plan_step_mode value) { return value == common_plan_step_mode::tool ? "tool" : value == common_plan_step_mode::reasoning ? "reasoning" : value == common_plan_step_mode::artifact_compose ? "artifact_compose" : "final_response"; }
+common_plan_step_mode parse_step_mode(const std::string & value) { return value == "tool" ? common_plan_step_mode::tool : value == "reasoning" ? common_plan_step_mode::reasoning : value == "artifact_compose" ? common_plan_step_mode::artifact_compose : common_plan_step_mode::final_response; }
 common_plan_operation_kind parse_operation_kind(const std::string & value) {
     const common_plan_operation_kind values[] = {
         common_plan_operation_kind::create_plan, common_plan_operation_kind::revise_goal,
@@ -122,12 +122,16 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
         for (const auto & transition : definition.transitions) {
             json item = {
                 {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
-                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : transition.kind == common_plan_workflow_transition_kind::artifact_compose ? "artifact_compose" : "tool"},
                 {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
                 {"candidates", transition.candidate_json_pointer},
                 {"candidate_id", transition.candidate_id_json_pointer}, {"cost", transition.cost},
                 {"model_supplies_arguments", transition.model_supplies_arguments},
                 {"model_instruction", transition.model_instruction},
+                {"artifact_profile_ref", transition.artifact_profile_ref},
+                {"artifact_profile_revision", transition.artifact_profile_revision},
+                {"artifact_section_id", transition.artifact_section_id},
+                {"artifact_profile_json", transition.artifact_profile_json},
                 {"optional", transition.optional}, {"max_pages", transition.max_pages}};
             if (!transition.choices.empty()) {
                 item["choices"] = json::array();
@@ -183,8 +187,9 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
         transition.id = item.value("id", std::string{});
         transition.from_state = item.value("from", std::string{});
         transition.to_state = item.value("to", std::string{});
-        transition.kind = item.value("kind", std::string("tool")) == "model_choice"
-            ? common_plan_workflow_transition_kind::model_choice : common_plan_workflow_transition_kind::tool;
+        const auto transition_kind = item.value("kind", std::string("tool"));
+        transition.kind = transition_kind == "model_choice" ? common_plan_workflow_transition_kind::model_choice :
+            transition_kind == "artifact_compose" ? common_plan_workflow_transition_kind::artifact_compose : common_plan_workflow_transition_kind::tool;
         transition.tool_name = item.value("tool", std::string{});
         transition.arguments_template_json = item.value("arguments", std::string("{}"));
         transition.candidate_json_pointer = item.value("candidates", std::string{});
@@ -192,6 +197,10 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
         transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
         transition.model_instruction = item.value("model_instruction", std::string{});
+        transition.artifact_profile_ref = item.value("artifact_profile_ref", std::string{});
+        transition.artifact_profile_revision = item.value("artifact_profile_revision", std::string{});
+        transition.artifact_section_id = item.value("artifact_section_id", std::string{});
+        transition.artifact_profile_json = item.value("artifact_profile_json", std::string{});
         transition.optional = item.value("optional", false);
         transition.max_pages = item.value("max_pages", uint8_t{0});
         for (const auto & choice_json : item.value("choices", json::array())) {

@@ -17,8 +17,8 @@ static std::string status_name(common_plan_status v) { switch(v) { case common_p
 static common_plan_status parse_status(const std::string & v) { if(v=="active")return common_plan_status::active; if(v=="completed")return common_plan_status::completed; if(v=="blocked")return common_plan_status::blocked; if(v=="failed")return common_plan_status::failed; if(v=="cancelled")return common_plan_status::cancelled; return common_plan_status::proposed; }
 static std::string step_status_name(common_plan_step_status v) { switch(v) { case common_plan_step_status::pending:return "pending"; case common_plan_step_status::active:return "active"; case common_plan_step_status::completed:return "completed"; case common_plan_step_status::blocked:return "blocked"; case common_plan_step_status::skipped:return "skipped"; default:return "failed"; } }
 static common_plan_step_status parse_step_status(const std::string & v) { if(v=="active")return common_plan_step_status::active; if(v=="completed")return common_plan_step_status::completed; if(v=="blocked")return common_plan_step_status::blocked; if(v=="skipped")return common_plan_step_status::skipped; if(v=="failed")return common_plan_step_status::failed; return common_plan_step_status::pending; }
-static std::string step_mode_name(common_plan_step_mode v) { return v == common_plan_step_mode::tool ? "tool" : v == common_plan_step_mode::reasoning ? "reasoning" : "final_response"; }
-static common_plan_step_mode parse_step_mode(const std::string & v) { return v == "tool" ? common_plan_step_mode::tool : v == "reasoning" ? common_plan_step_mode::reasoning : common_plan_step_mode::final_response; }
+static std::string step_mode_name(common_plan_step_mode v) { return v == common_plan_step_mode::tool ? "tool" : v == common_plan_step_mode::reasoning ? "reasoning" : v == common_plan_step_mode::artifact_compose ? "artifact_compose" : "final_response"; }
+static common_plan_step_mode parse_step_mode(const std::string & v) { return v == "tool" ? common_plan_step_mode::tool : v == "reasoning" ? common_plan_step_mode::reasoning : v == "artifact_compose" ? common_plan_step_mode::artifact_compose : common_plan_step_mode::final_response; }
 static json serialize_resource_ref(const common_runtime_resource_ref & resource) {
     json value = {
         {"uri", resource.uri},
@@ -94,9 +94,13 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
         for (const auto & transition : definition.transitions) {
             json item = {
                 {"id", transition.id}, {"from", transition.from_state}, {"to", transition.to_state},
-                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : "tool"},
+                {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : transition.kind == common_plan_workflow_transition_kind::artifact_compose ? "artifact_compose" : "tool"},
                 {"model_supplies_arguments", transition.model_supplies_arguments},
                 {"model_instruction", transition.model_instruction},
+                {"artifact_profile_ref", transition.artifact_profile_ref},
+                {"artifact_profile_revision", transition.artifact_profile_revision},
+                {"artifact_section_id", transition.artifact_section_id},
+                {"artifact_profile_json", transition.artifact_profile_json},
                 {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
                 {"candidates", transition.candidate_json_pointer}, {"candidate_id", transition.candidate_id_json_pointer},
                 {"cost", transition.cost},
@@ -151,9 +155,9 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         transition.id = item.value("id", std::string{});
         transition.from_state = item.value("from", std::string{});
         transition.to_state = item.value("to", std::string{});
-        transition.kind = item.value("kind", std::string("tool")) == "model_choice"
-            ? common_plan_workflow_transition_kind::model_choice
-            : common_plan_workflow_transition_kind::tool;
+        const auto transition_kind = item.value("kind", std::string("tool"));
+        transition.kind = transition_kind == "model_choice" ? common_plan_workflow_transition_kind::model_choice :
+            transition_kind == "artifact_compose" ? common_plan_workflow_transition_kind::artifact_compose : common_plan_workflow_transition_kind::tool;
         transition.tool_name = item.value("tool", std::string{});
         transition.arguments_template_json = item.value("arguments", std::string("{}"));
         transition.candidate_json_pointer = item.value("candidates", std::string{});
@@ -161,6 +165,10 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
         transition.model_instruction = item.value("model_instruction", std::string{});
+        transition.artifact_profile_ref = item.value("artifact_profile_ref", std::string{});
+        transition.artifact_profile_revision = item.value("artifact_profile_revision", std::string{});
+        transition.artifact_section_id = item.value("artifact_section_id", std::string{});
+        transition.artifact_profile_json = item.value("artifact_profile_json", std::string{});
         transition.optional = item.value("optional", false);
         for (const auto & choice_json : item.value("choices", json::array())) {
             common_plan_workflow_transition::choice choice;

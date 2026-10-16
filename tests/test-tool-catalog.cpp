@@ -387,7 +387,7 @@ int main() {
         common_tool_model_result_schema(*artifact_export),
         compact_error);
     assert(compact_error.empty());
-    assert(artifact_compact.find("rule: Choose one export mode: provide name and content for text, or source_dataset for CSV.") != std::string::npos);
+    assert(artifact_compact.find("rule: Choose one mode: name+content for text, source_dataset+format=csv for data, or format=markdown|docx to export the active host-composed report.") != std::string::npos);
     assert(artifact_compact.find("example:\nopen! artifact.export\nname: summary.txt\ncontent: \"Total orders: 42\"") != std::string::npos);
 
     std::vector<common_plan_schema_field> extracted_fields;

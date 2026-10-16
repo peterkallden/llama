@@ -477,6 +477,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-memory-tool-service.cpp
         test-memory-cozo.cpp
         test-plan-context.cpp
+        test-plan-goal.cpp
         test-plan-json.cpp
         test-plan-store.cpp
         test-plan-sqlite-continuation.cpp
@@ -498,6 +499,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-factorized-cvec-config.cpp
         test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
+        test-agent-artifact.cpp
         test-agent-route-compiler.cpp
         test-agent-workflow-grounding.cpp
         test-agent-execution-envelope.cpp
@@ -529,7 +531,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()

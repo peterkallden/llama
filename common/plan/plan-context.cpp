@@ -11,7 +11,7 @@ std::string common_plan_escape_context_text(const std::string & text) {
     replace_all(out, "<verified_tool_observations>", "<verified_tool_observations data-escaped=\"true\">");
     return out;
 }
-static const char * step_mode_name(common_plan_step_mode mode) { return mode == common_plan_step_mode::tool ? "tool" : mode == common_plan_step_mode::reasoning ? "reasoning" : "final_response"; }
+static const char * step_mode_name(common_plan_step_mode mode) { return mode == common_plan_step_mode::tool ? "tool" : mode == common_plan_step_mode::reasoning ? "reasoning" : mode == common_plan_step_mode::artifact_compose ? "artifact_compose" : "final_response"; }
 
 static void append_observation(std::ostringstream & out, const common_plan_observation & observation) {
     out << "Observation " << common_plan_escape_context_text(observation.id) << ": " << common_plan_escape_context_text(observation.summary) << "\n";
