@@ -350,6 +350,7 @@ public:
             const std::string & name,
             common_plan_tool_dataflow_contract & contract,
             std::string & error) const override {
+        if (!exposes_tool(name)) { error.clear(); return false; }
         const auto it = definitions.find(name);
         if (it == definitions.end()) { error.clear(); return false; }
         return common_plan_dataflow_contract_from_schemas(
@@ -380,11 +381,47 @@ public:
     }
 
     bool exposes_tool(const std::string & name) const override {
-        return definitions.find(name) != definitions.end();
+        return std::any_of(chat_tool_list.begin(), chat_tool_list.end(), [&](const common_chat_tool & tool) {
+            return tool.name == name;
+        });
     }
 
     bool is_read_only(const std::string & name) const override {
         return exposes_tool(name) && registry.is_read_only(name);
+    }
+
+    bool is_mcp_app_read_only(const std::string & name) const override {
+        if (!registry.is_read_only(name) || registry.is_policy_gated(name)) return false;
+        const auto it = std::find_if(chat_tool_list.begin(), chat_tool_list.end(), [&](const common_chat_tool & tool) {
+            return tool.name == name;
+        });
+        if (it == chat_tool_list.end()) return false;
+        const auto ui = json::parse(it->mcp_ui_metadata, nullptr, false);
+        if (!ui.is_object()) return false;
+        const auto visibility = ui.value("visibility", json::array());
+        return visibility.is_array() &&
+            std::find(visibility.begin(), visibility.end(), "app") != visibility.end();
+    }
+
+    bool is_web_read_only(const std::string & name) const override {
+        return (registry.is_read_only(name) && !registry.is_policy_gated(name)) || is_mcp_app_read_only(name);
+    }
+
+    bool app_tool_provenance(
+            const std::string & name,
+            std::string & provider_id,
+            std::string & server_tool_name) const override {
+        const auto it = std::find_if(chat_tool_list.begin(), chat_tool_list.end(), [&](const common_chat_tool & tool) {
+            return tool.name == name;
+        });
+        if (it == chat_tool_list.end()) return false;
+        const auto ui = json::parse(it->mcp_ui_metadata, nullptr, false);
+        if (!ui.is_object()) return false;
+        const auto visibility = ui.value("visibility", json::array());
+        if (!visibility.is_array() || std::find(visibility.begin(), visibility.end(), "app") == visibility.end()) return false;
+        provider_id = it->mcp_provider_id;
+        server_tool_name = it->mcp_server_tool_name.empty() ? it->name : it->mcp_server_tool_name;
+        return true;
     }
 
     bool is_policy_gated(const std::string & name) const override {
@@ -650,18 +687,24 @@ public:
             agent_tool_context context,
             agent_mcp_tool_client & client,
             std::vector<common_chat_tool> chat_tools,
+            std::vector<common_chat_tool> app_tools,
             std::map<std::string, mcp_agent_tool_definition> definitions,
             mcp_agent_tool_provider::plan_validator validator,
             std::string learning_provider_kind)
         : context(std::move(context))
         , client(client)
         , chat_tool_list(std::move(chat_tools))
+        , app_tool_list(std::move(app_tools))
         , definitions(std::move(definitions))
         , validator(std::move(validator))
         , learning_provider_kind(std::move(learning_provider_kind)) {}
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    const std::vector<common_chat_tool> & app_tools() const override {
+        return app_tool_list;
     }
 
     bool describe_tool_dataflow(
@@ -683,15 +726,44 @@ public:
     }
 
     bool exposes_tool(const std::string & name) const override {
-        return definitions.find(name) != definitions.end();
+        return std::any_of(chat_tool_list.begin(), chat_tool_list.end(), [&](const common_chat_tool & tool) {
+            return tool.name == name;
+        });
     }
 
     bool is_read_only(const std::string & name) const override {
+        if (!exposes_tool(name)) return false;
         auto it = definitions.find(name);
         return it != definitions.end() && it->second.read_only;
     }
 
+    bool is_mcp_app_read_only(const std::string & name) const override {
+        auto it = definitions.find(name);
+        return it != definitions.end() && it->second.app_read_only_authorized &&
+            std::find(it->second.ui_visibility.begin(), it->second.ui_visibility.end(), "app") !=
+                it->second.ui_visibility.end();
+    }
+
+    bool is_web_read_only(const std::string & name) const override {
+        if (!exposes_tool(name)) return false;
+        const auto it = definitions.find(name);
+        return it != definitions.end() && it->second.app_read_only_authorized;
+    }
+
+    bool app_tool_provenance(
+            const std::string & name,
+            std::string & provider_id,
+            std::string & server_tool_name) const override {
+        const auto it = definitions.find(name);
+        if (it == definitions.end() || std::find(it->second.ui_visibility.begin(),
+                it->second.ui_visibility.end(), "app") == it->second.ui_visibility.end()) return false;
+        provider_id = it->second.provider_id;
+        server_tool_name = it->second.name;
+        return true;
+    }
+
     bool is_policy_gated(const std::string & name) const override {
+        if (!exposes_tool(name)) return false;
         auto it = definitions.find(name);
         return it != definitions.end() &&
             !it->second.read_only &&
@@ -699,6 +771,7 @@ public:
     }
 
     common_learning_tool_metadata learning_metadata(const std::string & name) const override {
+        if (!exposes_tool(name)) return {};
         const auto it = definitions.find(name);
         if (it == definitions.end()) return {};
         auto family = common_agent_tool_family_name(name);
@@ -713,6 +786,10 @@ public:
     }
 
     bool validate(const agent_tool_call & call, std::string & error) const override {
+        if (!exposes_tool(call.name)) {
+            error = "tool is unavailable in the model-facing MCP view";
+            return false;
+        }
         auto it = definitions.find(call.name);
         if (it == definitions.end()) {
             error = "tool is unavailable in this MCP runtime view";
@@ -774,17 +851,30 @@ public:
             agent_tool_result & result,
             std::string & error) override {
         const auto app_it = definitions.find(app_tool_name);
-        const auto it = definitions.find(call.name);
+        auto it = definitions.end();
+        if (app_it != definitions.end()) {
+            // MCP Apps speak the upstream server's tool name. Resolve that
+            // name first, only within the provider that owns this app.
+            it = std::find_if(definitions.begin(), definitions.end(), [&](const auto & entry) {
+                return entry.second.provider_id == app_it->second.provider_id && entry.second.name == call.name;
+            });
+            if (it == definitions.end()) {
+                const auto exposed = definitions.find(call.name);
+                if (exposed != definitions.end() && exposed->second.provider_id == app_it->second.provider_id) it = exposed;
+            }
+        }
         if (app_it == definitions.end() || app_it->second.ui_resource_uri.empty() ||
                 std::find(app_it->second.ui_visibility.begin(), app_it->second.ui_visibility.end(), "app") == app_it->second.ui_visibility.end() ||
                 it == definitions.end() || it->second.provider_id != app_it->second.provider_id ||
-                !it->second.read_only || !it->second.read_only_declared ||
+                !it->second.app_read_only_authorized ||
                 it->second.requires_confirmation || it->second.writes_memory || it->second.writes_plan ||
                 std::find(it->second.ui_visibility.begin(), it->second.ui_visibility.end(), "app") == it->second.ui_visibility.end()) {
-            error = "MCP App may call only an app-visible read-only tool from its owning provider";
+            error = "MCP App may call only a host-authorized read-only tool from its owning provider";
             return false;
         }
-        result = execute_sync(call, error);
+        agent_tool_call exposed_call = call;
+        exposed_call.name = it->first;
+        result = execute_sync(exposed_call, error, true);
         return result.ok;
     }
 
@@ -871,7 +961,8 @@ public:
 private:
     bool reserve_call_slot(
             const agent_tool_call & call,
-            std::string & error) {
+            std::string & error,
+            bool app_call = false) {
         if (context.execution_control.should_stop()) {
             auto result = make_execution_control_failure_result(context, call);
             error = result.raw_diagnostic;
@@ -884,7 +975,8 @@ private:
         }
 
         std::string validation_error;
-        if (!validate(call, validation_error)) {
+        const bool valid = app_call ? validate_app_call(call, validation_error) : validate(call, validation_error);
+        if (!valid) {
             error = validation_error;
             return false;
         }
@@ -903,8 +995,9 @@ private:
 
     agent_tool_result execute_sync(
             const agent_tool_call & call,
-            std::string & error) {
-        if (!reserve_call_slot(call, error)) {
+            std::string & error,
+            bool app_call = false) {
+        if (!reserve_call_slot(call, error, app_call)) {
             if (context.execution_control.should_stop()) {
                 auto result = make_execution_control_failure_result(context, call);
                 error = result.raw_diagnostic;
@@ -1022,11 +1115,22 @@ private:
             call.arguments_json,
             definition.input_schema_json,
             normalized_arguments,
-            error);
+                error);
+    }
+
+    bool validate_app_call(const agent_tool_call & call, std::string & error) const {
+        const auto it = definitions.find(call.name);
+        if (it == definitions.end()) {
+            error = "tool is unavailable in this provider's MCP App view";
+            return false;
+        }
+        std::string normalized;
+        return normalize_arguments(call, it->second, normalized, error);
     }
     agent_tool_context context;
     agent_mcp_tool_client & client;
     std::vector<common_chat_tool> chat_tool_list;
+    std::vector<common_chat_tool> app_tool_list;
     std::map<std::string, mcp_agent_tool_definition> definitions;
     mcp_agent_tool_provider::plan_validator validator;
     std::string learning_provider_kind;
@@ -1043,13 +1147,21 @@ public:
     composite_agent_tool_view(
             std::vector<std::unique_ptr<agent_tool_view>> views,
             std::vector<common_chat_tool> chat_tools,
-            std::map<std::string, size_t> tool_owners)
+            std::vector<common_chat_tool> app_tools,
+            std::map<std::string, size_t> tool_owners,
+            std::map<std::string, size_t> app_owners)
         : views(std::move(views))
         , chat_tool_list(std::move(chat_tools))
-        , tool_owners(std::move(tool_owners)) {}
+        , app_tool_list(std::move(app_tools))
+        , tool_owners(std::move(tool_owners))
+        , app_owners(std::move(app_owners)) {}
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    const std::vector<common_chat_tool> & app_tools() const override {
+        return app_tool_list;
     }
 
     bool describe_tool_dataflow(
@@ -1094,6 +1206,24 @@ public:
         return view != nullptr && view->is_policy_gated(name);
     }
 
+    bool is_mcp_app_read_only(const std::string & name) const override {
+        const auto * view = find_app_owner(name);
+        return view != nullptr && view->is_mcp_app_read_only(name);
+    }
+
+    bool is_web_read_only(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->is_web_read_only(name);
+    }
+
+    bool app_tool_provenance(
+            const std::string & name,
+            std::string & provider_id,
+            std::string & server_tool_name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->app_tool_provenance(name, provider_id, server_tool_name);
+    }
+
     common_learning_tool_metadata learning_metadata(const std::string & name) const override {
         const auto * view = find_owner(name);
         return view != nullptr ? view->learning_metadata(name) : common_learning_tool_metadata{};
@@ -1130,8 +1260,12 @@ public:
             const std::string & uri,
             agent_tool_result & result,
             std::string & error) override {
-        auto * view = find_owner(tool_name);
-        return view != nullptr && view->read_mcp_app_resource(tool_name, uri, result, error);
+        auto * view = find_app_owner(tool_name);
+        if (view == nullptr) {
+            error = "MCP App owner is unavailable in this tool view";
+            return false;
+        }
+        return view->read_mcp_app_resource(tool_name, uri, result, error);
     }
 
     bool call_mcp_app_tool(
@@ -1139,10 +1273,10 @@ public:
             const agent_tool_call & call,
             agent_tool_result & result,
             std::string & error) override {
-        auto * view = find_owner(call.name);
-        const auto * app_view = find_owner(app_tool_name);
-        if (view == nullptr || app_view == nullptr || view != app_view) {
-            error = "MCP App cannot invoke a tool outside its owning provider";
+        const auto * app_view = find_app_owner(app_tool_name);
+        auto * view = const_cast<agent_tool_view *>(app_view);
+        if (view == nullptr) {
+            error = "MCP App owner is unavailable in this tool view";
             return false;
         }
         return view->call_mcp_app_tool(app_tool_name, call, result, error);
@@ -1191,6 +1325,18 @@ public:
     }
 
 private:
+    const agent_tool_view * find_app_owner(const std::string & name) const {
+        const auto it = app_owners.find(name);
+        if (it == app_owners.end() || it->second >= views.size()) return nullptr;
+        return views[it->second].get();
+    }
+
+    agent_tool_view * find_app_owner(const std::string & name) {
+        const auto it = app_owners.find(name);
+        if (it == app_owners.end() || it->second >= views.size()) return nullptr;
+        return views[it->second].get();
+    }
+
     const agent_tool_view * find_owner(const std::string & name) const {
         const auto it = tool_owners.find(name);
         if (it == tool_owners.end() || it->second >= views.size()) {
@@ -1209,7 +1355,9 @@ private:
 
     std::vector<std::unique_ptr<agent_tool_view>> views;
     std::vector<common_chat_tool> chat_tool_list;
+    std::vector<common_chat_tool> app_tool_list;
     std::map<std::string, size_t> tool_owners;
+    std::map<std::string, size_t> app_owners;
 };
 
 } // namespace
@@ -1317,12 +1465,14 @@ mcp_agent_tool_provider::mcp_agent_tool_provider(
         agent_mcp_tool_client & client,
         std::string exposed_name_prefix,
         plan_validator validator,
-        std::string learning_provider_kind)
+        std::string learning_provider_kind,
+        std::vector<std::string> read_only_tools)
     : provider_id(std::move(provider_id))
     , client(client)
     , exposed_name_prefix(std::move(exposed_name_prefix))
     , validator(std::move(validator))
-    , learning_provider_kind(std::move(learning_provider_kind)) {}
+    , learning_provider_kind(std::move(learning_provider_kind))
+    , read_only_tools(std::move(read_only_tools)) {}
 
 std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         const agent_tool_context & context,
@@ -1333,6 +1483,7 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
     }
 
     std::vector<common_chat_tool> chat_tools;
+    std::vector<common_chat_tool> app_tools;
     std::map<std::string, mcp_agent_tool_definition> resolved_definitions;
     for (auto definition : listed_tools) {
         if (definition.provider_id.empty()) {
@@ -1341,9 +1492,21 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         const std::string exposed_name = make_mcp_exposed_name(
             exposed_name_prefix.empty() ? definition.provider_id : exposed_name_prefix,
             definition.name);
-        if (!is_mcp_definition_allowed(definition, exposed_name, context)) {
-            continue;
-        }
+        const bool host_read_only = std::find(read_only_tools.begin(), read_only_tools.end(),
+            definition.name) != read_only_tools.end();
+        definition.app_read_only_authorized = host_read_only &&
+            !definition.requires_confirmation && !definition.writes_memory && !definition.writes_plan;
+        const bool model_visible = std::find(definition.ui_visibility.begin(),
+            definition.ui_visibility.end(), "model") != definition.ui_visibility.end();
+        const bool app_visible = std::find(definition.ui_visibility.begin(),
+            definition.ui_visibility.end(), "app") != definition.ui_visibility.end();
+        if (!model_visible && !app_visible) continue;
+        const bool model_allowed = model_visible && is_mcp_definition_allowed(definition, exposed_name, context);
+        const bool app_allowed = app_visible &&
+            (context.allowed_exposed_tool_names.empty() ||
+             std::find(context.allowed_exposed_tool_names.begin(), context.allowed_exposed_tool_names.end(), exposed_name) !=
+                context.allowed_exposed_tool_names.end());
+        if (!model_allowed && !app_allowed) continue;
         std::string compact_error;
         const auto & model_input_schema = definition.model_input_schema_json.empty()
             ? definition.input_schema_json
@@ -1361,16 +1524,24 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
             error = compact_error;
             return nullptr;
         }
-        chat_tools.push_back({
+        common_chat_tool descriptor{
             exposed_name,
             model_description,
             model_input_schema,
             model_result_schema,
             definition.result_schema_json,
-        });
-        chat_tools.back().host_input_schema = definition.input_schema_json;
-        chat_tools.back().mcp_ui_metadata = definition.ui_metadata_json;
-        resolved_definitions.emplace(exposed_name, std::move(definition));
+        };
+        descriptor.host_input_schema = definition.input_schema_json;
+        descriptor.mcp_ui_metadata = definition.ui_metadata_json;
+        descriptor.mcp_provider_id = definition.provider_id;
+        descriptor.mcp_server_tool_name = definition.name;
+        descriptor.mcp_app_read_only = definition.app_read_only_authorized;
+        if (model_allowed) chat_tools.push_back(descriptor);
+        if (app_allowed) app_tools.push_back(descriptor);
+        if (!resolved_definitions.emplace(exposed_name, std::move(definition)).second) {
+            error = "MCP provider exposes duplicate host tool name: " + exposed_name;
+            return nullptr;
+        }
     }
 
     error.clear();
@@ -1378,6 +1549,7 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         context,
         client,
         std::move(chat_tools),
+        std::move(app_tools),
         std::move(resolved_definitions),
         validator,
         learning_provider_kind);
@@ -1392,7 +1564,9 @@ std::unique_ptr<agent_tool_view> composite_agent_tool_provider::resolve_tools(
         std::string & error) {
     std::vector<std::unique_ptr<agent_tool_view>> resolved_views;
     std::vector<common_chat_tool> merged_chat_tools;
+    std::vector<common_chat_tool> merged_app_tools;
     std::map<std::string, size_t> tool_owners;
+    std::map<std::string, size_t> app_owners;
 
     for (auto * provider : providers) {
         if (provider == nullptr) {
@@ -1412,6 +1586,34 @@ std::unique_ptr<agent_tool_view> composite_agent_tool_provider::resolve_tools(
             }
             tool_owners.emplace(tool.name, owner_index);
             merged_chat_tools.push_back(tool);
+            std::string app_provider_id;
+            std::string app_server_tool_name;
+            if (view->app_tool_provenance(tool.name, app_provider_id, app_server_tool_name)) {
+                const auto app_owner = app_owners.find(tool.name);
+                if (app_owner != app_owners.end() && app_owner->second != owner_index) {
+                    error = "duplicate MCP App tool exposed in composite provider: " + tool.name;
+                    return nullptr;
+                }
+                app_owners.emplace(tool.name, owner_index);
+                if (std::none_of(merged_app_tools.begin(), merged_app_tools.end(), [&](const common_chat_tool & existing) {
+                        return existing.name == tool.name;
+                    })) {
+                    merged_app_tools.push_back(tool);
+                }
+            }
+        }
+        for (const auto & tool : view->app_tools()) {
+            const auto owner = app_owners.find(tool.name);
+            if (owner != app_owners.end() && owner->second != owner_index) {
+                error = "duplicate MCP App tool exposed in composite provider: " + tool.name;
+                return nullptr;
+            }
+            app_owners.emplace(tool.name, owner_index);
+            if (std::none_of(merged_app_tools.begin(), merged_app_tools.end(), [&](const common_chat_tool & existing) {
+                    return existing.name == tool.name;
+                })) {
+                merged_app_tools.push_back(tool);
+            }
         }
         resolved_views.push_back(std::move(view));
     }
@@ -1420,7 +1622,9 @@ std::unique_ptr<agent_tool_view> composite_agent_tool_provider::resolve_tools(
     return std::make_unique<composite_agent_tool_view>(
         std::move(resolved_views),
         std::move(merged_chat_tools),
-        std::move(tool_owners));
+        std::move(merged_app_tools),
+        std::move(tool_owners),
+        std::move(app_owners));
 }
 
 bool agent_dispatch_chat_tool_calls(

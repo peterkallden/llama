@@ -297,6 +297,11 @@ struct common_agent_daemon_event {
     common_agent_daemon_event_type event_type = common_agent_daemon_event_type::unknown;
     uint64_t sequence = 0;
     common_agent_daemon_event_category category = common_agent_daemon_event_category::unknown;
+    bool app_context_available = false;
+    std::string provider_id;
+    std::string server_tool_name;
+    std::string tool_input_json;
+    std::string tool_result_json;
 };
 
 enum class common_agent_event_stream_delivery_kind {

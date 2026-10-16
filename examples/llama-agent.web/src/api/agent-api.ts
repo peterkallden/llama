@@ -2,6 +2,13 @@ import type { AgentEvent, DaemonStatus, ToolCallResult, TurnRequest, UploadedRes
 
 export type EventSink = (event: AgentEvent) => void;
 
+export class AgentApiError extends Error {
+  constructor(message: string, readonly status: number, readonly payload: unknown) {
+    super(message);
+    this.name = "AgentApiError";
+  }
+}
+
 export function parseSseBlock(block: string): { id?: string; event?: string; data: string } | null {
   const lines = block.split(/\r?\n/);
   const data: string[] = [];
@@ -46,7 +53,7 @@ export class AgentApi {
     if (!response.ok) {
       const message = typeof payload === "object" && payload && "error" in payload
         ? String((payload as { error: unknown }).error) : `${response.status} ${response.statusText}`;
-      throw new Error(message);
+      throw new AgentApiError(message, response.status, payload);
     }
     return payload as T;
   }
@@ -67,7 +74,7 @@ export class AgentApi {
     return this.request("/tools/call", { method: "POST", body: JSON.stringify(input) });
   }
 
-  readMcpAppResource(input: { app_tool_name: string; resource_uri: string; session_id: string }): Promise<ToolCallResult> {
+  readMcpAppResource(input: { tool_name: string; resource_uri: string; session_id: string }): Promise<ToolCallResult> {
     return this.request("/mcp-apps/resource", { method: "POST", body: JSON.stringify(input) });
   }
 

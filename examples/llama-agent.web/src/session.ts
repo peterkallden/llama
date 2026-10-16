@@ -84,7 +84,7 @@ async function callReadOnlyTool(toolName: string, args: Record<string, unknown>)
 }
 
 async function readMcpAppResource(appToolName: string, uri: string) {
-  return api.value.readMcpAppResource({ app_tool_name: appToolName, resource_uri: uri, session_id: sessionId.value });
+  return api.value.readMcpAppResource({ tool_name: appToolName, resource_uri: uri, session_id: sessionId.value });
 }
 
 async function callMcpAppTool(appToolName: string, toolName: string, args: Record<string, unknown>) {

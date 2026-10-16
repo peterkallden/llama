@@ -1563,18 +1563,16 @@ bool initialize_agent_daemon_environment(
             return result.ok;
         }
         agent_tool_call call{"daemon-mcp-tool", payload.tool_name, payload.arguments_json};
-        if (!tooling.tool_view->validate(call, callback_error)) {
-            return false;
-        }
-        if (payload.read_only_only &&
-                (!tooling.tool_view->is_read_only(payload.tool_name) ||
-                 tooling.tool_view->is_policy_gated(payload.tool_name))) {
-            callback_error = "tool is not available through the read-only web tool endpoint";
-            return false;
-        }
         if (payload.mcp_app_call) {
             if (!tooling.tool_view->call_mcp_app_tool(payload.mcp_app_tool_name, call, result, callback_error)) return false;
         } else {
+            if (!tooling.tool_view->validate(call, callback_error)) return false;
+            if (payload.read_only_only &&
+                    (!tooling.tool_view->is_web_read_only(payload.tool_name) ||
+                     tooling.tool_view->is_policy_gated(payload.tool_name))) {
+                callback_error = "tool is not available through the read-only web tool endpoint";
+                return false;
+            }
             result = tooling.tool_view->call(call, callback_error);
         }
         return result.ok;
@@ -1639,6 +1637,12 @@ void configure_agent_daemon_provider_probe(
                 status.status = "ready";
                 for (auto & tool : provider_tooling.tools) {
                     retained_tooling.tools.push_back(std::move(tool));
+                }
+                for (auto & tool : provider_tooling.app_tools) {
+                    if (std::none_of(retained_tooling.app_tools.begin(), retained_tooling.app_tools.end(),
+                            [&](const common_chat_tool & existing) { return existing.name == tool.name; })) {
+                        retained_tooling.app_tools.push_back(std::move(tool));
+                    }
                 }
                 for (auto & resource : provider_tooling.owned_resources) {
                     retained_tooling.owned_resources.push_back(std::move(resource));

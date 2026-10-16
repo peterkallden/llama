@@ -388,9 +388,15 @@ common_agent_daemon_readiness make_daemon_readiness(
                         if (!resolved->host_input_schema.empty()) tool.input_schema = resolved->host_input_schema;
                         if (!resolved->output_schema.empty()) tool.output_schema = resolved->output_schema;
                         tool.ui_metadata = resolved->mcp_ui_metadata;
+                        tool.provider_id = resolved->mcp_provider_id;
+                        tool.server_tool_name = resolved->mcp_server_tool_name.empty() &&
+                                !resolved->mcp_ui_metadata.empty()
+                            ? resolved->name
+                            : resolved->mcp_server_tool_name;
                         if (runtime.provider_probe_tooling.tool_view != nullptr) {
                             tool.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(definition.name);
                             tool.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(definition.name);
+                            tool.app_read_only = runtime.provider_probe_tooling.tool_view->is_mcp_app_read_only(definition.name);
                         }
                     }
                     readiness.tools.push_back(std::move(tool));
@@ -407,12 +413,30 @@ common_agent_daemon_readiness make_daemon_readiness(
             status.input_schema = tool.host_input_schema.empty() ? tool.parameters : tool.host_input_schema;
             status.output_schema = tool.output_schema;
             status.ui_metadata = tool.mcp_ui_metadata;
+            status.provider_id = tool.mcp_provider_id;
+            status.server_tool_name = tool.mcp_server_tool_name;
             if (runtime.provider_probe_tooling.tool_view != nullptr) {
                 status.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(tool.name);
                 status.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(tool.name);
+                status.app_read_only = runtime.provider_probe_tooling.tool_view->is_mcp_app_read_only(tool.name);
             }
             readiness.tools.push_back(std::move(status));
         }
+    }
+    for (const auto & tool : runtime.provider_probe_tooling.app_tools) {
+        if (!known_tool_names.insert(tool.name).second) continue;
+        common_agent_daemon_tool_status status{tool.name, tool.description, "mcp_app", "active"};
+        status.input_schema = tool.host_input_schema.empty() ? tool.parameters : tool.host_input_schema;
+        status.output_schema = tool.output_schema;
+        status.ui_metadata = tool.mcp_ui_metadata;
+        status.provider_id = tool.mcp_provider_id;
+        status.server_tool_name = tool.mcp_server_tool_name;
+        status.app_read_only = tool.mcp_app_read_only;
+        status.read_only = runtime.provider_probe_tooling.tool_view != nullptr &&
+            runtime.provider_probe_tooling.tool_view->is_read_only(tool.name);
+        status.policy_gated = runtime.provider_probe_tooling.tool_view != nullptr &&
+            runtime.provider_probe_tooling.tool_view->is_policy_gated(tool.name);
+        readiness.tools.push_back(std::move(status));
     }
 
     if (!runtime.provider_readiness.empty()) {
@@ -2083,13 +2107,21 @@ bool common_agent_daemon_service::execute_outcome(
                 if (trace.kind == common_runtime_trace_kind::succeeded ||
                         trace.kind == common_runtime_trace_kind::completed) {
                     auto event_context = command_context;
-                    emit_internal_event(make_common_agent_daemon_event(
+                    auto completed_event = make_common_agent_daemon_event(
                         common_agent_daemon_event_type::tool_completed,
                         event_context.request_id,
                         event_context.turn_id,
                         trace.tool_name,
                         0,
-                        std::move(event_context)));
+                        std::move(event_context));
+                    if (trace.app_context_available) {
+                        completed_event.app_context_available = true;
+                        completed_event.provider_id = trace.app_provider_id;
+                        completed_event.server_tool_name = trace.app_server_tool_name;
+                        completed_event.tool_input_json = trace.app_tool_input_json;
+                        completed_event.tool_result_json = trace.app_tool_result_json;
+                    }
+                    emit_internal_event(std::move(completed_event));
                     auto output_context = command_context;
                     emit_internal_event(make_common_agent_daemon_event(
                         common_agent_daemon_event_type::tool_output,

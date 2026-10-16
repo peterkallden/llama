@@ -134,13 +134,21 @@ app requests through `/api/v1/mcp-apps/call`. The host negotiates
 `ui/initialize` / `ui/notifications/initialized` handshake. A data-origin
 sandbox proxy separates the host page from the app view; the app view itself is
 sandboxed without same-origin privileges, has a restrictive CSP, and receives
-no bearer token or provider credentials. The daemon verifies that the requested URI belongs to
-the advertised app tool, and that app calls target app-visible read-only tools
-owned by the same provider. Links and arbitrary network access are not brokered.
+no bearer token or provider credentials. The daemon verifies that the requested
+URI belongs to the advertised app tool, and that app calls target app-visible
+read-only tools owned by the same provider and named in that provider's
+host-controlled `read_only_tools` list. The list is empty by default; remote
+`readOnlyHint` is metadata, not authorization. App-only tools appear in status
+for app discovery without being exposed to model tool selection. Links and
+arbitrary network access are not brokered.
 
-The bounded web host supports initialization, `tools/call`, reads of the app's
-own declared UI resource, and a displayed `ui/message`. Unsupported app RPC
-methods are explicitly rejected. The daemon's MCP server also publishes
+The bounded web host supports initialization, scoped `tools/list` and
+`tools/call`, reads of the app's own declared UI resource, ping, and a displayed
+`ui/message`. Tool execution failures are MCP tool results with `isError: true`;
+protocol failures remain JSON-RPC errors. When opened from a model invocation,
+the app receives the actual bounded input and result. Standalone tabs do not
+fabricate empty input. Unsupported app RPC methods are explicitly rejected.
+The daemon's MCP server also publishes
 first-party Data Explorer and Workflow Inspector resources
 (`ui://llama-agent/apps/...`) and attaches them to the
 corresponding dataset and `plan.get` tools. `resources/read` serves only those

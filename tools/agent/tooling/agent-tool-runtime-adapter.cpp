@@ -74,6 +74,13 @@ public:
         return tool_view.learning_metadata(tool_name);
     }
 
+    bool app_tool_provenance(
+            const std::string & tool_name,
+            std::string & provider_id,
+            std::string & server_tool_name) const override {
+        return tool_view.app_tool_provenance(tool_name, provider_id, server_tool_name);
+    }
+
     bool describe_tool_dataflow(
             const std::string & tool_name,
             common_plan_tool_dataflow_contract & contract,

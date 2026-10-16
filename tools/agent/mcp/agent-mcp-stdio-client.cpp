@@ -3,6 +3,7 @@
 
 #include <sheredom/subprocess.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <chrono>
@@ -436,6 +437,11 @@ bool agent_mcp_stdio_client::list_tools(
         mcp_agent_tool_definition definition;
         std::string definition_error;
         if (!parse_mcp_tool_definition(config.server_name, item, definition, definition_error)) {
+            continue;
+        }
+        if (!config.allowed_tools.empty() &&
+                std::find(config.allowed_tools.begin(), config.allowed_tools.end(), definition.name) ==
+                    config.allowed_tools.end()) {
             continue;
         }
         tools.push_back(std::move(definition));

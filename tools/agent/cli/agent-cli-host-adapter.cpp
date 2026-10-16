@@ -157,6 +157,7 @@ void append_configured_stdio_mcp_providers(
         request_provider.command_line = provider.command;
         request_provider.url = provider.url;
         request_provider.allowed_tools = provider.allowed_tools;
+        request_provider.read_only_tools = provider.read_only_tools;
         request_provider.connect_timeout_ms = provider.connect_timeout_ms;
         request_provider.request_timeout_ms = provider.request_timeout_ms;
         request_provider.shutdown_timeout_ms = provider.shutdown_timeout_ms;
@@ -907,7 +908,10 @@ bool resolve_agent_host_tool_selection(
         auto provider = std::make_unique<mcp_agent_tool_provider>(
             provider_request.server_name,
             *client,
-            provider_request.exposed_name_prefix);
+            provider_request.exposed_name_prefix,
+            mcp_agent_tool_provider::plan_validator{},
+            "mcp",
+            provider_request.read_only_tools);
         selection.mcp_clients.push_back(std::move(client));
         mcp_providers.push_back(std::move(provider));
     }
@@ -1202,6 +1206,7 @@ bool resolve_agent_host_tool_selection(
             return false;
         }
         selection.tooling.tools = selection.tool_view->chat_tools();
+        selection.tooling.app_tools = selection.tool_view->app_tools();
         for (const auto & name : openapi_read_tools) {
             if (std::any_of(selection.tooling.tools.begin(), selection.tooling.tools.end(),
                     [&](const common_chat_tool & tool) { return tool.name == name; })) {

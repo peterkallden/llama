@@ -207,6 +207,21 @@ int main(int argc, char ** argv) {
         create_content_json = create_result.content_json;
     }
 
+    {
+        agent_mcp_stdio_client restricted_client({
+            "github",
+            {server_path.string()},
+            {},
+            {"search_issues"},
+        });
+        std::vector<mcp_agent_tool_definition> listed;
+        if (!restricted_client.list_tools(read_context, listed, error) || listed.size() != 1 ||
+                listed.front().name != "search_issues") {
+            std::fprintf(stderr, "stdio provider allowed_tools did not filter tools/list: %s\n", error.c_str());
+            return 1;
+        }
+    }
+
     agent_mcp_stdio_client broken_client({
         "github",
         {server_path.string(), "--mode", "bad-tools-list"},
@@ -231,6 +246,7 @@ int main(int argc, char ** argv) {
     agent_mcp_stdio_client hanging_client({
         "github",
         {server_path.string(), "--mode", "hang-tools-list"},
+        {},
         {},
         100,
         100,

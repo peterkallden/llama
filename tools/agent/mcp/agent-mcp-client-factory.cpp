@@ -15,6 +15,7 @@ std::unique_ptr<agent_mcp_tool_client> make_agent_mcp_client(
             request.server_name,
             request.command_line,
             {},
+            request.allowed_tools,
             request.request_timeout_ms,
             request.shutdown_timeout_ms,
         });

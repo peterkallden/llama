@@ -49,6 +49,7 @@ struct agent_host_stdio_mcp_provider_request {
     std::string url;
     std::string bearer_token;
     std::vector<std::string> allowed_tools;
+    std::vector<std::string> read_only_tools;
     uint32_t connect_timeout_ms = 5000;
     uint32_t request_timeout_ms = 30000;
     uint32_t shutdown_timeout_ms = 2000;

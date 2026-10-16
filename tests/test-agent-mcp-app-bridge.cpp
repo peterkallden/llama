@@ -62,15 +62,20 @@ int main() {
     definition_json["_meta"]["ui"]["resourceUri"] = "ui://catalog/data";
     definition_json["_meta"]["ui"]["visibility"] = agent_mcp_json::array({"app"});
     assert(parse_mcp_tool_definition("catalog", definition_json, parsed_definition, error));
-    assert(parsed_definition.read_only && parsed_definition.read_only_declared);
+    assert(parsed_definition.read_only && parsed_definition.read_only_hint && parsed_definition.read_only_declared);
     assert(parsed_definition.ui_resource_uri == "ui://catalog/data");
+    assert(parsed_definition.ui_visibility == std::vector<std::string>{"app"});
     assert(parse_mcp_tool_definition("catalog", {{"name", "unknown.read"}}, parsed_definition, error));
     assert(parsed_definition.read_only && !parsed_definition.read_only_declared);
+    assert(parsed_definition.ui_visibility == std::vector<std::string>{"model"});
     definition_json = agent_mcp_json::object();
     definition_json["name"] = "write";
     definition_json["annotations"]["readOnlyHint"] = false;
     assert(parse_mcp_tool_definition("catalog", definition_json, parsed_definition, error));
-    assert(!parsed_definition.read_only && parsed_definition.read_only_declared);
+    assert(!parsed_definition.read_only && !parsed_definition.read_only_hint && parsed_definition.read_only_declared);
+    definition_json = {{"name", "defaults"}, {"_meta", {{"ui", {{"resourceUri", "ui://catalog/defaults"}}}}}};
+    assert(parse_mcp_tool_definition("catalog", definition_json, parsed_definition, error));
+    assert(parsed_definition.ui_visibility == (std::vector<std::string>{"model", "app"}));
 
     agent_mcp_server_tool_registry registry;
     agent_mcp_server_tool listed_tool;
@@ -99,12 +104,28 @@ int main() {
     auto app = tool("explorer", true);
     app.ui_resource_uri = "ui://catalog/explorer";
     app.ui_metadata_json = R"({"resourceUri":"ui://catalog/explorer","visibility":["app"]})";
-    client.definitions = {app, tool("dataset.schema", true), tool("dataset.write", false)};
+    auto app_operation = tool("schema", true);
+    app_operation.read_only_hint = false; // remote hints do not grant or revoke host authority
+    app_operation.read_only_declared = true;
+    auto visible_both = tool("list", true);
+    visible_both.ui_visibility = {"model", "app"};
+    visible_both.ui_metadata_json = R"({"visibility":["model","app"]})";
+    auto write_app = tool("dataset.write", true);
+    write_app.writes_plan = true;
+    client.definitions = {app, app_operation, visible_both, write_app};
 
-    mcp_agent_tool_provider provider("catalog", client);
+    mcp_agent_tool_provider provider("catalog", client, {}, {}, "mcp", {"schema", "list", "dataset.write"});
     agent_tool_context context;
     auto view = provider.resolve_tools(context, error);
     assert(view && error.empty());
+    assert(view->chat_tools().size() == 1 && view->chat_tools()[0].name == "catalog_list");
+    assert(view->app_tools().size() == 4);
+    assert(!view->exposes_tool("catalog_schema"));
+    assert(!view->validate({"test", "catalog_schema", "{}"}, error));
+    assert(view->is_mcp_app_read_only("catalog_schema"));
+    assert(!view->is_mcp_app_read_only("catalog_dataset.write"));
+    assert(!view->is_web_read_only("catalog_schema"));
+    assert(view->is_web_read_only("catalog_list"));
 
     agent_tool_result resource;
     assert(view->read_mcp_app_resource("catalog_explorer", "ui://catalog/explorer", resource, error));
@@ -113,10 +134,34 @@ int main() {
     assert(!view->read_mcp_app_resource("explorer", "ui://other/arbitrary", resource, error));
 
     agent_tool_result call_result;
-    assert(view->call_mcp_app_tool("catalog_explorer", {"app", "dataset.schema", "{}"}, call_result, error));
-    assert(call_result.ok && client.called == "dataset.schema");
+    assert(view->call_mcp_app_tool("catalog_explorer", {"app", "schema", "{}"}, call_result, error));
+    assert(call_result.ok && client.called == "schema");
     assert(!view->call_mcp_app_tool("catalog_explorer", {"app", "dataset.write", "{}"}, call_result, error));
     assert(!view->call_mcp_app_tool("dataset.schema", {"app", "dataset.schema", "{}"}, call_result, error));
+
+    // The composite runtime must preserve the same boundary: app-only tools
+    // are app-callable through their provider owner, but are not model-callable.
+    composite_agent_tool_provider composite;
+    composite.add_provider(provider);
+    auto composite_view = composite.resolve_tools(context, error);
+    assert(composite_view && error.empty());
+    assert(!composite_view->exposes_tool("catalog_schema"));
+    assert(!composite_view->validate({"test", "catalog_schema", "{}"}, error));
+    assert(!composite_view->call({"test", "catalog_schema", "{}"}, error).ok);
+    assert(!composite_view->read_mcp_app_resource("missing-app", "ui://missing", resource, error));
+    assert(!error.empty());
+    assert(composite_view->call_mcp_app_tool(
+        "catalog_explorer", {"app", "schema", "{}"}, call_result, error));
+    assert(call_result.ok && client.called == "schema");
+
+    agent_tool_context restricted_context = context;
+    restricted_context.allowed_exposed_tool_names = {"catalog_explorer", "catalog_list"};
+    auto restricted_view = provider.resolve_tools(restricted_context, error);
+    assert(restricted_view && error.empty());
+    assert(restricted_view->app_tools().size() == 2);
+    assert(!restricted_view->is_mcp_app_read_only("catalog_schema"));
+    assert(!restricted_view->call_mcp_app_tool(
+        "catalog_explorer", {"app", "schema", "{}"}, call_result, error));
 
     auto unannotated = tool("unannotated.read", true);
     unannotated.read_only_declared = false;

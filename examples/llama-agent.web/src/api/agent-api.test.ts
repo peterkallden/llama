@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentApi, parseSseBlock, parseSseBuffer } from "./agent-api";
+import { AgentApi, AgentApiError, parseSseBlock, parseSseBuffer } from "./agent-api";
 
 describe("web event framing", () => {
   it("parses multiline SSE data and preserves id", () => {
@@ -42,13 +42,32 @@ describe("host-brokered MCP App API", () => {
   it("loads app UI resources through the host API, not a browser URL", async () => {
     const originalFetch = globalThis.fetch;
     let sentUrl = "";
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    let sentBody = "";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       sentUrl = String(input);
+      sentBody = String(init?.body ?? "");
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     }) as typeof fetch;
     try {
-      await new AgentApi().readMcpAppResource({ app_tool_name: "provider.explorer", resource_uri: "ui://provider/explorer", session_id: "s" });
+      await new AgentApi().readMcpAppResource({ tool_name: "provider.explorer", resource_uri: "ui://provider/explorer", session_id: "s" });
       expect(sentUrl).toBe("/api/v1/mcp-apps/resource");
+      expect(JSON.parse(sentBody)).toEqual({ tool_name: "provider.explorer", resource_uri: "ui://provider/explorer", session_id: "s" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  it("preserves structured daemon failures for MCP Apps callers", async () => {
+    const originalFetch = globalThis.fetch;
+    const failure = { ok: false, tool: { error: { code: "tool.denied", class: "policy", retryable: false, safe_summary: "Not allowed." } } };
+    globalThis.fetch = (async () => new Response(JSON.stringify(failure), { status: 422 })) as typeof fetch;
+    try {
+      let thrown: unknown;
+      try {
+        await new AgentApi().callMcpAppTool({
+          app_tool_name: "provider.explorer", tool_name: "read", arguments: {}, session_id: "s",
+        });
+      } catch (error) { thrown = error; }
+      expect(thrown).toBeInstanceOf(AgentApiError);
+      expect(thrown).toMatchObject({ status: 422, payload: failure });
     } finally { globalThis.fetch = originalFetch; }
   });
 });

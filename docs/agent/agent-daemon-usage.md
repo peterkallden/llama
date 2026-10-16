@@ -408,6 +408,24 @@ The directory is rescanned when the main configuration is reloaded.
 The provider allowlist and the caller allowlist are independent: provider
 `allowed_tools` limits what the daemon imports from a remote MCP server, while
 `--enable-tools` limits what an authenticated MCP/JSONL caller can invoke.
+Each MCP provider may also declare `read_only_tools`, a host-owned allowlist of
+upstream MCP tool names permitted through the web client's read-only endpoint
+and MCP Apps. It defaults to empty. A remote `annotations.readOnlyHint` is
+retained as descriptive metadata but does not grant this web/app authority.
+For example:
+
+```json
+{
+  "mcp_providers": [{
+    "id": "catalog",
+    "type": "mcp",
+    "transport": "stdio",
+    "command": ["catalog-mcp"],
+    "allowed_tools": ["search", "read_record"],
+    "read_only_tools": ["search", "read_record"]
+  }]
+}
+```
 
 When a remote MCP server advertises `outputSchema`, llama-agent preserves that
 canonical structured-result contract for planning and typed result binding.
@@ -423,9 +441,14 @@ MCP UI metadata is preserved alongside the schema. The daemon publishes the
 first-party Data Explorer and Workflow Inspector as `text/html;profile=mcp-app`
 resources and links them to dataset inspection and `plan.get` tools. The web
 adapter exposes a sandboxed MCP App host: it fetches each UI resource through
-its owning provider and brokers app tool calls through the daemon. App calls
-are limited to app-visible read-only tools from that same provider; the iframe
-does not receive bearer tokens or provider credentials. The web client's
+its owning provider and brokers app tool calls through the daemon. App-only
+tools stay out of the model's tool catalog but remain discoverable by the web
+client through daemon status. Missing MCP Apps `visibility` defaults to
+`model` plus `app`; explicit values are respected. The host maps original
+upstream tool names only inside the owning provider, and exposes only tools in
+that provider's host-controlled `read_only_tools` list. Remote
+`readOnlyHint` cannot authorize an app call. The iframe does not receive bearer
+tokens or provider credentials. The web client's
 direct Data Explorer uses the same host-side read-only enforcement.
 Executor exceptions and transport failures retain their stable error code,
 failure class and retryability while exposing only a safe summary to the
@@ -1393,15 +1416,17 @@ that changes providers requires a restart for a fresh probe.
 The web client includes a bounded MCP Apps host for app resources advertised by
 the daemon. It negotiates `io.modelcontextprotocol/ui` with the HTML app MIME
 type, follows the `ui/initialize` handshake, and uses a data-origin sandbox
-proxy between the host page and the app view. It brokers `tools/call` only to
-explicitly app-visible read-only tools from the owning provider and permits
-`resources/read` only for the app's own declared UI resource. It also displays
-`ui/message`; unsupported app RPC methods are rejected. An app cannot select a
-provider, access a credential, invoke a write/policy-gated tool, or fetch
-arbitrary resources. MCP `readOnlyHint` is treated as an eligibility
-declaration, not as authority: the daemon still applies its own read-only and
-policy checks. The view receives no daemon token; network access is denied
-unless a sanitized resource-domain policy explicitly allows static content.
+proxy between the host page and the app view. It supports scoped `tools/list`
+and `tools/call`, allows `resources/read` only for the app's own declared UI
+resource, and displays `ui/message`. Tool execution failures are MCP tool
+results with `isError: true`; protocol errors remain JSON-RPC errors. When
+available, a model invocation's actual bounded arguments and result are passed
+to the app; standalone app tabs do not fabricate empty input. App tool names
+are resolved only within their owning provider. The host-owned per-provider
+`read_only_tools` list defaults to empty; remote `readOnlyHint` is metadata and
+cannot authorize a web/app call. The view receives no daemon token; network
+access is denied unless a sanitized resource-domain policy explicitly allows
+it.
 
 - foreground process only;
 - stdin/stdout remains the local administrative transport; JSONL TCP is

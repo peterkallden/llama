@@ -513,6 +513,15 @@ json serialize_agent_daemon_event(
     if (!event.detail.empty()) {
         event_json["detail"] = event.detail;
     }
+    if (event.app_context_available) {
+        event_json["app_context_available"] = true;
+        if (!event.provider_id.empty()) event_json["provider_id"] = event.provider_id;
+        if (!event.server_tool_name.empty()) event_json["server_tool_name"] = event.server_tool_name;
+        const auto input = json::parse(event.tool_input_json, nullptr, false);
+        if (input.is_object()) event_json["tool_input"] = input;
+        const auto result = json::parse(event.tool_result_json, nullptr, false);
+        if (result.is_object()) event_json["tool_result"] = result;
+    }
     return event_json;
 }
 
@@ -577,6 +586,15 @@ json serialize_agent_daemon_trace_entry(
     if (!entry.related_id.empty()) {
         entry_json["related_id"] = entry.related_id;
     }
+    if (entry.app_context_available) {
+        entry_json["app_context_available"] = true;
+        entry_json["app_provider_id"] = entry.app_provider_id;
+        entry_json["app_server_tool_name"] = entry.app_server_tool_name;
+        const auto input = json::parse(entry.app_tool_input_json, nullptr, false);
+        if (input.is_object()) entry_json["app_tool_input"] = input;
+        const auto tool_result = json::parse(entry.app_tool_result_json, nullptr, false);
+        if (tool_result.is_object()) entry_json["app_tool_result"] = tool_result;
+    }
     if (!entry.http_provider.empty() || entry.http_status > 0 || !entry.http_url.empty()) {
         entry_json["http"] = {
             {"provider", entry.http_provider}, {"operation", entry.http_operation}, {"method", entry.http_method},
@@ -638,8 +656,11 @@ void append_agent_daemon_status_snapshot(
             {"source", tool.source},
             {"state", tool.state},
             {"read_only", tool.read_only},
+            {"app_read_only", tool.app_read_only},
             {"policy_gated", tool.policy_gated},
         };
+        if (!tool.provider_id.empty()) item["provider_id"] = tool.provider_id;
+        if (!tool.server_tool_name.empty()) item["server_tool_name"] = tool.server_tool_name;
         if (!tool.input_schema.empty()) {
             const auto schema = json::parse(tool.input_schema, nullptr, false);
             if (schema.is_object()) item["input_schema"] = schema;

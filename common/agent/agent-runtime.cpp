@@ -1751,6 +1751,30 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::succeeded,
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             attach_http_trace_metadata(result.trace.back(), execution.http);
+            if (tools != nullptr) {
+                std::string app_provider_id;
+                std::string app_server_tool_name;
+                if (tools->app_tool_provenance(tool_call->name, app_provider_id, app_server_tool_name) &&
+                        tool_call->arguments_json.size() <= 16 * 1024) {
+                    auto & app_trace = result.trace.back();
+                    app_trace.app_context_available = true;
+                    app_trace.app_provider_id = std::move(app_provider_id);
+                    app_trace.app_server_tool_name = std::move(app_server_tool_name);
+                    app_trace.app_tool_input_json = tool_call->arguments_json;
+                    if (execution.output.size() <= 64 * 1024) {
+                        const auto structured = json::parse(execution.output, nullptr, false);
+                        json app_result = {{"isError", false}};
+                        if (structured.is_object()) app_result["structuredContent"] = structured;
+                        if (!execution.output.empty()) {
+                            app_result["content"] = json::array({{{"type", "text"}, {"text", execution.output}}});
+                        } else if (!execution.content_summary.empty()) {
+                            app_result["content"] = json::array({{{"type", "text"}, {"text", execution.content_summary}}});
+                        }
+                        if (!execution.content_summary.empty()) app_result["summary"] = execution.content_summary;
+                        app_trace.app_tool_result_json = app_result.dump();
+                    }
+                }
+            }
             append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
                 "tool observation recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             if (plan.workflow_definition &&

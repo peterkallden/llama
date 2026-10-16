@@ -223,6 +223,20 @@ bool read_mcp_provider(
             provider.allowed_tools.push_back(tool.get<std::string>());
         }
     }
+    if (value.contains("read_only_tools")) {
+        if (!value["read_only_tools"].is_array()) {
+            error = "MCP provider read_only_tools must be an array of strings";
+            return false;
+        }
+        provider.read_only_tools.clear();
+        for (const auto & tool : value["read_only_tools"]) {
+            if (!tool.is_string() || tool.get<std::string>().empty()) {
+                error = "MCP provider read_only_tools entries must be non-empty strings";
+                return false;
+            }
+            provider.read_only_tools.push_back(tool.get<std::string>());
+        }
+    }
 
     if (provider.type.empty()) {
         provider.type = "mcp";
@@ -1199,6 +1213,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"ca_cert_path_env", provider.auth.ca_cert_path_env},
             }},
             {"allowed_tools", provider.allowed_tools},
+            {"read_only_tools", provider.read_only_tools},
             {"connect_timeout_ms", provider.connect_timeout_ms},
             {"request_timeout_ms", provider.request_timeout_ms},
             {"shutdown_timeout_ms", provider.shutdown_timeout_ms},

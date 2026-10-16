@@ -11,6 +11,11 @@ export type AgentEvent = {
   session_id?: string;
   operation_id?: string;
   tool_name?: string;
+  app_context_available?: boolean;
+  provider_id?: string;
+  server_tool_name?: string;
+  tool_input?: Record<string, unknown>;
+  tool_result?: unknown;
   detail?: string;
   response?: string;
   error?: string;
@@ -43,7 +48,10 @@ export type DaemonToolStatus = {
   input_schema?: Record<string, unknown>;
   output_schema?: Record<string, unknown>;
   read_only?: boolean;
+  app_read_only?: boolean;
   policy_gated?: boolean;
+  provider_id?: string;
+  server_tool_name?: string;
   _meta?: { ui?: { resourceUri?: string; visibility?: string[]; [key: string]: unknown } };
 };
 

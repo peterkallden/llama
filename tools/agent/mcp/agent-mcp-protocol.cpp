@@ -244,21 +244,35 @@ bool parse_mcp_tool_definition(
     }
     if (item.contains("_meta") && item["_meta"].is_object() &&
             item["_meta"].contains("ui") && item["_meta"]["ui"].is_object()) {
-        const auto & ui = item["_meta"]["ui"];
+        auto ui = item["_meta"]["ui"];
         definition.ui_metadata_json = ui.dump();
         definition.ui_resource_uri = ui.value("resourceUri", "");
         if (ui.contains("visibility") && ui["visibility"].is_array()) {
             for (const auto & visibility : ui["visibility"]) {
-                if (visibility.is_string()) definition.ui_visibility.push_back(visibility.get<std::string>());
+                if (visibility.is_string()) {
+                    const auto value = visibility.get<std::string>();
+                    if (value == "model" || value == "app") definition.ui_visibility.push_back(value);
+                }
             }
+        } else {
+            // MCP Apps visibility defaults to both the agent and the app.
+            definition.ui_visibility = {"model", "app"};
+            ui["visibility"] = definition.ui_visibility;
         }
+        definition.ui_metadata_json = ui.dump();
+    } else {
+        // Ordinary MCP tools have no app surface, but remain available to the
+        // model. The MCP Apps default (model + app) applies only when a UI
+        // resource is actually declared.
+        definition.ui_visibility = {"model"};
     }
 
     if (item.contains("annotations") && item["annotations"].is_object()) {
         const auto & annotations = item["annotations"];
         if (annotations.contains("readOnlyHint") && annotations["readOnlyHint"].is_boolean()) {
             definition.read_only_declared = true;
-            definition.read_only = annotations["readOnlyHint"].get<bool>();
+            definition.read_only_hint = annotations["readOnlyHint"].get<bool>();
+            definition.read_only = definition.read_only_hint;
         }
     }
     if (item.contains("hostPolicy") && item["hostPolicy"].is_object()) {

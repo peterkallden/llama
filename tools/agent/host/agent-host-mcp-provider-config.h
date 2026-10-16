@@ -15,6 +15,9 @@ struct agent_host_mcp_provider_config {
     std::string url;
     agent_host_provider_auth_config auth;
     std::vector<std::string> allowed_tools;
+    // Host-owned read-only authorization for web/MCP App calls. Remote
+    // annotations are descriptive only and never populate this allowlist.
+    std::vector<std::string> read_only_tools;
     uint32_t connect_timeout_ms = 0;
     uint32_t request_timeout_ms = 0;
     uint32_t shutdown_timeout_ms = 0;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 
 const props = defineProps<{
@@ -13,17 +13,23 @@ const result = ref<unknown>(null);
 const busy = ref(false);
 const error = ref("");
 const available = computed(() => new Set(props.tools.filter((tool) => tool.read_only).map((tool) => tool.name)));
+let requestGeneration = 0;
+watch(dataset, () => { requestGeneration++; result.value = null; error.value = ""; busy.value = false; });
 
 async function inspect(name: "dataset.schema" | "dataset.sample") {
   if (!dataset.value.trim()) { error.value = "Enter a dataset reference first."; return; }
   if (!available.value.has(name)) { error.value = `${name} is not available as a read-only tool.`; return; }
-  busy.value = true; error.value = "";
+  const generation = ++requestGeneration;
+  const requestedDataset = dataset.value.trim();
+  busy.value = true; error.value = ""; result.value = null;
   try {
-    result.value = await props.callTool(name, name === "dataset.sample"
-      ? { dataset: dataset.value.trim(), rows: Math.max(1, Math.min(100, rows.value)) }
-      : { dataset: dataset.value.trim() });
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
-  finally { busy.value = false; }
+    const current = await props.callTool(name, name === "dataset.sample"
+      ? { dataset: requestedDataset, rows: Math.max(1, Math.min(100, rows.value)) }
+      : { dataset: requestedDataset });
+    if (generation === requestGeneration && dataset.value.trim() === requestedDataset) result.value = current;
+  } catch (cause) {
+    if (generation === requestGeneration) { result.value = null; error.value = cause instanceof Error ? cause.message : String(cause); }
+  } finally { if (generation === requestGeneration) busy.value = false; }
 }
 </script>
 
@@ -39,6 +45,6 @@ async function inspect(name: "dataset.schema" | "dataset.sample") {
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <pre v-if="result !== null" class="explorer-result">{{ JSON.stringify(result, null, 2) }}</pre>
-    <button v-if="result !== null" class="handoff-button" @click="emit('handoff', `Analyze this dataset result for ${dataset}. Use the verified schema/sample below as context: ${JSON.stringify(result)}`)">Continue with agent</button>
+    <button v-if="result !== null" class="handoff-button" @click="emit('handoff', `Analyze this dataset result for ${dataset}. The host returned this schema/sample: ${JSON.stringify(result)}`)">Continue with agent</button>
   </section>
 </template>

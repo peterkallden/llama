@@ -395,6 +395,7 @@ int main(int argc, char ** argv) {
                 a.auth.client_key_path_env == b.auth.client_key_path_env &&
                 a.auth.ca_cert_path_env == b.auth.ca_cert_path_env &&
                 a.allowed_tools == b.allowed_tools &&
+                a.read_only_tools == b.read_only_tools &&
                 a.connect_timeout_ms == b.connect_timeout_ms &&
                 a.request_timeout_ms == b.request_timeout_ms &&
                 a.shutdown_timeout_ms == b.shutdown_timeout_ms &&

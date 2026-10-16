@@ -14,6 +14,7 @@ class agent_tool_view;
 
 struct common_agent_runtime_tooling {
     std::vector<common_chat_tool> tools;
+    std::vector<common_chat_tool> app_tools;
     // Host-owned descriptions for model-facing family preflight. This is
     // presentation metadata only and does not grant tools or change names.
     std::map<std::string, std::string> family_descriptions;

@@ -361,7 +361,10 @@ struct common_agent_daemon_tool_status {
     std::string input_schema;
     std::string output_schema;
     std::string ui_metadata;
+    std::string provider_id;
+    std::string server_tool_name;
     bool read_only = false;
+    bool app_read_only = false;
     bool policy_gated = false;
 };
 

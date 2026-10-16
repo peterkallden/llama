@@ -95,4 +95,11 @@ struct common_runtime_trace_entry {
     size_t http_response_bytes = 0;
     int64_t http_duration_ms = 0;
     int http_retry_after_seconds = -1;
+    // Bounded MCP App invocation context, present only for app-visible tools.
+    // Oversized JSON values are omitted rather than truncated.
+    bool app_context_available = false;
+    std::string app_provider_id;
+    std::string app_server_tool_name;
+    std::string app_tool_input_json;
+    std::string app_tool_result_json;
 };

@@ -110,6 +110,12 @@ public:
     virtual ~agent_tool_view() = default;
 
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
+    // App-visible tools are kept separate so app-only tools never leak into
+    // model tool selection. The daemon may publish these to its UI status.
+    virtual const std::vector<common_chat_tool> & app_tools() const {
+        static const std::vector<common_chat_tool> empty;
+        return empty;
+    }
     virtual bool describe_tool_dataflow(
         const std::string &, common_plan_tool_dataflow_contract &, std::string &) const { return false; }
     virtual bool validate_plan(const common_plan_state &, std::string &) const { return true; }
@@ -117,6 +123,12 @@ public:
         const std::string &, const std::string &, const std::string &) const;
     virtual bool exposes_tool(const std::string & name) const = 0;
     virtual bool is_read_only(const std::string & name) const = 0;
+    // Host authorization for the web client's read-only call surface. MCP
+    // annotations do not populate this capability.
+    virtual bool is_web_read_only(const std::string & name) const { return is_read_only(name); }
+    virtual bool is_mcp_app_read_only(const std::string &) const { return false; }
+    virtual bool app_tool_provenance(
+            const std::string &, std::string &, std::string &) const { return false; }
     virtual bool is_policy_gated(const std::string & name) const = 0;
     virtual common_learning_tool_metadata learning_metadata(const std::string &) const { return {}; }
     virtual bool validate(const agent_tool_call & call, std::string & error) const = 0;
@@ -195,9 +207,11 @@ struct mcp_agent_tool_definition {
     // host-known required inputs so normal planning does not depend on repair.
     std::string model_input_schema_json;
     bool read_only = true;
-    // MCP's readOnlyHint is advisory; app calls require an explicit declaration
-    // in addition to the host's read-only policy.
+    // The remote hint is retained only as metadata; read_only is assigned by
+    // the host allowlist when the provider view is resolved.
     bool read_only_declared = false;
+    bool read_only_hint = false;
+    bool app_read_only_authorized = false;
     bool requires_confirmation = false;
     bool uses_network = false;
     bool writes_memory = false;
@@ -281,7 +295,8 @@ public:
             agent_mcp_tool_client & client,
             std::string exposed_name_prefix = {},
             plan_validator validator = {},
-            std::string learning_provider_kind = "mcp");
+            std::string learning_provider_kind = "mcp",
+            std::vector<std::string> read_only_tools = {});
 
     std::unique_ptr<agent_tool_view> resolve_tools(
         const agent_tool_context & context,
@@ -293,6 +308,7 @@ private:
     std::string exposed_name_prefix;
     plan_validator validator;
     std::string learning_provider_kind;
+    std::vector<std::string> read_only_tools;
 };
 
 class composite_agent_tool_provider : public agent_tool_provider {
@@ -313,6 +329,7 @@ struct agent_mcp_stdio_client_config {
     std::string server_name;
     std::vector<std::string> command_line;
     std::map<std::string, std::string> environment;
+    std::vector<std::string> allowed_tools;
     uint32_t request_timeout_ms = 30000;
     uint32_t shutdown_timeout_ms = 1000;
 };

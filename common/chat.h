@@ -251,6 +251,11 @@ struct common_chat_tool {
     // Optional MCP Apps presentation metadata. It is transport metadata only;
     // the tool runtime and policy remain authoritative for execution.
     std::string mcp_ui_metadata;
+    // Host/provider provenance for web app discovery. These are not model
+    // instructions; they support provider-scoped UI routing and authorization.
+    std::string mcp_provider_id;
+    std::string mcp_server_tool_name;
+    bool mcp_app_read_only = false;
 };
 
 enum common_chat_tool_choice {
