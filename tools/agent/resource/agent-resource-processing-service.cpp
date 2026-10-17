@@ -57,6 +57,37 @@ agent_resource_processing_service::agent_resource_processing_service(
     : store_(store),
       registry_(registry) {}
 
+bool agent_resource_processing_service::supports(
+        const agent_resource_processing_binding_request & request) const {
+    if (request.source_uri.empty() || request.target_representation.empty()) return false;
+    std::string error;
+    agent_resource_descriptor source;
+    if (!store_.stat(request.source_uri, request.authority, source, error)) return false;
+    agent_resource_processing_service_request service_request;
+    service_request.source_uri = request.source_uri;
+    service_request.authority = request.authority;
+    service_request.media_type = request.media_type;
+    service_request.target_representation = request.target_representation;
+    service_request.target_media_type = request.target_media_type;
+    service_request.purpose = request.purpose;
+    service_request.page = request.page;
+    service_request.range = request.range;
+    service_request.limits = request.limits;
+    const auto media_type = resolve_processing_media_type(store_, service_request, source, error);
+    if (!error.empty()) return false;
+    agent_resource_processing_request selection;
+    selection.source = source;
+    selection.authority = request.authority;
+    selection.media_type = media_type;
+    selection.target_representation = request.target_representation;
+    selection.target_media_type = request.target_media_type;
+    selection.purpose = request.purpose;
+    selection.page = request.page;
+    selection.range = request.range;
+    selection.limits = request.limits;
+    return registry_.resolve(selection) != nullptr;
+}
+
 agent_resource_processing_result agent_resource_processing_service::process(
         const agent_resource_processing_binding_request & request) const {
     agent_resource_processing_service_request service_request;

@@ -1601,6 +1601,36 @@ void configure_agent_daemon_provider_probe(
         retained_tooling = {};
         provider_status.clear();
         bool all_required_ready = true;
+
+        // The status endpoint also publishes native profile tools and their
+        // MCP App metadata. Provider probing below only resolves configured
+        // external MCP servers, so resolve the active native profile once
+        // without providers and retain its tool view for readiness projection.
+        daemon_options native_options = probe_options;
+        native_options.mcp_providers.clear();
+        common_agent_runtime_session_host_turn_request native_request;
+        native_request.mode = common_agent_runtime_host_mode::chat;
+        native_request.session_id = "daemon-native-tool-probe";
+        native_request.namespace_id = "local";
+        native_request.project_id = "llama-agent";
+        native_request.turn_id = "daemon-native-tool-probe";
+        native_request.memory_scope = common_memory_scope::session;
+        native_request.plan_scope = common_plan_scope::turn;
+        common_agent_runtime_tooling native_tooling;
+        std::string native_error;
+        if (resolve_agent_daemon_tooling(
+                native_options,
+                nullptr,
+                native_request,
+                *probe_memory_store,
+                *probe_plan_store,
+                probe_resource_store,
+                native_tooling,
+                native_error,
+                probe_data_store)) {
+            retained_tooling = std::move(native_tooling);
+        }
+
         for (const auto & configured : probe_options.mcp_providers) {
             if (!configured.enabled) {
                 continue;

@@ -57,6 +57,14 @@ struct common_agent_runtime_session_host_turn_request {
     std::vector<std::string> allowed_exposed_tool_names;
     std::optional<common_agent_deliberation_policy> deliberation_policy_override;
     std::vector<common_agent_input_resource> input_resources;
+    // Preferred typed contract. The booleans below remain accepted only as
+    // legacy daemon-wire inputs and are normalized into this binding.
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
+    // A narrowly scoped host workflow intent. When true, the daemon replaces
+    // the caller prompt with a fixed read-only orientation task for one
+    // attached resource and requires at least one successful tool execution.
+    bool attachment_orientation = false;
+    bool require_tool_execution = false;
     struct document_context_binding {
         std::string document_uri;
         uint64_t revision = 0;

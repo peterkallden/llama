@@ -10,7 +10,8 @@ void usage(const char * argv0) {
     std::fprintf(stderr,
         "usage: %s --daemon-port N [--listen ADDRESS] [--port N] "
         "[--daemon-address ADDRESS] [--web-bearer-token TOKEN] "
-        "[--daemon-authorization VALUE] [--allowed-origin ORIGIN]\n",
+        "[--daemon-authorization VALUE | --daemon-authorization-env ENV] "
+        "[--allowed-origin ORIGIN]\n",
         argv0);
 }
 
@@ -33,6 +34,14 @@ int main(int argc, char ** argv) {
         else if (arg == "--daemon-port" && value_arg(i, argc, argv, value)) options.daemon_port = std::stoi(value);
         else if (arg == "--web-bearer-token" && value_arg(i, argc, argv, value)) options.web_bearer_token = value;
         else if (arg == "--daemon-authorization" && value_arg(i, argc, argv, value)) options.daemon_authorization = value;
+        else if (arg == "--daemon-authorization-env" && value_arg(i, argc, argv, value)) {
+            const char * authorization = std::getenv(value.c_str());
+            if (authorization == nullptr || authorization[0] == '\0') {
+                std::fprintf(stderr, "daemon authorization environment variable is empty: %s\n", value.c_str());
+                return 2;
+            }
+            options.daemon_authorization = authorization;
+        }
         else if (arg == "--allowed-origin" && value_arg(i, argc, argv, value)) options.allowed_origin = value;
         else {
             usage(argv[0]);
@@ -46,4 +55,3 @@ int main(int argc, char ** argv) {
     }
     return 0;
 }
-

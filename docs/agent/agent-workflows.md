@@ -1,5 +1,31 @@
 # Agent workflows
 
+## Uploaded-resource orientation
+
+An uploaded file without an accompanying question receives a separate,
+read-only initial orientation turn. This reuses the preferred document-analysis
+blueprint and its host-owned resource resolution and chunking; it does not add
+a separate orchestration graph. The orientation describes the resource and
+extraction limits, then asks for the user's next goal. It does not edit the
+document, search externally, or automatically continue into dataset analysis.
+After the user states the goal, ordinary route selection can choose a dataset,
+research, editing, or other applicable workflow. An explicit question sent
+with an attachment skips the duplicate orientation, keeps the exact question,
+and requires the answer to use the attached resource through the normal tools.
+The host requires a successful content read of a bound resource; this question
+path may use bounded relevant reads. The initial orientation path is stricter:
+it requires complete validated coverage, including all host-generated text
+chunks, before the initial summary can be accepted.
+
+Coverage is tracked independently for each required source and tied to the
+turn's task fingerprint, source-content fingerprint, representation and
+parent-linked resource. A partial read of one attachment cannot satisfy a
+second attachment. Unresolved chunks, missing or duplicate chunk indexes,
+gapped byte ranges and processor failures remain explicit coverage gaps. A
+later question can reuse findings from a complete orientation only when the
+same authorized source fingerprint is still current; task-specific reads can
+still be requested as needed.
+
 This page describes runtime workflows (not GitHub Actions workflows).
 
 ## Contracts
@@ -217,6 +243,17 @@ the ordered validated findings and source provenance instead of reattaching
 the complete text. The typed resource reference comes from the read adapter's
 actual text descriptor (including PDF/OCR-derived text), not by parsing the
 tool's JSON output. Small resources retain the ordinary single-read path.
+
+The `resource-document-analysis` starter is revision `v6` and its path/graph
+are revisioned accordingly. Attachment orientation and explicit attachment
+questions use typed host read bindings. Binary inputs (including DOCX/PDF) are
+converted by the configured resource processor before chunk planning; the
+model receives only the derived readable representation. Orientation requires
+complete validated coverage. If processing or a chunk fails, the runtime
+reports the limitation and does not treat metadata inspection as a content
+read. Selected document reviews use a host-generated Markdown projection of
+the selected blocks plus immediate neighboring blocks, avoiding a full
+document dump into the prompt.
 
 If reflection subsequently requests research, the runtime can seed its
 research workspace with those validated finding/quote pairs and their source

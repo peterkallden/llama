@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v26",
+  "version": "v28",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -213,16 +213,15 @@
       "required_context": ["context.repository.available"]
     },
     {
-      "id": "resource-document-analysis-path-v5",
-      "source_revision": "agent-workflows-starter@v11",
+      "id": "resource-document-analysis-path-v7",
+      "source_revision": "agent-workflows-starter@v28",
       "workflow_ref": "workflow://resource/document-analysis",
-      "workflow_revision": "v5",
+      "workflow_revision": "v6",
       "family": "resource",
-      "graph_revision": "resource-document-analysis-graph@v5",
+      "graph_revision": "resource-document-analysis-graph@v6",
       "resource_read_policy": "chunked",
       "required_capabilities": ["resource.inspect", "resource.read", "document.inspect", "dataset.inspect"],
       "optional_capabilities": ["artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
       "required_context": ["context.resource.available"]
     },
     {
@@ -662,28 +661,29 @@
       ]
     },
     {
-      "id": "resource-document-analysis-v5",
-      "source_revision": "agent-workflows-starter@v11",
-      "selection_description": "Analyse a supplied document or resource using host-resolved representations.",
-      "purpose": "Answer a document question from bounded resource content or structured tables.",
-      "goal": "Establish and explain evidence from the supplied resource.",
-      "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, and claims are grounded in the returned content.",
+      "id": "resource-document-analysis-v7",
+      "source_revision": "agent-workflows-starter@v28",
+      "selection_description": "Give an initial orientation to an uploaded document or answer an explicit question about a supplied resource, using host-resolved representations.",
+      "purpose": "Orient the user to a supplied resource or answer their explicit document question from bounded content and structured tables.",
+      "goal": "Establish a concise, source-grounded understanding of the supplied resource and identify what the user may want to do next.",
+      "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, extraction limits are stated, no unsupported research or edits are introduced, and the user is asked what they want next when intent is still open.",
       "required_capabilities": ["resource.read", "document.inspect", "dataset.inspect"],
       "workflow_policy": "preferred",
       "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v5"}
+        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v6"}
       ],
       "constraints": [
         {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},
-        {"id": "bounded-inspection", "description": "Keep resource reads and table analysis within host-provided bounds.", "hard": true}
+        {"id": "bounded-inspection", "description": "Keep resource reads and table analysis within host-provided bounds; host controls chunking and read cursors.", "hard": true},
+        {"id": "no-unsolicited-research", "description": "For an initial orientation, do not perform external research or edit the document; later workflows are selected only after the user states the next goal.", "hard": true}
       ],
       "steps": [
         {"id": "resolve-resource", "title": "Resolve resource", "objective": "Use the host-provided resource identity."},
         {"id": "inspect-resource", "title": "Inspect resource", "objective": "Inspect available representations and relevant structure.", "depends_on": ["resolve-resource"]},
         {"id": "inspect-tables", "title": "Inspect tables", "objective": "If structured tables are present, resolve one through its host identity.", "depends_on": ["inspect-resource"]},
         {"id": "establish-evidence", "title": "Establish evidence", "objective": "Ground the answer in returned text or bounded table results.", "depends_on": ["inspect-resource", "inspect-tables"]},
-        {"id": "answer", "title": "Answer", "objective": "Answer with resource-grounded evidence and limitations.", "depends_on": ["establish-evidence"]}
+        {"id": "orient", "title": "Orient", "objective": "Give a concise overview grounded in inspected resource content, disclose extraction limits, and ask what the user wants to do next if no specific question was supplied.", "depends_on": ["establish-evidence"]}
       ]
     },
     {

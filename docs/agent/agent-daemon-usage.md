@@ -1044,12 +1044,15 @@ Start the daemon with a private TCP endpoint first, then start the web adapter:
   --listen 127.0.0.1 \
   --port 8090 \
   --web-bearer-token replace-with-a-web-secret \
-  --daemon-authorization "Bearer replace-with-a-daemon-secret"
+  --daemon-authorization-env LLAMA_AGENT_WEB_DAEMON_AUTH
 ```
 
-The daemon authorization value must match the TCP caller policy. Keep both
-listeners on loopback or behind a TLS/authentication proxy; the adapter does
-not provide TLS.
+`LLAMA_AGENT_WEB_DAEMON_AUTH` must contain the authorization value expected by
+the TCP caller policy (for example, `Bearer <secret>`). The environment-variable
+form keeps the secret out of the adapter's process arguments. The direct
+`--daemon-authorization VALUE` option remains available for controlled local
+use. Keep both listeners on loopback or behind a TLS/authentication proxy; the
+adapter does not provide TLS.
 
 The initial web surface is intentionally small:
 

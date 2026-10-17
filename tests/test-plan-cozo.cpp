@@ -62,6 +62,8 @@ int main() {
         ref.lineage.parent_uri="agent-resource://original";ref.lineage.chunk_count=1;
         ref.lineage.derivation="resource.process:pdf";
         observation.resource_refs.push_back(ref);
+        observation.resource_read_provenance=common_plan_resource_read_provenance{
+            "task-fingerprint", "orientation", ref.uri, "sha256:original", "text", "agent-resource://original"};
         common_agent_dataset_ref dataset;dataset.uri="dataset://source";dataset.source_provider="public-api";
         dataset.source_operation="list";dataset.source_request_json=R"({"search":"battery recycling"})";
         dataset.content_hash="sha256:data";dataset.retrieved_at=1234;
@@ -142,6 +144,10 @@ int main() {
         assert(ref.metadata.source_request_json==R"({"url":"https://example.org/paper.pdf"})");
         assert(ref.metadata.content_hash=="sha256:text"&&ref.metadata.retrieved_at==1234);
         assert(ref.lineage.parent_uri=="agent-resource://original"&&ref.lineage.derivation=="resource.process:pdf");
+        const auto & read=plan->observations.front().resource_read_provenance;
+        assert(read&&read->task_fingerprint=="task-fingerprint"&&read->intent=="orientation");
+        assert(read->source_uri=="agent-resource://derived"&&read->source_fingerprint=="sha256:original");
+        assert(read->representation=="text"&&read->source_parent_uri=="agent-resource://original");
         const auto & dataset=plan->observations.front().dataset_refs.front();
         assert(dataset.source_provider=="public-api"&&dataset.source_operation=="list");
         assert(dataset.source_request_json==R"({"search":"battery recycling"})");

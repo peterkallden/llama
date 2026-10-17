@@ -248,6 +248,15 @@ json serialize_plan(const common_plan_state & plan) {
             {"summary", observation.summary}, {"confidence", observation.confidence},
             {"evidence_ids", observation.evidence_ids}, {"created_at", observation.created_at},
             {"resource_refs", resource_refs}, {"dataset_refs", dataset_refs}});
+        if (observation.resource_read_provenance) {
+            observations.back()["resource_read_provenance"] = {
+                {"task_fingerprint", observation.resource_read_provenance->task_fingerprint},
+                {"intent", observation.resource_read_provenance->intent},
+                {"source_uri", observation.resource_read_provenance->source_uri},
+                {"source_fingerprint", observation.resource_read_provenance->source_fingerprint},
+                {"representation", observation.resource_read_provenance->representation},
+                {"source_parent_uri", observation.resource_read_provenance->source_parent_uri}};
+        }
     }
     json bindings = json::array();
     for (const auto & binding : plan.workflow_bindings) bindings.push_back({{"workflow_ref", binding.workflow_ref}, {"workflow_revision", binding.workflow_revision}});
@@ -337,6 +346,16 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
         observation.summary = item.value("summary", std::string{}); observation.confidence = item.value("confidence", 0.5f);
         observation.evidence_ids = item.value("evidence_ids", std::vector<std::string>{});
         observation.created_at = item.value("created_at", int64_t(0));
+        if (item.contains("resource_read_provenance") && item["resource_read_provenance"].is_object()) {
+            const auto & provenance = item["resource_read_provenance"];
+            observation.resource_read_provenance = common_plan_resource_read_provenance{
+                provenance.value("task_fingerprint", std::string{}),
+                provenance.value("intent", std::string{}),
+                provenance.value("source_uri", std::string{}),
+                provenance.value("source_fingerprint", std::string{}),
+                provenance.value("representation", std::string{}),
+                provenance.value("source_parent_uri", std::string{})};
+        }
         for (const auto & resource : item.value("resource_refs", json::array())) observation.resource_refs.push_back(parse_plan_resource_ref(resource));
         for (const auto & dataset : item.value("dataset_refs", json::array())) observation.dataset_refs.push_back({
             dataset.value("uri", std::string{}), dataset.value("name", std::string{}),

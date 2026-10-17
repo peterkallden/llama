@@ -1118,20 +1118,27 @@ bool normalize_planner_host_dataset_references(
 
 std::string render_planner_binding_repair_context(
         const common_agent_request & request,
-        const std::string & parse_error) {
+        const std::string & parse_error,
+        bool compact_dsl_output) {
     const bool binding_error = parse_error.rfind("plan.binding.", 0) == 0;
     if (!binding_error) {
-        if (!request.require_tool_execution) return {};
-        // Do not present resource/dataset recovery instructions for an
-        // ordinary plan-shape failure. In a tool-required API turn with no
-        // attachment those instructions are irrelevant and can divert a
-        // compact model away from the registered operation it must repair.
-        return " The previous plan failed host plan validation with '" + parse_error + "'. "
-            "Repair it using only executable steps: each tool step must name a registered "
-            "tool, use args matching that tool's registered model-facing schema, and use "
-            "mode:'tool'; an explicit mode:'reasoning' step is allowed only when tool execution "
-            "is not required. "
-            "Do not emit a final or answer step; final synthesis is host-owned.";
+        // The previous response must be explained on every retry. Omitting
+        // parse diagnostics for ordinary turns made the model repeat malformed
+        // DSL (or switch to a bare open! call) until the turn deadline expired.
+        std::string repair = " The previous response failed host plan validation: '" + parse_error + "'. ";
+        if (compact_dsl_output) {
+            repair += "Regenerate the complete plan, starting exactly with `plan goal=\"short goal\"`, "
+                "then use `step | open! EXACT_REGISTERED_TOOL` and one `field: value` line per argument. "
+                "Never return only an open! call. Quote every scalar containing spaces, for example "
+                "`query: \"GDP per capita\"`. Use only registered tool names and declared fields. ";
+        } else {
+            repair += "Regenerate the complete JSON plan matching the supplied schema; do not return a partial plan. ";
+        }
+        if (request.require_tool_execution) {
+            repair += "At least one executable tool step is required; do not emit a reasoning-only or answer step. ";
+        }
+        repair += "Do not emit a final or answer step; final synthesis is host-owned.";
+        return repair;
     }
 
     std::string repair = " The previous plan failed host binding validation with '" + parse_error + "'. "
@@ -1718,7 +1725,7 @@ public:
                         " At least one step must be mode:'tool' and use an exact registered tool name. "
                         "A reasoning-only or answer-only plan is invalid for this request.";
                 }
-                attempt.content += render_planner_binding_repair_context(request, parse_error);
+                attempt.content += render_planner_binding_repair_context(request, parse_error, compact_dsl_output);
             }
             return inference.generate_result(make_agent_cli_generation_request(
                 request,

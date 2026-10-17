@@ -1223,6 +1223,11 @@ public:
         return view != nullptr && view->is_mcp_app_read_only(name);
     }
 
+    bool is_mcp_app_write_authorized(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view != nullptr && view->is_mcp_app_write_authorized(name);
+    }
+
     bool is_web_read_only(const std::string & name) const override {
         const auto * view = find_owner(name);
         return view != nullptr && view->is_web_read_only(name);
@@ -1462,7 +1467,7 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         } else if (definition.name == "plan.get") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/workflow-inspector","visibility":["model","app"]})";
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
-        } else if (definition.name == "document.open" || definition.name == "document.save" ||
+        } else if (definition.name == "document.import" || definition.name == "document.open" || definition.name == "document.save" ||
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/document-editor","visibility":["model","app"]})";
 #endif

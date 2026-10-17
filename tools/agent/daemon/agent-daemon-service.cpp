@@ -397,6 +397,7 @@ common_agent_daemon_readiness make_daemon_readiness(
                             tool.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(definition.name);
                             tool.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(definition.name);
                             tool.app_read_only = runtime.provider_probe_tooling.tool_view->is_mcp_app_read_only(definition.name);
+                            tool.app_write_authorized = runtime.provider_probe_tooling.tool_view->is_mcp_app_write_authorized(definition.name);
                         }
                     }
                     readiness.tools.push_back(std::move(tool));

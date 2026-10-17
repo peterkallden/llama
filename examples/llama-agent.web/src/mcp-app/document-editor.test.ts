@@ -86,6 +86,16 @@ describe("document editor sandbox script", () => {
     expect(view.node("#status").textContent).toContain("local draft restored");
   });
 
+  it("waits for the matching tool result instead of fetching the document twice", async () => {
+    const view = app();
+    view.deliver("ui/notifications/tool-input", { arguments: { document_uri: opened.document_uri } });
+    await settle();
+    expect(view.requests.filter((request) => request.method === "tools/call")).toHaveLength(0);
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened });
+    await settle();
+    expect(view.Editor.current.getMarkdown()).toBe(opened.markdown);
+  });
+
   it("opens without sandbox localStorage and ignores a late open after user editing", async () => {
     const view = app();
     view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();

@@ -15,6 +15,7 @@
 class agent_resource_store;
 struct agent_resource_processing_binding_request;
 class agent_resource_processing_provider;
+class agent_resource_processing_provider;
 
 enum class common_runtime_resource_scope {
     turn,
@@ -284,6 +285,7 @@ struct agent_resource_read_authority {
 
 struct agent_resource_runtime {
     agent_resource_store * store = nullptr;
+    std::shared_ptr<agent_resource_processing_provider> processing_provider;
     std::function<std::shared_ptr<agent_resource_processing_provider>(
         const agent_resource_processing_binding_request &)> processing_provider_factory;
     std::string namespace_id = "local";
@@ -446,6 +448,10 @@ struct agent_resource_processing_binding_request {
 class agent_resource_processing_provider {
 public:
     virtual ~agent_resource_processing_provider() = default;
+
+    // A side-effect-free capability query lets hosts choose a representation
+    // from the registered processor set before starting conversion.
+    virtual bool supports(const agent_resource_processing_binding_request &) const { return false; }
 
     virtual agent_resource_processing_result process(
         const agent_resource_processing_binding_request & request) const = 0;

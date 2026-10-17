@@ -63,10 +63,21 @@ Each icon retains a tooltip and accessible action name. Licenses remains a text 
 document is open, the editor saves pending changes and returns a typed binding
 for the saved document URI, immutable revision, and selected block IDs. The
 message is not sent if save or revision checks fail, and the chat draft remains
-in place. The host re-authorizes the resource and validates the revision and
-block IDs before adding bounded document context. An empty block selection
-means the whole document. Sending a chat message saves the document but does
-not start a separate review.
+in place. The host re-authorizes the document and validates the revision and
+block IDs, then creates a Markdown resource containing the selected blocks
+and their immediate neighbors. It does not serialize document JSON metadata
+or attach the complete document to the model. An empty selection projects the
+whole Markdown revision; large projections use the existing host-controlled
+chunk path. The typed resource-read binding requires an actual read of that
+projection; metadata-only inspection and unrelated tool calls do not satisfy
+it. Document content remains data, not instructions.
+The projection retains host-owned `evidence_ids` and `source_refs` for each
+selected block, together with document URI, revision, content fingerprint and
+block-selection lineage. These references preserve provenance but do not
+transfer factual support to changed user-authored text. Large projections use
+the same processor and chunk path as other text, and the read gate checks the
+exact projection revision and required chunk coverage before synthesis.
+Sending a chat message saves the document but does not start a separate review.
 
 “Save and review” registers a normal daemon turn after saving. The × button
 “Spara, granska och stäng” saves and queues the changes since the editing
@@ -110,6 +121,12 @@ for a new edit because whitespace or rendering was normalized during save.
 Failure and cancellation events abort the browser's pending HTTP turn request
 and retain the daemon's reason, including deadline expiry. A cancelled turn
 therefore cannot leave the composer permanently in its sending state.
+Ordinary chat turns submitted while another turn is active are persisted in the
+browser's session-scoped queue with selected resource references and document
+binding. They run in order after the active HTTP turn settles. Failed entries
+remain visible with their original request context and can be retried. Starting
+a new session invalidates in-flight browser callbacks so they cannot mutate the
+new session's attachments or queue.
 
 Changed blocks are marked as user-authored and unreviewed. Their old evidence
 references may remain for navigation, but they do not confer support on the
@@ -127,6 +144,12 @@ replace this grant while a local draft has changes. Other MCP Apps retain their 
 model calls to `document.save` and `document.apply_patch` require host
 confirmation. The app bundle is embedded and advertised only when its build
 dependencies are available; ordinary C++ builds do not require Node.js.
+The daemon's generic policy-gated-write default remains off. A first-party
+MCP App invocation may reach the provider's write tools only through the
+separate app/resource binding and per-tool write authorization; this scoped
+app path must not be rejected by the generic default before those checks run.
+The web example reports a missing upload URI or editor authorization instead
+of silently ignoring “Open in editor”.
 
 ## Sandbox drafts and asynchronous results
 

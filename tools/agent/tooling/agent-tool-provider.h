@@ -51,7 +51,11 @@ struct agent_tool_context {
 
     size_t max_calls = 4;
     uint32_t default_timeout_ms = 1000;
-    size_t default_max_result_bytes = 16 * 1024;
+    // Native tools normally retain their own much smaller per-definition
+    // limit. This context ceiling must not silently undercut deliberately
+    // larger host contracts such as document.open, whose payload is the
+    // authorized editor content rather than model-facing tool output.
+    size_t default_max_result_bytes = 1024 * 1024;
     common_agent_runtime_execution_control execution_control;
 };
 

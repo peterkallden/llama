@@ -116,6 +116,15 @@ void common_agent_runtime_resident_runtime::set_flydelta_activation(
     base_turn_request.request.flydelta_activation = std::move(activation);
 }
 
+void common_agent_runtime_resident_runtime::set_turn_inputs(
+        std::vector<common_agent_input_resource> input_resources,
+        bool require_tool_execution,
+        std::optional<common_agent_resource_read_binding> resource_read_binding) {
+    base_turn_request.request.input_resources = std::move(input_resources);
+    base_turn_request.request.require_tool_execution = require_tool_execution;
+    base_turn_request.request.resource_read_binding = std::move(resource_read_binding);
+}
+
 bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
     if (model_residency) {
         if (resident_model_handle.valid()) {
@@ -199,6 +208,12 @@ bool common_agent_runtime_resident_runtime::run_agent_prompt(
         return false;
     }
 
+    // A resident runtime is reused across user turns, but a plan is not an
+    // implicit session cursor. Start route resolution afresh; the host may
+    // explicitly select a still-active plan for a continuation. In-run
+    // workflow/chunk continuations keep their local plan binding unchanged.
+    resident_current_plan_id.clear();
+
     const std::vector<common_memory_hit> memories;
     common_agent_runtime_host_build_context build_context{
         memory_store,
@@ -212,7 +227,12 @@ bool common_agent_runtime_resident_runtime::run_agent_prompt(
     auto inputs = make_agent_runtime_host_agent_inputs(build_context, build_context.turn_request.orchestration_config);
     const bool ok = host.run_turn(inputs, result, error);
     if (ok && result.plan_id) {
-        resident_current_plan_id = *result.plan_id;
+        std::string plan_error;
+        const auto completed_plan = plan_store->get(*result.plan_id, plan_error);
+        if (completed_plan && (completed_plan->status == common_plan_status::active ||
+                completed_plan->status == common_plan_status::blocked)) {
+            resident_current_plan_id = *result.plan_id;
+        }
     }
     return ok;
 }

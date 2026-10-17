@@ -145,6 +145,8 @@ int main() {
     assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && document_import && value_counts && native_crash);
     assert(document_import->risk_class == common_tool_risk_class::artifact_write && document_import->requires_confirmation);
     assert(document_import->mcp_app_write_authorized);
+    const auto * document_patch = catalog.find_definition("document.propose_patch");
+    assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
     assert(artifact_export->risk_class == common_tool_risk_class::artifact_write);
     assert(artifact_export->requires_confirmation);
     const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);
@@ -445,7 +447,8 @@ int main() {
             assert(definition.requires_confirmation);
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
                 "artifact.export") != definition.capabilities.end());
-        } else if (definition.name == "document.import" || definition.name == "document.save" || definition.name == "document.apply_patch") {
+        } else if (definition.name == "document.import" || definition.name == "document.save" ||
+                definition.name == "document.propose_patch" || definition.name == "document.apply_patch") {
             assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);

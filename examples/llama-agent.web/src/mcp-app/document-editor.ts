@@ -362,9 +362,10 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (message.method === "ui/notifications/tool-input") {
-    const params = message.params as Record<string, unknown> | undefined;
-    const args = params?.arguments as Record<string, unknown> | undefined;
-    if (typeof args?.document_uri === "string") void callOpen(args.document_uri).catch((error) => status(String(error), true));
+    // The host sends the matching tool-result notification immediately after
+    // the input. It already carries the authorized document projection; making
+    // a second document.open call here is redundant and can race the result.
+    status("Loading document result…");
   }
   if (message.method === "ui/notifications/tool-result") {
     const params = message.params as RpcResult | undefined;

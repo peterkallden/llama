@@ -501,6 +501,8 @@ bool resolve_agent_host_tool_selection(
             *resource_store,
             *selection.resource_processor_registry);
         bindings.resource_processing_service = selection.resource_processing_service.get();
+        bindings.resource_runtime.processing_provider = selection.resource_processing_service;
+        selection.tooling.resource_runtime.processing_provider = selection.resource_processing_service;
         bindings.data_store = request.data_store != nullptr
             ? request.data_store
             : selection.owned_data_store.get();
@@ -875,6 +877,9 @@ bool resolve_agent_host_tool_selection(
 
         selection.tooling.resource_runtime.processing_provider_factory =
             bindings.resource_processing_provider_factory;
+        if (bindings.resource_processing_provider_factory) {
+            selection.tooling.resource_runtime.processing_provider.reset();
+        }
 
         native_provider = std::make_unique<native_agent_tool_provider>(
             tool_catalog,

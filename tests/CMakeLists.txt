@@ -471,6 +471,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-sideband-controller.cpp
         test-agent-flydelta-representation-augmentation.cpp
         test-agent-model-facing-tool-chain.cpp
+        test-agent-resource-read-binding.cpp
         test-memory-policy.cpp
         test-memory-store.cpp
         test-memory-retrieval.cpp
@@ -578,6 +579,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-daemon-scope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-daemon-library)
         endif()
         if (TEST_NAME STREQUAL "test-agent-bootstrap")
             target_compile_definitions(${TEST_NAME} PRIVATE

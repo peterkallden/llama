@@ -81,6 +81,10 @@ export type TurnRequest = {
   include_summary: boolean;
   resource_refs?: string[];
   document_context?: { document_uri: string; revision: number; block_ids: string[] };
+  /** Fixed, read-only host task for a single newly uploaded attachment. */
+  attachment_orientation?: true;
+  /** Keep the user's question, but require tool-grounded use of attachments. */
+  attachment_context_required?: true;
 };
 
 export type UploadedResource = {

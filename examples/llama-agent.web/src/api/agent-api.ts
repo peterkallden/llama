@@ -9,6 +9,16 @@ export class AgentApiError extends Error {
   }
 }
 
+function safeErrorMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== "object") return fallback;
+  const value = payload as Record<string, unknown>;
+  if (typeof value.error === "string" && value.error.trim()) return value.error;
+  const tool = value.tool && typeof value.tool === "object" ? value.tool as Record<string, unknown> : undefined;
+  const toolError = tool?.error && typeof tool.error === "object" ? tool.error as Record<string, unknown> : undefined;
+  if (typeof toolError?.safe_summary === "string" && toolError.safe_summary.trim()) return toolError.safe_summary;
+  return fallback;
+}
+
 export function parseSseBlock(block: string): { id?: string; event?: string; data: string } | null {
   const lines = block.split(/\r?\n/);
   const data: string[] = [];
@@ -51,8 +61,7 @@ export class AgentApi {
     let payload: unknown = text;
     try { payload = text ? JSON.parse(text) : {}; } catch { /* retain diagnostic text */ }
     if (!response.ok) {
-      const message = typeof payload === "object" && payload && "error" in payload
-        ? String((payload as { error: unknown }).error) : `${response.status} ${response.statusText}`;
+      const message = safeErrorMessage(payload, `${response.status} ${response.statusText}`);
       throw new AgentApiError(message, response.status, payload);
     }
     return payload as T;

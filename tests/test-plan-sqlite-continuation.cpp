@@ -39,6 +39,9 @@ int main() {
     observation.resource_refs.back().metadata.source_request_json=R"({"url":"https://example.org/catalogue"})";
     observation.resource_refs.back().metadata.retrieved_at=1234;
     observation.resource_refs.back().metadata.content_hash="sha256:catalogue";
+    observation.resource_read_provenance=common_plan_resource_read_provenance{
+        "task-fingerprint", "question", "resource://eurostat/toc", "sha256:catalogue",
+        "text/plain", "resource://eurostat/original"};
     plan.observations.push_back(observation);
     plan.workflow_definition = common_plan_workflow_definition{};
     plan.workflow_definition->workflow_ref = "workflow://eurostat/catalog";
@@ -115,6 +118,10 @@ int main() {
     assert(metadata.source_provider=="native"&&metadata.source_operation=="web.fetch");
     assert(metadata.source_request_json==R"({"url":"https://example.org/catalogue"})");
     assert(metadata.retrieved_at==1234&&metadata.content_hash=="sha256:catalogue");
+    const auto & read=restored->observations.front().resource_read_provenance;
+    assert(read&&read->task_fingerprint=="task-fingerprint"&&read->intent=="question");
+    assert(read->source_uri=="resource://eurostat/toc"&&read->source_fingerprint=="sha256:catalogue");
+    assert(read->representation=="text/plain"&&read->source_parent_uri=="resource://eurostat/original");
     assert(restored->workflow_definition && restored->workflow_definition->workflow_ref == "workflow://eurostat/metadata");
     assert(restored->workflow_definition->preferred_thinking_mode == "deliberate");
     assert(restored->workflow_definition->require_declared_claims);

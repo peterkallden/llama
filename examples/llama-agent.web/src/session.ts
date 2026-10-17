@@ -21,6 +21,7 @@ const error = ref("");
 const messages = ref<ChatMessage[]>([]);
 const attachments = ref<UploadedResource[]>([]);
 const resourceRefs = ref<string[]>([]);
+const selectedResourceRefs = ref<string[]>([]);
 const activeTurnId = ref("");
 const recording = ref(false);
 const abortController = ref<AbortController | null>(null);
@@ -42,9 +43,22 @@ export type PendingDocumentReview = {
 };
 const documentReviews = ref<PendingDocumentReview[]>(restoreDocumentReviews());
 let drainingDocumentReviews = false;
+let attachmentOrientationTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+export type AttachmentOrientationState = "queued" | "running" | "failed" | "completed";
+export type PendingAttachmentOrientation = {
+  operation_id: string;
+  turn_id: string;
+  session_id: string;
+  resource_uri: string;
+  name: string;
+  state: AttachmentOrientationState;
+  error?: string;
+};
+const attachmentOrientations = ref<PendingAttachmentOrientation[]>(restoreAttachmentOrientations());
 let turnRequestInFlight = false;
 let turnRequestController: AbortController | null = null;
 let turnRequestFailure = "";
+let sessionEpoch = 0;
 let disposed = false;
 
 function reviewQueueKey(id = sessionId.value) { return `llama-agent-web.document-reviews:${id}`; }
@@ -61,10 +75,56 @@ function restoreDocumentReviews(): PendingDocumentReview[] {
 }
 function persistDocumentReviews() {
   try {
-    documentReviews.value = documentReviews.value.slice(-10);
     sessionStorage.setItem(reviewQueueKey(), JSON.stringify(documentReviews.value));
   } catch { error.value = "A pending document review could not be persisted in this browser session."; }
 }
+function orientationQueueKey(id = sessionId.value) { return `llama-agent-web.attachment-orientations:${id}`; }
+function restoreAttachmentOrientations(): PendingAttachmentOrientation[] {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(orientationQueueKey()) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((item): item is PendingAttachmentOrientation => item && typeof item === "object" &&
+      typeof item.operation_id === "string" && typeof item.turn_id === "string" && item.session_id === sessionId.value &&
+      typeof item.resource_uri === "string" && typeof item.name === "string")
+      .map((item) => ({ ...item, state: item.state === "completed" || item.state === "failed" ? item.state : "queued" }));
+  } catch { return []; }
+}
+function persistAttachmentOrientations() {
+  try {
+    sessionStorage.setItem(orientationQueueKey(), JSON.stringify(attachmentOrientations.value));
+  } catch { error.value = "A pending attachment orientation could not be persisted in this browser session."; }
+}
+export type PendingUserTurn = {
+  turn_id: string;
+  session_id: string;
+  prompt: string;
+  resource_refs: string[];
+  display_prompt: string;
+  document_context?: TurnRequest["document_context"];
+  attachment_context_required?: true;
+  attachment_orientation?: true;
+  state: "queued" | "running" | "failed";
+  error?: string;
+};
+function userTurnQueueKey(id = sessionId.value) { return `llama-agent-web.pending-user-turns:${id}`; }
+function restorePendingUserTurns(): PendingUserTurn[] {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(userTurnQueueKey()) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((item): item is PendingUserTurn => item && typeof item === "object" &&
+      typeof item.turn_id === "string" && item.session_id === sessionId.value && typeof item.prompt === "string" &&
+      Array.isArray(item.resource_refs) && item.resource_refs.every((uri: unknown) => typeof uri === "string") &&
+      typeof item.display_prompt === "string" &&
+      (!item.document_context || (typeof item.document_context.document_uri === "string" &&
+        Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))))
+      .map((item) => ({ ...item, state: item.state === "failed" ? "failed" as const : "queued" as const }));
+  } catch { return []; }
+}
+function persistPendingUserTurns() {
+  try { sessionStorage.setItem(userTurnQueueKey(), JSON.stringify(pendingUserTurns.value)); }
+  catch { error.value = "A queued chat message could not be persisted in this browser session."; }
+}
+const pendingUserTurns = ref<PendingUserTurn[]>(restorePendingUserTurns());
 
 function base64Encode(bytes: Uint8Array): string {
   let binary = "";
@@ -173,17 +233,51 @@ async function connect() {
 }
 
 async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false,
-    documentContext?: TurnRequest["document_context"], stableTurnId?: string) {
+    documentContext?: TurnRequest["document_context"], stableTurnId?: string,
+    resourceRefsOverride?: string[], displayPrompt?: string, attachmentOrientation = false) {
+  const turnId = stableTurnId ?? crypto.randomUUID();
+  const visiblePrompt = displayPrompt ?? prompt;
+  const turnResourceRefs = [...new Set(resourceRefsOverride ??
+    (additionalResourceRefs.length ? additionalResourceRefs : selectedResourceRefs.value))];
+  const attachmentContextRequired = !attachmentOrientation &&
+    turnResourceRefs.some((uri) => uri !== documentContext?.document_uri);
+  if (!attachmentOrientation && !documentContext && turnResourceRefs.length) {
+    const supplied = new Set(turnResourceRefs);
+    const previousLength = attachmentOrientations.value.length;
+    attachmentOrientations.value = attachmentOrientations.value.filter((orientation) =>
+      orientation.state !== "queued" || !supplied.has(orientation.resource_uri));
+    if (attachmentOrientations.value.length !== previousLength) {
+      persistAttachmentOrientations();
+      if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
+      attachmentOrientationTimer = undefined;
+    }
+  }
   if (busy.value || turnRequestInFlight) {
     if (propagateFailure) throw new Error("An agent turn is already running. Retry the review when it finishes.");
-    return;
+    if (pendingUserTurns.value.length >= 32) {
+      error.value = "The pending chat queue is full. Wait for a turn to finish before sending another message.";
+      return false;
+    }
+    pendingUserTurns.value.push({ turn_id: turnId, session_id: sessionId.value, prompt,
+      resource_refs: turnResourceRefs, display_prompt: visiblePrompt,
+      ...(documentContext ? { document_context: { ...documentContext, block_ids: [...documentContext.block_ids] } } : {}),
+      ...(attachmentContextRequired ? { attachment_context_required: true as const } : {}),
+      ...(attachmentOrientation ? { attachment_orientation: true as const } : {}), state: "queued" });
+    if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
+      messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: visiblePrompt });
+      messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant",
+        content: "Queued until the current turn finishes.", pending: true });
+    }
+    persistPendingUserTurns();
+    return true;
   }
+  const requestEpoch = sessionEpoch;
+  const requestSessionId = sessionId.value;
   error.value = ""; busy.value = true; turnRequestInFlight = true;
   turnRequestController = new AbortController(); turnRequestFailure = "";
-  const turnId = stableTurnId ?? crypto.randomUUID();
   activeTurnId.value = turnId;
   if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
-    messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: prompt });
+    messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: visiblePrompt });
     messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant", content: "", pending: true });
   } else {
     const assistant = messages.value.find((message) => message.id === `${turnId}-assistant`);
@@ -192,31 +286,43 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   const turn: TurnRequest = {
     prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
     turn_id: turnId, mode: "agent", n_predict: 384, include_summary: true,
-    ...([...resourceRefs.value, ...additionalResourceRefs].length ? { resource_refs: [...new Set([...resourceRefs.value, ...additionalResourceRefs])] } : {}),
+    ...(turnResourceRefs.length ? { resource_refs: [...new Set(turnResourceRefs)] } : {}),
     ...(documentContext ? { document_context: documentContext } : {}),
+    ...(attachmentOrientation ? { attachment_orientation: true } : {}),
+    ...(attachmentContextRequired
+      ? { attachment_context_required: true } : {}),
   };
   try {
     const result = await api.value.submitTurn(turn, turnRequestController.signal) as TurnResult;
+    if (requestEpoch !== sessionEpoch || requestSessionId !== sessionId.value) return false;
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant) assistant.pending = false;
     if (result.ok === false) {
       error.value = result.error || "Turn failed";
+      busy.value = false;
+      activeTurnId.value = "";
       if (propagateFailure) throw new Error(error.value);
+      return false;
     }
     busy.value = false;
     activeTurnId.value = "";
   } catch (cause) {
+    if (requestEpoch !== sessionEpoch || requestSessionId !== sessionId.value) return false;
     busy.value = false; activeTurnId.value = "";
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
     error.value = turnRequestFailure || (cause instanceof Error ? cause.message : String(cause));
     if (propagateFailure) throw new Error(error.value);
+    return false;
   } finally {
-    turnRequestInFlight = false;
-    turnRequestController = null; turnRequestFailure = "";
-    void drainDocumentReviews();
+    if (requestEpoch === sessionEpoch && requestSessionId === sessionId.value) {
+      turnRequestInFlight = false;
+      turnRequestController = null; turnRequestFailure = "";
+      void drainDocumentReviews();
+    }
   }
+  return true;
 }
 
 async function submitReview(prompt: string, documentContext: NonNullable<TurnRequest["document_context"]>, operationId: string = crypto.randomUUID()) {
@@ -234,7 +340,33 @@ async function submitReview(prompt: string, documentContext: NonNullable<TurnReq
 async function drainDocumentReviews() {
   if (disposed || drainingDocumentReviews || busy.value || turnRequestInFlight) return;
   const item = documentReviews.value.find((review) => review.state === "queued" && review.session_id === sessionId.value);
-  if (!item) return;
+  if (!item) {
+    const queuedTurn = pendingUserTurns.value.find((turn) => turn.state === "queued" && turn.session_id === sessionId.value);
+    if (!queuedTurn) { void drainAttachmentOrientations(); return; }
+    drainingDocumentReviews = true;
+    queuedTurn.state = "running";
+    persistPendingUserTurns();
+    try {
+      const sent = await submit(queuedTurn.prompt, [], false, queuedTurn.document_context,
+        queuedTurn.turn_id, queuedTurn.resource_refs, queuedTurn.display_prompt,
+        Boolean(queuedTurn.attachment_orientation));
+      if (sent) {
+        pendingUserTurns.value = pendingUserTurns.value.filter((turn) => turn.turn_id !== queuedTurn.turn_id);
+      } else {
+        queuedTurn.state = "failed";
+        queuedTurn.error = error.value || "The queued turn could not be submitted.";
+        const assistant = messages.value.find((message) => message.id === `${queuedTurn.turn_id}-assistant`);
+        if (assistant) { assistant.pending = false; assistant.content = `Queued message failed: ${queuedTurn.error}`; }
+      }
+    } finally {
+      persistPendingUserTurns();
+      drainingDocumentReviews = false;
+      if (!busy.value && pendingUserTurns.value.some((turn) => turn.state === "queued" && turn.session_id === sessionId.value)) {
+        void drainDocumentReviews();
+      }
+    }
+    return;
+  }
   drainingDocumentReviews = true;
   item.state = "running"; item.error = undefined; persistDocumentReviews();
   try {
@@ -250,11 +382,46 @@ async function drainDocumentReviews() {
   }
 }
 
+async function drainAttachmentOrientations() {
+  if (disposed || attachmentOrientationTimer !== undefined || drainingDocumentReviews || busy.value || turnRequestInFlight) return;
+  const item = attachmentOrientations.value.find((orientation) => orientation.state === "queued" && orientation.session_id === sessionId.value);
+  if (!item) return;
+  drainingDocumentReviews = true;
+  item.state = "running"; item.error = undefined; persistAttachmentOrientations();
+  try {
+    const prompt = "Orient me to the attached file. Give a short overview of its subject and structure, explain any extraction or coverage limitations, do not edit it or search externally, and ask what I would like to do next.";
+    await submit(prompt, [], true, undefined, item.turn_id, [item.resource_uri], `Initial orientation: ${item.name}`, true);
+    item.state = error.value ? "failed" : "completed";
+    if (item.state === "failed") item.error = error.value;
+  } catch (cause) {
+    item.state = "failed";
+    item.error = cause instanceof Error ? cause.message : String(cause);
+    const assistant = messages.value.find((message) => message.turnId === item.turn_id && message.role === "assistant");
+    if (assistant) assistant.content = `I couldn't create an initial orientation for ${item.name}: ${item.error}`;
+  } finally {
+    drainingDocumentReviews = false;
+    persistAttachmentOrientations();
+    if (!busy.value) void drainDocumentReviews();
+  }
+}
+
 function retryDocumentReview(operationId: string) {
   const item = documentReviews.value.find((review) => review.operation_id === operationId && review.session_id === sessionId.value);
   if (!item || item.state !== "failed") return;
   item.state = "queued"; item.error = undefined; persistDocumentReviews();
   void drainDocumentReviews();
+}
+
+function retryPendingUserTurn(turnId: string) {
+  const item = pendingUserTurns.value.find((turn) => turn.turn_id === turnId && turn.session_id === sessionId.value);
+  if (!item || item.state !== "failed") return;
+  item.state = "queued"; item.error = undefined; persistPendingUserTurns();
+  void drainDocumentReviews();
+}
+
+function dismissPendingUserTurn(turnId: string) {
+  pendingUserTurns.value = pendingUserTurns.value.filter((turn) => turn.turn_id !== turnId);
+  persistPendingUserTurns();
 }
 
 async function cancel() {
@@ -263,10 +430,11 @@ async function cancel() {
 }
 
 async function upload(file: File) {
+  const uploadSessionId = sessionId.value;
   const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|txt|xml|html?)$/i.test(file.name);
   const resource: UploadedResource = {
     name: file.name, mime_type: file.type || (isText ? "text/plain" : "application/octet-stream"), scope: "session",
-    description: `Web attachment: ${file.name}`, session_id: sessionId.value,
+    description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
     namespace_id: "web", project_id: "web-example",
     ...(isText
       ? { text: await file.text() }
@@ -274,12 +442,21 @@ async function upload(file: File) {
   };
   try {
     const result = await api.value.putResource(resource) as PutResourceResult;
+    if (uploadSessionId !== sessionId.value) return;
     const uri = result.resource?.uri;
     if (!uri) throw new Error("The daemon returned no resource URI for the attachment");
     attachments.value.push({ ...resource, uri });
     resourceRefs.value.push(uri);
+    const operationId = `orient-${crypto.randomUUID()}`;
+    attachmentOrientations.value.push({ operation_id: operationId, turn_id: operationId,
+      session_id: sessionId.value, resource_uri: uri, name: file.name, state: "queued" });
+    persistAttachmentOrientations();
+    if (attachmentOrientationTimer === undefined) attachmentOrientationTimer = globalThis.setTimeout(() => {
+      attachmentOrientationTimer = undefined;
+      void drainDocumentReviews();
+    }, 1500);
   }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
+  catch (cause) { if (uploadSessionId === sessionId.value) error.value = cause instanceof Error ? cause.message : String(cause); }
 }
 
 function recordingMimeType(): string {
@@ -335,8 +512,20 @@ function toggleRecording() {
 }
 
 function removeAttachment(index: number) {
+  const removed = attachments.value[index];
   attachments.value.splice(index, 1);
   resourceRefs.value.splice(index, 1);
+  if (removed?.uri) selectedResourceRefs.value = selectedResourceRefs.value.filter((uri) => uri !== removed.uri);
+  if (removed?.uri) {
+    const previousLength = attachmentOrientations.value.length;
+    attachmentOrientations.value = attachmentOrientations.value.filter((item) =>
+      item.state !== "queued" || item.resource_uri !== removed.uri);
+    if (attachmentOrientations.value.length !== previousLength) persistAttachmentOrientations();
+    if (!attachmentOrientations.value.some((item) => item.state === "queued") && attachmentOrientationTimer !== undefined) {
+      globalThis.clearTimeout(attachmentOrientationTimer);
+      attachmentOrientationTimer = undefined;
+    }
+  }
 }
 
 async function downloadArtifact(event: AgentEvent) {
@@ -364,27 +553,37 @@ async function downloadArtifact(event: AgentEvent) {
 }
 
 function newSession() {
+  sessionEpoch++;
+  turnRequestController?.abort();
+  turnRequestController = null;
+  turnRequestInFlight = false;
+  if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
+  attachmentOrientationTimer = undefined;
   sessionId.value = `web-${crypto.randomUUID()}`;
   sessionStorage.setItem(sessionStorageKey, sessionId.value);
   messages.value = [];
   events.value = [];
   attachments.value = [];
   resourceRefs.value = [];
+  selectedResourceRefs.value = [];
   if (recording.value) stopRecording();
   activeTurnId.value = "";
   busy.value = false;
   error.value = "";
   documentReviews.value = restoreDocumentReviews();
+  attachmentOrientations.value = restoreAttachmentOrientations();
+  pendingUserTurns.value = restorePendingUserTurns();
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, documentReviews, refreshStatus, connect, submit, submitReview, retryDocumentReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, resourceRefs, selectedResourceRefs, activeTurnId, recording, documentReviews, attachmentOrientations, pendingUserTurns, refreshStatus, connect, submit, submitReview, retryDocumentReview, retryPendingUserTurn, dismissPendingUserTurn, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }
 
 // Replacing this module during Vite development must release its long-lived
 // stream; otherwise abandoned modules keep browser connection slots occupied.
 import.meta.hot?.dispose(() => {
   disposed = true;
+  if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
   abortController.value?.abort();
   turnRequestController?.abort();
 });

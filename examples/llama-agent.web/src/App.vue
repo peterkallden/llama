@@ -87,15 +87,19 @@ watch(() => session.events.length, () => {
 async function send() {
   const draftAtSubmit = prompt.value;
   const value = draftAtSubmit.trim();
-  if ((!value && !session.attachments.length) || session.busy || chatSending.value) return;
+  if ((!value && !session.selectedResourceRefs.length) || chatSending.value) return;
   chatSending.value = true;
   const sendingSession = session.sessionId;
   try {
     if (documentMode.value && !editorHost.value) throw new Error("The document editor is not ready. Your message is preserved.");
     const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
     if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
-    if (prompt.value === draftAtSubmit) prompt.value = "";
-    await session.submit(value || "Please process the attached audio.", [], false, context);
+    const sent = await session.submit(value || "Please process the attached audio.", [], false, context,
+      undefined, session.selectedResourceRefs, undefined);
+    if (sent) {
+      if (prompt.value === draftAtSubmit) prompt.value = "";
+      session.selectedResourceRefs = [];
+    }
   } catch (cause) {
     session.error = cause instanceof Error ? cause.message : String(cause);
   } finally { chatSending.value = false; }
@@ -302,14 +306,21 @@ function isArtifactEvent(event: Record<string, unknown>) {
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || chatSending || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>{{ chatSending ? 'Saving…' : 'Send' }}</span></button></div></div>
+            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="chatSending || (!prompt.trim() && !session.selectedResourceRefs.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>{{ chatSending ? 'Saving…' : session.busy ? 'Queue' : 'Send' }}</span></button></div></div>
           </form>
-          <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="attachment-editor-button" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) || Boolean(openingAttachmentUri)" :title="!file.uri ? 'Upload is still in progress.' : !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) ? 'The daemon has not authorized document import for the editor app.' : 'Redigera dokument'" aria-label="Redigera dokument" @click="openAttachmentInEditor(file)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3M4 20l4.4-.9L19 8.5a2.1 2.1 0 0 0-3-3L5.4 16.1 4 20Z"/><path d="M3 22h18"/></svg></button><small v-if="file.uri && !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" class="muted">Document editor import is not authorized by the daemon profile.</small><small v-if="openingAttachmentUri === file.uri" class="muted">Importing the document and opening its saved revision…</small><small v-if="attachmentEditorError" class="error">{{ attachmentEditorError }}</small></div></div>
+          <div v-if="session.attachments.length" class="attachments"><strong>Attachments — select for this message</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input v-model="session.selectedResourceRefs" type="checkbox" :value="file.uri" :disabled="!file.uri" />{{ file.name }}</label><button type="button" class="quiet" :aria-label="`Remove ${file.name}`" @click="session.removeAttachment(index)">Remove</button><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="attachment-editor-button" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) || Boolean(openingAttachmentUri)" :title="!file.uri ? 'Upload is still in progress.' : !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) ? 'The daemon has not authorized document import for the editor app.' : 'Redigera dokument'" aria-label="Redigera dokument" @click="openAttachmentInEditor(file)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3M4 20l4.4-.9L19 8.5a2.1 2.1 0 0 0-3-3L5.4 16.1 4 20Z"/><path d="M3 22h18"/></svg></button><small v-if="file.uri && !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" class="muted">Document editor import is not authorized by the daemon profile.</small><small v-if="openingAttachmentUri === file.uri" class="muted">Importing the document and opening its saved revision…</small><small v-if="attachmentEditorError" class="error">{{ attachmentEditorError }}</small></div></div>
           <div v-if="session.busy" class="chat-cancel"><button class="cancel-button" @click="session.cancel">Cancel</button></div>
           <section v-if="session.documentReviews.some((item) => item.state !== 'completed')" class="document-review-queue" aria-label="Document review status">
             <div v-for="review in session.documentReviews.filter((item) => item.state !== 'completed')" :key="review.operation_id" class="review-queue-item" :class="`review-${review.state}`">
               <span>{{ review.state === 'queued' ? 'Review waiting for the current turn' : review.state === 'running' ? 'Document review running in chat' : `Review failed: ${review.error ?? 'unknown error'}` }}</span>
               <button v-if="review.state === 'failed'" class="quiet" @click="session.retryDocumentReview(review.operation_id)">Retry review</button>
+            </div>
+          </section>
+          <section v-if="session.pendingUserTurns.length" class="document-review-queue" aria-label="Pending chat messages">
+            <div v-for="turn in session.pendingUserTurns" :key="turn.turn_id" class="review-queue-item" :class="`review-${turn.state}`">
+              <span>{{ turn.state === 'failed' ? `Queued message failed: ${turn.error ?? 'unknown error'}` : turn.state === 'running' ? 'Queued message running' : 'Message queued' }} — {{ turn.display_prompt }}</span>
+              <button v-if="turn.state === 'failed'" class="quiet" @click="session.retryPendingUserTurn(turn.turn_id)">Retry</button>
+              <button v-if="turn.state === 'failed'" class="quiet" @click="session.dismissPendingUserTurn(turn.turn_id)">Dismiss</button>
             </div>
           </section>
         </section>

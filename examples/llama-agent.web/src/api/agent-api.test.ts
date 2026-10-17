@@ -67,6 +67,7 @@ describe("host-brokered MCP App API", () => {
         });
       } catch (error) { thrown = error; }
       expect(thrown).toBeInstanceOf(AgentApiError);
+      expect((thrown as Error).message).toBe("Not allowed.");
       expect(thrown).toMatchObject({ status: 422, payload: failure });
     } finally { globalThis.fetch = originalFetch; }
   });

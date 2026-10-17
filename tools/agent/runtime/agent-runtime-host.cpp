@@ -194,6 +194,7 @@ bool run_agent_runtime_host(
             driver_execution.flydelta_activation = execution.turn_request.request.flydelta_activation;
             driver_execution.flydelta_capture = execution.turn_request.request.flydelta_capture;
             driver_execution.tool_argument_bindings = execution.turn_request.request.tool_argument_bindings;
+            driver_execution.resource_read_binding = execution.turn_request.request.resource_read_binding;
             return run_agent_runtime_driver(driver_execution, result, error);
         }
 

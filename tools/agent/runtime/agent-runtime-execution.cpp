@@ -243,14 +243,73 @@ bool select_model_tool_families(
     // Family preflight may strengthen this invariant after selecting a
     // family, but must never discard an explicit caller requirement.
     execution.require_tool_execution = caller_requires_tool_execution;
+
+    // Attachment orientation is a host-authored, read-only task. The daemon
+    // has already restricted its tool catalog to resource/dataset/document
+    // inspection, so asking the model to classify those same families adds a
+    // fragile generation before the actual read without adding authorization
+    // value. Select only those families that are present in the restricted
+    // catalog and let the normal planner choose the concrete read operation.
+    const bool attachment_orientation = request.resource_read_binding &&
+        request.resource_read_binding->intent == common_agent_resource_read_intent::orientation;
+    if (attachment_orientation) {
+        const auto families = common_generate_tool_family_index(
+            execution.tooling.tools, execution.tooling.family_descriptions);
+        std::vector<std::string> family_ids;
+        for (const auto & family : families) {
+            if (family.id == "resource" || family.id == "dataset" ||
+                    family.id == "document") {
+                family_ids.push_back(family.id);
+            }
+        }
+        execution.model_tools = common_expand_tool_family_prerequisites(
+            execution.tooling.tools, family_ids);
+        if (execution.model_tools.empty()) {
+            error = "attachment orientation has no permitted resource inspection tools";
+            return false;
+        }
+        execution.require_tool_execution = true;
+        return true;
+    }
+
     if (!generation_config.enable_tool_family_routing ||
             execution.tooling.tools.empty() ||
-            !execution.current_plan_id.empty()) {
+            (!execution.current_plan_id.empty() && !request.resource_read_binding)) {
         return true;
     }
 
     const auto families = common_generate_tool_family_index(
         execution.tooling.tools, execution.tooling.family_descriptions);
+    std::vector<std::string> required_attachment_families;
+    const bool bound_resource_read = request.resource_read_binding &&
+        request.resource_read_binding->require_content_read;
+    for (const auto & input : request.input_resources) {
+        if (!bound_resource_read && input.role != "attachment_question" && input.role != "document_context") continue;
+        required_attachment_families.push_back("resource");
+        const auto & mime = input.resource.mime_type;
+        if (mime == "text/csv" || mime == "text/tab-separated-values") {
+            required_attachment_families.push_back("dataset");
+        }
+        if (mime == "text/html" ||
+                mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+                mime == "application/epub+zip") {
+            required_attachment_families.push_back("document");
+        }
+    }
+    std::sort(required_attachment_families.begin(), required_attachment_families.end());
+    required_attachment_families.erase(
+        std::unique(required_attachment_families.begin(), required_attachment_families.end()),
+        required_attachment_families.end());
+    if (bound_resource_read) {
+        for (const auto & family : families) {
+            if ((family.id == "resource" || family.id == "dataset" || family.id == "document") &&
+                    std::find(required_attachment_families.begin(), required_attachment_families.end(), family.id) ==
+                        required_attachment_families.end()) {
+                required_attachment_families.push_back(family.id);
+            }
+        }
+        std::sort(required_attachment_families.begin(), required_attachment_families.end());
+    }
     const std::string family_view = common_render_tool_family_index(families, 2048);
     const bool required_family_selection = caller_requires_tool_execution;
     common_chat_msg system{
@@ -259,13 +318,19 @@ bool select_model_tool_families(
             ? common_tool_family_required_selection_prompt(families)
             : "Decide whether the user request needs external tools. Reply with exactly one line: "
               "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
-              "are needed. Current-turn attachments are optional inputs: choose the resource or "
-              "dataset family when the request concerns an attached file, but keep NO_TOOLS for "
-              "unrelated conversation. Return family ids, not tool names; for example, "
+              "are needed. If the user asks about text already included in the prompt, including "
+              "host-validated document context, answer from that text and return NO_TOOLS. Do not "
+              "select resource or document only because the user mentions an attached file. Select "
+              "those families only when more content must be fetched or extracted; select web when "
+              "external research is requested, and document tools when editing is requested. "
+              "For other requests, attached files are optional inputs: choose resource or dataset "
+              "when their contents must be read or analyzed, and keep NO_TOOLS for unrelated conversation. "
+              "Return family ids, not tool names; for example, "
               "dataset.validate belongs to the dataset family. Do not explain, use JSON, or invent family ids. Available "
               "families:\n" + family_view,
     };
-    common_chat_msg user{"user", request.prompt + common_agent_render_input_resource_context(
+    common_chat_msg user{"user", common_tool_family_selection_user_prompt(request.prompt) +
+        common_agent_render_input_resource_context(
         request.input_resources, 2048, request.available_resources)};
     common_agent_generation_options options;
     // This is a one-line classifier, not a planning turn. A small hard cap
@@ -355,6 +420,25 @@ bool select_model_tool_families(
                 return false;
             }
         }
+    }
+    // A caller-bound attachment question must actually inspect its resource;
+    // a model-selected web or unrelated tool alone is not grounded. Add the
+    // host-required families after model classification so the model may also
+    // select web/research or other capabilities requested by the user.
+    for (const auto & required_family : required_attachment_families) {
+        const bool family_available = std::any_of(
+            families.begin(), families.end(), [&required_family](const auto & family) {
+                return family.id == required_family;
+            });
+        if (!family_available) {
+            error = "attached resource requires unavailable tool family: " + required_family;
+            return false;
+        }
+        if (std::find(selection.family_ids.begin(), selection.family_ids.end(), required_family) ==
+                selection.family_ids.end()) {
+            selection.family_ids.push_back(required_family);
+        }
+        selection.needs_tools = true;
     }
     if (!selection.needs_tools && !selection.family_ids.empty()) {
         error = "tool family selection must not select families when needs_tools is false";
@@ -473,6 +557,16 @@ bool prepare_resource_chunk_observations(
     }
     execution.resource_chunk_observations_prepared = true;
     execution.resource_chunk_original_inputs = execution.input_resources;
+    if (!execution.resource_read_binding ||
+            !execution.resource_read_binding->require_content_read ||
+            !execution.resource_read_binding->require_full_coverage) {
+        // Questions use the ordinary resource.read path, which can choose a
+        // bounded range based on the task. Eagerly extracting chunk zero here
+        // would both waste context and make a partial read look task-relevant.
+        // Unbound session attachments are inventory only, not an implicit
+        // instruction to read every file on every turn.
+        return true;
+    }
     if (execution.tooling.resource_runtime.store == nullptr ||
             execution.input_resources.empty() || execution.current_plan_id.empty()) {
         return true;
@@ -520,6 +614,19 @@ bool prepare_resource_chunk_observations(
                 continue;
             }
             const auto & lineage = observation.resource_refs.front().lineage;
+            std::string target_fingerprint;
+            if (execution.resource_read_binding) {
+                const auto target = std::find_if(execution.resource_read_binding->targets.begin(),
+                    execution.resource_read_binding->targets.end(), [&](const auto & candidate) {
+                        return candidate.uri == input.resource.uri || candidate.parent_uri == input.resource.uri;
+                    });
+                if (target != execution.resource_read_binding->targets.end()) target_fingerprint = target->content_fingerprint;
+            }
+            if (!common_runtime_resource_lineage_is_chunk(lineage) ||
+                    !execution.resource_read_binding || !observation.resource_read_provenance ||
+                    observation.resource_read_provenance->task_fingerprint != execution.resource_read_binding->task_fingerprint ||
+                    target_fingerprint.empty() ||
+                    observation.resource_read_provenance->source_fingerprint != target_fingerprint) continue;
             if (lineage.chunk_index == next_chunk_index) ++next_chunk_index;
         }
         if (next_chunk_index >= chunk_plan.ranges.size()) {
@@ -536,7 +643,8 @@ bool prepare_resource_chunk_observations(
         execution.active_resource_chunk_input = input_index;
         execution.active_resource_chunk_index = next_chunk_index;
 
-        const std::string plan_observation_id = "resource_chunk_plan:" + input.resource.uri;
+        const std::string plan_observation_id = "resource_chunk_plan:" + input.resource.uri + ":" +
+            (execution.resource_read_binding ? execution.resource_read_binding->task_fingerprint.substr(0, 16) : "unbound");
         const bool plan_observation_exists = std::any_of(
             plan->observations.begin(), plan->observations.end(),
             [&](const common_plan_observation & observation) {
@@ -702,7 +810,9 @@ bool record_and_advance_resource_chunk(
     observed.expected_version = plan->version;
     observed.reason_summary = "bounded resource chunk processed on the session lane";
     observed.observation = common_plan_observation{
-        "resource_chunk:" + chunk_plan.parent.uri + ":" + std::to_string(chunk_index),
+        "resource_chunk:" + chunk_plan.parent.uri + ":" +
+            (execution.resource_read_binding ? execution.resource_read_binding->task_fingerprint.substr(0, 16) : "unbound") +
+            ":" + std::to_string(chunk_index),
         extraction.unresolved ? "resource_chunk_unresolved" : "resource_chunk",
         summary.str(),
         1.0f,
@@ -710,6 +820,21 @@ bool record_and_advance_resource_chunk(
         {chunk_ref},
         static_cast<int64_t>(std::time(nullptr)),
     };
+    if (execution.resource_read_binding) {
+        const auto target = std::find_if(execution.resource_read_binding->targets.begin(),
+            execution.resource_read_binding->targets.end(), [&](const auto & candidate) {
+                return candidate.uri == chunk_plan.parent.uri || candidate.parent_uri == chunk_plan.parent.uri;
+            });
+        if (target != execution.resource_read_binding->targets.end()) {
+            observed.observation->resource_read_provenance = common_plan_resource_read_provenance{
+                execution.resource_read_binding->task_fingerprint,
+                common_agent_resource_read_intent_name(execution.resource_read_binding->intent),
+                target->uri,
+                target->content_fingerprint,
+                target->representation,
+                target->parent_uri};
+        }
+    }
     common_plan_state updated;
     if (!execution.plan_store.apply(observed, updated, error)) return false;
     *plan = std::move(updated);
@@ -744,6 +869,7 @@ bool record_and_advance_resource_chunk(
         for (const auto & input : execution.resource_chunk_original_inputs) {
             if (input.resource.uri != chunk_plan.parent.uri) execution.input_resources.push_back(input);
         }
+        execution.resource_chunk_observations_prepared = false;
         return false;
     }
     execution.active_resource_chunk_index = evidence_session.active_index;
@@ -958,7 +1084,8 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         {},
         false,
         inputs.input_resources,
-        std::nullopt,
+        inputs.resource_read_binding,
+        {},
         inputs.research_should_stop,
         inputs.research_stop_reason,
         inputs.explicit_memory_candidate,
@@ -1017,6 +1144,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.plan_scope = execution.scope.plan_scope;
     request.prompt = execution.orchestration_config.prompt;
     request.input_resources = execution.input_resources;
+    request.resource_read_binding = execution.resource_read_binding;
     request.available_resources = execution.available_resources;
     request.available_datasets = execution.tooling.available_datasets;
     request.grounding_dataset_reader = execution.tooling.grounding_dataset_reader;
@@ -1878,6 +2006,15 @@ bool run_agent_runtime_driver(
                     result = std::move(aggregate);
                     break;
                 }
+                if (!prepare_resource_chunk_observations(execution, error)) {
+                    return fail_with_partial_result(error);
+                }
+                if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
+                    execution.orchestration_config.prompt =
+                        "Continue the same task. The host is now processing another required resource; "
+                        "do not ask the model to read or locate it.\n";
+                    continue;
+                }
                 execution.orchestration_config.prompt =
                     "Synthesize the validated resource-chunk findings from the active plan in chunk order. "
                     "Use only the structured claims, host-verified excerpts and source locations below. The source text has "
@@ -1910,16 +2047,30 @@ bool run_agent_runtime_driver(
                                     ? source->resource_ref->uri : source->resource_ref->lineage.parent_uri)) + "\n"
                             "source_location: " + item.source_location + "\n";
                     }
-                    common_plan_chunk_synthesis_input coverage;
-                    if (common_plan_chunk_synthesis_from_observations(
-                            active_plan->observations, {}, coverage, coverage_error) &&
-                            !coverage.missing_chunk_indexes.empty()) {
-                        execution.orchestration_config.prompt +=
-                            "Host coverage status: incomplete. Give a partial answer from verified evidence "
-                            "and state that some source text could not be assessed. The resource itself was "
-                            "fetched and made readable; do not claim it is unavailable or was not accessed. "
-                            "Do not infer missing details.\n";
+                    std::set<std::string> chunk_parents;
+                    for (const auto & observation : active_plan->observations) {
+                        if (common_plan_observation_is_resource_chunk(observation) &&
+                                observation.resource_refs.size() == 1 &&
+                                common_runtime_resource_lineage_is_chunk(observation.resource_refs.front().lineage)) {
+                            chunk_parents.insert(observation.resource_refs.front().lineage.parent_uri);
+                        }
                     }
+                    bool incomplete = false;
+                    for (const auto & parent : chunk_parents) {
+                        std::vector<common_plan_observation> one_source;
+                        std::copy_if(active_plan->observations.begin(), active_plan->observations.end(),
+                            std::back_inserter(one_source), [&](const auto & observation) {
+                                return common_plan_observation_is_resource_chunk(observation) &&
+                                    observation.resource_refs.size() == 1 &&
+                                    observation.resource_refs.front().lineage.parent_uri == parent;
+                            });
+                        common_plan_chunk_synthesis_input coverage;
+                        if (!common_plan_chunk_synthesis_from_observations(one_source, parent, coverage, coverage_error) ||
+                                !coverage.missing_chunk_indexes.empty()) incomplete = true;
+                    }
+                    if (incomplete) execution.orchestration_config.prompt +=
+                        "Host coverage status: incomplete. Give a partial answer from verified evidence "
+                        "and state which source text could not be assessed. Do not infer missing details.\n";
                 }
                 continue;
             }

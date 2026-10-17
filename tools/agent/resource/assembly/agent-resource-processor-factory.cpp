@@ -33,6 +33,10 @@ public:
         return service_->process(request);
     }
 
+    bool supports(const agent_resource_processing_binding_request & request) const override {
+        return service_->supports(request);
+    }
+
 private:
     // The registry stores non-owning processor pointers. Keep all assembled
     // objects alive for the complete operation-scoped provider lifetime.

@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -271,6 +272,144 @@ static bool plan_has_completed_tool_step(const common_plan_state & plan) {
                 return observation.id.rfind(observation_prefix, 0) == 0;
             });
     });
+}
+
+static const common_agent_resource_read_target * read_binding_target_for_uri(
+    const common_agent_resource_read_binding & binding,
+        const std::string & uri) {
+    for (const auto & target : binding.targets) {
+        if (uri == target.uri) return &target;
+    }
+    return nullptr;
+}
+
+bool common_agent_plan_satisfies_resource_read_binding(
+        const common_plan_state & plan,
+        const common_agent_request & request,
+        std::string * missing_targets) {
+    if (!request.resource_read_binding || !request.resource_read_binding->require_content_read) return true;
+    const auto & binding = *request.resource_read_binding;
+    std::vector<common_agent_resource_read_target> targets = binding.targets;
+    if (targets.empty()) {
+        for (const auto & uri : binding.resource_uris) targets.push_back({uri, {}, {}, {}, 0, true});
+    }
+    std::vector<std::string> missing;
+    for (const auto & target : targets) {
+        if (!target.required) continue;
+        const bool reusable_orientation = binding.intent == common_agent_resource_read_intent::question &&
+            std::any_of(binding.reusable_orientation_targets.begin(), binding.reusable_orientation_targets.end(),
+                [&](const auto & cached) {
+                    return cached.uri == target.uri && !target.content_fingerprint.empty() &&
+                        cached.content_fingerprint == target.content_fingerprint;
+                });
+        if (reusable_orientation) continue;
+        const auto is_target_uri = [&](const std::string & uri) {
+            return uri == target.uri;
+        };
+        const auto provenance_matches_target = [&](const common_plan_resource_read_provenance & provenance) {
+            if (provenance.source_uri == target.uri) return true;
+            return !target.parent_uri.empty() &&
+                (provenance.source_uri == target.parent_uri || provenance.source_parent_uri == target.parent_uri);
+        };
+        struct coverage_state {
+            size_t count = 0;
+            std::set<size_t> indexes;
+            std::vector<std::pair<size_t, size_t>> ranges;
+            bool valid = true;
+        } current, prior_orientation;
+        bool current_single_read = false;
+        bool current_dataset_read = false;
+        for (const auto & observation : plan.observations) {
+            const auto & provenance = observation.resource_read_provenance;
+            if (!provenance || !provenance_matches_target(*provenance) ||
+                    provenance->source_fingerprint != target.content_fingerprint ||
+                    (!target.representation.empty() && provenance->representation != target.representation)) continue;
+            const bool task_matches = !binding.task_fingerprint.empty() &&
+                provenance->task_fingerprint == binding.task_fingerprint;
+            const bool orientation_cache = binding.intent == common_agent_resource_read_intent::question &&
+                provenance->intent == "orientation";
+            if (!task_matches && !orientation_cache) continue;
+            const bool is_chunk = common_plan_observation_is_resource_chunk(observation) &&
+                observation.resource_refs.size() == 1 &&
+                common_runtime_resource_lineage_is_chunk(observation.resource_refs.front().lineage);
+            if (!is_chunk) continue;
+            const auto & lineage = observation.resource_refs.front().lineage;
+            auto & coverage = task_matches ? current : prior_orientation;
+            if (lineage.chunk_count == 0 || lineage.chunk_index >= lineage.chunk_count ||
+                    (coverage.count != 0 && coverage.count != lineage.chunk_count) ||
+                    lineage.parent_uri != provenance->source_uri ||
+                    observation.source == "resource_chunk_unresolved") {
+                coverage.valid = false;
+                continue;
+            }
+            coverage.count = lineage.chunk_count;
+            if (!coverage.indexes.insert(lineage.chunk_index).second) coverage.valid = false;
+            coverage.ranges.emplace_back(lineage.byte_offset,
+                lineage.byte_offset + lineage.byte_length);
+        }
+        const auto complete = [&](coverage_state & coverage) {
+            if (!coverage.valid || coverage.count == 0 || coverage.indexes.size() != coverage.count ||
+                    *coverage.indexes.begin() != 0 || *coverage.indexes.rbegin() != coverage.count - 1) return false;
+            std::sort(coverage.ranges.begin(), coverage.ranges.end());
+            size_t end = 0;
+            for (const auto & range : coverage.ranges) {
+                if (range.first > end) return false;
+                end = std::max(end, range.second);
+            }
+            return end >= target.size_bytes && target.size_bytes > 0;
+        };
+        bool complete_read = complete(current);
+        if (!complete_read && binding.intent == common_agent_resource_read_intent::question) {
+            complete_read = complete(prior_orientation);
+        }
+        for (const auto & step : plan.steps) {
+            if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool ||
+                    step.status != common_plan_step_status::completed || !step.tool_call) continue;
+            const std::string prefix = "tool:" + step.id + ":";
+            const auto observation = std::find_if(plan.observations.begin(), plan.observations.end(),
+                [&](const common_plan_observation & candidate) { return candidate.id.rfind(prefix, 0) == 0; });
+            if (observation == plan.observations.end() || !observation->resource_read_provenance ||
+                    observation->resource_read_provenance->task_fingerprint != binding.task_fingerprint ||
+                    observation->resource_read_provenance->source_fingerprint != target.content_fingerprint ||
+                    (!target.representation.empty() &&
+                     observation->resource_read_provenance->representation != target.representation) ||
+                    observation->resource_read_provenance->source_uri != target.uri) continue;
+            const auto arguments = json::parse(step.tool_call->arguments_json, nullptr, false);
+            if (!arguments.is_object()) continue;
+            if (step.tool_call->name == "resource.read") {
+                const auto uri = arguments.value("uri", std::string());
+                if (!is_target_uri(uri) || observation->resource_refs.empty()) continue;
+                if (binding.require_full_coverage) {
+                    const int64_t offset = arguments.value("offset", int64_t{0});
+                    const int64_t max_bytes = arguments.value("max_bytes", int64_t{8192});
+                    const auto full_ref = std::find_if(observation->resource_refs.begin(), observation->resource_refs.end(),
+                        [&](const auto & ref) { return ref.uri == uri || ref.lineage.parent_uri == uri; });
+                    if (offset != 0 || max_bytes < 0 || static_cast<uint64_t>(max_bytes) < target.size_bytes) continue;
+                    if (full_ref == observation->resource_refs.end() || full_ref->size_bytes < target.size_bytes) continue;
+                }
+                current_single_read = true;
+            } else if (step.tool_call->name == "dataset.inspect") {
+                const auto uri = arguments.value("resource", std::string());
+                current_dataset_read = is_target_uri(uri) && std::any_of(
+                    observation->dataset_refs.begin(), observation->dataset_refs.end(),
+                    [&](const common_agent_dataset_ref & dataset) { return is_target_uri(dataset.source_resource_uri); });
+            }
+        }
+        if (binding.require_full_coverage && !complete_read && !current_single_read && !current_dataset_read) {
+            missing.push_back(target.uri + " (full host-validated coverage missing)");
+            continue;
+        }
+        if (complete_read) continue;
+        if (!current_single_read && !current_dataset_read) missing.push_back(target.uri + " (no successful current-task read)");
+    }
+    if (missing_targets) {
+        missing_targets->clear();
+        for (size_t index = 0; index < missing.size(); ++index) {
+            if (index) *missing_targets += "; ";
+            *missing_targets += missing[index];
+        }
+    }
+    return missing.empty();
 }
 
 static bool plan_has_pending_mandatory_tool_step(const common_plan_state & plan) {
@@ -1950,6 +2089,21 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             observed.expected_version = plan.version;
             observed.reason_summary = "registered tool result";
             observed.observation = common_plan_observation{tool_observation_id, tool_call->name, tool_result, 1.0f, {}, execution.resource_refs, 0, execution.dataset_refs};
+            if (request.resource_read_binding) {
+                const auto arguments = json::parse(tool_call->arguments_json, nullptr, false);
+                if (arguments.is_object() && (tool_call->name == "resource.read" || tool_call->name == "dataset.inspect")) {
+                    const auto uri = arguments.value(tool_call->name == "resource.read" ? "uri" : "resource", std::string());
+                    if (const auto * target = read_binding_target_for_uri(*request.resource_read_binding, uri)) {
+                        observed.observation->resource_read_provenance = common_plan_resource_read_provenance{
+                            request.resource_read_binding->task_fingerprint,
+                            common_agent_resource_read_intent_name(request.resource_read_binding->intent),
+                            target->uri,
+                            target->content_fingerprint,
+                            target->representation,
+                            target->parent_uri};
+                    }
+                }
+            }
             if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             const auto after = common_agent_verify_workflow(request, plan,
                 common_plan_verification_phase::after_tool, tool_step_id, tool_call->arguments_json,
@@ -2161,6 +2315,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.workflow_definition->resource_read_policy ==
                         common_plan_workflow_resource_read_policy::chunked &&
                     tool_call->name == "resource.read" &&
+                    (!request.resource_read_binding ||
+                     request.resource_read_binding->require_full_coverage) &&
                     execution.resource_refs.size() == 1 &&
                     execution.resource_refs.front().size_bytes > context_budgets.resource_chunk_max_bytes) {
                 result.chunk_resource_request = execution.resource_refs.front();
@@ -2224,6 +2380,20 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id);
                 defer_draft_for_required_tools = true;
                 break;
+            }
+            if (request.resource_read_binding &&
+                    request.resource_read_binding->require_content_read &&
+                    !plan_has_failed_mandatory_tool_step(plan) &&
+                    !plan_has_pending_mandatory_tool_step(plan) &&
+                    !common_agent_plan_satisfies_resource_read_binding(plan, request, &error)) {
+                result.error = request.resource_read_binding->require_full_coverage
+                    ? "the bound resource was not fully read; metadata inspection or unrelated tool calls do not satisfy the task"
+                    : "the bound resource content was not read; metadata inspection or unrelated tool calls do not satisfy the task";
+                if (!error.empty()) result.error += "; missing: " + error;
+                error = result.error;
+                append_trace(result, common_runtime_trace_stage::tool,
+                    common_runtime_trace_kind::failed, result.error, plan.id);
+                return result;
             }
         }
 

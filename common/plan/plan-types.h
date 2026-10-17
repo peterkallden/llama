@@ -41,6 +41,14 @@ struct common_plan_artifact_binding {
 
 struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
 struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
+struct common_plan_resource_read_provenance {
+    std::string task_fingerprint;
+    std::string intent;
+    std::string source_uri;
+    std::string source_fingerprint;
+    std::string representation;
+    std::string source_parent_uri;
+};
 struct common_plan_observation {
     std::string id;
     std::string source;
@@ -50,6 +58,7 @@ struct common_plan_observation {
     std::vector<common_runtime_resource_ref> resource_refs;
     int64_t created_at = 0;
     std::vector<common_agent_dataset_ref> dataset_refs;
+    std::optional<common_plan_resource_read_provenance> resource_read_provenance;
 };
 
 inline bool common_plan_observation_is_resource_chunk(const common_plan_observation & observation) {

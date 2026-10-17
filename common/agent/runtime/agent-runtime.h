@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/agent-context-budgets.h"
+#include "agent/contracts/agent-request.h"
 #include "agent/contracts/agent-result.h"
 #include "agent/runtime/agent-action-executor.h"
 #include "agent/runtime/agent-planner.h"
@@ -18,6 +19,11 @@ class common_agent_adaptation_observer;
 
 using common_agent_context_token_estimator = std::function<std::optional<size_t>(
     const common_agent_request &, const common_plan_state &)>;
+
+bool common_agent_plan_satisfies_resource_read_binding(
+        const common_plan_state & plan,
+        const common_agent_request & request,
+        std::string * missing_targets = nullptr);
 
 class common_agent_runtime {
 public:

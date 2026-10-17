@@ -68,6 +68,7 @@ struct common_agent_runtime_driver_inputs {
     const std::string & fallback_reason;
     const common_agent_runtime_tooling & tooling;
     std::vector<common_agent_input_resource> input_resources;
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
     std::optional<common_memory_candidate> explicit_memory_candidate;
@@ -111,6 +112,7 @@ struct common_agent_runtime_driver_execution {
     common_agent_result family_chat_result;
     bool family_chat_routed = false;
     std::vector<common_agent_input_resource> input_resources;
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
     std::optional<common_agent_working_state> compact_working_state;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
@@ -129,6 +131,7 @@ struct common_agent_runtime_driver_execution {
     // synthesis slice after the last bounded chunk has been processed.
     std::vector<common_agent_input_resource> resource_chunk_original_inputs;
     bool resource_chunk_observations_prepared = false;
+    bool resource_chunk_single_pass = false;
     // Only one resource chunk chain is active at a time.  The original
     // resource remains authoritative in the store; this is the transient
     // session-lane cursor for the bounded input view.

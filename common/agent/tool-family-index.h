@@ -26,8 +26,13 @@ std::vector<common_tool_family_index> common_generate_tool_family_index(
     const std::map<std::string, std::string> & descriptions = {});
 
 std::string common_render_tool_family_index(
-    const std::vector<common_tool_family_index> & families,
-    size_t max_chars = 2048);
+        const std::vector<common_tool_family_index> & families,
+        size_t max_chars = 2048);
+
+// Keep host-validated document bodies out of the small routing prompt. The
+// full text remains in the final answer/planning prompt; routing needs only
+// to know that this context is available.
+std::string common_tool_family_selection_user_prompt(const std::string & prompt);
 
 std::string common_tool_family_required_selection_prompt(
     const std::vector<common_tool_family_index> & families);

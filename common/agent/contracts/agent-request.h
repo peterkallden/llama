@@ -19,6 +19,7 @@
 #include "chat.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -39,6 +40,48 @@ struct common_agent_input_resource {
     common_runtime_resource_ref resource;
     std::string role = "reference";
     bool required = false;
+};
+
+// Typed host binding for turns whose task depends on reading supplied
+// resources. Resource identities and completeness requirements are host-owned;
+// neither a model-selected URI nor an unrelated successful tool call can
+// satisfy this contract.
+enum class common_agent_resource_read_intent {
+    orientation,
+    question,
+    document_review,
+};
+
+struct common_agent_resource_read_target {
+    std::string uri;
+    std::string content_fingerprint;
+    std::string representation;
+    std::string parent_uri;
+    uint64_t size_bytes = 0;
+    bool required = true;
+};
+
+inline const char * common_agent_resource_read_intent_name(common_agent_resource_read_intent intent) {
+    switch (intent) {
+        case common_agent_resource_read_intent::orientation: return "orientation";
+        case common_agent_resource_read_intent::document_review: return "document_review";
+        default: return "question";
+    }
+}
+
+struct common_agent_resource_read_binding {
+    common_agent_resource_read_intent intent = common_agent_resource_read_intent::question;
+    std::vector<std::string> resource_uris;
+    std::vector<common_agent_resource_read_target> targets;
+    // Host-verified certificates imported from an earlier full orientation of
+    // the same source fingerprint. This is runtime evidence, not model input.
+    std::vector<common_agent_resource_read_target> reusable_orientation_targets;
+    std::string task_fingerprint;
+    bool require_content_read = true;
+    bool require_full_coverage = false;
+    std::string document_uri;
+    uint64_t document_revision = 0;
+    std::vector<std::string> selected_block_ids;
 };
 
 // Host-owned arguments that are already resolved before planning. The model
@@ -85,6 +128,7 @@ struct common_agent_request {
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
     // Host-owned candidates discovered from the scoped resource store. These
     // are available for selection but are not current-turn inputs.
     std::vector<common_agent_input_resource> available_resources;

@@ -28,6 +28,8 @@ public:
     agent_resource_processing_result process(
         const agent_resource_processing_binding_request & request) const override;
 
+    bool supports(const agent_resource_processing_binding_request & request) const override;
+
     agent_resource_processing_result process(
         const agent_resource_processing_service_request & request) const;
 

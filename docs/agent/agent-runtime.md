@@ -297,6 +297,55 @@ scope and representation.
 
 ### Resource handles and attachment defaults
 
+The web client schedules a short initial orientation after each successful
+attachment upload, unless the user has already sent a turn with that
+attachment. An explicit question preserves the user's wording and adds a
+host-owned requirement that the answer use attached resources through tools.
+Attachments retained in the session are not implicitly attached to every later
+message: only resources selected for the current message become required read
+targets. This lets an unrelated turn proceed without rescanning old files.
+Each file is a separate orientation turn so resource identity, extraction
+limits, and failures remain attributable. The daemon replaces the browser's
+orientation text with a fixed host-owned task, requires a successful tool call,
+and exposes only resource/document/dataset read and inspection operations for
+that task. It does not edit the file or perform external research. Unsupported
+representations are reported as an orientation limitation; raw binary bytes
+are not placed into the model prompt.
+
+The orientation reuses the preferred
+`workflow://resource/document-analysis` blueprint. Its resource-read policy is
+`chunked`; large text is read through the existing host-controlled chunk
+workflow, while small resources and structured documents use the applicable
+inspection tools. After the short orientation, the agent asks what the user
+wants to do next. A later user turn selects a continuation workflow from that
+intent; the host does not guess whether the user wants editing, research, or
+dataset analysis.
+
+The read proof is per required source and is bound to the turn task, source
+content fingerprint, representation and source/derived-resource lineage.
+Chunk extraction records the source identity and byte coverage with every
+result. The host accepts full coverage only when every required source has a
+complete, contiguous set of host-created chunk ranges (or a qualifying full
+resource/dataset read); an unresolved chunk, stale fingerprint, missing range
+or unrelated resource cannot satisfy another source's requirement. A later
+question may reuse a prior complete orientation only for the same authorized
+source fingerprint. The prior findings are context, not a blanket claim that
+all task-specific reading is complete; the model can still request relevant
+additional reads.
+
+Before chunking a binary attachment, the host selects a configured processor
+from its media type and supported representation: DOCX is projected to
+Markdown/text, PDF follows the configured text/OCR path, and XLSX follows the
+workbook/dataset path. Unsupported media types, missing processors, expired
+turn deadlines and cancellation are explicit failures; raw binary bytes are
+never mislabeled as Markdown or silently treated as readable content.
+
+Editor-bound document context is supplied as the immutable saved Markdown
+representation, not as document JSON metadata. The host validates the document
+URI, revision, and selected block IDs, then binds the authorized Markdown
+resource to the turn. The model receives a concise instruction to prioritize
+selected blocks; resource reading and chunk cursors remain host-controlled.
+
 The wire request carries opaque host-owned resource URIs in `input_resources`.
 The model-facing prompt uses compact handles: `r1`, `r2`, ... refer to
 current-turn attachments, while `s1`, `s2`, ... refer to host-listed resources
@@ -3912,6 +3961,39 @@ The current chunking path is deliberately bounded and text-oriented:
    missing index. Typed daemon events expose planning and processing progress,
    while the plan remains the durable progress record.
 
+### Bound resource-reading turns
+
+Attachment orientation, explicit questions about supplied files, and editor
+reviews are normalized into a typed host binding with resource identities,
+document revision/block selection, and the required coverage level. Legacy
+daemon request flags are accepted at the protocol boundary but do not remain
+the runtime's authority. Binary attachments are converted through the existing
+resource processor provider before tool-family selection and chunk planning;
+only the authorized derived text representation is offered for reading.
+
+A required read is verified against the completed plan, not satisfied by any
+successful tool call. `resource.inspect`, an unrelated read, or a failed read
+does not count. Full-coverage tasks require either one complete bounded read,
+a source-backed dataset materialization, or a complete set of validated host
+chunk observations for the bound resource. Unresolved or missing chunks keep
+coverage incomplete and prevent the host from treating the read requirement as
+met. This is a content-read gate, not a claim that every model interpretation
+is factually correct.
+
+Editor reviews bind to the requested immutable revision and selected block IDs.
+The host creates a Markdown projection containing only those blocks and their
+immediate neighbors, then exposes it as a normal scoped resource. Large
+projections use the existing text chunk path; the full editor document is not
+re-attached to the model. The projection and block selection remain data, not
+instructions.
+
+Resident model reuse does not make the prior plan an implicit cursor. At each
+new agent turn the host resolves an active plan from the current request and
+scope; continuations within that turn retain their plan and chunk cursor. A
+completed plan is not retained as the next turn's current plan. This lets a
+new document question start a distinct task while preserving resumable active
+plans.
+
 Conversation compaction is implemented separately from resource chunking. The
 session host stores immutable user/assistant turn records and checkpoint
 revisions through the existing scoped resource store. At each generation it
@@ -6307,6 +6389,15 @@ allow local execution or the configured sandbox backend; the model cannot
 select an executable, image, workspace, or backend. Adding a processor should
 therefore require a descriptor/registration entry and a processor factory,
 not another parallel set of model-facing arguments or runtime policy flags.
+
+For attachment normalization, the host now checks the processing provider's
+registered capability contract before conversion. MIME-specific preferences
+define an ordered set of acceptable representations (for example DOCX
+Markdown/document JSON, PDF text, or XLSX workbook JSON); only a representation
+reported as supported by the configured registry is executed. Missing
+processors and unsupported representations fail before any model-facing
+resource is published. Processor work is bounded by the turn's remaining
+deadline and observes cancellation before and after execution.
 
 The CLI keeps this boundary in four small stages: normalized host
 configuration, processor dispatch, operation-scoped assembly, and processing
