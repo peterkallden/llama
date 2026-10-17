@@ -10,7 +10,7 @@ const props = defineProps<{
   sessionId: string;
   readResource: (toolName: string, uri: string) => Promise<unknown>;
   callTool: (appTool: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
-  submitReview?: (prompt: string, resourceRefs: string[]) => Promise<unknown>;
+  submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[] }) => Promise<unknown>;
   invocation?: { input?: Record<string, unknown>; result?: unknown };
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
@@ -147,11 +147,19 @@ async function onMessage(event: MessageEvent) {
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
     if (typeof content.text === "string" && uri.value === "ui://llama-agent/apps/document-editor") {
-      const matches = [...content.text.matchAll(/Document resource: (\S+)/g)];
-      const refs = matches.map((match) => match[1]);
+      const rawBinding = params.document_context && typeof params.document_context === "object"
+        ? params.document_context as Record<string, unknown> : {};
       try {
         if (!props.submitReview) throw new Error("Agent review is unavailable in this host.");
-        await props.submitReview(content.text, refs);
+        if (typeof rawBinding.document_uri !== "string" || typeof rawBinding.revision !== "number" || !Number.isSafeInteger(rawBinding.revision) ||
+            !Array.isArray(rawBinding.block_ids) || !rawBinding.block_ids.every((item) => typeof item === "string")) {
+          throw new Error("The editor did not provide a valid typed document binding.");
+        }
+        await props.submitReview(content.text, {
+          document_uri: rawBinding.document_uri,
+          revision: rawBinding.revision as number,
+          block_ids: rawBinding.block_ids as string[],
+        });
         reply({});
       } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
     } else {

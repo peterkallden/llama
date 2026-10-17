@@ -679,7 +679,7 @@ do not select implementations or host paths.
 | `diagnostics.format` | Host-native analysis | Interprets bounded formatter output and reports files needing formatting | Limited | Real formatter backend, patch artifact generation and format profiles |
 | `diagnostics.include_graph` | Host-native analysis | Parses bounded `source -> include` dependency output | Limited | Compiler database extraction, cycle analysis and persisted graph queries |
 | `diagnostics.native_crash` | Host-native analysis | Analyzes an executable plus a post-mortem core/dump through the configured debugger provider | Contract-level | GDB/MI and CDB providers, symbol quality, bounded stacks and crash smokes |
-| `artifact.export` | Store-backed artifact | Publishes bounded text, dataset CSV, or a workflow-composed report with snapshot lineage; report output supports Markdown and optional DOCX conversion | Limited | Collaborative report editing and richer retention policy |
+| `artifact.export` | Store-backed artifact | Publishes bounded text/dataset CSV, composes a report, or exports a saved report/imported document as Markdown or optional DOCX | Limited | Collaborative editing of additional file formats |
 
 Maturity is a capability status, not a quality rating:
 
@@ -3477,6 +3477,7 @@ The current processor catalog is intentionally small:
 | `pdf.page_image` | `application/pdf` | `page-image` | Implemented; local page-image E2E verified | Page, DPI, image format, colorspace and pixel/output limits |
 | `tesseract-ocr-v1` | `image/*` | `text`, `hocr` or `tsv` | Implemented; local, Docker and Kubernetes E2E verified | Explicit language or `auto`, fallback language, OCR engine mode, page segmentation mode and output limits |
 | `pandoc-docx-text-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `text` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, plain-text output and bounded output bytes |
+| `pandoc-docx-markdown-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `markdown` | Implemented for explicit `document.import` | Pandoc executable, Markdown output and bounded output bytes; layout or unsupported images may be lost |
 | `pandoc-docx-document-json-v1` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `document-json` with `application/json` target | Contract implemented; model-free command smoke covered | Pandoc executable, structured document JSON and bounded output bytes |
 | `pandoc-markdown-docx-v1` | `text/markdown` | `docx` | Implemented; local E2E verified when Pandoc is installed | Pandoc executable, DOCX output and bounded output bytes |
 | `pandoc-odt-markdown-v1` | `application/vnd.oasis.opendocument.text` | `text` with `text/markdown` target | Implemented; model-free command smoke covered | Pandoc executable, Markdown output and bounded output bytes |

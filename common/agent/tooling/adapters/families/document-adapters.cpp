@@ -6,6 +6,7 @@
 #include "hash/hash.h"
 
 #include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <mutex>
 
@@ -26,22 +27,24 @@ bool read_document(const common_native_tool_bindings & bindings,const std::strin
     const auto authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
     agent_resource_descriptor descriptor;
     if(!bindings.resource_runtime.store->stat(uri,authority,descriptor,error))return false;
-    if(descriptor.mime_type!="application/vnd.llama-agent.report+json"){error="resource is not a structured report document";return false;}
+    if(descriptor.mime_type!="application/vnd.llama-agent.report+json"&&descriptor.mime_type!="application/vnd.llama-agent.document+json"){error="resource is not a structured document";return false;}
     if(descriptor.size_bytes>document_max_bytes){error="structured report exceeds the document read limit";return false;}
     std::string text;
     if(!bindings.resource_runtime.store->read_text(uri,authority,document_max_bytes,text,error))return false;
-    return common_agent_artifact_document_from_json(text,document,error);
+    if(!common_agent_artifact_document_from_json(text,document,error))return false;
+    if((document.kind==common_agent_artifact_document_kind::report)!=(descriptor.mime_type=="application/vnd.llama-agent.report+json")){error="document resource media type and document kind disagree";return false;}
+    return true;
 }
 
 bool put_document_resource(const common_native_tool_bindings & bindings,const std::string & name,
         const std::string & mime,const std::string & text,const std::string & tool,
         const std::string & cache_key,const std::string & parent,std::string & uri,std::string & error){
     if(bindings.resource_runtime.store==nullptr){error="resource store is unavailable";return false;}
-    agent_resource_put_request request;request.name=name;request.description="Immutable host-managed report revision resource";
+    agent_resource_put_request request;request.name=name;request.description="Immutable host-managed document revision resource";
     request.mime_type=mime;request.text=text;request.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
     request.source_provider="native";request.source_tool=tool;request.metadata.purpose="Immutable report revision or publication manifest";
-    request.metadata.content_summary=name;request.metadata.usage_hint="Use document.open to inspect a structured report revision.";
-    request.metadata.limitations="The report source evidence remains authoritative.";request.metadata.processing_cache_key=cache_key;
+    request.metadata.content_summary=name;request.metadata.usage_hint="Use document.open to inspect a structured document revision.";
+    request.metadata.limitations="Imported source resources remain unchanged and authoritative.";request.metadata.processing_cache_key=cache_key;
     request.lineage.parent_uri=parent;request.lineage.derivation=tool;
     if(!parent.empty()){request.lineage.chunk_count=1;request.lineage.byte_length=text.size();}
     apply_agent_resource_runtime(bindings.resource_runtime,request);
@@ -106,7 +109,7 @@ bool latest_document_head(const common_native_tool_bindings & bindings,const std
     }
     if(revision>0){error.clear();return true;}
     int64_t latest_doc_time=-1;
-    for(const auto & resource:resources){if(resource.mime_type!="application/vnd.llama-agent.report+json")continue;
+    for(const auto & resource:resources){if(resource.mime_type!="application/vnd.llama-agent.report+json"&&resource.mime_type!="application/vnd.llama-agent.document+json")continue;
         std::string text;if(!bindings.resource_runtime.store->read_text(resource.uri,authority,document_max_bytes,text,error))continue;
         common_agent_artifact_document candidate;std::string parse_error;if(!common_agent_artifact_document_from_json(text,candidate,parse_error)||candidate.id!=id)continue;
         // Edited resources are published only by a head manifest. A crash
@@ -276,8 +279,9 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
     if(!put_document_resource(bindings,revised.id+"-r"+std::to_string(revised.revision)+".md","text/markdown",rendered_markdown,"document.save",base+":markdown",document_uri,new_markdown_uri,error))return common_adapter_execution_failure("tool.document.save.markdown_write_failed",error,"The Markdown revision could not be saved.");
     revised.editor_markdown_uri=new_markdown_uri;
     if(!common_agent_artifact_document_to_json(revised,document_json,error))return common_adapter_execution_failure("tool.document.save.render_failed",error,"The report document could not be finalized.");
-    if(document_json.size()>document_max_bytes)return common_adapter_validation_failure("tool.document.save.document_too_large","serialized report exceeds the document read limit","The edited report is too large to reopen safely.");
-    if(!put_document_resource(bindings,revised.id+"-r"+std::to_string(revised.revision)+"-report.json","application/vnd.llama-agent.report+json",document_json,"document.save",base+":report",document_uri,new_document_uri,error))return common_adapter_execution_failure("tool.document.save.report_write_failed",error,"The new report revision could not be saved.");
+    if(document_json.size()>document_max_bytes)return common_adapter_validation_failure("tool.document.save.document_too_large","serialized document exceeds the document read limit","The edited document is too large to reopen safely.");
+    const auto structured_mime=revised.kind==common_agent_artifact_document_kind::document?"application/vnd.llama-agent.document+json":"application/vnd.llama-agent.report+json";
+    if(!put_document_resource(bindings,revised.id+"-r"+std::to_string(revised.revision)+"-document.json",structured_mime,document_json,"document.save",base+":document",document_uri,new_document_uri,error))return common_adapter_execution_failure("tool.document.save.document_write_failed",error,"The new document revision could not be saved.");
     const json operation_manifest={{"schema_version",1},{"document_id",revised.id},{"operation_id",operation_id},
         {"base_document_uri",document_uri},{"expected_revision",expected_revision},{"input_fingerprint",input_fingerprint},
         {"document_uri",new_document_uri},{"markdown_uri",new_markdown_uri},{"revision",revised.revision},
@@ -290,6 +294,120 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
             operation_id,revised.content_fingerprint,error))return common_adapter_execution_failure("tool.document.save.publish_failed",error,"The revision was stored but its head manifest could not be published.");
     return common_adapter_success_json(document_save_result(new_document_uri,new_markdown_uri,revised.revision,
         revised.content_fingerprint,false,diff));
+}
+
+std::string plain_text_as_markdown(const std::string & text) {
+    size_t fence_size=3;
+    size_t run=0;
+    for(char c:text){if(c=='`'){++run;fence_size=std::max(fence_size,run+1);}else run=0;}
+    const std::string fence(fence_size,'`');
+    return fence+"text\n"+text+(text.empty()||text.back()=='\n'?"":"\n")+fence;
+}
+
+common_tool_execution_result import_document(const common_native_tool_bindings & bindings,
+        const std::string & source_uri,const std::string & operation_id) {
+    std::lock_guard<std::mutex> lock(document_revision_mutex);
+    if(bindings.resource_runtime.store==nullptr)return common_adapter_execution_failure("tool.document.import.store_unavailable","resource store is unavailable","Document import is unavailable.");
+    const auto authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
+    agent_resource_descriptor source;std::string error;
+    if(!bindings.resource_runtime.store->stat(source_uri,authority,source,error))return common_adapter_not_found_failure("tool.document.import.source_unavailable",error,"The selected source file is unavailable in this session.");
+    if(source.size_bytes>document_max_bytes)return common_adapter_validation_failure("tool.document.import.source_too_large","source exceeds the 4 MiB import limit","The selected file is too large to import.");
+    std::string source_bytes;
+    if(!bindings.resource_runtime.store->read_bytes(source_uri,authority,document_max_bytes,source_bytes,error))return common_adapter_execution_failure("tool.document.import.source_read_failed",error,"The selected file could not be read.");
+    std::string extension=source.name.substr(source.name.find_last_of('.')==std::string::npos?source.name.size():source.name.find_last_of('.')+1);
+    std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+    const auto mime=common_normalize_resource_media_type(source.mime_type);
+    const bool is_docx=mime=="application/vnd.openxmlformats-officedocument.wordprocessingml.document"||extension=="docx";
+    const bool is_markdown=mime=="text/markdown"||extension=="md"||extension=="markdown";
+    const bool is_text=mime=="text/plain"||extension=="txt";
+    if(!is_docx&&!is_markdown&&!is_text)return common_adapter_validation_failure("tool.document.import.unsupported_format","document.import supports TXT, Markdown and DOCX resources","Choose a TXT, Markdown or DOCX file.");
+    const std::string source_hash="sha256:"+hash_sha256_hex(source_bytes.data(),source_bytes.size());
+    const std::string operation_cache_key="document-import-operation:"+operation_id;
+    std::vector<agent_resource_descriptor> operation_resources;
+    if(!bindings.resource_runtime.store->list(authority,operation_resources,error))return common_adapter_execution_failure("tool.document.import.index_failed",error,"The imported document index could not be checked.");
+    for(const auto & prior:operation_resources)if(prior.metadata.processing_cache_key==operation_cache_key){
+        std::string operation_text;
+        if(!bindings.resource_runtime.store->read_text(prior.uri,authority,65536,operation_text,error))return common_adapter_execution_failure("tool.document.import.retry_unavailable",error,"The previous import could not be verified.");
+        const auto record=json::parse(operation_text,nullptr,false);
+        if(!record.is_object()||record.value("source_uri",std::string{})!=source_uri||record.value("source_fingerprint",std::string{})!=source_hash)
+            return common_adapter_failure("tool.document.import.operation_conflict",common_tool_failure_class::conflict,false,
+                "This import operation ID was already used for a different source.","document import operation payload mismatch");
+        const auto prior_uri=record.value("document_uri",std::string{});common_agent_artifact_document prior_document;
+        if(prior_uri.empty()||!read_document(bindings,prior_uri,prior_document,error))return common_adapter_execution_failure("tool.document.import.retry_unavailable",error,"The previous imported document revision could not be restored.");
+        std::string current,md,op;uint64_t revision=0;
+        if(!latest_document_head(bindings,prior_document.id,current,md,revision,op,error)){
+            error.clear();
+            if(prior_document.editor_markdown_uri.empty()||!publish_document_head(bindings,prior_document.id,prior_uri,
+                    prior_document.editor_markdown_uri,prior_document.revision,operation_id,prior_document.content_fingerprint,error))
+                return common_adapter_execution_failure("tool.document.import.retry_publish_failed",error,"The previous import was stored but its head could not be recovered.");
+            current=prior_uri;revision=prior_document.revision;
+        }
+        return common_adapter_success_json(json{{"document_uri",current.empty()?prior_uri:current},{"document_id",prior_document.id},
+            {"revision",revision?revision:prior_document.revision},{"original_uri",source_uri},{"reused",true},{"limitations",json::array()}});
+    }
+    std::string markdown=source_bytes;
+    std::string importer_version="document-import-v1";
+    std::vector<std::string> limitations;
+    if(is_text)markdown=plain_text_as_markdown(source_bytes);
+    else if(is_docx){
+        if(bindings.resource_processing_service==nullptr&&!bindings.resource_processing_provider_factory)return common_adapter_execution_failure("tool.document.import.processor_unavailable","DOCX Markdown processor is not configured","DOCX import is unavailable because its document processor is not configured.");
+        agent_resource_processing_binding_request request;request.source_uri=source_uri;request.operation_id="document-import:"+source_hash;request.authority=authority;
+        request.media_type.declared_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        request.media_type.resolved_type=request.media_type.declared_type;request.media_type.content_verified=true;
+        request.target_representation="markdown";request.target_media_type="text/markdown";
+        request.purpose=agent_resource_processing_purpose::normalization;request.limits.max_source_bytes=document_max_bytes;
+        request.limits.max_output_bytes=document_max_bytes;request.limits.max_duration_ms=180000;request.limits.max_generated_resources=1;
+        std::shared_ptr<agent_resource_processing_provider> owned;auto * processor=bindings.resource_processing_service;
+        if(bindings.resource_processing_provider_factory){owned=bindings.resource_processing_provider_factory(request);processor=owned.get();}
+        if(processor==nullptr)return common_adapter_execution_failure("tool.document.import.processor_unavailable","DOCX processor provider could not be created","DOCX import is unavailable.");
+        const auto processed=processor->process(request);
+        if(!processed.success||processed.outputs.size()!=1||processed.outputs.front().bytes.empty()||
+                common_normalize_resource_media_type(processed.outputs.front().mime_type)!="text/markdown")
+            return common_adapter_execution_failure("tool.document.import.conversion_failed",processed.failure_code+": "+processed.safe_summary,"The DOCX could not be converted into editable Markdown.");
+        markdown=processed.outputs.front().bytes;importer_version=processed.processor_id.empty()?"pandoc-docx-markdown-v1":processed.processor_id;
+        if(!processed.outputs.front().metadata.limitations.empty())limitations.push_back(processed.outputs.front().metadata.limitations);
+    }
+    const auto material=source_uri+"\n"+source_hash+"\n"+importer_version;
+    const auto import_hash=hash_sha256_hex(material.data(),material.size());
+    const auto import_key="document-import:sha256:"+import_hash;
+    std::vector<agent_resource_descriptor> resources=std::move(operation_resources);
+    for(const auto & candidate:resources)if(candidate.metadata.processing_cache_key==import_key){
+        common_agent_artifact_document existing;
+        if(!read_document(bindings,candidate.uri,existing,error))return common_adapter_execution_failure("tool.document.import.cache_invalid",error,"A prior imported document could not be verified.");
+        std::string current,md,op;uint64_t revision=0;
+        if(!latest_document_head(bindings,existing.id,current,md,revision,op,error))return common_adapter_execution_failure("tool.document.import.head_failed",error,"The current imported document revision could not be checked.");
+        const auto selected=current.empty()?candidate.uri:current;
+        const json operation_record={{"schema_version",1},{"operation_id",operation_id},{"source_uri",source_uri},
+            {"source_fingerprint",source_hash},{"document_uri",selected},{"document_id",existing.id}};
+        std::string operation_uri;
+        if(!put_document_resource(bindings,existing.id+"-import-operation-"+operation_id+".json","application/vnd.llama-agent.document-operation+json",
+                operation_record.dump(),"document.import",operation_cache_key,selected,operation_uri,error))return common_adapter_execution_failure("tool.document.import.operation_write_failed",error,"The import could not be made retry-safe.");
+        return common_adapter_success_json(json{{"document_uri",selected},{"document_id",existing.id},{"revision",revision?revision:existing.revision},
+            {"original_uri",source_uri},{"reused",true},{"limitations",limitations}});
+    }
+    common_agent_artifact_document document;document.schema_version=3;document.kind=common_agent_artifact_document_kind::document;
+    document.markdown_renderer_version=4;document.id="document-"+import_hash.substr(0,24);
+    document.title=source.name.empty()?"Imported document":source.name;
+    if(const auto dot=document.title.find_last_of('.');dot!=std::string::npos&&dot>0)document.title.resize(dot);
+    document.purpose="Imported user document";document.source_resource_uri=source_uri;document.source_content_fingerprint=source_hash;document.importer_version=importer_version;
+    common_agent_artifact_document empty=document;empty.sections={{"document-content","Content",false,{},{}}};
+    if(!common_agent_artifact_apply_markdown_edit(empty,markdown,document,error))return common_adapter_validation_failure("tool.document.import.invalid_content",error,"The selected file could not be parsed as an editable document.");
+    document.revision=1;document.content_fingerprint="sha256:"+hash_sha256_hex(markdown.data(),markdown.size());
+    std::string canonical;if(!common_agent_artifact_render_editable_markdown(document,canonical,error))return common_adapter_execution_failure("tool.document.import.render_failed",error,"The imported document could not be prepared.");
+    document.content_fingerprint="sha256:"+hash_sha256_hex(canonical.data(),canonical.size());
+    std::string markdown_uri,document_uri,serialized;
+    if(!put_document_resource(bindings,document.id+"-r1.md","text/markdown",canonical,"document.import",import_key+":markdown",source_uri,markdown_uri,error))return common_adapter_execution_failure("tool.document.import.markdown_store_failed",error,"The editable document content could not be stored.");
+    document.editor_markdown_uri=markdown_uri;
+    if(!common_agent_artifact_document_to_json(document,serialized,error))return common_adapter_execution_failure("tool.document.import.serialize_failed",error,"The imported document metadata could not be validated.");
+    if(!put_document_resource(bindings,document.id+"-r1-document.json","application/vnd.llama-agent.document+json",serialized,"document.import",import_key,source_uri,document_uri,error))return common_adapter_execution_failure("tool.document.import.document_store_failed",error,"The imported document could not be stored.");
+    const json operation_record={{"schema_version",1},{"operation_id",operation_id},{"source_uri",source_uri},
+        {"source_fingerprint",source_hash},{"document_uri",document_uri},{"document_id",document.id}};
+    std::string operation_uri;
+    if(!put_document_resource(bindings,document.id+"-import-operation-"+operation_id+".json","application/vnd.llama-agent.document-operation+json",
+            operation_record.dump(),"document.import",operation_cache_key,document_uri,operation_uri,error))return common_adapter_execution_failure("tool.document.import.operation_write_failed",error,"The imported document could not be made retry-safe.");
+    if(!publish_document_head(bindings,document.id,document_uri,markdown_uri,1,operation_id,document.content_fingerprint,error))return common_adapter_execution_failure("tool.document.import.publish_failed",error,"The document was stored but its initial revision could not be published.");
+    return common_adapter_success_json(json{{"document_uri",document_uri},{"document_id",document.id},{"revision",1},
+        {"original_uri",source_uri},{"reused",false},{"limitations",limitations}});
 }
 } // namespace
 
@@ -309,7 +427,15 @@ bool common_try_register_document_tool_adapter(
     const bool is_document_tool = definition.executor_id.rfind("builtin.document.",0)==0;
     if (!is_document_tool) return false;
 
-    if(definition.executor_id=="builtin.document.open"){
+    if(definition.executor_id=="builtin.document.import"){
+        installed=common_adapter_register_definition(definition,registry,[bindings](const std::string & input){
+            std::string parse_error;json args;
+            if(!common_adapter_parse_object(input,args,parse_error)||!args.contains("source_uri")||!args["source_uri"].is_string()||!args.contains("operation_id")||!args["operation_id"].is_string())
+                return common_adapter_validation_failure("tool.document.import.invalid_arguments",parse_error.empty()?"document.import requires source_uri and operation_id":parse_error);
+            const auto op=args["operation_id"].get<std::string>();if(!valid_operation_id(op))return common_adapter_validation_failure("tool.document.import.invalid_operation_id","operation_id must be 1-128 ASCII letters, digits, dot, underscore or hyphen");
+            return import_document(bindings,args["source_uri"].get<std::string>(),op);
+        },error,false,true);
+    } else if(definition.executor_id=="builtin.document.open"){
         installed=common_adapter_register_definition(definition,registry,[bindings](const std::string & input){
             std::string parse_error;json arguments;
             if(!common_adapter_parse_object(input,arguments,parse_error)||!arguments.contains("document_uri")||!arguments["document_uri"].is_string())
@@ -319,7 +445,7 @@ bool common_try_register_document_tool_adapter(
             std::string markdown;if(!common_agent_artifact_render_editable_markdown(document,markdown,error))return common_adapter_execution_failure("tool.document.open.render_failed",error,"The report could not be opened for editing.");
             std::string serialized;if(!common_agent_artifact_document_to_json(document,serialized,error))return common_adapter_execution_failure("tool.document.open.serialize_failed",error,"The report metadata could not be opened.");
             const auto document_json=json::parse(serialized,nullptr,false);if(!document_json.is_object())return common_adapter_execution_failure("tool.document.open.serialize_failed","serialized report document is not valid JSON","The report metadata could not be opened.");
-            json result={{"document_uri",uri},{"id",document.id},{"revision",document.revision},{"title",document.title},
+            json result={{"document_uri",uri},{"id",document.id},{"kind",document.kind==common_agent_artifact_document_kind::document?"document":"report"},{"revision",document.revision},{"title",document.title},
                 {"markdown",markdown},{"document",document_json},
                 {"bibliography",json::array()}};
             for(const auto & source:document.source_bibliography)result["bibliography"].push_back({{"source_id",source.source_id},{"title",source.title},{"original_uri",source.original_uri},{"resolved_uri",source.resolved_uri},{"file_name",source.file_name},{"resource_uri",source.resource_uri},{"retrieved_at",source.retrieved_at}});
@@ -343,23 +469,40 @@ bool common_try_register_document_tool_adapter(
             std::string head,head_markdown,op;uint64_t revision=0;if(!latest_document_head(bindings,original.id,head,head_markdown,revision,op,error))return common_adapter_execution_failure("tool.document.propose_patch.head_unavailable",error,"The current report revision could not be checked.");
             const auto expected=args["expected_revision"].get<uint64_t>();if((revision&&revision!=expected)||(!head.empty()&&head!=uri)||original.revision!=expected)return common_adapter_failure("tool.document.propose_patch.stale",common_tool_failure_class::conflict,false,"This proposal targets an older report revision.","proposal base does not match current report head");
             std::string markdown;
-            const bool block_patch=args.contains("section_id")||args.contains("block_id")||args.contains("text");
+            const bool block_patch=args.contains("operation")||args.contains("section_id")||args.contains("block_id")||args.contains("text");
             if(block_patch){
-                if(args.contains("markdown")||!args.contains("section_id")||!args["section_id"].is_string()||!args.contains("block_id")||!args["block_id"].is_string()||!args.contains("text")||!args["text"].is_string()||args["text"].get_ref<const std::string &>().empty()||args["text"].get_ref<const std::string &>().size()>16384)
-                    return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","provide section_id, block_id and bounded text without markdown");
+                if(args.contains("markdown")||!args.contains("operation")||!args["operation"].is_string()||!args.contains("text")||!args["text"].is_string()||args["text"].get_ref<const std::string &>().empty()||args["text"].get_ref<const std::string &>().size()>16384)
+                    return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","provide operation and bounded Markdown text without full markdown");
+                const auto action=args["operation"].get<std::string>();
+                if(action!="replace"&&action!="insert_after"&&action!="append")return common_adapter_validation_failure("tool.document.propose_patch.invalid_operation","operation must be replace, insert_after or append");
                 auto replacement=original;bool found=false;
-                for(auto & section:replacement.sections)if(section.id==args["section_id"])
-                    for(auto & block:section.blocks)if(block.id==args["block_id"]){block.text=args["text"].get<std::string>();found=true;}
-                if(!found)return common_adapter_validation_failure("tool.document.propose_patch.unknown_target","block does not belong to the selected report section");
+                if(action=="append"&&replacement.kind==common_agent_artifact_document_kind::document&&replacement.sections.empty())replacement.sections.push_back({"document-content","Content",false,{},{}});
+                if(action=="append"){
+                    if(replacement.kind==common_agent_artifact_document_kind::report&&(!args.contains("section_id")||!args["section_id"].is_string()))return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","report append requires section_id");
+                    for(auto & section:replacement.sections)if(replacement.kind==common_agent_artifact_document_kind::document||section.id==args.value("section_id",std::string{})){
+                        common_agent_artifact_block block;block.text=args["text"].get<std::string>();block.author=common_agent_artifact_author::model;block.origin="model_review";block.review_state=common_agent_artifact_review_state::unreviewed;block.id="proposal-append-"+std::to_string(section.blocks.size());section.blocks.push_back(std::move(block));found=true;break;
+                    }
+                }else{
+                    if(!args.contains("section_id")||!args["section_id"].is_string()||!args.contains("block_id")||!args["block_id"].is_string())return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","replace and insert_after require section_id and block_id");
+                    for(auto & section:replacement.sections)if(section.id==args["section_id"]){
+                        for(auto it=section.blocks.begin();it!=section.blocks.end();++it)if(it->id==args["block_id"]){
+                            found=true;
+                            if(action=="replace")it->text=args["text"].get<std::string>();
+                            else {common_agent_artifact_block block;block.id="proposal-insert-"+std::to_string(section.blocks.size());block.text=args["text"].get<std::string>();block.author=common_agent_artifact_author::model;block.origin="model_review";block.review_state=common_agent_artifact_review_state::unreviewed;section.blocks.insert(std::next(it),std::move(block));}
+                            break;
+                        }
+                    }
+                }
+                if(!found)return common_adapter_validation_failure("tool.document.propose_patch.unknown_target","the selected section or block does not belong to this document revision");
                 if(!common_agent_artifact_render_editable_markdown(replacement,markdown,error))return common_adapter_validation_failure("tool.document.propose_patch.invalid_target",error);
             }else if(args.contains("markdown")&&args["markdown"].is_string())markdown=args["markdown"].get<std::string>();
             else return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","provide a block replacement or legacy markdown");
             if(!common_agent_artifact_apply_markdown_edit(original,markdown,proposed,error))return common_adapter_validation_failure("tool.document.propose_patch.invalid_markdown",error,"The proposed edit is invalid.");
             if(block_patch){
-                bool same_shape=proposed.title==original.title&&proposed.sections.size()==original.sections.size();
+                bool same_shape=original.kind==common_agent_artifact_document_kind::document||proposed.sections.size()==original.sections.size();
                 for(size_t i=0;same_shape&&i<original.sections.size();++i)
-                    same_shape=proposed.sections[i].title==original.sections[i].title&&proposed.sections[i].blocks.size()==original.sections[i].blocks.size();
-                if(!same_shape)return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","replacement must remain one Markdown block inside the selected section");
+                    same_shape=proposed.sections[i].id==original.sections[i].id&&proposed.sections[i].title==original.sections[i].title;
+                if(!same_shape)return common_adapter_validation_failure("tool.document.propose_patch.invalid_target","the proposal must preserve report section structure");
             }
             const std::string summary=args["summary"].get<std::string>();if(summary.empty()||summary.size()>1024)return common_adapter_validation_failure("tool.document.propose_patch.invalid_summary","proposal summary is outside bounds");
             const json proposal={{"schema_version",1},{"document_id",original.id},{"document_uri",uri},{"base_revision",expected},{"summary",summary},{"markdown",markdown},{"content_fingerprint",proposed.content_fingerprint}};

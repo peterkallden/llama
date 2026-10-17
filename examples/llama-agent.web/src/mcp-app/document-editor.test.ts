@@ -9,6 +9,7 @@ function app() {
   const nodes = new Map<string, Fields>();
   const node = (selector: string) => {
     if (!nodes.has(selector)) nodes.set(selector, { textContent: "", dataset: {}, replaceChildren() {}, append() {},
+      setAttribute() {},
       addEventListener(event: string, handler: () => void) { this[event] = handler; } });
     return nodes.get(selector)!;
   };
@@ -102,5 +103,25 @@ describe("document editor sandbox script", () => {
     expect(view.Editor.current.getMarkdown()).toBe("Newer edit");
     expect(view.drafts.get("resource://r2")?.markdown).toBe("Newer edit");
     expect(view.node("#status").textContent).toContain("newer local edits");
+  });
+
+  it("sends the saved revision and selected host block IDs as a typed review binding", async () => {
+    const view = app();
+    const documentValue = { sections: [{ id: "body", title: "Body", blocks: [{ id: "block-1", text: "Claim", author: "user", review_state: "unreviewed", support: "unverified" }] }] };
+    const documentOpen = { ...opened, document: documentValue };
+    view.handle((request) => {
+      if (request.method !== "tools/call") return undefined;
+      if (request.params.name === "document.save") return { structuredContent: {
+        document_uri: opened.document_uri, markdown_uri: "resource://md1", revision: 1, reused: true, diff: { blocks: [] },
+      } };
+      if (request.params.name === "document.open") return { structuredContent: documentOpen };
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: documentOpen }); await settle();
+    view.node("#review").click(); await settle();
+    const message = view.requests.findLast((request) => request.method === "ui/message")!;
+    expect(message.params.document_context).toEqual({ document_uri: opened.document_uri, revision: 1, block_ids: ["block-1"] });
+    expect(String(message.params.content.text)).toContain("Review document report revision 1");
+    expect(String(message.params.content.text)).not.toContain("Document resource:");
   });
 });

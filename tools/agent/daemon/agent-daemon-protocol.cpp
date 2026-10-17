@@ -424,6 +424,34 @@ bool parse_agent_daemon_turn_request(
             request.input_resources.push_back(std::move(input_resource));
         }
     }
+    if (parsed.contains("document_context")) {
+        const auto & binding = parsed["document_context"];
+        if (!binding.is_object() || !binding.contains("document_uri") ||
+                !binding["document_uri"].is_string() || binding["document_uri"].get<std::string>().empty() ||
+                !binding.contains("revision") || !binding["revision"].is_number_unsigned() ||
+                binding["revision"].get<uint64_t>() == 0 ||
+                !binding.contains("block_ids") || !binding["block_ids"].is_array() ||
+                binding["block_ids"].size() > 128) {
+            error = "document_context requires document_uri, positive revision and up to 128 block_ids";
+            return false;
+        }
+        common_agent_runtime_session_host_turn_request::document_context_binding parsed_binding;
+        parsed_binding.document_uri = binding["document_uri"].get<std::string>();
+        parsed_binding.revision = binding["revision"].get<uint64_t>();
+        for (const auto & id : binding["block_ids"]) {
+            if (!id.is_string() || id.get<std::string>().empty() || id.get<std::string>().size() > 256) {
+                error = "document_context.block_ids must contain non-empty bounded strings";
+                return false;
+            }
+            parsed_binding.block_ids.push_back(id.get<std::string>());
+        }
+        std::sort(parsed_binding.block_ids.begin(), parsed_binding.block_ids.end());
+        if (std::adjacent_find(parsed_binding.block_ids.begin(), parsed_binding.block_ids.end()) != parsed_binding.block_ids.end()) {
+            error = "document_context.block_ids must be unique";
+            return false;
+        }
+        request.document_context = std::move(parsed_binding);
+    }
     if (parsed.contains("_caller_allow_policy_gated_writes") &&
             parsed["_caller_allow_policy_gated_writes"].is_boolean()) {
         request.allow_policy_gated_writes = parsed["_caller_allow_policy_gated_writes"].get<bool>();

@@ -40,6 +40,7 @@ bool is_markdown_normalization(const agent_pandoc_options & options) {
 } // namespace
 
 std::string agent_pandoc_processor::id() const {
+    if (options_.input_format == "docx" && options_.output_format == "markdown") return "pandoc-docx-markdown-v1";
     if (options_.input_format == "markdown") return "pandoc-markdown-docx-v1";
     if (options_.input_format == "odt") return "pandoc-odt-markdown-v1";
     if (options_.input_format == "docx" && options_.output_format == "json") {
@@ -63,6 +64,8 @@ bool agent_pandoc_processor::supports(
     return (options_.input_format == "docx" && normalized == docx_mime &&
             target_representation == "text") ||
         (options_.input_format == "docx" && normalized == docx_mime &&
+            target_representation == "markdown") ||
+        (options_.input_format == "docx" && normalized == docx_mime &&
             target_representation == "document-json") ||
         (options_.input_format == "markdown" && normalized == markdown_mime &&
             target_representation == "docx") ||
@@ -84,6 +87,10 @@ agent_resource_processor::support agent_pandoc_processor::supports(
         request.target_representation == "text" &&
         (request.target_media_type.empty() ||
          common_normalize_resource_media_type(request.target_media_type) == "text/plain");
+    const bool docx_markdown = options_.input_format == "docx" && options_.output_format == "markdown" &&
+        common_normalize_resource_media_type(source_type) == docx_mime &&
+        request.target_representation == "markdown" &&
+        (request.target_media_type.empty() || common_normalize_resource_media_type(request.target_media_type) == markdown_mime);
     const bool document_json = options_.output_format == "json" &&
         request.target_representation == "document-json" &&
         (options_.input_format == "docx" || options_.input_format == "html") &&
@@ -104,8 +111,8 @@ agent_resource_processor::support agent_pandoc_processor::supports(
         request.target_representation == "text" &&
         (request.target_media_type.empty() ||
          common_normalize_resource_media_type(request.target_media_type) == markdown_mime);
-    return {forward || document_json || reverse || normalized_markdown,
-        reverse ? 100 : 50, normalized_markdown || document_json, false};
+    return {forward || docx_markdown || document_json || reverse || normalized_markdown,
+        reverse ? 100 : 50, normalized_markdown || document_json || docx_markdown, false};
 }
 
 agent_resource_processing_result agent_pandoc_processor::process(
@@ -157,11 +164,14 @@ agent_resource_processing_result agent_pandoc_processor::process(
 
     const auto & artifact = artifacts.front();
     const bool text_forward = (forward || odt_forward) && !document_json;
+    const bool markdown_forward = options_.input_format == "docx" && options_.output_format == "markdown";
     agent_resource_processing_result result;
     result.success = true;
     result.processor_id = id();
     result.safe_summary = document_json
         ? "Structured Pandoc document representation created through the host resource processor."
+        : markdown_forward
+        ? "DOCX converted to structured Markdown through the host resource processor."
         : text_forward
         ? "Document text extracted through the host resource processor."
         : markdown_normalization
@@ -169,22 +179,27 @@ agent_resource_processing_result agent_pandoc_processor::process(
             : "DOCX artifact generated through the host resource processor.";
     agent_resource_processing_output output;
     output.name = artifact.name.empty()
-        ? request.source.name + (document_json ? ".json" : text_forward ? ".txt" : markdown_normalization ? ".md" : ".docx")
+        ? request.source.name + (document_json ? ".json" : markdown_forward || markdown_normalization ? ".md" : text_forward ? ".txt" : ".docx")
         : artifact.name;
     output.description = document_json
         ? "Structured document representation derived from an authoritative document resource."
+        : markdown_forward
+        ? "Markdown document derived from the authoritative DOCX resource."
         : text_forward
         ? "Normalized text representation extracted from a DOCX document."
         : markdown_normalization
             ? "Normalized Markdown representation derived from a document resource."
             : "DOCX artifact generated from a Markdown resource.";
     output.mime_type = document_json ? "application/json" :
+        (markdown_forward || markdown_normalization) ? markdown_mime :
         (text_forward || markdown_normalization)
             ? (odt_forward || markdown_normalization ? markdown_mime : "text/plain")
             : docx_mime;
     output.bytes = artifact.bytes;
     output.metadata.purpose = document_json
         ? "structured document representation"
+        : markdown_forward
+        ? "Markdown derived from the authoritative DOCX resource."
         : text_forward
         ? "normalized DOCX text representation"
         : markdown_normalization
@@ -192,6 +207,8 @@ agent_resource_processing_result agent_pandoc_processor::process(
             : "DOCX artifact generated from a Markdown resource";
     output.metadata.content_summary = document_json
         ? "Structured intermediate representation derived from the authoritative document resource."
+        : markdown_forward
+        ? "Markdown retains the text structure supported by Pandoc but does not guarantee original Word layout or all formatting."
         : text_forward
         ? "Text extracted from the authoritative DOCX resource."
         : markdown_normalization

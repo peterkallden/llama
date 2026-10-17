@@ -16,6 +16,7 @@ enum class common_agent_artifact_validation { unvalidated, references_resolve, g
 enum class common_agent_artifact_support { unverified, linked_support, contradicted, mixed };
 enum class common_agent_artifact_author { model, user, host };
 enum class common_agent_artifact_review_state { reviewed, unreviewed, requires_research };
+enum class common_agent_artifact_document_kind { report, document };
 
 struct common_agent_artifact_block {
     std::string id;
@@ -75,7 +76,8 @@ struct common_agent_artifact_snapshot {
 };
 
 struct common_agent_artifact_document {
-    uint32_t schema_version = 2;
+    uint32_t schema_version = 3;
+    common_agent_artifact_document_kind kind = common_agent_artifact_document_kind::report;
     // Stored documents retain their renderer semantics for manifest readback.
     uint32_t markdown_renderer_version = 3;
     std::string id;
@@ -91,6 +93,9 @@ struct common_agent_artifact_document {
     std::string editor_parent_uri;
     std::string editor_operation_id;
     std::string editor_markdown_uri;
+    std::string source_resource_uri;
+    std::string source_content_fingerprint;
+    std::string importer_version;
     std::string source_plan_id;
     uint64_t source_plan_version = 0;
     bool coverage_complete = false;

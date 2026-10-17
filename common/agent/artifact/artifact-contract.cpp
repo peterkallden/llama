@@ -166,6 +166,15 @@ const char * block_kind(common_agent_artifact_block_kind v) {
         case common_agent_artifact_block_kind::recommendation: return "recommendation"; }
     return "observation";
 }
+const char * document_kind_name(common_agent_artifact_document_kind value) {
+    return value == common_agent_artifact_document_kind::document ? "document" : "report";
+}
+bool parse_document_kind(const std::string & value, common_agent_artifact_document_kind & out) {
+    if (value == "report") out = common_agent_artifact_document_kind::report;
+    else if (value == "document") out = common_agent_artifact_document_kind::document;
+    else return false;
+    return true;
+}
 bool parse_kind(const std::string & s, common_agent_artifact_block_kind & v) {
     if (s == "observation") v = common_agent_artifact_block_kind::observation;
     else if (s == "conclusion") v = common_agent_artifact_block_kind::conclusion;
@@ -571,16 +580,23 @@ bool common_agent_artifact_section_from_stored_json(const std::string & text,
 bool common_agent_artifact_document_to_json(const common_agent_artifact_document & d, std::string & out, std::string & error) {
     if(d.schema_version>=2){std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(d,editable,render_error)){error=render_error;return false;}const auto expected="sha256:"+hash_sha256_hex(editable.data(),editable.size());if(d.content_fingerprint.empty()||d.content_fingerprint!=expected){error="artifact document content fingerprint is missing or stale";return false;}}
     json value = {{"schema_version",d.schema_version},{"markdown_renderer_version",d.markdown_renderer_version},
+        {"kind",document_kind_name(d.kind)},
         {"id",d.id},{"title",d.title},{"purpose",d.purpose},
         {"profile_id",d.profile_id},{"profile_revision",d.profile_revision},{"revision",d.revision},
         {"previous_revision_uri",d.previous_revision_uri},{"snapshot_uri",d.snapshot_uri},
         {"snapshot_fingerprint",d.snapshot_fingerprint},
         {"content_fingerprint",d.content_fingerprint},{"editor_parent_uri",d.editor_parent_uri},
         {"editor_operation_id",d.editor_operation_id},{"editor_markdown_uri",d.editor_markdown_uri},
+        {"source_resource_uri",d.source_resource_uri},{"source_content_fingerprint",d.source_content_fingerprint},
+        {"importer_version",d.importer_version},
         {"source_plan_id",d.source_plan_id},{"source_plan_version",d.source_plan_version},
         {"coverage_complete",d.coverage_complete},{"unresolved_gaps",d.unresolved_gaps},
         {"source_bibliography",json::array()},{"sections",json::array()}};
-    if (d.id.empty() || d.title.empty() || d.sections.size() > 32) { error="artifact document has invalid identity or section count"; return false; }
+    if (d.id.empty() || d.title.empty() || d.sections.size() > 32 ||
+            (d.schema_version >= 3 && d.kind == common_agent_artifact_document_kind::document &&
+             (d.source_resource_uri.empty() || d.source_content_fingerprint.empty() || d.importer_version.empty()))) {
+        error="artifact document has invalid identity, source lineage or section count"; return false;
+    }
     for (const auto & s : d.sections) {
         json section={{"id",s.id},{"title",s.title},{"no_findings",s.no_findings},
             {"out_of_scope_refs",s.out_of_scope_refs},{"blocks",json::array()}};
@@ -1050,17 +1066,19 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
 
 bool common_agent_artifact_document_from_json(const std::string & text, common_agent_artifact_document & d, std::string & error) {
     const auto v=json::parse(text,nullptr,false);
-    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>2 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
+    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>3 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
     d={}; d.id=v.value("id",std::string{}); d.title=v.value("title",std::string{}); d.purpose=v.value("purpose",std::string{});
     if(v.contains("markdown_renderer_version")&&!v["markdown_renderer_version"].is_number_unsigned()){
         error="artifact Markdown renderer version is malformed";return false;
     }
     d.schema_version=v.value("schema_version",uint32_t(1));
-    if(d.schema_version<1||d.schema_version>2){error="unsupported artifact document schema version";return false;}
+    if(d.schema_version<1||d.schema_version>3){error="unsupported artifact document schema version";return false;}
+    if(d.schema_version>=3&&!parse_document_kind(v.value("kind",std::string{}),d.kind)){error="artifact document kind is invalid";return false;}
     d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
     if(d.markdown_renderer_version<1||d.markdown_renderer_version>4){
         error="unsupported artifact Markdown renderer version";return false;
     }
+    d.source_resource_uri=v.value("source_resource_uri",std::string{});d.source_content_fingerprint=v.value("source_content_fingerprint",std::string{});d.importer_version=v.value("importer_version",std::string{});
     d.profile_id=v.value("profile_id",std::string{}); d.profile_revision=v.value("profile_revision",std::string{});
     d.revision=v.value("revision",uint64_t(1)); d.previous_revision_uri=v.value("previous_revision_uri",std::string{});
     d.snapshot_uri=v.value("snapshot_uri",std::string{});d.snapshot_fingerprint=v.value("snapshot_fingerprint",std::string{});d.content_fingerprint=v.value("content_fingerprint",std::string{});d.editor_parent_uri=v.value("editor_parent_uri",std::string{});d.editor_operation_id=v.value("editor_operation_id",std::string{});d.editor_markdown_uri=v.value("editor_markdown_uri",std::string{}); d.source_plan_id=v.value("source_plan_id",std::string{}); d.source_plan_version=v.value("source_plan_version",uint64_t(0));
@@ -1091,13 +1109,15 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
         }
         d.sections.push_back(std::move(s));
     }
-    if(d.id.empty()||d.title.empty()){error="artifact document identity is missing";return false;}
+    if(d.id.empty()||d.title.empty()||(d.schema_version>=3&&d.kind==common_agent_artifact_document_kind::document&&
+            (d.source_resource_uri.empty()||d.source_content_fingerprint.empty()||d.importer_version.empty()))){error="artifact document identity or source lineage is missing";return false;}
     if(d.schema_version>=2){std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(d,editable,render_error)){error=render_error;return false;}const auto expected="sha256:"+hash_sha256_hex(editable.data(),editable.size());if(d.content_fingerprint.empty()||d.content_fingerprint!=expected){error="artifact document content fingerprint is invalid";return false;}}
     error.clear();return true;
 }
 
 bool common_agent_artifact_render_markdown(const common_agent_artifact_document & d, std::string & out, std::string & error) {
     if(d.id.empty()||d.title.empty()){error="artifact document identity is missing";return false;}
+    if(d.kind==common_agent_artifact_document_kind::document)return common_agent_artifact_render_editable_markdown(d,out,error);
     out="# "+d.title+"\n\n";
     if(!d.purpose.empty()) out+="> "+d.purpose+"\n\n";
     if(!d.coverage_complete){out+="**Coverage incomplete.** The source snapshot does not establish complete coverage.";for(const auto & gap:d.unresolved_gaps)out+="\n- Unresolved: "+gap;out+="\n\n";}
@@ -1129,7 +1149,15 @@ bool common_agent_artifact_render_markdown(const common_agent_artifact_document 
 
 bool common_agent_artifact_render_editable_markdown(
         const common_agent_artifact_document & document,std::string & out,std::string & error) {
-    if(document.id.empty()||document.title.empty()){error="artifact document identity is missing";return false;}
+    if(document.id.empty()||(document.kind==common_agent_artifact_document_kind::report&&document.title.empty())){error="artifact document identity is missing";return false;}
+    if(document.kind==common_agent_artifact_document_kind::document){
+        out.clear();
+        for(const auto & section:document.sections)for(const auto & block:section.blocks){
+            if(!out.empty())out+="\n\n";
+            out+=block.text;
+        }
+        error.clear();return true;
+    }
     out="# "+document.title+"\n\n";
     for(const auto & section:document.sections){
         out+="## "+section.title+"\n\n";
@@ -1141,7 +1169,16 @@ bool common_agent_artifact_render_editable_markdown(
 bool common_agent_artifact_apply_markdown_edit(
         const common_agent_artifact_document & original,const std::string & markdown,
         common_agent_artifact_document & edited,std::string & error) {
-    if(markdown.empty()||markdown.size()>4*1024*1024){error="edited Markdown is empty or exceeds the 4 MiB limit";return false;}
+    if((markdown.empty()&&original.kind!=common_agent_artifact_document_kind::document)||markdown.size()>4*1024*1024){error="edited Markdown is empty or exceeds the 4 MiB limit";return false;}
+    if(markdown.empty()&&original.kind==common_agent_artifact_document_kind::document){
+        edited=original;edited.schema_version=3;edited.markdown_renderer_version=4;
+        common_agent_artifact_section content;
+        if(!original.sections.empty())content=original.sections.front();
+        content.id="document-content";content.title="Content";content.no_findings=false;content.blocks.clear();
+        edited.sections={std::move(content)};
+        edited.content_fingerprint="sha256:"+hash_sha256_hex("",0);
+        error.clear();return true;
+    }
     struct parsed_section {std::string title;std::vector<std::string> blocks;};
     std::vector<parsed_section> parsed;
     std::vector<std::string> lines;
@@ -1163,6 +1200,33 @@ bool common_agent_artifact_apply_markdown_edit(
     cmark_parser_feed(parser.get(),markdown.data(),markdown.size());
     std::unique_ptr<cmark_node, decltype(&cmark_node_free)> root(cmark_parser_finish(parser.get()),cmark_node_free);
     if(!root){error="Markdown could not be parsed as GFM";return false;}
+    if(original.kind==common_agent_artifact_document_kind::document){
+        edited=original;edited.schema_version=3;edited.markdown_renderer_version=4;
+        common_agent_artifact_section content;
+        if(!original.sections.empty())content=original.sections.front();
+        content.id="document-content";content.title="Content";content.no_findings=false;
+        std::vector<common_agent_artifact_block> previous=content.blocks, blocks;
+        std::vector<bool> used(previous.size(),false);
+        for(auto * node=cmark_node_first_child(root.get());node!=nullptr;node=cmark_node_next(node)){
+            auto text=markdown_source_lines(lines,cmark_node_get_start_line(node),cmark_node_get_end_line(node));
+            if(text.empty())continue;
+            common_agent_artifact_block block;bool unchanged=false;
+            for(size_t i=0;i<previous.size();++i)if(!used[i]&&previous[i].text==text){block=previous[i];used[i]=true;unchanged=true;break;}
+            if(!unchanged){
+                const size_t index=blocks.size();
+                if(index<previous.size()&&!used[index]){block=previous[index];used[index]=true;}
+                block.id="document-block-"+fingerprint(content.id+"\n"+std::to_string(index)+"\n"+text);
+                block.kind=common_agent_artifact_block_kind::observation;block.evidence_ids.clear();block.source_refs.clear();
+                block.validation=common_agent_artifact_validation::unvalidated;block.support=common_agent_artifact_support::unverified;
+                block.validation_note="Edited document text has not been fact-checked.";block.author=common_agent_artifact_author::user;
+                block.origin="user_edit";block.review_state=common_agent_artifact_review_state::unreviewed;
+            }
+            block.text=std::move(text);blocks.push_back(std::move(block));
+        }
+        content.blocks=std::move(blocks);edited.sections={std::move(content)};
+        std::string canonical;if(!common_agent_artifact_render_editable_markdown(edited,canonical,error))return false;
+        edited.content_fingerprint="sha256:"+hash_sha256_hex(canonical.data(),canonical.size());error.clear();return true;
+    }
     std::string title;
     bool seen_title=false;
     for(auto * node=cmark_node_first_child(root.get());node!=nullptr;node=cmark_node_next(node)){

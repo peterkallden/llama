@@ -57,6 +57,14 @@ struct common_agent_runtime_session_host_turn_request {
     std::vector<std::string> allowed_exposed_tool_names;
     std::optional<common_agent_deliberation_policy> deliberation_policy_override;
     std::vector<common_agent_input_resource> input_resources;
+    struct document_context_binding {
+        std::string document_uri;
+        uint64_t revision = 0;
+        std::vector<std::string> block_ids;
+    };
+    // Typed editor binding. The daemon validates its shape; the session host
+    // re-authorizes the resource and checks the immutable revision/block IDs.
+    std::optional<document_context_binding> document_context;
     common_agent_event_sink event_sink;
     // Daemon request identity is kept separate from the model turn identity,
     // but travels with the host-owned turn for checkpoint validation.

@@ -80,6 +80,7 @@ export type TurnRequest = {
   n_predict: number;
   include_summary: boolean;
   resource_refs?: string[];
+  document_context?: { document_uri: string; revision: number; block_ids: string[] };
 };
 
 export type UploadedResource = {

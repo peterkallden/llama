@@ -91,6 +91,13 @@ async function callMcpAppTool(appToolName: string, toolName: string, args: Recor
   return api.value.callMcpAppTool({ app_tool_name: appToolName, tool_name: toolName, arguments: args, session_id: sessionId.value });
 }
 
+async function importDocument(sourceUri: string) {
+  return callMcpAppTool("document.open", "document.import", {
+    source_uri: sourceUri,
+    operation_id: `web-import-${crypto.randomUUID()}`,
+  });
+}
+
 async function connect() {
   abortController.value?.abort();
   const controller = new AbortController();
@@ -121,7 +128,8 @@ async function connect() {
   }
 }
 
-async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false) {
+async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false,
+    documentContext?: TurnRequest["document_context"]) {
   if (busy.value) {
     if (propagateFailure) throw new Error("An agent turn is already running. Retry the review when it finishes.");
     return;
@@ -135,6 +143,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
     turn_id: turnId, mode: "agent", n_predict: 384, include_summary: true,
     ...([...resourceRefs.value, ...additionalResourceRefs].length ? { resource_refs: [...new Set([...resourceRefs.value, ...additionalResourceRefs])] } : {}),
+    ...(documentContext ? { document_context: documentContext } : {}),
   };
   try {
     const result = await api.value.submitTurn(turn) as TurnResult;
@@ -156,8 +165,8 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   }
 }
 
-async function submitReview(prompt: string, resourceRefs: string[]) {
-  await submit(prompt, resourceRefs, true);
+async function submitReview(prompt: string, documentContext: NonNullable<TurnRequest["document_context"]>) {
+  await submit(prompt, [documentContext.document_uri], true, documentContext);
 }
 
 async function cancel() {
@@ -280,5 +289,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, submitReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, submitReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

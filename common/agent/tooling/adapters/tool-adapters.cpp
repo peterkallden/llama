@@ -501,13 +501,14 @@ common_tool_execution_result export_saved_document(
     const auto uri=arguments.value("source_document",std::string{});
     const auto format=arguments.value("format",std::string("markdown"));
     if(uri.empty()||(format!="markdown"&&format!="docx"))
-        return tool_validation_failure("tool.artifact.export.invalid_document_export","source_document requires a report resource and format markdown or docx");
+        return tool_validation_failure("tool.artifact.export.invalid_document_export","source_document requires a saved document resource and format markdown or docx");
     if(bindings.resource_runtime.store==nullptr)
         return tool_execution_failure("tool.artifact.export.store_unavailable","resource store is unavailable","Document export is unavailable.");
     const auto authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
     agent_resource_descriptor report_descriptor;std::string error;
-    if(!bindings.resource_runtime.store->stat(uri,authority,report_descriptor,error)||report_descriptor.mime_type!="application/vnd.llama-agent.report+json")
-        return tool_not_found_failure("tool.artifact.export.document_unavailable",std::move(error),"The saved report revision is not available in this scope.");
+    if(!bindings.resource_runtime.store->stat(uri,authority,report_descriptor,error)||
+            (report_descriptor.mime_type!="application/vnd.llama-agent.report+json"&&report_descriptor.mime_type!="application/vnd.llama-agent.document+json"))
+        return tool_not_found_failure("tool.artifact.export.document_unavailable",std::move(error),"The saved document revision is not available in this scope.");
     std::string serialized;
     if(!bindings.resource_runtime.store->read_text(uri,authority,4*1024*1024,serialized,error))
         return tool_execution_failure("tool.artifact.export.document_read_failed",std::move(error),"The saved report could not be read.");
@@ -577,9 +578,11 @@ common_tool_execution_result export_saved_document(
             final_resource.uri=descriptor.uri;final_resource.name=descriptor.name;final_resource.mime_type=descriptor.mime_type;final_resource.size_bytes=descriptor.size_bytes;final_resource.scope=descriptor.scope;final_resource.metadata=descriptor.metadata;final_resource.lineage=descriptor.lineage;
         }
     }
-    const auto result=json{{"resource",final_resource.uri},{"report_resource",uri},{"markdown_resource",markdown_resource.uri},
-        {"report_id",document.id},{"revision",document.revision},{"content_fingerprint",document.content_fingerprint},
-        {"previous_revision_uri",document.previous_revision_uri},{"format",format}}.dump();
+    json result_json{{"resource",final_resource.uri},{"document_resource",uri},{"markdown_resource",markdown_resource.uri},
+        {"document_id",document.id},{"document_kind",document.kind==common_agent_artifact_document_kind::document?"document":"report"},{"revision",document.revision},{"content_fingerprint",document.content_fingerprint},
+        {"previous_revision_uri",document.previous_revision_uri},{"format",format}};
+    if(document.kind==common_agent_artifact_document_kind::report)result_json["report_resource"]=uri;
+    const auto result=result_json.dump();
     std::vector<common_runtime_resource_ref> refs{final_resource};if(final_resource.uri!=markdown_resource.uri)refs.push_back(markdown_resource);refs.push_back(report_descriptor);
     return common_tool_execution_result::success(result,"Exported the selected immutable report revision.",std::move(refs));
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "./session";
-import type { DaemonProviderStatus } from "./types/agent";
+import type { AgentEvent, DaemonProviderStatus } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
 import WorkflowInspector from "./components/WorkflowInspector.vue";
 import McpAppHost from "./components/McpAppHost.vue";
@@ -17,6 +17,7 @@ const webClientExpanded = ref(true);
 const eventsViewport = ref<HTMLElement | null>(null);
 const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
 const activeAppTool = ref("");
+const localDocumentEvent = ref<AgentEvent>();
 const mcpApps = () => {
   const apps = new Map<string, (typeof session.tools)[number]>();
   for (const tool of session.tools) {
@@ -31,7 +32,9 @@ const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAp
 const activeAppInvocation = () => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const event = findLatestAppInvocation(session.events, session.tools, app, session.sessionId);
+  const event = localDocumentEvent.value?.provider_id === app.provider_id
+    ? localDocumentEvent.value
+    : findLatestAppInvocation(session.events, session.tools, app, session.sessionId);
   if (!event) return undefined;
   return {
     id: mcpAppInvocationKey(event),
@@ -73,6 +76,38 @@ function send() {
   if ((!value && !session.attachments.length) || session.busy) return;
   prompt.value = "";
   void session.submit(value || "Please process the attached audio.");
+}
+
+function structuredToolResult(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object") throw new Error("The daemon returned no import result.");
+  const envelope = payload as Record<string, unknown>;
+  const tool = envelope.tool && typeof envelope.tool === "object" ? envelope.tool as Record<string, unknown> : envelope;
+  if (tool.ok === false || tool.error) throw new Error(String((tool.error as Record<string, unknown> | undefined)?.safe_summary ?? tool.content_summary ?? "Document import failed."));
+  const structured = tool.structured_content && typeof tool.structured_content === "object"
+    ? tool.structured_content as Record<string, unknown> : tool;
+  return structured;
+}
+
+async function openAttachmentInEditor(file: (typeof session.attachments)[number]) {
+  if (!file.uri || !session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) return;
+  try {
+    const imported = structuredToolResult(await session.importDocument(file.uri));
+    const documentUri = String(imported.document_uri ?? "");
+    if (!documentUri) throw new Error("Import completed without a document revision reference.");
+    const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: documentUri }));
+    const openTool = session.tools.find((tool) => tool.name === "document.open");
+    if (!openTool) throw new Error("The document editor app is unavailable.");
+    localDocumentEvent.value = {
+      session_id: session.sessionId, request_id: crypto.randomUUID(), turn_id: crypto.randomUUID(),
+      sequence: Date.now(), provider_id: openTool.provider_id, server_tool_name: openTool.server_tool_name ?? openTool.name,
+      app_context_available: true, tool_input: { document_uri: documentUri },
+      tool_result: { tool: { ok: true, structured_content: opened } },
+    };
+    activeAppTool.value = mcpAppKey(openTool);
+    activeView.value = "app";
+  } catch (cause) {
+    session.error = cause instanceof Error ? cause.message : String(cause);
+  }
 }
 
 function attachFiles(event: Event) {
@@ -188,7 +223,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
             <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>Send</span></button></div></div>
           </form>
-          <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><label v-for="(file, index) in session.attachments" :key="file.name" class="attachment"><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label></div>
+          <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="quiet" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" @click="openAttachmentInEditor(file)">Open in editor</button></div></div>
           <div v-if="session.busy" class="chat-cancel"><button class="cancel-button" @click="session.cancel">Cancel</button></div>
         </section>
 

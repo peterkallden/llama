@@ -100,22 +100,13 @@ public:
         observed_request_ = request;
         agent_resource_processing_result result;
         result.success = true;
-        agent_resource_put_request put;
-        put.name = "pandoc-output.docx";
-        put.mime_type = request.target_media_type;
-        put.bytes = "test-docx-bytes";
-        put.bytes_are_authoritative = true;
-        put.scope = common_runtime_resource_scope::session;
-        put.namespace_id = request.authority.namespace_id;
-        put.session_id = request.authority.session_id;
-        put.project_id = request.authority.project_id;
-        put.turn_id = request.authority.turn_id;
-        put.source_provider = "resource_processor";
-        put.source_tool = "pandoc-markdown-docx-v1";
-        agent_resource_descriptor descriptor;
-        std::string error;
-        assert(store_.put_bytes(put, descriptor, error));
-        result.resources.push_back(descriptor);
+        const bool markdown = request.target_representation == "markdown";
+        agent_resource_processing_output output;
+        output.name = markdown ? "pandoc-output.md" : "pandoc-output.docx";
+        output.mime_type = request.target_media_type;
+        output.bytes = markdown ? "# Imported DOCX\n\n| Name | Value |\n|---|---|\n| alpha | 1 |\n" : "test-docx-bytes";
+        output.metadata.limitations = markdown ? "Images or unsupported Word formatting may not be preserved." : "";
+        result.outputs.push_back(std::move(output));
         return result;
     }
 
@@ -398,6 +389,7 @@ int main() {
         {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
         {"document.open", 1, true, "{}"},
+        {"document.import", 1, true, "{}"},
         {"document.save", 1, true, "{}"},
         {"document.propose_patch", 1, true, "{}"},
         {"document.apply_patch", 1, true, "{}"},
@@ -515,6 +507,64 @@ int main() {
             R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
     };
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    {
+        agent_resource_descriptor uploaded;
+        uploaded.uri = "resource://session/notes.txt";
+        uploaded.name = "notes.txt";
+        uploaded.mime_type = "text/plain";
+        uploaded.scope = common_runtime_resource_scope::session;
+        uploaded.size_bytes = 35;
+        foundation_resources.resources[uploaded.uri] = uploaded;
+        foundation_resources.available_uris.insert(uploaded.uri);
+        foundation_resources.contents[uploaded.uri] = "# literal heading\n\n*literal text*\n";
+        result = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(result.ok);
+        const auto imported = nlohmann::json::parse(result.output);
+        assert(imported.value("revision",uint64_t(0)) == 1 && imported.value("original_uri",std::string{}) == uploaded.uri);
+        const auto imported_uri = imported.value("document_uri",std::string{});
+        result = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("reused",false));
+        agent_resource_descriptor other_upload=uploaded;
+        other_upload.uri="resource://session/other.txt";other_upload.name="other.txt";
+        foundation_resources.resources[other_upload.uri]=other_upload;foundation_resources.available_uris.insert(other_upload.uri);
+        foundation_resources.contents[other_upload.uri]="Different source.";
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",other_upload.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        result = foundation_registry.execute({"document.open", nlohmann::json{{"document_uri",imported_uri}}.dump()});
+        assert(result.ok);
+        const auto opened = nlohmann::json::parse(result.output);
+        assert(opened.value("kind",std::string{}) == "document");
+        assert(opened.value("markdown",std::string{}).find("```text") != std::string::npos);
+        assert(opened.value("markdown",std::string{}).find("# literal heading") != std::string::npos);
+        auto retry = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-2"}}.dump()});
+        assert(retry.ok && nlohmann::json::parse(retry.output).value("reused",false));
+        auto edited = opened.value("markdown",std::string{}) + "\nA user paragraph.\n";
+        result = foundation_registry.execute({"document.save",nlohmann::json{{"document_uri",imported_uri},{"expected_revision",1},
+            {"markdown",edited},{"operation_id","import-notes-save-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("revision",uint64_t(0)) == 2);
+        const auto saved_uri = nlohmann::json::parse(result.output).value("document_uri",std::string{});
+        result = foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","markdown"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("document_kind",std::string{}) == "document");
+        const auto generic_export = nlohmann::json::parse(result.output);
+        const auto generic_markdown = foundation_resources.contents.at(generic_export.value("markdown_resource",std::string{}));
+        assert(generic_markdown.find("Coverage incomplete") == std::string::npos);
+        assert(generic_markdown.find("A user paragraph.") != std::string::npos);
+
+        agent_resource_descriptor uploaded_docx;
+        uploaded_docx.uri = "resource://session/word.docx";
+        uploaded_docx.name = "word.docx";
+        uploaded_docx.mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        uploaded_docx.scope = common_runtime_resource_scope::session;
+        uploaded_docx.size_bytes = 20;
+        foundation_resources.resources[uploaded_docx.uri] = uploaded_docx;
+        foundation_resources.available_uris.insert(uploaded_docx.uri);
+        foundation_resources.contents[uploaded_docx.uri] = "docx bytes";
+        result = foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-docx-1"}}.dump()});
+        assert(result.ok && docx_processing_request.target_representation == "markdown");
+        const auto imported_docx = nlohmann::json::parse(result.output);
+        result = foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",imported_docx.value("document_uri",std::string{})}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("markdown",std::string{}).find("| Name | Value |") != std::string::npos);
+    }
     result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
     assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&
            result.output.find("available_next_turn") != std::string::npos);
@@ -756,6 +806,7 @@ int main() {
     result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","limit":1})"});
     assert(result.ok && foundation_data.last_operation == "data.query" &&
            foundation_data.last_request.find(R"("limit":1)" ) != std::string::npos);
+    const auto writes_before_text_export = foundation_resources.requests.size();
     result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
     assert(result.ok && result.output.find("resource://") != std::string::npos);
     result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
@@ -769,12 +820,12 @@ int main() {
         report_export.value("report_id", std::string{}) == "report:report-plan" &&
         report_export.value("revision", uint64_t(0)) == 1 &&
         report_export.contains("coverage_complete") && !report_export["coverage_complete"].get<bool>());
-    assert(foundation_resources.requests.size() == 5 &&
-        foundation_resources.requests[1].mime_type == "application/json" &&
-        foundation_resources.requests[2].mime_type == "application/vnd.llama-agent.report+json" &&
-        foundation_resources.requests[3].mime_type == "text/markdown" &&
-        foundation_resources.requests[3].text.find("Coverage incomplete") != std::string::npos &&
-        foundation_resources.requests[4].text.find(report_export.value("export_id", std::string{})) != std::string::npos);
+    assert(foundation_resources.requests.size() == writes_before_text_export + 5 &&
+        foundation_resources.requests[writes_before_text_export + 1].mime_type == "application/json" &&
+        foundation_resources.requests[writes_before_text_export + 2].mime_type == "application/vnd.llama-agent.report+json" &&
+        foundation_resources.requests[writes_before_text_export + 3].mime_type == "text/markdown" &&
+        foundation_resources.requests[writes_before_text_export + 3].text.find("Coverage incomplete") != std::string::npos &&
+        foundation_resources.requests[writes_before_text_export + 4].text.find(report_export.value("export_id", std::string{})) != std::string::npos);
     const auto writes_before_retry=foundation_resources.requests.size();
     // Simulate a publication predating renderer versioning. Retry and format
     // changes must preserve that stored document rather than rebuilding it.
@@ -871,7 +922,7 @@ int main() {
     assert(large_opened["document"]["sections"].back()["blocks"][0]["review_state"]=="unreviewed");
     const auto & target_section=large_opened["document"]["sections"].back();
     auto block_proposal=nlohmann::json{{"document_uri",large_saved_uri},{"expected_revision",2},
-        {"section_id",target_section["id"]},{"block_id",target_section["blocks"][0]["id"]},
+        {"operation","replace"},{"section_id",target_section["id"]},{"block_id",target_section["blocks"][0]["id"]},
         {"text","A bounded replacement."},{"summary","Replace only the selected block."}};
     result=foundation_registry.execute({"document.propose_patch",block_proposal.dump()});assert(result.ok);
     auto unknown_block=block_proposal;unknown_block["block_id"]="not-a-report-block";

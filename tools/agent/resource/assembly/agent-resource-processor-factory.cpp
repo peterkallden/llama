@@ -87,9 +87,11 @@ std::shared_ptr<agent_resource_processing_host> make_processing_host(
     return host;
 }
 
-agent_pandoc_options pandoc_options_for_source(const std::string & source_type) {
+agent_pandoc_options pandoc_options_for_source(const std::string & source_type, const std::string & target_representation) {
     agent_pandoc_options options;
-    if (source_type == "text/markdown") {
+    if (source_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && target_representation == "markdown") {
+        options.input_format = "docx";options.output_format = "markdown";options.output_extension = "md";
+    } else if (source_type == "text/markdown") {
         options.input_format = "markdown";
         options.output_format = "docx";
         options.output_extension = "docx";
@@ -205,7 +207,7 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
         if (!add(std::make_shared<agent_pandoc_processor>(
                 *host, execution, agent_resource_backend_kind::local_pandoc,
                 selected.executable.empty() ? "pandoc" : selected.executable,
-                pandoc_options_for_source(source_type)))) return {};
+                pandoc_options_for_source(source_type, binding.target_representation)))) return {};
     }
     if (dispatch.has_policy(pandoc) && dispatch.wants_sandbox_for(pandoc)) {
         const auto & selected = *dispatch.policy_for(pandoc);
@@ -217,7 +219,7 @@ std::shared_ptr<agent_resource_processing_provider> assemble_provider(
         if (!add(std::make_shared<agent_pandoc_processor>(
                 *host, execution, backend,
                 selected.executable.empty() ? "pandoc" : selected.executable,
-                pandoc_options_for_source(source_type)))) return {};
+                pandoc_options_for_source(source_type, binding.target_representation)))) return {};
     }
     const auto xlsx = agent_resource_processor_kind::xlsx;
     if (dispatch.has_policy(xlsx) &&

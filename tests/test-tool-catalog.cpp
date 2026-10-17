@@ -139,9 +139,12 @@ int main() {
     const auto * dataset_sample = catalog.find_definition("dataset.sample");
     const auto * dataset_validate = catalog.find_definition("dataset.validate");
     const auto * artifact_export = catalog.find_definition("artifact.export");
+    const auto * document_import = catalog.find_definition("document.import");
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
     const auto * native_crash = catalog.find_definition("diagnostics.native_crash");
-    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && value_counts && native_crash);
+    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && document_import && value_counts && native_crash);
+    assert(document_import->risk_class == common_tool_risk_class::artifact_write && document_import->requires_confirmation);
+    assert(document_import->mcp_app_write_authorized);
     assert(artifact_export->risk_class == common_tool_risk_class::artifact_write);
     assert(artifact_export->requires_confirmation);
     const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);
@@ -387,7 +390,7 @@ int main() {
         common_tool_model_result_schema(*artifact_export),
         compact_error);
     assert(compact_error.empty());
-    assert(artifact_compact.find("rule: Choose one mode: name+content for text, source_dataset+format=csv for data, source_document+format=markdown|docx to export a saved immutable report revision, or format=markdown|docx to compose the active report.") != std::string::npos);
+    assert(artifact_compact.find("saved report/document as Markdown or DOCX") != std::string::npos);
     assert(artifact_compact.find("example:\nopen! artifact.export\nname: summary.txt\ncontent: \"Total orders: 42\"") != std::string::npos);
 
     std::vector<common_plan_schema_field> extracted_fields;
@@ -442,7 +445,7 @@ int main() {
             assert(definition.requires_confirmation);
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
                 "artifact.export") != definition.capabilities.end());
-        } else if (definition.name == "document.save" || definition.name == "document.apply_patch") {
+        } else if (definition.name == "document.import" || definition.name == "document.save" || definition.name == "document.apply_patch") {
             assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);

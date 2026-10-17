@@ -1,18 +1,32 @@
 # Document editor MCP App
 
 The first document editor is a first-party MCP App at
-`ui://llama-agent/apps/document-editor`. It edits host-composed report
-revisions, not arbitrary files. The editor is a standalone embedded app using
+`ui://llama-agent/apps/document-editor`. It edits immutable report revisions
+and explicitly imported TXT, Markdown, and DOCX documents. The editor is a standalone embedded app using
 the pinned `@toast-ui/editor` package; Markdown/GFM parsing and block identity
 remain host responsibilities.
 
 ## Revision and review flow
 
-`document.open` returns the saved immutable report revision and an editable
+`document.import` accepts an explicitly selected, host-authorized source
+resource and an operation ID. It supports TXT, Markdown, and DOCX. The
+original resource is never changed; imported documents retain its URI,
+content fingerprint, and importer version. TXT is represented as a fenced
+literal-text block so Markdown punctuation is not interpreted as formatting.
+DOCX import uses the configured Pandoc DOCX-to-Markdown processor; missing
+processors, invalid files, limits, and conversion failures are explicit and
+leave the original intact. Unsupported formatting or images may be reported
+as import limitations. Reimporting the same source content and importer
+version reopens the existing document's latest published revision. A distinct
+uploaded resource creates a distinct document identity.
+
+The attachment list offers an explicit “Open in editor” action for supported
+file types; uploading alone does not import or open a document.
+`document.open` returns the saved immutable report or imported document revision and an editable
 Markdown projection. `document.save` compares `expected_revision` with the
 current host manifest, parses the full document, and publishes a new immutable
 revision. A conflicting save leaves the browser's local draft intact. An
-unchanged save does not increment the revision. `operation_id` makes an
+unchanged save does not increment the revision. `operation_id` makes a
 retry idempotent, including unchanged saves. The editor retains the pending
 operation and payload until the host confirms it. A retry uses that same
 operation even if newer local edits already exist.
@@ -26,14 +40,17 @@ export and editor revision selection consult the same current-revision check,
 so continued editing follows the recomposed report's revision and lineage.
 
 “Save” performs no model call. “Save and review” saves first and submits a
-normal daemon turn that receives the document reference and asks the agent to
+normal daemon turn with a typed document URI, immutable revision, and selected
+block IDs. The host re-authorizes the resource and validates the revision and
+block IDs before adding bounded document context. An empty block selection
+means the whole document. The turn asks the agent to
 review the changed content. The agent may use existing research/tool routes
 and may create a bounded `document.propose_patch` proposal. The model supplies
 `section_id`, `block_id`, replacement `text` (up to 16 KiB), and `summary`.
 The IDs come from `document.open`; the host rejects unknown blocks and text
 that escapes the selected block's structure. The legacy full-Markdown input
 remains readable by host callers. A proposal never
-changes the report. The user must accept it in the editor, which invokes
+changes the document. The user must accept it in the editor, which invokes
 `document.apply_patch` against the expected current revision. Stale proposals
 are rejected and must be reviewed again. Accepting a proposal is not a factual
 verification verdict.
@@ -47,11 +64,13 @@ references may remain for navigation, but they do not confer support on the
 changed text. Unchanged blocks preserve their provenance and review status.
 The editor sidebar presents saved block review/support states separately from
 the bibliography; these statuses refresh after a successful save.
-The report's evidence snapshot is immutable; new research belongs to a later
-explicit report composition/review, not a mutation of the original snapshot.
+For reports, the evidence snapshot is immutable; new research belongs to a
+later explicit report composition/review, not a mutation of the original
+snapshot. Imported documents retain their original upload and may link review
+findings to newly gathered research without claiming the original file changed.
 
 The host grants write access only to the exact first-party document-editor
-resource and its currently opened report revision. Late invocations cannot
+resource and its currently opened document revision. Late invocations cannot
 replace this grant while a local draft has changes. Other MCP Apps retain their existing read-only restrictions. Direct
 model calls to `document.save` and `document.apply_patch` require host
 confirmation. The app bundle is embedded and advertised only when its build
@@ -61,15 +80,15 @@ dependencies are available; ordinary C++ builds do not require Node.js.
 
 The sandbox uses an opaque origin and cannot access browser `localStorage`.
 The first-party extension `ui/llama-agent/document-draft` asks the web host to
-read/write a draft for its host-confirmed open report. Storage keys include
-session, provider, report identity and base revision. The host uses browser
+read/write a draft for its host-confirmed open document. Storage keys include
+session, provider, document identity and base revision. The host uses browser
 storage when available and retains the newest copy in memory when a quota or
 privacy restriction blocks persistence. The editor reports this limitation.
 
 Open responses are checked against the edit sequence. Newer edits survive late
 loads, saves and patch acceptance; concurrent save clicks do not create parallel
 mutations. A tool invocation updates the mounted app instead of remounting it.
-The saved report and local draft stay distinct until a save succeeds.
+The saved revision and local draft stay distinct until a save succeeds.
 At narrow widths the sidebar stacks below the editor and the preview uses tabs.
 The editor uses TOAST UI's bundled dark theme for readable controls and text.
 
@@ -97,10 +116,12 @@ retain their own licenses. See [`../third-party/NOTICE.md`](../third-party/NOTIC
 
 ## Current scope
 
-The first version supports immutable report revisions, local draft recovery,
-review proposals and user-approved patch application. It does not provide
-multi-user simultaneous editing, Yjs synchronization, arbitrary Markdown file
-editing, or a legal chain-of-custody system. The browser workflow has unit and
+The first version supports immutable report and imported-document revisions,
+local draft recovery, review proposals and user-approved patch application.
+Ordinary documents have no report coverage status or automatic factual
+support. Research stays in normal agent turns and has separate provenance.
+It does not provide multi-user simultaneous editing, arbitrary local filesystem
+access, HTML, editable PDF/OCR, spreadsheets, or a legal chain-of-custody system. The browser workflow has unit and
 host-bridge tests; a full installed-package/browser/daemon end-to-end test is
 still a separate verification requirement.
 Regression tests also execute the editor script with simulated host replies,

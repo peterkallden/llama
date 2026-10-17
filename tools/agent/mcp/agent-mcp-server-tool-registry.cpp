@@ -44,7 +44,7 @@ agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name)
     if (tool_name == "plan.get") {
         return {{"resourceUri", "ui://llama-agent/apps/workflow-inspector"}, {"visibility", {"model", "app"}}};
     }
-    if (tool_name == "document.open" || tool_name == "document.save" ||
+    if (tool_name == "document.open" || tool_name == "document.import" || tool_name == "document.save" ||
             tool_name == "document.propose_patch" || tool_name == "document.apply_patch") {
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
         return {{"resourceUri", "ui://llama-agent/apps/document-editor"}, {"visibility", {"model", "app"}}};

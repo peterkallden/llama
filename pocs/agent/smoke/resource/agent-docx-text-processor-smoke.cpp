@@ -14,7 +14,10 @@ public:
         last_request = std::move(request);
         result = {};
         result.status = common_agent_sandbox_status::completed;
-        artifacts = {{"docx-text-report.docx.txt", "text/plain", "Heading\nBody text\n", {}}};
+        const bool markdown = request.command.arguments.size() > 2 && request.command.arguments[2] == "--to=markdown";
+        artifacts = {{markdown ? "docx-report.md" : "docx-text-report.docx.txt",
+            markdown ? "text/markdown" : "text/plain",
+            markdown ? "# Heading\n\n| A | B |\n|---|---|\n| 1 | 2 |\n" : "Heading\nBody text\n", {}}};
         error.clear();
         return true;
     }
@@ -53,6 +56,23 @@ int main() {
     assert(host.last_request.command.arguments[1] == "--from=docx");
     assert(host.last_request.command.arguments[2] == "--to=plain");
     assert(host.last_request.command.arguments[3] == "--wrap=none");
+
+    agent_pandoc_options markdown_options;
+    markdown_options.input_format = "docx";
+    markdown_options.output_format = "markdown";
+    markdown_options.output_extension = "md";
+    agent_pandoc_processor markdown_processor(host, context, agent_resource_backend_kind::local_pandoc,
+        "E:\\tools\\pandoc-3.10.1\\pandoc.exe", markdown_options);
+    auto markdown_request = request;
+    markdown_request.target_representation = "markdown";
+    markdown_request.target_media_type = "text/markdown";
+    const auto markdown_result = markdown_processor.process(markdown_request);
+    assert(markdown_result.success && markdown_result.processor_id == "pandoc-docx-markdown-v1");
+    assert(markdown_result.outputs.size() == 1 && markdown_result.outputs[0].mime_type == "text/markdown");
+    assert(markdown_result.outputs[0].bytes.find("| A | B |") != std::string::npos);
+    assert(markdown_result.outputs[0].metadata.limitations.find("does not guarantee original Word layout") != std::string::npos);
+    assert(host.last_request.command.arguments[1] == "--from=docx");
+    assert(host.last_request.command.arguments[2] == "--to=markdown");
 
     agent_pandoc_options reverse_options;
     reverse_options.input_format = "markdown";

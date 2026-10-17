@@ -35,6 +35,7 @@ bool validate_agent_pandoc_options(
     }
     const bool valid_direction =
         (options.input_format == "docx" && options.output_format == "plain") ||
+        (options.input_format == "docx" && options.output_format == "markdown") ||
         (options.input_format == "docx" && options.output_format == "json") ||
         (options.input_format == "markdown" && options.output_format == "docx") ||
         (options.input_format == "odt" && options.output_format == "markdown") ||

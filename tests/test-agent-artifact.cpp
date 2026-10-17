@@ -556,5 +556,38 @@ int main() {
     exported_plan.observations.back().summary = R"({"report_resource":"","markdown_resource":"","coverage_complete":false})";
     assert(!common_agent_artifact_completion_summary(exported_plan, completion));
     assert(completion.empty());
+
+    common_agent_artifact_document imported;
+    imported.id = "document:empty-import";
+    imported.title = "empty-import";
+    imported.kind = common_agent_artifact_document_kind::document;
+    imported.schema_version = 3;
+    imported.source_resource_uri = "resource://session/original.txt";
+    imported.source_content_fingerprint = "sha256:source";
+    imported.importer_version = "document-import-v1";
+    imported.sections.push_back({"document-content", "Content", false, {}, {}});
+    common_agent_artifact_document imported_empty;
+    assert(common_agent_artifact_apply_markdown_edit(imported, "", imported_empty, error));
+    std::string imported_json;
+    assert(common_agent_artifact_document_to_json(imported_empty, imported_json, error));
+    common_agent_artifact_document imported_roundtrip;
+    assert(common_agent_artifact_document_from_json(imported_json, imported_roundtrip, error));
+    assert(imported_roundtrip.kind == common_agent_artifact_document_kind::document);
+    assert(imported_roundtrip.source_resource_uri == imported.source_resource_uri);
+    assert(imported_roundtrip.importer_version == "document-import-v1");
+    std::string empty_editable;
+    assert(common_agent_artifact_render_editable_markdown(imported_roundtrip, empty_editable, error));
+    assert(empty_editable.empty());
+    common_agent_artifact_document imported_empty_edit;
+    assert(common_agent_artifact_apply_markdown_edit(imported_roundtrip, "", imported_empty_edit, error));
+    assert(imported_empty_edit.sections.size() == 1 && imported_empty_edit.sections.front().blocks.empty());
+
+    common_agent_artifact_document literal_text = imported_roundtrip;
+    common_agent_artifact_document literal_text_edit;
+    assert(common_agent_artifact_apply_markdown_edit(literal_text,
+        "```text\n# literal heading\n*not a list*\n```", literal_text_edit, error));
+    assert(literal_text_edit.sections.front().blocks.size() == 1);
+    assert(literal_text_edit.sections.front().blocks.front().text.find("# literal heading") != std::string::npos);
+    assert(literal_text_edit.sections.front().blocks.front().support == common_agent_artifact_support::unverified);
     return 0;
 }
