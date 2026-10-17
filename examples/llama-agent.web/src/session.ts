@@ -43,6 +43,9 @@ export type PendingDocumentReview = {
 const documentReviews = ref<PendingDocumentReview[]>(restoreDocumentReviews());
 let drainingDocumentReviews = false;
 let turnRequestInFlight = false;
+let turnRequestController: AbortController | null = null;
+let turnRequestFailure = "";
+let disposed = false;
 
 function reviewQueueKey(id = sessionId.value) { return `llama-agent-web.document-reviews:${id}`; }
 function restoreDocumentReviews(): PendingDocumentReview[] {
@@ -96,6 +99,10 @@ function observe(event: AgentEvent) {
   if (kind === "turn.completed" && assistant && typeof event.response === "string") assistant.content = event.response;
   if (kind === "turn.failed") error.value = String(event.error ?? event.detail ?? "Turn failed");
   if (kind === "turn.completed" || kind === "turn.failed" || kind === "turn.cancelled") {
+    if (turnId === activeTurnId.value && kind !== "turn.completed") {
+      turnRequestFailure = String(event.error ?? event.detail ?? (kind === "turn.cancelled" ? "Turn cancelled" : "Turn failed"));
+      turnRequestController?.abort();
+    }
     if (!turnRequestInFlight) {
       busy.value = false;
       if (turnId === activeTurnId.value) activeTurnId.value = "";
@@ -172,6 +179,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     return;
   }
   error.value = ""; busy.value = true; turnRequestInFlight = true;
+  turnRequestController = new AbortController(); turnRequestFailure = "";
   const turnId = stableTurnId ?? crypto.randomUUID();
   activeTurnId.value = turnId;
   if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
@@ -188,7 +196,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     ...(documentContext ? { document_context: documentContext } : {}),
   };
   try {
-    const result = await api.value.submitTurn(turn) as TurnResult;
+    const result = await api.value.submitTurn(turn, turnRequestController.signal) as TurnResult;
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant) assistant.pending = false;
@@ -202,10 +210,11 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     busy.value = false; activeTurnId.value = "";
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
-    error.value = cause instanceof Error ? cause.message : String(cause);
-    if (propagateFailure) throw cause;
+    error.value = turnRequestFailure || (cause instanceof Error ? cause.message : String(cause));
+    if (propagateFailure) throw new Error(error.value);
   } finally {
     turnRequestInFlight = false;
+    turnRequestController = null; turnRequestFailure = "";
     void drainDocumentReviews();
   }
 }
@@ -223,7 +232,7 @@ async function submitReview(prompt: string, documentContext: NonNullable<TurnReq
 }
 
 async function drainDocumentReviews() {
-  if (drainingDocumentReviews || busy.value || turnRequestInFlight) return;
+  if (disposed || drainingDocumentReviews || busy.value || turnRequestInFlight) return;
   const item = documentReviews.value.find((review) => review.state === "queued" && review.session_id === sessionId.value);
   if (!item) return;
   drainingDocumentReviews = true;
@@ -374,4 +383,8 @@ export function useAgentSession() {
 
 // Replacing this module during Vite development must release its long-lived
 // stream; otherwise abandoned modules keep browser connection slots occupied.
-import.meta.hot?.dispose(() => abortController.value?.abort());
+import.meta.hot?.dispose(() => {
+  disposed = true;
+  abortController.value?.abort();
+  turnRequestController?.abort();
+});

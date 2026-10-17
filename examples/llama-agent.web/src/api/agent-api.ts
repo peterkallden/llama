@@ -60,8 +60,8 @@ export class AgentApi {
 
   status(): Promise<DaemonStatus> { return this.request<DaemonStatus>("/status"); }
 
-  submitTurn(turn: TurnRequest): Promise<unknown> {
-    return this.request("/turns", { method: "POST", body: JSON.stringify(turn) });
+  submitTurn(turn: TurnRequest, signal?: AbortSignal): Promise<unknown> {
+    return this.request("/turns", { method: "POST", body: JSON.stringify(turn), ...(signal ? { signal } : {}) });
   }
 
   callReadOnlyTool(input: {

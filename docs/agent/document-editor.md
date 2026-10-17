@@ -100,6 +100,12 @@ Locally opening an attachment does not pin its initial tool result: later
 agent patch proposals continue to reach the same mounted editor.
 Queued reviews wait for the current HTTP turn response as well as its event
 stream, so an early completion event cannot start the next turn prematurely.
+Draft persistence records whether text is actually unsaved. A clean saved
+projection reopens from host-normalized Markdown rather than being mistaken
+for a new edit because whitespace or rendering was normalized during save.
+Failure and cancellation events abort the browser's pending HTTP turn request
+and retain the daemon's reason, including deadline expiry. A cancelled turn
+therefore cannot leave the composer permanently in its sending state.
 
 Changed blocks are marked as user-authored and unreviewed. Their old evidence
 references may remain for navigation, but they do not confer support on the

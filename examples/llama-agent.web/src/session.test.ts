@@ -12,9 +12,12 @@ vi.mock("./api/agent-api", () => ({ AgentApi: class {
     transport.sink = sink; connected();
     return new Promise<void>(() => {});
   }
-  submitTurn(turn: Record<string, unknown>) {
+  submitTurn(turn: Record<string, unknown>, signal?: AbortSignal) {
     transport.calls.push(turn);
-    return new Promise((resolve) => transport.replies.push(resolve));
+    return new Promise((resolve, reject) => {
+      transport.replies.push(resolve);
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
   }
 } }));
 
@@ -44,4 +47,10 @@ it("waits for the active HTTP turn before dispatching a queued review, despite a
   expect(session.documentReviews[0].state).toBe("completed");
   await session.submitReview("Review", { document_uri: "resource://doc", revision: 2, block_ids: [] }, "review-operation");
   expect(transport.calls).toHaveLength(2);
+  const cancelled = session.submit("A long request");
+  transport.sink({ event_type: "turn.cancelled", session_id: session.sessionId,
+    turn_id: transport.calls[2].turn_id, detail: "turn deadline exceeded" });
+  await cancelled;
+  expect(session.busy).toBe(false);
+  expect(session.error).toBe("turn deadline exceeded");
 });

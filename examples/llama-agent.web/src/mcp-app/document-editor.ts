@@ -47,7 +47,7 @@ async function draft(action: "read" | "write", value?: Record<string, unknown>, 
 
 function retainDraft() {
   if (!editor || !documentUri) return;
-  void draft("write", { markdown: editor.getMarkdown(), pending_save: saveAttempt, pending_review: reviewAttempt, pending_apply: applyAttempt })
+  void draft("write", { markdown: editor.getMarkdown(), dirty, pending_save: saveAttempt, pending_review: reviewAttempt, pending_apply: applyAttempt })
     .then((result) => { if (!result.persistent) status("Draft retained in host memory; browser persistence is unavailable.", true); })
     .catch((error) => status(`Draft storage failed; keep this editor open. ${String(error)}`, true));
 }
@@ -165,7 +165,9 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
   const titleNode = document.querySelector<HTMLElement>("#document-title");
   if (titleNode) titleNode.textContent = String(doc.title ?? "Document");
   const stored = response.draft && typeof response.draft === "object" ? response.draft as Record<string, unknown> : {};
-  const content = typeof stored.markdown === "string" ? stored.markdown : markdown;
+  // A saved projection may differ textually after host Markdown normalization.
+  // Restore only actual unsaved drafts; pending review metadata remains valid.
+  const content = stored.dirty !== false && typeof stored.markdown === "string" ? stored.markdown : markdown;
   const pendingSave = stored.pending_save as SaveAttempt | undefined;
   saveAttempt = pendingSave?.document_uri === uri && pendingSave.expected_revision === revision &&
     typeof pendingSave.markdown === "string" && typeof pendingSave.operation_id === "string" ? pendingSave : undefined;
@@ -228,7 +230,7 @@ async function saveRevision() {
   const savedEditSequence = editSequence;
   saveAttempt ??= { document_uri: documentUri, expected_revision: revision, markdown: content, operation_id: operationId() };
   const attempt = saveAttempt;
-  await draft("write", { markdown: content, pending_save: attempt, pending_review: reviewAttempt });
+  await draft("write", { markdown: content, dirty, pending_save: attempt, pending_review: reviewAttempt });
   const result = structured(await rpc("tools/call", { name: "document.save", arguments: attempt }));
   documentUri = String(result.document_uri ?? "");
   markdownUri = String(result.markdown_uri ?? "");
@@ -239,7 +241,7 @@ async function saveRevision() {
     if (!reviewAttempt) reviewAttempt = { document_uri: documentUri, base_uri: attempt.document_uri, revision, diffs: [result.diff], operation_id: operationId() };
     else { reviewAttempt.document_uri = documentUri; reviewAttempt.revision = revision; reviewAttempt.diffs.push(result.diff); }
   }
-  await draft("write", { markdown: editor.getMarkdown(), pending_review: reviewAttempt });
+  await draft("write", { markdown: editor.getMarkdown(), dirty, pending_review: reviewAttempt });
   status(dirty ? `Saved revision ${revision}; newer local edits remain unsaved.` : `Saved immutable revision ${revision}`);
   return result;
   } finally { mutationBusy = false; updateButtons(); publishEditorStatus(); }
@@ -293,7 +295,7 @@ async function registerReview(closeAfter = false): Promise<boolean> {
       document_context: { document_uri: attempt.document_uri, revision: attempt.revision, block_ids: blockIds ?? [] },
     });
     reviewAttempt = undefined;
-    await draft("write", { markdown: editor?.getMarkdown() ?? "", pending_review: undefined });
+    await draft("write", { markdown: editor?.getMarkdown() ?? "", dirty, pending_review: undefined });
     if (closeAfter) {
       if (dirty || editSequence !== expectedEditSequence) {
         status("Review queued; newer edits remain unsaved. Save them before closing.", true);

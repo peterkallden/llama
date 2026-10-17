@@ -63,6 +63,21 @@ function app() {
 const opened = { document_uri: "resource://r1", id: "report", revision: 1, title: "Report", markdown: "# Report\n\n## Results\n\nOriginal.\n", document: {} };
 
 describe("document editor sandbox script", () => {
+  it("reopens host-normalized saved Markdown without reviving a clean draft as unsaved", async () => {
+    const view = app();
+    view.handle((request) => request.params?.name === "document.save" ? { structuredContent: {
+      document_uri: "resource://r2", revision: 2, diff: {},
+    } } : undefined);
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
+    view.Editor.current.edit("Changed\n\n");
+    view.node("#save").click(); await settle();
+    expect(view.drafts.get("resource://r2")?.dirty).toBe(false);
+    view.deliver("ui/notifications/tool-result", { structuredContent: {
+      ...opened, document_uri: "resource://r2", revision: 2, markdown: "Changed\n",
+    } }); await settle();
+    expect(view.Editor.current.getMarkdown()).toBe("Changed\n");
+    expect(view.node("#status").textContent).not.toContain("local draft restored");
+  });
   it("restores a host draft from the UI extension's plain RPC result", async () => {
     const view = app();
     view.drafts.set(opened.document_uri, { markdown: "Restored local draft" });
