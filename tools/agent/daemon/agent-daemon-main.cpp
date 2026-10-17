@@ -181,7 +181,9 @@ bool inbound_auth_configuration_equal(
 
 bool tool_profile_equal(const common_tool_profile & left, const common_tool_profile & right) {
     if (left.id != right.id || left.description != right.description ||
-            left.enabled != right.enabled || left.include_capabilities != right.include_capabilities ||
+            left.enabled != right.enabled ||
+            left.include_all_configured_tools != right.include_all_configured_tools ||
+            left.include_capabilities != right.include_capabilities ||
             left.exclude_capabilities != right.exclude_capabilities ||
             left.allow_network != right.allow_network ||
             left.allow_policy_gated_writes != right.allow_policy_gated_writes ||

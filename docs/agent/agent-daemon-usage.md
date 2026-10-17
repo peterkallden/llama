@@ -535,9 +535,10 @@ bounded profile for explicit deliberate turns: it can inspect local resources,
 document tables, datasets, statistics and (when host network policy permits)
 web sources, but it does not include workspace writes, development execution
 or memory proposals. `research` keeps controller-owned acquisition and
-evidence progression. `all-configured` includes every currently
-catalogued native tool; network access, proposal-style writes, confirmation,
-scope and provider allowlists remain host-controlled.
+evidence progression. `all-configured` dynamically includes every enabled
+catalogued native tool, so new definitions need no separate profile-list
+change. Network access, proposal-style writes, confirmation, scope and
+provider allowlists remain host-controlled.
 
 The active profile is host-owned. A client may submit an objective, mode,
 resources and bounded limits, but it cannot select a profile or widen the

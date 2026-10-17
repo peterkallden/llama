@@ -471,6 +471,19 @@ int main() {
         return definition.name == "artifact.export";
     }));
 
+    const auto all_configured = catalog.load_profile("all-configured", error);
+    assert(error.empty());
+    assert(all_configured.size() == first.definitions_created.size());
+    assert(std::all_of(all_configured.begin(), all_configured.end(), [](const auto & definition) {
+        return definition.enabled;
+    }));
+    assert(std::any_of(all_configured.begin(), all_configured.end(), [](const auto & definition) {
+        return definition.name == "document.import";
+    }));
+    const auto * all_configured_profile = catalog.find_profile("all-configured");
+    assert(all_configured_profile && all_configured_profile->include_all_configured_tools);
+    assert(all_configured_profile->members.empty());
+
     common_tool_bootstrap_result second;
     assert(catalog.bootstrap("memory", second, error));
     assert(second.definitions_created.empty());

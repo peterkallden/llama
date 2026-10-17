@@ -529,6 +529,11 @@ network and policy-gated-write flags. The built-in profiles remain available,
 but custom profiles do not require a code change. Caller policy may narrow the
 resolved view; it cannot select a profile or expand it.
 
+`all-configured` is resolved dynamically from every enabled definition in the
+active tool catalog; it has no separately maintained tool-name list. Network,
+write, confirmation, scope and provider policies remain independent gates on
+whether each exposed tool may actually run.
+
 The daemon `ready` response includes a `tooling` diagnostic with the active
 profile, configured capabilities, resolved tool names and effective policy.
 Public turn requests that try to provide `tool_profile`, `allowed_tools`,

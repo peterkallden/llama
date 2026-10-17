@@ -379,6 +379,12 @@ common_tool_profile policy_profile(
 }
 
 std::vector<common_tool_profile> builtin_profiles() {
+    common_tool_profile all_configured;
+    all_configured.id = "all-configured";
+    all_configured.description = "All configured catalog tools, still subject to host policy and confirmation.";
+    all_configured.include_all_configured_tools = true;
+    all_configured.allow_network = true;
+    all_configured.allow_policy_gated_writes = true;
     return {
         policy_profile(profile("minimal", "Local deterministic utility tools.", {"math.calculate", "time.now"}), false, false),
         policy_profile(profile("semi-oracle", "Use for explicitly ruled small two-player placement games or one-variable linear equations: define/correct the session rules once; host-verify moves/rewrites, and call the host-owned bounded solver when asked to solve an equation. Not for arbitrary games or general math.", {"oracle.ruleset.define", "oracle.action.verify", "oracle.goal.search"}), false, false),
@@ -387,7 +393,7 @@ std::vector<common_tool_profile> builtin_profiles() {
         policy_profile(profile("analysis", "Bounded deliberate inspection, user-requested export and host-verified semi-oracle reasoning.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "plan.get", "repository.search", "repository.read", "repository.list", "resource.inspect", "resource.read", "document.tables", "document.table", "document.open", "document.import", "document.save", "document.propose_patch", "document.apply_patch", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "web.search", "web.fetch", "openapi.connect", "oracle.ruleset.define", "oracle.action.verify", "oracle.goal.search"}), true, true),
         policy_profile(profile("research", "Memory profile with host-owned acquisition, bounded analysis and semi-oracle verification.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "memory.remember", "plan.get", "plan.propose", "repository.search", "repository.read", "repository.list", "repository.diff", "resource.inspect", "resource.read", "document.tables", "document.table", "document.open", "document.import", "document.save", "document.propose_patch", "document.apply_patch", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "web.search", "web.fetch", "openapi.connect", "oracle.ruleset.define", "oracle.action.verify", "oracle.goal.search"}), true, true),
         policy_profile(profile("developer-read", "Read-only workspace, repository and resource inspection tools.", {"math.calculate", "time.now", "repository.list", "repository.search", "repository.read", "repository.diff", "repository.log", "repository.status", "repository.changed_files", "workspace.list", "workspace.read", "workspace.search", "diagnostics.symbol", "diagnostics.references", "diagnostics.call_hierarchy", "diagnostics.native_crash", "resource.inspect", "resource.read", "document.tables", "document.table"}), false, false),
-        policy_profile(profile("all-configured", "All catalogued tools, still subject to host policy and confirmation.", {"math.calculate", "time.now", "memory.search", "memory.get", "memory.inspect", "memory.conflict_check", "memory.remember", "memory.propose_update", "memory.propose_forget", "memory.link", "memory.compact_propose", "plan.get", "plan.propose", "repository.list", "repository.search", "repository.read", "repository.diff", "repository.log", "repository.status", "repository.changed_files", "workspace.list", "workspace.read", "workspace.search", "workspace.patch", "development.build", "development.test", "diagnostics.compile", "diagnostics.symbol", "diagnostics.references", "diagnostics.call_hierarchy", "diagnostics.test_failures", "diagnostics.format", "diagnostics.include_graph", "diagnostics.native_crash", "dataset.list", "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate", "data.query", "data.filter", "data.aggregate", "data.join", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts", "artifact.export", "resource.inspect", "resource.read", "document.tables", "document.table", "web.search", "web.fetch", "openapi.connect"}), true, true),
+        all_configured,
     };
 }
 
@@ -527,6 +533,12 @@ bool common_tool_catalog::resolve_profile(
     snapshot.allow_network = profile->allow_network;
     snapshot.allow_policy_gated_writes = profile->allow_policy_gated_writes;
     std::vector<common_tool_definition> loaded;
+    if (profile->include_all_configured_tools) {
+        for (const auto & entry : definitions) {
+            const auto & definition = entry.second;
+            if (definition.enabled) loaded.push_back(definition);
+        }
+    }
     for (const auto & member : profile->members) {
         if (!member.enabled) continue;
         const auto * definition = find_definition(member.tool_name, member.tool_version);
