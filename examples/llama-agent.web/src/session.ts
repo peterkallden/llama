@@ -154,6 +154,7 @@ function observe(event: AgentEvent) {
   if (event.session_id && event.session_id !== sessionId.value) return;
   const kind = eventType(event);
   const turnId = String(event.turn_id ?? activeTurnId.value);
+  if (event.turn_id && turnId !== activeTurnId.value && kind.startsWith("turn.")) return;
   const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
   if (kind === "response.delta" && assistant) assistant.content += String(event.text ?? event.response ?? "");
   if (kind === "turn.completed" && assistant && typeof event.response === "string") assistant.content = event.response;
@@ -339,6 +340,7 @@ async function submitReview(prompt: string, documentContext: NonNullable<TurnReq
 
 async function drainDocumentReviews() {
   if (disposed || drainingDocumentReviews || busy.value || turnRequestInFlight) return;
+  const drainEpoch = sessionEpoch;
   const item = documentReviews.value.find((review) => review.state === "queued" && review.session_id === sessionId.value);
   if (!item) {
     const queuedTurn = pendingUserTurns.value.find((turn) => turn.state === "queued" && turn.session_id === sessionId.value);
@@ -350,6 +352,7 @@ async function drainDocumentReviews() {
       const sent = await submit(queuedTurn.prompt, [], false, queuedTurn.document_context,
         queuedTurn.turn_id, queuedTurn.resource_refs, queuedTurn.display_prompt,
         Boolean(queuedTurn.attachment_orientation));
+      if (drainEpoch !== sessionEpoch) return;
       if (sent) {
         pendingUserTurns.value = pendingUserTurns.value.filter((turn) => turn.turn_id !== queuedTurn.turn_id);
       } else {
@@ -359,10 +362,10 @@ async function drainDocumentReviews() {
         if (assistant) { assistant.pending = false; assistant.content = `Queued message failed: ${queuedTurn.error}`; }
       }
     } finally {
-      persistPendingUserTurns();
-      drainingDocumentReviews = false;
-      if (!busy.value && pendingUserTurns.value.some((turn) => turn.state === "queued" && turn.session_id === sessionId.value)) {
-        void drainDocumentReviews();
+      if (drainEpoch === sessionEpoch) {
+        persistPendingUserTurns();
+        drainingDocumentReviews = false;
+        if (!busy.value) void drainDocumentReviews();
       }
     }
     return;
@@ -371,19 +374,24 @@ async function drainDocumentReviews() {
   item.state = "running"; item.error = undefined; persistDocumentReviews();
   try {
     await submit(item.prompt, [item.document_context.document_uri], true, item.document_context, item.turn_id);
+    if (drainEpoch !== sessionEpoch) return;
     item.state = error.value ? "failed" : "completed";
     if (item.state === "failed") item.error = error.value;
   } catch (cause) {
+    if (drainEpoch !== sessionEpoch) return;
     item.state = "failed"; item.error = cause instanceof Error ? cause.message : String(cause);
   } finally {
-    drainingDocumentReviews = false;
-    persistDocumentReviews();
-    if (!busy.value) void drainDocumentReviews();
+    if (drainEpoch === sessionEpoch) {
+      drainingDocumentReviews = false;
+      persistDocumentReviews();
+      if (!busy.value) void drainDocumentReviews();
+    }
   }
 }
 
 async function drainAttachmentOrientations() {
   if (disposed || attachmentOrientationTimer !== undefined || drainingDocumentReviews || busy.value || turnRequestInFlight) return;
+  const drainEpoch = sessionEpoch;
   const item = attachmentOrientations.value.find((orientation) => orientation.state === "queued" && orientation.session_id === sessionId.value);
   if (!item) return;
   drainingDocumentReviews = true;
@@ -391,17 +399,21 @@ async function drainAttachmentOrientations() {
   try {
     const prompt = "Orient me to the attached file. Give a short overview of its subject and structure, explain any extraction or coverage limitations, do not edit it or search externally, and ask what I would like to do next.";
     await submit(prompt, [], true, undefined, item.turn_id, [item.resource_uri], `Initial orientation: ${item.name}`, true);
+    if (drainEpoch !== sessionEpoch) return;
     item.state = error.value ? "failed" : "completed";
     if (item.state === "failed") item.error = error.value;
   } catch (cause) {
+    if (drainEpoch !== sessionEpoch) return;
     item.state = "failed";
     item.error = cause instanceof Error ? cause.message : String(cause);
     const assistant = messages.value.find((message) => message.turnId === item.turn_id && message.role === "assistant");
     if (assistant) assistant.content = `I couldn't create an initial orientation for ${item.name}: ${item.error}`;
   } finally {
-    drainingDocumentReviews = false;
-    persistAttachmentOrientations();
-    if (!busy.value) void drainDocumentReviews();
+    if (drainEpoch === sessionEpoch) {
+      drainingDocumentReviews = false;
+      persistAttachmentOrientations();
+      if (!busy.value) void drainDocumentReviews();
+    }
   }
 }
 
@@ -554,6 +566,7 @@ async function downloadArtifact(event: AgentEvent) {
 
 function newSession() {
   sessionEpoch++;
+  drainingDocumentReviews = false;
   turnRequestController?.abort();
   turnRequestController = null;
   turnRequestInFlight = false;

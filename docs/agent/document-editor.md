@@ -128,6 +128,13 @@ remain visible with their original request context and can be retried. Starting
 a new session invalidates in-flight browser callbacks so they cannot mutate the
 new session's attachments or queue.
 
+Queue draining is also bound to the session epoch: a late review, orientation,
+or queued-chat completion cannot release a newer session's queue lock or write
+its stored queue. After each queued chat completes, pending reviews and
+attachment orientations are reconsidered, even when no further chat is queued.
+Turn lifecycle events for a different turn ID do not change the current turn's
+busy or error state; the events remain available in the event log.
+
 Changed blocks are marked as user-authored and unreviewed. Their old evidence
 references may remain for navigation, but they do not confer support on the
 changed text. Unchanged blocks preserve their provenance and review status.

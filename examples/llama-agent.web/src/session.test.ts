@@ -208,6 +208,53 @@ it("cancels a queued orientation when its attachment is removed", async () => {
   expect(transport.calls).toHaveLength(0);
 });
 
+it("dispatches a review queued during a queued chat turn", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const first = session.submit("first");
+  await session.submit("second");
+  transport.replies[0]({ ok: true, response: "first done" });
+  await first;
+  expect(transport.calls).toHaveLength(2);
+  await session.submitReview("review", { document_uri: "resource://doc", revision: 1, block_ids: [] }, "later-review");
+  transport.replies[1]({ ok: true, response: "second done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(transport.calls).toHaveLength(3);
+  expect(transport.calls[2].turn_id).toBe("later-review");
+  transport.replies[2]({ ok: true, response: "review done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+});
+
+it("isolates a draining review from a new session and ignores unrelated turn events", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  void session.connect();
+  await session.submitReview("old review", { document_uri: "resource://old", revision: 1, block_ids: [] }, "old-review");
+  session.newSession();
+  await session.submitReview("new review", { document_uri: "resource://new", revision: 1, block_ids: [] }, "new-review");
+  expect(transport.calls).toHaveLength(2);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.documentReviews[0].state).toBe("running");
+  expect(session.busy).toBe(true);
+  transport.sink({ event_type: "turn.failed", session_id: session.sessionId, turn_id: "old-review", error: "stale" });
+  expect(session.error).toBe("");
+  transport.replies[1]({ ok: true, response: "review done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.documentReviews[0].state).toBe("completed");
+  transport.sink({ event_type: "turn.started", session_id: session.sessionId, turn_id: "old-review" });
+  expect(session.busy).toBe(false);
+});
+
 it("waits for the active HTTP turn before dispatching a queued review, despite an earlier SSE completion", async () => {
   transport.calls.length = 0;
   transport.replies.length = 0;
