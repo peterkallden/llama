@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 import { invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { DocumentEditorAccess } from "./document-editor-access";
 
 const props = defineProps<{
   tool: DaemonToolStatus;
@@ -22,6 +23,7 @@ const appVisible = computed(() => (props.tool._meta?.ui?.visibility ?? []).inclu
 let initialized = false;
 let initializeAccepted = false;
 let lastInvocationSignature = "";
+let documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
 
 function unwrap(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object") return {};
@@ -44,6 +46,7 @@ async function load() {
   initialized = false; initializeAccepted = false; proxyUrl.value = ""; error.value = "";
   busy.value = false; appMessage.value = "";
   lastInvocationSignature = "";
+  documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
   pendingHtml = ""; pendingCsp = {};
   if (!uri.value || !appVisible.value) { error.value = "This tool does not advertise an app-visible UI resource."; return; }
   busy.value = true;
@@ -80,7 +83,15 @@ function publishInvocation() {
   const signature = JSON.stringify(props.invocation);
   if (!signature || signature === lastInvocationSignature) return;
   lastInvocationSignature = signature;
-  for (const notification of invocationNotifications(props.invocation)) send(notification);
+  for (const notification of invocationNotifications(props.invocation)) {
+    if (notification.method === "ui/notifications/tool-result" && uri.value === "ui://llama-agent/apps/document-editor") {
+      const params = notification.params as Record<string, unknown>;
+      if (!params.isError && params.structuredContent && typeof params.structuredContent === "object") {
+        documentAccess.observe("document.open", props.invocation.input ?? {}, params.structuredContent as Record<string, unknown>);
+      }
+    }
+    send(notification);
+  }
 }
 
 async function onMessage(event: MessageEvent) {
@@ -135,21 +146,31 @@ async function onMessage(event: MessageEvent) {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
-    reply({});
     if (typeof content.text === "string" && uri.value === "ui://llama-agent/apps/document-editor") {
       const matches = [...content.text.matchAll(/Document resource: (\S+)/g)];
       const refs = matches.map((match) => match[1]);
-      void props.submitReview?.(content.text, refs);
+      try {
+        if (!props.submitReview) throw new Error("Agent review is unavailable in this host.");
+        await props.submitReview(content.text, refs);
+        reply({});
+      } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
+    } else {
+      reply({});
     }
     return;
   }
   if (method === "ui/open-link") { reply({ opened: false, message: "Links are not opened automatically by this host." }); return; }
   try {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
-    if (method === "tools/list") {
+    if (method === "ui/llama-agent/document-draft") {
+      if (uri.value !== "ui://llama-agent/apps/document-editor") throw new Error("Draft storage is reserved for the first-party editor.");
+      let storage: Storage | undefined;
+      try { storage = window.localStorage; } catch { /* host can still retain drafts in memory */ }
+      reply(documentAccess.draft(params, storage));
+    } else if (method === "tools/list") {
       const listed = props.tools.filter((tool) => tool.provider_id === props.tool.provider_id &&
         (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
-        (tool._meta?.ui?.visibility ?? []).includes("app"));
+        (tool._meta?.ui?.visibility ?? []).includes("app") && tool._meta?.ui?.resourceUri === uri.value);
       reply({ tools: listed.map((tool) => ({
         name: tool.server_tool_name || tool.name,
         description: tool.description ?? "",
@@ -163,14 +184,19 @@ async function onMessage(event: MessageEvent) {
         ? params.arguments as Record<string, unknown> : {};
       const exposed = props.tools.find((tool) => tool.provider_id === props.tool.provider_id &&
         (tool.server_tool_name || tool.name) === name && (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
-        (tool._meta?.ui?.visibility ?? []).includes("app"));
+        (tool._meta?.ui?.visibility ?? []).includes("app") && tool._meta?.ui?.resourceUri === uri.value);
       if (!exposed) {
         reply({ isError: true, content: [{ type: "text", text: "The requested tool is not host-authorized for this app." }] });
       } else {
         try {
+          if (uri.value === "ui://llama-agent/apps/document-editor") documentAccess.authorize(name, args);
           const result = toolEnvelope(await props.callTool(props.tool.name, name, args));
           const failed = result.ok === false || Boolean(result.error);
           const errorInfo = result.error && typeof result.error === "object" ? result.error as Record<string, unknown> : {};
+          if (!failed && uri.value === "ui://llama-agent/apps/document-editor" && result.structured_content && typeof result.structured_content === "object" &&
+              isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) {
+            documentAccess.observe(name, args, result.structured_content as Record<string, unknown>);
+          }
           reply({
             isError: failed,
             ...(result.structured_content !== undefined ? { structuredContent: result.structured_content } : {}),

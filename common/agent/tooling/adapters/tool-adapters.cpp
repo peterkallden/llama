@@ -702,6 +702,10 @@ common_tool_execution_result export_plan_report(
             if(prior_format==format){verified_same_snapshot_manifest=manifest;verified_same_snapshot_manifest_uri=candidate.uri;}
         }
     }
+    uint64_t current_revision=0;std::string current_document_uri;
+    if(!common_adapter_document_current_revision(bindings,report_id,current_document_uri,current_revision,error))
+        return tool_execution_failure("tool.artifact.export.revision_index_failed",std::move(error),"The current edited report revision could not be verified.");
+    if(current_revision>latest_revision){latest_revision=current_revision;latest_report_uri=current_document_uri;}
     if(!same_snapshot&&latest_revision>0){document.revision=latest_revision+1;document.previous_revision_uri=latest_report_uri;}
     std::string document_json,markdown;
     if(!common_agent_artifact_document_to_json(document,document_json,error)||!common_agent_artifact_render_markdown(document,markdown,error))

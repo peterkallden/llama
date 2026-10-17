@@ -17,11 +17,15 @@ const thirdParty = [
 const noticeHtml = (await Promise.all(thirdParty.map(async ([title, path]) =>
   `<details><summary>${escapeHtml(title)}</summary><pre>${escapeHtml(await readFile(path, "utf8"))}</pre></details>`))).join("");
 if (!template.includes("__LLAMA_AGENT_DOCUMENT_EDITOR_BUNDLE__") || !template.includes("__LLAMA_AGENT_DOCUMENT_EDITOR_CSS__") || !template.includes("__LLAMA_AGENT_THIRD_PARTY_NOTICES__")) throw new Error("document app template is missing a bundle marker");
-const html = template.replace("__LLAMA_AGENT_THIRD_PARTY_NOTICES__", noticeHtml).replace("__LLAMA_AGENT_DOCUMENT_EDITOR_CSS__", css).replace("__LLAMA_AGENT_DOCUMENT_EDITOR_BUNDLE__", bundle);
+const inlineBundle = bundle.replace(/<\/script/gi, "<\\/script");
+const html = template.replace("__LLAMA_AGENT_THIRD_PARTY_NOTICES__", () => noticeHtml).replace("__LLAMA_AGENT_DOCUMENT_EDITOR_CSS__", () => css).replace("__LLAMA_AGENT_DOCUMENT_EDITOR_BUNDLE__", () => inlineBundle);
 const bytes = Buffer.from(html, "utf8");
+if (bytes.length > 2 * 1024 * 1024) throw new Error("document editor exceeds the MCP App host's 2 MiB limit");
+await writeFile(resolve(root, "dist/document-editor.html"), html, "utf8");
 let literal = '"';
 for (const byte of bytes) {
   if (byte === 0x22) literal += '\\"';
+  else if (byte === 0x3f) literal += '\\?';
   else if (byte === 0x5c) literal += '\\\\';
   else if (byte === 0x0a) literal += '\\n';
   else if (byte === 0x0d) literal += '\\r';

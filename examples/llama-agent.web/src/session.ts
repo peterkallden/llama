@@ -121,7 +121,11 @@ async function connect() {
   }
 }
 
-async function submit(prompt: string, additionalResourceRefs: string[] = []) {
+async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false) {
+  if (busy.value) {
+    if (propagateFailure) throw new Error("An agent turn is already running. Retry the review when it finishes.");
+    return;
+  }
   error.value = ""; busy.value = true;
   const turnId = crypto.randomUUID();
   activeTurnId.value = turnId;
@@ -137,7 +141,10 @@ async function submit(prompt: string, additionalResourceRefs: string[] = []) {
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant) assistant.pending = false;
-    if (result.ok === false) error.value = result.error || "Turn failed";
+    if (result.ok === false) {
+      error.value = result.error || "Turn failed";
+      if (propagateFailure) throw new Error(error.value);
+    }
     busy.value = false;
     activeTurnId.value = "";
   } catch (cause) {
@@ -145,7 +152,12 @@ async function submit(prompt: string, additionalResourceRefs: string[] = []) {
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
     error.value = cause instanceof Error ? cause.message : String(cause);
+    if (propagateFailure) throw cause;
   }
+}
+
+async function submitReview(prompt: string, resourceRefs: string[]) {
+  await submit(prompt, resourceRefs, true);
 }
 
 async function cancel() {
@@ -268,5 +280,5 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, callReadOnlyTool, readMcpAppResource, callMcpAppTool, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, submitReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

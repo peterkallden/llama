@@ -21,7 +21,8 @@
 
 class test_resource_store final : public agent_resource_store {
 public:
-    bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string &) override {
+    bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string & error) override {
+        if(!fail_mime.empty()&&request.mime_type==fail_mime){error="injected publication failure";return false;}
         last_request = request;
         requests.push_back(request);
         out.uri = "resource://test/" + request.name;
@@ -78,6 +79,7 @@ public:
         out.clear();for(const auto & item:resources)out.push_back(item.second);return true;
     }
     agent_resource_put_request last_request;
+    std::string fail_mime;
     std::vector<agent_resource_put_request> requests;
     std::set<std::string> available_uris;
     std::map<std::string,agent_resource_descriptor> resources;
@@ -823,6 +825,79 @@ int main() {
     auto conflict_args=save_args;conflict_args["operation_id"]="adapter-test-save-conflict";
     result=foundation_registry.execute({"document.save",conflict_args.dump()});
     assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    // An unchanged legacy revision is a no-op, but still reserves its operation
+    // ID so a retry cannot silently substitute a different payload.
+    auto install_editor_fixture=[&](const std::string & id){
+        auto fixture=legacy_report;fixture["id"]=id;fixture["revision"]=1;fixture["schema_version"]=1;fixture.erase("content_fingerprint");
+        agent_resource_put_request put;put.name=id+".json";put.mime_type="application/vnd.llama-agent.report+json";put.text=fixture.dump();
+        agent_resource_descriptor resource;std::string error;
+        assert(foundation_resources.put_text(put,resource,error));
+        return resource.uri;
+    };
+    const auto no_op_uri=install_editor_fixture("report-no-op");
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",no_op_uri}}.dump()});assert(result.ok);
+    auto no_op_args=nlohmann::json{{"document_uri",no_op_uri},{"expected_revision",1},
+        {"markdown",nlohmann::json::parse(result.output)["markdown"]},{"operation_id","unchanged-save"}};
+    result=foundation_registry.execute({"document.save",no_op_args.dump()});assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==1);
+    const auto no_op_fingerprint=nlohmann::json::parse(result.output)["content_fingerprint"];
+    result=foundation_registry.execute({"document.save",no_op_args.dump()});assert(result.ok);
+    assert(nlohmann::json::parse(result.output)["content_fingerprint"]==no_op_fingerprint);
+    auto changed_no_op=no_op_args;changed_no_op["markdown"]=no_op_args["markdown"].get<std::string>()+"\n## New section\n\nChanged.\n";
+    result=foundation_registry.execute({"document.save",changed_no_op.dump()});assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+
+    // A report resource written before its operation/head is not a published
+    // revision. Retrying from the original base remains possible.
+    for(const auto * failing_mime:{"application/vnd.llama-agent.document-operation+json","application/vnd.llama-agent.document-head+json"}){
+        const auto interrupted_uri=install_editor_fixture(std::string(failing_mime).find("head")!=std::string::npos?"report-head-failure":"report-operation-failure");
+        auto interrupted_args=changed_no_op;interrupted_args["document_uri"]=interrupted_uri;interrupted_args["operation_id"]="interrupted-save";
+        foundation_resources.fail_mime=failing_mime;
+        result=foundation_registry.execute({"document.save",interrupted_args.dump()});assert(!result.ok);
+        foundation_resources.fail_mime.clear();
+        result=foundation_registry.execute({"document.save",interrupted_args.dump()});
+        assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==2);
+    }
+
+    const auto large_uri=install_editor_fixture("report-large-proposal");
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",large_uri}}.dump()});assert(result.ok);
+    const auto large_markdown=nlohmann::json::parse(result.output)["markdown"].get<std::string>()+"\n## Long clarification\n\n"+std::string(70000,'a')+"\n";
+    result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",large_uri},{"expected_revision",1},{"markdown",large_markdown},{"summary","Large but bounded clarification."}}.dump()});assert(result.ok);
+    const auto large_proposal=nlohmann::json::parse(result.output);assert(large_proposal.contains("diff"));
+    result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",large_uri},{"expected_revision",1},
+        {"proposal_uri",large_proposal["proposal_uri"]},{"operation_id","large-proposal-apply"}}.dump()});assert(result.ok);
+    const auto large_saved_uri=nlohmann::json::parse(result.output)["document_uri"].get<std::string>();
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",large_saved_uri}}.dump()});assert(result.ok);
+    const auto large_opened=nlohmann::json::parse(result.output);
+    assert(large_opened["document"]["sections"].back()["blocks"][0]["author"]=="model");
+    assert(large_opened["document"]["sections"].back()["blocks"][0]["review_state"]=="unreviewed");
+    const auto & target_section=large_opened["document"]["sections"].back();
+    auto block_proposal=nlohmann::json{{"document_uri",large_saved_uri},{"expected_revision",2},
+        {"section_id",target_section["id"]},{"block_id",target_section["blocks"][0]["id"]},
+        {"text","A bounded replacement."},{"summary","Replace only the selected block."}};
+    result=foundation_registry.execute({"document.propose_patch",block_proposal.dump()});assert(result.ok);
+    auto unknown_block=block_proposal;unknown_block["block_id"]="not-a-report-block";
+    result=foundation_registry.execute({"document.propose_patch",unknown_block.dump()});assert(!result.ok);
+    auto escaping_block=block_proposal;escaping_block["text"]="Changed.\n\n## Another section\n\nUnrelated content.";
+    result=foundation_registry.execute({"document.propose_patch",escaping_block.dump()});assert(!result.ok);
+    // A newer report composition supersedes an earlier editor head. Further
+    // edits must continue its revision rather than becoming permanently stale.
+    auto recomposed_json=nlohmann::json::parse(foundation_resources.contents.at(large_saved_uri));
+    recomposed_json["revision"]=3;recomposed_json["editor_parent_uri"]="";recomposed_json["editor_operation_id"]="";recomposed_json["editor_markdown_uri"]="";
+    common_agent_artifact_document recomposed;std::string recomposition_error,recomposed_markdown,recomposed_editable;
+    assert(common_agent_artifact_document_from_json(recomposed_json.dump(),recomposed,recomposition_error));
+    assert(common_agent_artifact_render_markdown(recomposed,recomposed_markdown,recomposition_error));
+    assert(common_agent_artifact_render_editable_markdown(recomposed,recomposed_editable,recomposition_error));
+    auto publish_fixture=[&](const std::string & name,const std::string & mime,const std::string & text,const std::string & key){
+        agent_resource_put_request put;put.name=name;put.mime_type=mime;put.text=text;put.metadata.processing_cache_key=key;
+        agent_resource_descriptor resource;assert(foundation_resources.put_text(put,resource,recomposition_error));return resource.uri;
+    };
+    const auto recomposed_uri=publish_fixture("recomposed-r3.json","application/vnd.llama-agent.report+json",recomposed_json.dump(),"");
+    const auto recomposed_md_uri=publish_fixture("recomposed-r3.md","text/markdown",recomposed_markdown,"");
+    publish_fixture("recomposed-r3-manifest.json","application/json",nlohmann::json{{"report_id",recomposed.id},{"revision",3},
+        {"report_resource",recomposed_uri},{"markdown_resource",recomposed_md_uri},{"resource",recomposed_md_uri},
+        {"snapshot_fingerprint",recomposed.snapshot_fingerprint}}.dump(),"artifact-export:"+recomposed.id+":r3:fixture:manifest");
+    result=foundation_registry.execute({"document.save",nlohmann::json{{"document_uri",recomposed_uri},{"expected_revision",3},
+        {"markdown",recomposed_editable+"\n## After recomposition\n\nAnother edit.\n"},{"operation_id","after-recomposition"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==4);
     result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})}}.dump()});
     assert(result.ok&&nlohmann::json::parse(result.output).value("markdown",std::string{}).find("User-edited report text.")!=std::string::npos);
     result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_document.value("document_uri",std::string{})},{"format","markdown"}}.dump()});
