@@ -69,6 +69,9 @@ struct common_agent_runtime_session_host_turn_request {
         std::string document_uri;
         uint64_t revision = 0;
         std::vector<std::string> block_ids;
+        // Optional earlier immutable revision of the same document for review.
+        // The host authorizes and reads it; comparison text is never a prompt argument.
+        std::string base_document_uri;
     };
     // Typed editor binding. The daemon validates its shape; the session host
     // re-authorizes the resource and checks the immutable revision/block IDs.

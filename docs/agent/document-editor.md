@@ -97,6 +97,18 @@ changes the document. The user must accept it in the editor, which invokes
 `document.apply_patch` against the expected current revision. Stale proposals
 are rejected and must be reviewed again. Accepting a proposal is not a factual
 verification verdict.
+
+The typed review binding optionally includes `base_document_uri`. The session
+host re-authorizes that resource, checks that it is an earlier revision of the
+same document, and renders both revisions into the scoped Markdown reading
+resource. The initial prompt contains the review task, not accumulated JSON
+diff previews. The comparison follows the existing chunk and full-coverage
+requirements. Its fingerprint identifies the actual projection content, while
+metadata retains the source revisions and selected blocks. Complete-document
+selection uses an empty block-ID list; partial selections allow up to 128 IDs.
+Queue persistence must succeed before the editor is told that review has been
+registered. A browser storage failure leaves its pending review available for
+retry in the open editor.
 Review context retains document order and the selected flag on adjacent selected
 blocks. It includes the immutable document URI, revision, section IDs and block
 IDs needed for bounded patch proposals. The first-party host checks the review

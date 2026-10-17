@@ -22,6 +22,7 @@ const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
 const activeAppTool = ref("");
 const documentMode = ref(false);
 const chatSending = ref(false);
+const workspaceNavigating = ref(false);
 const documentStatus = ref<{ title: string; revision: number; dirty: boolean; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
 const editorHost = ref<InstanceType<typeof McpAppHost> | null>(null);
 const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string; web: boolean; status: boolean; events: boolean } | null>(null);
@@ -62,7 +63,13 @@ watch(() => session.events[0], (event) => {
   }
 }, { flush: "sync" });
 
-watch(() => session.sessionId, () => { localDocumentEvent.value = undefined; });
+watch(() => session.sessionId, () => {
+  localDocumentEvent.value = undefined;
+  restoreDocumentMode();
+  activeView.value = "chat";
+  activeAppTool.value = "";
+  attachmentEditorError.value = "";
+});
 
 const connectionLabel = {
   connecting: "connecting",
@@ -90,18 +97,19 @@ async function send() {
   if ((!value && !session.selectedResourceRefs.length) || chatSending.value) return;
   chatSending.value = true;
   const sendingSession = session.sessionId;
+  const sendingResources = [...session.selectedResourceRefs];
   try {
     if (documentMode.value && !editorHost.value) throw new Error("The document editor is not ready. Your message is preserved.");
     const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
     if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
     const sent = await session.submit(value || "Please process the attached audio.", [], false, context,
-      undefined, session.selectedResourceRefs, undefined);
-    if (sent) {
+      undefined, sendingResources, undefined);
+    if (sent && session.sessionId === sendingSession) {
       if (prompt.value === draftAtSubmit) prompt.value = "";
-      session.selectedResourceRefs = [];
+      session.selectedResourceRefs = session.selectedResourceRefs.filter((uri) => !sendingResources.includes(uri));
     }
   } catch (cause) {
-    session.error = cause instanceof Error ? cause.message : String(cause);
+    if (session.sessionId === sendingSession) session.error = cause instanceof Error ? cause.message : String(cause);
   } finally { chatSending.value = false; }
 }
 
@@ -126,26 +134,40 @@ function restoreDocumentMode() {
 }
 
 async function navigateWorkspace(view: typeof activeView.value, appKey = "") {
-  if (documentMode.value) {
-    try { await editorHost.value?.closeDocument(); }
-    catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
-    restoreDocumentMode();
-  }
-  activeView.value = view;
-  if (appKey) activeAppTool.value = appKey;
+  if (workspaceNavigating.value) return;
+  workspaceNavigating.value = true;
+  try {
+    if (documentMode.value) {
+      try {
+        if (!editorHost.value) throw new Error("The document editor is not ready to save and close.");
+        await editorHost.value.closeDocument();
+      }
+      catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
+      restoreDocumentMode();
+    }
+    activeView.value = view;
+    if (appKey) activeAppTool.value = appKey;
+  } finally { workspaceNavigating.value = false; }
 }
 
 async function startNewSession() {
-  if (documentMode.value) {
-    try { await editorHost.value?.closeDocument(); }
-    catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
-    restoreDocumentMode();
-  }
-  if (session.busy || session.documentReviews.some((item) => item.state !== "completed")) {
-    session.error = "The current session still has an active turn or document review. It will remain available here; start a new session after it finishes.";
-    return;
-  }
-  session.newSession();
+  if (workspaceNavigating.value) return;
+  workspaceNavigating.value = true;
+  try {
+    if (documentMode.value) {
+      try {
+        if (!editorHost.value) throw new Error("The document editor is not ready to save and close.");
+        await editorHost.value.closeDocument();
+      }
+      catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
+      restoreDocumentMode();
+    }
+    if (session.busy || session.documentReviews.some((item) => item.state !== "completed")) {
+      session.error = "The current session still has an active turn or document review. It will remain available here; start a new session after it finishes.";
+      return;
+    }
+    session.newSession();
+  } finally { workspaceNavigating.value = false; }
 }
 
 function onDocumentClosed() { restoreDocumentMode(); }
@@ -167,10 +189,16 @@ async function openAttachmentInEditor(file: (typeof session.attachments)[number]
     return;
   }
   const sourceUri = file.uri;
-  if (openingAttachmentUri.value) return;
+  if (openingAttachmentUri.value || workspaceNavigating.value) return;
   openingAttachmentUri.value = sourceUri;
   const importingSession = session.sessionId;
   try {
+    if (documentMode.value) {
+      if (!editorHost.value) throw new Error("The document editor is not ready to save and close.");
+      await editorHost.value.closeDocument();
+      if (session.sessionId !== importingSession) return;
+      restoreDocumentMode();
+    }
     const imported = structuredToolResult(await session.importDocument(sourceUri));
     if (session.sessionId !== importingSession) return;
     const documentUri = String(imported.document_uri ?? "");
@@ -188,7 +216,7 @@ async function openAttachmentInEditor(file: (typeof session.attachments)[number]
     enterDocumentMode();
     activeAppTool.value = mcpAppKey(openTool);
   } catch (cause) {
-    attachmentEditorError.value = cause instanceof Error ? cause.message : String(cause);
+    if (session.sessionId === importingSession) attachmentEditorError.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     if (openingAttachmentUri.value === sourceUri) openingAttachmentUri.value = "";
   }

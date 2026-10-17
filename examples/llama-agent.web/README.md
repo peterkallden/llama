@@ -18,6 +18,13 @@ transport framing changes from JSONL to SSE. SSE is connected with `fetch`
 instead of `EventSource`, so a bearer token can be sent in the
 `Authorization` header.
 
+The adapter sends an initial SSE comment immediately, followed by events and
+heartbeats. Reconnect callbacks are tied to the active connection so an older
+stream cannot reset a newer connection's status. Daemon JSONL responses are
+read in buffered blocks; the response bound includes JSON escaping overhead
+for configured downloads and bundled MCP Apps. Turn generation limits come
+from the daemon configuration rather than a fixed browser token limit.
+
 Text attachments use the existing `text` field. Binary attachments use the
 existing byte-oriented resource-store path and are sent as bounded
 `bytes_base64` JSONL payloads. The daemon applies the same 1 MiB resource
@@ -203,3 +210,16 @@ acceptance in the editor. Starting a new session is blocked while a turn or
 document review is pending so the session-bound review queue cannot be orphaned.
 Development hot reload closes the previous session module's SSE connection;
 otherwise repeated edits can leave stale streams occupying browser connections.
+
+Queue registration succeeds only after browser storage accepts the entry. A
+storage failure keeps the document open or the chat draft intact. Uploads and
+audio recordings retain their originating session; late results cannot attach
+files to a different session. Selecting another document first completes the
+current editor's save-and-close flow.
+
+Review requests carry `document_context.base_document_uri` alongside the saved
+revision. The host authorizes both revisions of the same document and makes
+their Markdown comparison available through the normal resource/chunk path.
+Diff previews are not accumulated in the browser or embedded in model prompts.
+Selecting the complete document sends an empty block-ID list, which means all
+blocks; partial selections are limited to 128 blocks.

@@ -442,6 +442,14 @@ bool parse_agent_daemon_turn_request(
         common_agent_runtime_session_host_turn_request::document_context_binding parsed_binding;
         parsed_binding.document_uri = binding["document_uri"].get<std::string>();
         parsed_binding.revision = binding["revision"].get<uint64_t>();
+        if (binding.contains("base_document_uri")) {
+            if (!binding["base_document_uri"].is_string() || binding["base_document_uri"].get<std::string>().empty() ||
+                    binding["base_document_uri"].get<std::string>().size() > 512) {
+                error = "document_context.base_document_uri must be a non-empty bounded resource reference";
+                return false;
+            }
+            parsed_binding.base_document_uri = binding["base_document_uri"].get<std::string>();
+        }
         for (const auto & id : binding["block_ids"]) {
             if (!id.is_string() || id.get<std::string>().empty() || id.get<std::string>().size() > 256) {
                 error = "document_context.block_ids must contain non-empty bounded strings";

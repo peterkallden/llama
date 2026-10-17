@@ -10,7 +10,7 @@ const props = defineProps<{
   sessionId: string;
   readResource: (toolName: string, uri: string) => Promise<unknown>;
   callTool: (appTool: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
-  submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[] }, operationId?: string) => Promise<unknown>;
+  submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[]; base_document_uri?: string }, operationId?: string) => Promise<unknown>;
   invocation?: { input?: Record<string, unknown>; result?: unknown };
 }>();
 const emit = defineEmits<{
@@ -49,6 +49,11 @@ function toolEnvelope(payload: unknown): Record<string, unknown> {
 let loadGeneration = 0;
 async function load() {
   const generation = ++loadGeneration;
+  for (const request of hostRequests.values()) {
+    clearTimeout(request.timer);
+    request.reject(new Error("The editor app was reloaded; its local draft is retained."));
+  }
+  hostRequests.clear();
   initialized = false; initializeAccepted = false; proxyUrl.value = ""; error.value = "";
   busy.value = false; appMessage.value = "";
   lastInvocationSignature = "";
@@ -170,7 +175,9 @@ async function onMessage(event: MessageEvent) {
       // Navigation awaits its own editor RPC before unmounting. Only an
       // editor-initiated close emits here; otherwise unmount rejects that RPC.
       if (![...hostRequests.values()].some((request) => request.method === "ui/llama-agent/close-document")) {
-        window.setTimeout(() => emit("documentClosed"), 0);
+        window.setTimeout(() => {
+          if (isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) emit("documentClosed");
+        }, 0);
       }
       return;
     }
@@ -180,7 +187,10 @@ async function onMessage(event: MessageEvent) {
       try {
         if (!props.submitReview) throw new Error("Agent review is unavailable in this host.");
         if (typeof rawBinding.document_uri !== "string" || typeof rawBinding.revision !== "number" || !Number.isSafeInteger(rawBinding.revision) ||
-            !Array.isArray(rawBinding.block_ids) || !rawBinding.block_ids.every((item) => typeof item === "string")) {
+            rawBinding.revision <= 0 || !Array.isArray(rawBinding.block_ids) || rawBinding.block_ids.length > 128 ||
+            !rawBinding.block_ids.every((item) => typeof item === "string") ||
+            (rawBinding.base_document_uri !== undefined &&
+              (typeof rawBinding.base_document_uri !== "string" || !rawBinding.base_document_uri || rawBinding.base_document_uri.length > 512))) {
           throw new Error("The editor did not provide a valid typed document binding.");
         }
         documentAccess.authorize("document.propose_patch", {
@@ -190,9 +200,12 @@ async function onMessage(event: MessageEvent) {
           document_uri: rawBinding.document_uri,
           revision: rawBinding.revision as number,
           block_ids: rawBinding.block_ids as string[],
+          ...(typeof rawBinding.base_document_uri === "string" ? { base_document_uri: rawBinding.base_document_uri } : {}),
         }, typeof params.operation_id === "string" ? params.operation_id : undefined);
         reply({ queued: true, ...(queued && typeof queued === "object" ? queued as Record<string, unknown> : {}) });
-        if (action === "close-review") window.setTimeout(() => emit("documentClosed"), 0);
+        if (action === "close-review") window.setTimeout(() => {
+          if (isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) emit("documentClosed");
+        }, 0);
       } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
     } else {
       reply({});
@@ -208,8 +221,8 @@ async function onMessage(event: MessageEvent) {
       try { storage = window.localStorage; } catch { /* host can still retain drafts in memory */ }
       reply(documentAccess.draft(params, storage));
     } else if (method === "tools/list") {
-      const listed = props.tools.filter((tool) => tool.provider_id === props.tool.provider_id &&
-        (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
+      const listed = props.tools.filter((tool) => (tool.provider_id ?? "") === (props.tool.provider_id ?? "") &&
+        (tool.app_read_only || tool.app_write_authorized || (!tool.provider_id && tool.read_only)) &&
         (tool._meta?.ui?.visibility ?? []).includes("app") && tool._meta?.ui?.resourceUri === uri.value);
       reply({ tools: listed.map((tool) => ({
         name: tool.server_tool_name || tool.name,
@@ -222,8 +235,8 @@ async function onMessage(event: MessageEvent) {
       const name = String(params.name ?? "");
       const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
         ? params.arguments as Record<string, unknown> : {};
-      const exposed = props.tools.find((tool) => tool.provider_id === props.tool.provider_id &&
-        (tool.server_tool_name || tool.name) === name && (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
+      const exposed = props.tools.find((tool) => (tool.provider_id ?? "") === (props.tool.provider_id ?? "") &&
+        (tool.server_tool_name || tool.name) === name && (tool.app_read_only || tool.app_write_authorized || (!tool.provider_id && tool.read_only)) &&
         (tool._meta?.ui?.visibility ?? []).includes("app") && tool._meta?.ui?.resourceUri === uri.value);
       if (!exposed) {
         reply({ isError: true, content: [{ type: "text", text: "The requested tool is not host-authorized for this app." }] });

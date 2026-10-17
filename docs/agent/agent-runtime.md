@@ -3994,6 +3994,11 @@ immediate neighbors, then exposes it as a normal scoped resource. Large
 projections use the existing text chunk path; the full editor document is not
 re-attached to the model. The projection and block selection remain data, not
 instructions.
+For comparison reviews, optional `document_context.base_document_uri` binds an
+earlier revision of the same document. The host authorizes both resources and
+includes the earlier revision in the Markdown reading resource. The resource
+fingerprint covers its actual text, and provenance records both revision
+references. Diff previews are not placed in the initial model prompt.
 
 Resident model reuse does not make the prior plan an implicit cursor. At each
 new agent turn the host resolves an active plan from the current request and

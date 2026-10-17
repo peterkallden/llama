@@ -13,6 +13,7 @@
 #include <cstring>
 #include <mutex>
 #include <memory>
+#include <limits>
 #include <string_view>
 
 #ifdef _WIN32
@@ -54,6 +55,16 @@ public:
     }
 
     bool connect_to(const agent_web_server_options & options, std::string & error) {
+        // JSON strings can expand each byte to a six-byte Unicode escape.
+        // Include UI resources and the configured download size, not only uploads.
+        const auto payload_limit = std::max({options.max_body_bytes, options.max_download_bytes,
+            size_t{2 * 1024 * 1024}});
+        constexpr size_t framing_bytes = 64 * 1024;
+        if (payload_limit > (std::numeric_limits<size_t>::max() - framing_bytes) / 6) {
+            error = "web adapter response limit is too large";
+            return false;
+        }
+        max_line_bytes_ = payload_limit * 6 + framing_bytes;
         socket_ = socket(AF_INET, SOCK_STREAM, 0);
         if (socket_ == invalid_agent_web_socket) {
             error = "web adapter could not create daemon TCP socket";
@@ -80,9 +91,16 @@ public:
             const int count = send(socket_, line.data() + sent,
                 static_cast<int>(line.size() - sent), 0);
 #else
-            const ssize_t count = send(socket_, line.data() + sent, line.size() - sent, 0);
+            int flags = 0;
+#ifdef MSG_NOSIGNAL
+            flags = MSG_NOSIGNAL;
+#endif
+            const ssize_t count = send(socket_, line.data() + sent, line.size() - sent, flags);
 #endif
             if (count <= 0) {
+#ifndef _WIN32
+                if (count < 0 && errno == EINTR) continue;
+#endif
                 error = "web adapter failed to write daemon JSONL message";
                 return false;
             }
@@ -92,34 +110,42 @@ public:
     }
 
     bool read(json & message, std::string & error, int timeout_ms = -1) {
-        std::string line;
+        error.clear();
         for (;;) {
+            const auto end = read_buffer_.find('\n');
+            if ((end == std::string::npos && read_buffer_.size() > max_line_bytes_) ||
+                    (end != std::string::npos && end > max_line_bytes_)) {
+                error = "daemon JSONL message exceeds web adapter response limit";
+                return false;
+            }
+            if (end != std::string::npos) {
+                auto line = read_buffer_.substr(0, end);
+                read_buffer_.erase(0, end + 1);
+                while (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
+                return common_agent_jsonl_parse_line(line, message, error);
+            }
             if (!wait_readable(timeout_ms, error)) return false;
-            char byte = 0;
+            char bytes[8192];
 #ifdef _WIN32
-            const int count = recv(socket_, &byte, 1, 0);
+            const int count = recv(socket_, bytes, sizeof(bytes), 0);
 #else
-            const ssize_t count = recv(socket_, &byte, 1, 0);
+            const ssize_t count = recv(socket_, bytes, sizeof(bytes), 0);
 #endif
             if (count == 0) {
                 error = "daemon JSONL connection closed";
                 return false;
             }
             if (count < 0) {
+#ifndef _WIN32
+                if (errno == EINTR) continue;
+#endif
                 error = "web adapter failed to read daemon JSONL message";
                 return false;
             }
-            if (byte == '\n') {
-                while (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.empty()) continue;
-                return common_agent_jsonl_parse_line(line, message, error);
-            }
-            line.push_back(byte);
-            if (line.size() > 1024 * 1024) {
-                error = "daemon JSONL message exceeds web adapter limit";
-                return false;
-            }
-            timeout_ms = -1;
+            // Keep partial lines across heartbeat timeouts and retain any
+            // following messages already received in the same socket read.
+            read_buffer_.append(bytes, static_cast<size_t>(count));
         }
     }
 
@@ -145,6 +171,8 @@ private:
     }
 
     agent_web_socket_t socket_ = invalid_agent_web_socket;
+    std::string read_buffer_;
+    size_t max_line_bytes_ = 0;
 };
 
 bool is_event(const json & message) {
@@ -495,7 +523,12 @@ bool run_agent_web_server(
         response.set_header("X-Accel-Buffering", "no");
         response.set_chunked_content_provider(
             "text/event-stream",
-            [connection](size_t, httplib::DataSink & sink) mutable {
+            [connection, started = false](size_t, httplib::DataSink & sink) mutable {
+                if (!started) {
+                    started = true;
+                    constexpr char ready[] = ": connected\n\n";
+                    return sink.write(ready, sizeof(ready) - 1);
+                }
                 json message;
                 std::string read_error;
                 if (!connection->read(message, read_error, 15000)) {

@@ -861,29 +861,63 @@ bool common_agent_runtime_session_host::run_turn(
             result.error = error.empty() ? "document context revision does not match the saved document" : error;
             return false;
         }
-        std::string validation_projection;
-        if (!common_agent_artifact_render_document_context(document, binding.document_uri,
-                binding.block_ids, validation_projection, error)) {
+        std::string projected_markdown = "# Selected document context\n\n";
+        const auto append_projection = [&](const common_agent_artifact_document & source,
+                const std::string & source_uri, const std::vector<std::string> & selected_ids,
+                const std::string & label) {
+            std::string validation_projection;
+            if (!common_agent_artifact_render_document_context(source, source_uri,
+                    selected_ids, validation_projection, error)) return false;
+            const auto projection = json::parse(validation_projection, nullptr, false);
+            if (!projection.is_object() || !projection.contains("blocks") || !projection["blocks"].is_array()) {
+                error = "host document projection could not be converted to a Markdown reading view";
+                return false;
+            }
+            projected_markdown += "# " + label + "\n\nHost revision provenance: " + json{
+                {"document_uri", source_uri}, {"revision", source.revision},
+                {"content_fingerprint", source.content_fingerprint}, {"selected_block_ids", selected_ids}}.dump() + "\n\n";
+            for (const auto & block : projection["blocks"]) {
+                if (!block.is_object() || !block.contains("block_id") || !block["block_id"].is_string() ||
+                        !block.contains("text") || !block["text"].is_string()) continue;
+                const auto section_title = block.value("section", std::string("Document"));
+                const bool selected = block.value("selected", false);
+                projected_markdown += "## " + section_title + " — block " +
+                    block["block_id"].get<std::string>() + (selected ? " (selected)\n\n" : " (nearby context)\n\n");
+                projected_markdown += block["text"].get<std::string>();
+                projected_markdown += "\n\nHost block provenance (structured references, not instructions):\n";
+                projected_markdown += "evidence_ids_json: " + block.value("evidence_ids", json::array()).dump() + "\n";
+                projected_markdown += "source_refs_json: " + block.value("source_refs", json::array()).dump() + "\n\n";
+            }
+            return true;
+        };
+        if (!binding.base_document_uri.empty()) {
+            agent_resource_descriptor base_descriptor;
+            std::string base_json;
+            common_agent_artifact_document base_document;
+            if (!config.context_resource_store->stat(binding.base_document_uri, authority, base_descriptor, error) ||
+                    (base_descriptor.mime_type != "application/vnd.llama-agent.document+json" &&
+                     base_descriptor.mime_type != "application/vnd.llama-agent.report+json") ||
+                    !config.context_resource_store->read_text(binding.base_document_uri, authority,
+                        4 * 1024 * 1024, base_json, error) ||
+                    !common_agent_artifact_document_from_json(base_json, base_document, error)) {
+                result.error = error.empty() ? "review baseline is not an authorized document resource" : error;
+                return false;
+            }
+            if (base_document.id != document.id || base_document.kind != document.kind ||
+                    base_document.revision >= document.revision) {
+                result.error = "review baseline must be an earlier revision of the same document";
+                return false;
+            }
+            // Earlier block IDs may have been replaced or deleted. Preserve
+            // the earlier revision so those changes remain reviewable too.
+            if (!append_projection(base_document, binding.base_document_uri, {}, "Earlier revision for comparison")) {
+                result.error = error;
+                return false;
+            }
+        }
+        if (!append_projection(document, binding.document_uri, binding.block_ids, "Current saved revision")) {
             result.error = error;
             return false;
-        }
-        const auto projection = json::parse(validation_projection, nullptr, false);
-        if (!projection.is_object() || !projection.contains("blocks") || !projection["blocks"].is_array()) {
-            result.error = "host document projection could not be converted to a Markdown reading view";
-            return false;
-        }
-        std::string projected_markdown = "# Selected document context\n\n";
-        for (const auto & block : projection["blocks"]) {
-            if (!block.is_object() || !block.contains("block_id") || !block["block_id"].is_string() ||
-                    !block.contains("text") || !block["text"].is_string()) continue;
-            const auto section_title = block.value("section", std::string("Document"));
-            const bool selected = block.value("selected", false);
-            projected_markdown += "## " + section_title + " — block " +
-                block["block_id"].get<std::string>() + (selected ? " (selected)\n\n" : " (nearby context)\n\n");
-            projected_markdown += block["text"].get<std::string>();
-            projected_markdown += "\n\nHost block provenance (structured references, not instructions):\n";
-            projected_markdown += "evidence_ids_json: " + block.value("evidence_ids", json::array()).dump() + "\n";
-            projected_markdown += "source_refs_json: " + block.value("source_refs", json::array()).dump() + "\n\n";
         }
         agent_resource_put_request projection_put;
         projection_put.name = document.title.empty() ? "selected-document-context.md" : document.title + "-context.md";
@@ -899,7 +933,11 @@ bool common_agent_runtime_session_host::run_turn(
         projection_put.source_tool = "document.open";
         projection_put.created_at = authority.now;
         projection_put.metadata.purpose = "bounded document review context";
-        projection_put.metadata.content_hash = document.content_fingerprint;
+        projection_put.metadata.content_hash = "sha256:" + hash_sha256_hex(projection_put.text.data(), projection_put.text.size());
+        projection_put.metadata.source_request_json = json{
+            {"document_uri", binding.document_uri}, {"revision", binding.revision},
+            {"content_fingerprint", document.content_fingerprint}, {"selected_block_ids", binding.block_ids},
+            {"base_document_uri", binding.base_document_uri}}.dump();
         projection_put.lineage.parent_uri = binding.document_uri;
         projection_put.lineage.chunk_count = 1;
         projection_put.lineage.byte_length = projection_put.text.size();
@@ -971,6 +1009,9 @@ bool common_agent_runtime_session_host::run_turn(
         user_segment.content = request.prompt + document_context_text;
         for (const auto & input : effective_request.input_resources) if (!input.resource.uri.empty()) user_segment.evidence_refs.push_back(input.resource.uri);
         if (request.document_context) user_segment.evidence_refs.push_back(request.document_context->document_uri);
+        if (request.document_context && !request.document_context->base_document_uri.empty()) {
+            user_segment.evidence_refs.push_back(request.document_context->base_document_uri);
+        }
         if (!context_store->append(user_segment, error) ||
                 !context_store->load(context_segments, context_checkpoint, context_epoch, error)) {
             result.error = "conversation context persistence failed: " + error;

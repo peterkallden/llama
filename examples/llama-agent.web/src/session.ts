@@ -27,7 +27,6 @@ const recording = ref(false);
 const abortController = ref<AbortController | null>(null);
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
-let recordedChunks: Blob[] = [];
 const sessionStorageKey = "llama-agent-web.session-id";
 const sessionId = ref(sessionStorage.getItem(sessionStorageKey) || `web-${crypto.randomUUID()}`);
 sessionStorage.setItem(sessionStorageKey, sessionId.value);
@@ -73,10 +72,14 @@ function restoreDocumentReviews(): PendingDocumentReview[] {
       .map((item) => ({ ...item, state: item.state === "completed" || item.state === "failed" ? item.state : "queued" }));
   } catch { return []; }
 }
-function persistDocumentReviews() {
+function persistDocumentReviews(): boolean {
   try {
     sessionStorage.setItem(reviewQueueKey(), JSON.stringify(documentReviews.value));
-  } catch { error.value = "A pending document review could not be persisted in this browser session."; }
+    return true;
+  } catch {
+    error.value = "A pending document review could not be persisted in this browser session.";
+    return false;
+  }
 }
 function orientationQueueKey(id = sessionId.value) { return `llama-agent-web.attachment-orientations:${id}`; }
 function restoreAttachmentOrientations(): PendingAttachmentOrientation[] {
@@ -120,9 +123,14 @@ function restorePendingUserTurns(): PendingUserTurn[] {
       .map((item) => ({ ...item, state: item.state === "failed" ? "failed" as const : "queued" as const }));
   } catch { return []; }
 }
-function persistPendingUserTurns() {
-  try { sessionStorage.setItem(userTurnQueueKey(), JSON.stringify(pendingUserTurns.value)); }
-  catch { error.value = "A queued chat message could not be persisted in this browser session."; }
+function persistPendingUserTurns(): boolean {
+  try {
+    sessionStorage.setItem(userTurnQueueKey(), JSON.stringify(pendingUserTurns.value));
+    return true;
+  } catch {
+    error.value = "A queued chat message could not be persisted in this browser session.";
+    return false;
+  }
 }
 const pendingUserTurns = ref<PendingUserTurn[]>(restorePendingUserTurns());
 
@@ -172,7 +180,12 @@ function observe(event: AgentEvent) {
   } else if (kind.startsWith("turn.")) busy.value = true;
 }
 
-async function refreshStatus() { status.value = await api.value.status(); }
+async function refreshStatus() {
+  const requestApi = api.value;
+  const requestEpoch = sessionEpoch;
+  const result = await requestApi.status();
+  if (!disposed && requestApi === api.value && requestEpoch === sessionEpoch) status.value = result;
+}
 
 async function callReadOnlyTool(toolName: string, args: Record<string, unknown>) {
   if (!tools.value.some((tool) => tool.name === toolName && tool.read_only && !tool.policy_gated)) {
@@ -203,32 +216,37 @@ async function importDocument(sourceUri: string) {
 }
 
 async function connect() {
+  if (disposed) return;
   abortController.value?.abort();
   const controller = new AbortController();
   abortController.value = controller;
+  const current = () => !disposed && abortController.value === controller && !controller.signal.aborted;
   connected.value = false;
   connectionState.value = "connecting";
   connectionError.value = "";
   try {
-    await api.value.connectEvents(observe, controller.signal, () => {
+    await api.value.connectEvents((event) => { if (current()) observe(event); }, controller.signal, () => {
+      if (!current()) return;
       connected.value = true;
       connectionState.value = "connected";
-      void refreshStatus().catch(() => undefined);
-      void drainDocumentReviews();
+      void refreshStatus().then(() => { if (current()) void drainDocumentReviews(); })
+        .catch((cause) => { if (current()) connectionError.value = cause instanceof Error ? cause.message : String(cause); });
     });
   } catch (cause) {
-    if (!controller.signal.aborted) {
+    if (current()) {
       const message = cause instanceof Error ? cause.message : String(cause);
       connected.value = false;
       connectionError.value = message;
       connectionState.value = /401|403|unauthor/i.test(message) ? "auth-error" : "error";
     }
   } finally {
-    connected.value = false;
-    if (!controller.signal.aborted && connectionState.value !== "auth-error") {
-      connectionState.value = "disconnected";
+    if (current()) {
+      connected.value = false;
+      if (connectionState.value === "connected" || connectionState.value === "connecting") connectionState.value = "disconnected";
+    }
+    if (current() && connectionState.value !== "auth-error") {
       await new Promise((resolve) => window.setTimeout(resolve, 1500));
-      if (!controller.signal.aborted) void connect();
+      if (current()) void connect();
     }
   }
 }
@@ -264,12 +282,15 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
       ...(documentContext ? { document_context: { ...documentContext, block_ids: [...documentContext.block_ids] } } : {}),
       ...(attachmentContextRequired ? { attachment_context_required: true as const } : {}),
       ...(attachmentOrientation ? { attachment_orientation: true as const } : {}), state: "queued" });
+    if (!persistPendingUserTurns()) {
+      pendingUserTurns.value = pendingUserTurns.value.filter((turn) => turn.turn_id !== turnId);
+      return false;
+    }
     if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
       messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: visiblePrompt });
       messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant",
         content: "Queued until the current turn finishes.", pending: true });
     }
-    persistPendingUserTurns();
     return true;
   }
   const requestEpoch = sessionEpoch;
@@ -286,7 +307,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   }
   const turn: TurnRequest = {
     prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
-    turn_id: turnId, mode: "agent", n_predict: 384, include_summary: true,
+    turn_id: turnId, mode: "agent", n_predict: 0, include_summary: true,
     ...(turnResourceRefs.length ? { resource_refs: [...new Set(turnResourceRefs)] } : {}),
     ...(documentContext ? { document_context: documentContext } : {}),
     ...(attachmentOrientation ? { attachment_orientation: true } : {}),
@@ -301,6 +322,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     if (assistant) assistant.pending = false;
     if (result.ok === false) {
       error.value = result.error || "Turn failed";
+      if (assistant && !assistant.content) assistant.content = error.value;
       busy.value = false;
       activeTurnId.value = "";
       if (propagateFailure) throw new Error(error.value);
@@ -314,6 +336,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
     error.value = turnRequestFailure || (cause instanceof Error ? cause.message : String(cause));
+    if (assistant && !assistant.content) assistant.content = error.value;
     if (propagateFailure) throw new Error(error.value);
     return false;
   } finally {
@@ -328,12 +351,20 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
 
 async function submitReview(prompt: string, documentContext: NonNullable<TurnRequest["document_context"]>, operationId: string = crypto.randomUUID()) {
   const existing = documentReviews.value.find((item) => item.operation_id === operationId && item.session_id === sessionId.value);
-  if (existing) return { queued: true, operation_id: operationId, state: existing.state };
+  if (existing) {
+    if (existing.prompt !== prompt || JSON.stringify(existing.document_context) !== JSON.stringify(documentContext)) {
+      throw new Error("The review operation ID already belongs to a different document review.");
+    }
+    return { queued: true, operation_id: operationId, state: existing.state };
+  }
   documentReviews.value.push({
     operation_id: operationId, turn_id: operationId, session_id: sessionId.value,
     prompt, document_context: { ...documentContext, block_ids: [...documentContext.block_ids] }, state: "queued",
   });
-  persistDocumentReviews();
+  if (!persistDocumentReviews()) {
+    documentReviews.value = documentReviews.value.filter((item) => item.operation_id !== operationId);
+    throw new Error(error.value);
+  }
   void drainDocumentReviews();
   return { queued: true, operation_id: operationId, state: "queued" as const };
 }
@@ -442,22 +473,28 @@ async function cancel() {
 }
 
 async function upload(file: File) {
+  const uploadEpoch = sessionEpoch;
   const uploadSessionId = sessionId.value;
-  const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|txt|xml|html?)$/i.test(file.name);
-  const resource: UploadedResource = {
-    name: file.name, mime_type: file.type || (isText ? "text/plain" : "application/octet-stream"), scope: "session",
-    description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
-    namespace_id: "web", project_id: "web-example",
-    ...(isText
-      ? { text: await file.text() }
-      : { bytes_base64: base64Encode(new Uint8Array(await file.arrayBuffer())) }),
-  };
   try {
+    const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|txt|xml|html?)$/i.test(file.name);
+    const resource: UploadedResource = {
+      name: file.name, mime_type: file.type || (isText ? "text/plain" : "application/octet-stream"), scope: "session",
+      description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
+      namespace_id: "web", project_id: "web-example",
+      ...(isText
+        ? { text: await file.text() }
+        : { bytes_base64: base64Encode(new Uint8Array(await file.arrayBuffer())) }),
+    };
+    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value) return;
     const result = await api.value.putResource(resource) as PutResourceResult;
-    if (uploadSessionId !== sessionId.value) return;
+    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value) return;
     const uri = result.resource?.uri;
     if (!uri) throw new Error("The daemon returned no resource URI for the attachment");
-    attachments.value.push({ ...resource, uri });
+    // The resource store owns the content after upload. Keep only attachment
+    // metadata in reactive UI state rather than a second full file copy.
+    attachments.value.push({ name: resource.name, mime_type: resource.mime_type, scope: resource.scope,
+      description: resource.description, session_id: uploadSessionId,
+      namespace_id: resource.namespace_id, project_id: resource.project_id, uri });
     resourceRefs.value.push(uri);
     const operationId = `orient-${crypto.randomUUID()}`;
     attachmentOrientations.value.push({ operation_id: operationId, turn_id: operationId,
@@ -468,7 +505,11 @@ async function upload(file: File) {
       void drainDocumentReviews();
     }, 1500);
   }
-  catch (cause) { if (uploadSessionId === sessionId.value) error.value = cause instanceof Error ? cause.message : String(cause); }
+  catch (cause) {
+    if (!disposed && uploadEpoch === sessionEpoch && uploadSessionId === sessionId.value) {
+      error.value = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
 }
 
 function recordingMimeType(): string {
@@ -482,28 +523,35 @@ async function startRecording() {
     error.value = "Audio recording is not supported by this browser.";
     return;
   }
+  const recordingEpoch = sessionEpoch;
+  const recordingSessionId = sessionId.value;
   try {
     const mimeType = recordingMimeType();
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
-    recordedChunks = [];
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size) recordedChunks.push(event.data);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (disposed || recordingEpoch !== sessionEpoch || recordingSessionId !== sessionId.value) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    mediaStream = stream;
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    mediaRecorder = recorder;
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) chunks.push(event.data);
     };
-    mediaRecorder.onstop = () => {
-      const type = mediaRecorder?.mimeType || mimeType || "audio/webm";
+    recorder.onstop = () => {
+      const type = recorder.mimeType || mimeType || "audio/webm";
       const extension = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : "webm";
-      const file = new File(recordedChunks, `recording-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.${extension}`, { type });
-      mediaStream?.getTracks().forEach((track) => track.stop());
-      mediaStream = null;
-      mediaRecorder = null;
-      recordedChunks = [];
-      if (file.size) void upload(file);
+      const file = new File(chunks, `recording-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.${extension}`, { type });
+      stream.getTracks().forEach((track) => track.stop());
+      if (mediaRecorder === recorder) { mediaStream = null; mediaRecorder = null; }
+      if (file.size && !disposed && recordingEpoch === sessionEpoch && recordingSessionId === sessionId.value) void upload(file);
     };
     mediaRecorder.start();
     recording.value = true;
     error.value = "";
   } catch (cause) {
+    if (disposed || recordingEpoch !== sessionEpoch || recordingSessionId !== sessionId.value) return;
     mediaStream?.getTracks().forEach((track) => track.stop());
     mediaStream = null;
     mediaRecorder = null;
@@ -599,4 +647,6 @@ import.meta.hot?.dispose(() => {
   if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
   abortController.value?.abort();
   turnRequestController?.abort();
+  if (mediaRecorder?.state !== "inactive") mediaRecorder?.stop();
+  mediaStream?.getTracks().forEach((track) => track.stop());
 });

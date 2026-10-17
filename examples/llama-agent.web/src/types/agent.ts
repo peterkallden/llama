@@ -80,7 +80,7 @@ export type TurnRequest = {
   n_predict: number;
   include_summary: boolean;
   resource_refs?: string[];
-  document_context?: { document_uri: string; revision: number; block_ids: string[] };
+  document_context?: { document_uri: string; revision: number; block_ids: string[]; base_document_uri?: string };
   /** Fixed, read-only host task for a single newly uploaded attachment. */
   attachment_orientation?: true;
   /** Keep the user's question, but require tool-grounded use of attachments. */

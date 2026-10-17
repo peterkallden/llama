@@ -1,7 +1,7 @@
 import type { AgentEvent, DaemonToolStatus } from "../types/agent";
 
 export function mcpAppKey(tool: DaemonToolStatus): string {
-  return `${tool.provider_id ?? "native"}\u0000${tool._meta?.ui?.resourceUri ?? ""}`;
+  return `${tool.provider_id ?? ""}\u0000${tool._meta?.ui?.resourceUri ?? ""}`;
 }
 
 function providerId(value: unknown): string {
