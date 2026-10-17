@@ -439,7 +439,10 @@ the surrounding MCP response envelope. Planner bindings use the schema field
 types; compact result descriptions shown to a model are a separate projection.
 MCP UI metadata is preserved alongside the schema. The daemon publishes the
 first-party Data Explorer and Workflow Inspector as `text/html;profile=mcp-app`
-resources and links them to dataset inspection and `plan.get` tools. The web
+resources and, when built with the pinned editor dependencies, a Document
+Editor resource linked to report tools. Only the exact first-party editor
+resource receives narrowly scoped write permission for document editing; the
+other apps keep their existing read-only restrictions. The web
 adapter exposes a sandboxed MCP App host: it fetches each UI resource through
 its owning provider and brokers app tool calls through the daemon. App-only
 tools stay out of the model's tool catalog but remain discoverable by the web

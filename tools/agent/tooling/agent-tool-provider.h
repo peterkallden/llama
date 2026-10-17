@@ -127,6 +127,7 @@ public:
     // annotations do not populate this capability.
     virtual bool is_web_read_only(const std::string & name) const { return is_read_only(name); }
     virtual bool is_mcp_app_read_only(const std::string &) const { return false; }
+    virtual bool is_mcp_app_write_authorized(const std::string &) const { return false; }
     virtual bool app_tool_provenance(
             const std::string &, std::string &, std::string &) const { return false; }
     virtual bool is_policy_gated(const std::string & name) const = 0;

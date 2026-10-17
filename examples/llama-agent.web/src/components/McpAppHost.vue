@@ -9,6 +9,7 @@ const props = defineProps<{
   sessionId: string;
   readResource: (toolName: string, uri: string) => Promise<unknown>;
   callTool: (appTool: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+  submitReview?: (prompt: string, resourceRefs: string[]) => Promise<unknown>;
   invocation?: { input?: Record<string, unknown>; result?: unknown };
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
@@ -135,6 +136,11 @@ async function onMessage(event: MessageEvent) {
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
     reply({});
+    if (typeof content.text === "string" && uri.value === "ui://llama-agent/apps/document-editor") {
+      const matches = [...content.text.matchAll(/Document resource: (\S+)/g)];
+      const refs = matches.map((match) => match[1]);
+      void props.submitReview?.(content.text, refs);
+    }
     return;
   }
   if (method === "ui/open-link") { reply({ opened: false, message: "Links are not opened automatically by this host." }); return; }
@@ -142,21 +148,21 @@ async function onMessage(event: MessageEvent) {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
     if (method === "tools/list") {
       const listed = props.tools.filter((tool) => tool.provider_id === props.tool.provider_id &&
-        (tool.app_read_only || (tool.provider_id === "" && tool.read_only)) &&
+        (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
         (tool._meta?.ui?.visibility ?? []).includes("app"));
       reply({ tools: listed.map((tool) => ({
         name: tool.server_tool_name || tool.name,
         description: tool.description ?? "",
         inputSchema: tool.input_schema ?? { type: "object" },
         ...(tool.output_schema ? { outputSchema: tool.output_schema } : {}),
-        annotations: { readOnlyHint: true },
+        annotations: { readOnlyHint: !tool.app_write_authorized },
       })) });
     } else if (method === "tools/call") {
       const name = String(params.name ?? "");
       const args = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
         ? params.arguments as Record<string, unknown> : {};
       const exposed = props.tools.find((tool) => tool.provider_id === props.tool.provider_id &&
-        (tool.server_tool_name || tool.name) === name && (tool.app_read_only || (tool.provider_id === "" && tool.read_only)) &&
+        (tool.server_tool_name || tool.name) === name && (tool.app_read_only || tool.app_write_authorized || (tool.provider_id === "" && tool.read_only)) &&
         (tool._meta?.ui?.visibility ?? []).includes("app"));
       if (!exposed) {
         reply({ isError: true, content: [{ type: "text", text: "The requested tool is not host-authorized for this app." }] });

@@ -7,6 +7,15 @@ Copyright: 2023-2026 The llama.cpp authors and contributors
            2026 Peter Kallden
 License: MIT
 
+Files: docs/third-party/*
+Copyright: 2026 Peter Kallden
+License: MIT
+
+Files: examples/llama-agent.web/src/mcp-app/*
+Copyright: 2026 Peter Kallden
+License: MIT
+Comment: The separately bundled editor dependencies retain their own licenses. See docs/third-party/NOTICE.md and the installed third-party notices.
+
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal

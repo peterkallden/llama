@@ -49,6 +49,7 @@ export type DaemonToolStatus = {
   output_schema?: Record<string, unknown>;
   read_only?: boolean;
   app_read_only?: boolean;
+  app_write_authorized?: boolean;
   policy_gated?: boolean;
   provider_id?: string;
   server_tool_name?: string;

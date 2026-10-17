@@ -1,5 +1,43 @@
 set(TARGET llama-agent-core)
 
+# Parse Markdown with the GFM AST implementation used by the editor contract.
+# Prefer the pinned system library for reproducible/offline package builds;
+# otherwise fetch the exact release and disable its spec/test corpus.
+find_path(LLAMA_AGENT_CMARK_INCLUDE_DIR cmark-gfm.h PATH_SUFFIXES cmark-gfm)
+find_library(LLAMA_AGENT_CMARK_CORE_LIBRARY NAMES cmark-gfm)
+find_library(LLAMA_AGENT_CMARK_EXT_LIBRARY NAMES cmark-gfm-extensions)
+if (LLAMA_AGENT_CMARK_INCLUDE_DIR AND LLAMA_AGENT_CMARK_CORE_LIBRARY AND LLAMA_AGENT_CMARK_EXT_LIBRARY)
+    add_library(llama-agent-cmark-gfm UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(llama-agent-cmark-gfm PROPERTIES
+        IMPORTED_LOCATION "${LLAMA_AGENT_CMARK_CORE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LLAMA_AGENT_CMARK_INCLUDE_DIR}")
+    add_library(llama-agent-cmark-gfm-extensions UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(llama-agent-cmark-gfm-extensions PROPERTIES
+        IMPORTED_LOCATION "${LLAMA_AGENT_CMARK_EXT_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LLAMA_AGENT_CMARK_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES llama-agent-cmark-gfm)
+    set(LLAMA_AGENT_CMARK_TARGETS llama-agent-cmark-gfm-extensions llama-agent-cmark-gfm)
+else()
+    include(FetchContent)
+    set(CMARK_TESTS OFF CACHE BOOL "Disable upstream cmark-gfm tests/spec corpus" FORCE)
+    set(CMARK_STATIC ON CACHE BOOL "Build cmark-gfm static library" FORCE)
+    set(CMARK_SHARED OFF CACHE BOOL "Do not build a second shared cmark library" FORCE)
+    FetchContent_Declare(cmark_gfm
+        URL https://codeload.github.com/github/cmark-gfm/tar.gz/refs/tags/0.29.0.gfm.13
+        URL_HASH SHA256=5abc61798ebd9de5660bc076443c07abad2b8d15dbc11094a3a79644b8ad243a
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    FetchContent_MakeAvailable(cmark_gfm)
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+    set(LLAMA_AGENT_CMARK_INCLUDE_DIRS
+        ${cmark_gfm_SOURCE_DIR}/src ${cmark_gfm_BINARY_DIR}/src
+        ${cmark_gfm_SOURCE_DIR}/extensions ${cmark_gfm_BINARY_DIR}/extensions)
+    set(LLAMA_AGENT_CMARK_TARGETS libcmark-gfm-extensions_static libcmark-gfm_static)
+    install(FILES ${cmark_gfm_SOURCE_DIR}/COPYING
+        DESTINATION share/doc/llama-agent/third-party
+        RENAME cmark-gfm-COPYING)
+endif()
+
 # Shared report contracts are consumed by both the runtime core and native
 # artifact adapters. Keep them in a small dependency below both targets rather
 # than introducing a core <-> tooling link cycle.
@@ -7,7 +45,9 @@ add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifac
     artifact/artifact-sources.cpp artifact/artifact-sources.h)
 target_include_directories(llama-agent-artifact PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-artifact PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan PRIVATE vendor::hash)
+target_include_directories(llama-agent-artifact PRIVATE ${LLAMA_AGENT_CMARK_INCLUDE_DIRS})
+target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan
+    PRIVATE vendor::hash ${LLAMA_AGENT_CMARK_TARGETS})
 
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
 # mobile clients can share the wire contract without linking agent semantics.

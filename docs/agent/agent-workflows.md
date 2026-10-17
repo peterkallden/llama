@@ -628,9 +628,12 @@ snapshot, document and Markdown, verifies exact bytes before reuse, and writes
 a publication manifest last. Retries therefore reuse verified resources and
 cannot advertise a partial publication as complete. The manifest and successful
 tool observation retain the revision and resource references.
-A future MCP Apps editor should create a new report revision while the original
-research evidence remains authoritative. Collaborative editing is not part of
-the current implementation.
+The first-party Document Editor MCP App now creates a new immutable report
+revision while the original research evidence remains authoritative. Changed
+text is unreviewed even if old references remain attached. Review happens in a
+normal daemon turn; a proposed patch is never applied until the user approves
+it against the still-current revision. Simultaneous multi-user collaboration is
+not included. See [Document editor MCP App](document-editor.md).
 
 When a completed `artifact.export` returns the structured report and Markdown
 resource references plus `coverage_complete`, the host also constructs the

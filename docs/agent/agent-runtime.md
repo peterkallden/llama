@@ -976,7 +976,9 @@ frozen snapshot, including available title, origin, resource URI, retrieval
 time, content hash, evidence IDs and source locations, in both report JSON and
 Markdown. DOCX is converted from that same Markdown revision.
 
-New report documents use Markdown renderer version 3. Sources show independent
+New host-composed reports use Markdown renderer version 3; user-edited report
+revisions use renderer version 4 so arbitrary Markdown blocks round-trip
+without being converted to generated-report bullets. Sources show independent
 links to the original URI, any captured redirect destination, and the saved
 resource or dataset. Missing titles fall back to the available filename and
 provider/operation; absent external addresses remain unknown. Host-retained
@@ -986,6 +988,15 @@ Resource ancestry connects PDF/OCR/chunk representations to captured source
 addresses without another fetch. The bibliography projection lives in
 `common/agent/artifact/artifact-sources.cpp` and is shared by report JSON and
 Markdown/DOCX export.
+
+Reports can also be edited through the first-party Document Editor MCP App. It
+creates immutable content revisions against an expected revision, retains
+local drafts on conflicts, and marks changed blocks unreviewed without
+inheriting factual support from retained citations. “Save and review” submits
+a normal agent turn; proposals remain unapplied until user approval. See
+[Document editor MCP App](document-editor.md). The editor is advertised only
+when its embedded bundle is built; standard C++ builds remain independent of
+Node.js.
 
 Snapshot v4 preserves research-resource provider/operation/request metadata.
 Both plan backends retain resource provenance through reopen/resume, and Cozo

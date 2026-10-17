@@ -161,6 +161,7 @@ common_tool_failure_class parse_mcp_failure_class(const std::string & value) {
     if (value == "timeout")    return common_tool_failure_class::timeout;
     if (value == "network")    return common_tool_failure_class::network;
     if (value == "limit")      return common_tool_failure_class::limit;
+    if (value == "conflict")   return common_tool_failure_class::conflict;
     return common_tool_failure_class::execution;
 }
 

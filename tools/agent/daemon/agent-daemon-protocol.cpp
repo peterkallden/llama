@@ -657,6 +657,7 @@ void append_agent_daemon_status_snapshot(
             {"state", tool.state},
             {"read_only", tool.read_only},
             {"app_read_only", tool.app_read_only},
+            {"app_write_authorized", tool.app_write_authorized},
             {"policy_gated", tool.policy_gated},
         };
         if (!tool.provider_id.empty()) item["provider_id"] = tool.provider_id;

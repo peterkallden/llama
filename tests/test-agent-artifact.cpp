@@ -395,6 +395,87 @@ int main() {
     assert(markdown.find("No validated content was produced") != std::string::npos);
     assert(markdown.find("Reference status: gap") != std::string::npos);
 
+    common_agent_artifact_document editable_document;
+    editable_document.id="report:editable";editable_document.title="Draft";editable_document.schema_version=2;
+    common_agent_artifact_section editable_section;editable_section.id="summary";editable_section.title="Summary";
+    common_agent_artifact_block unchanged_block;unchanged_block.id="summary:b1";unchanged_block.text="Supported statement.";
+    unchanged_block.evidence_ids={"E-1"};unchanged_block.source_refs={"S-1"};
+    unchanged_block.validation=common_agent_artifact_validation::references_resolve;
+    unchanged_block.support=common_agent_artifact_support::linked_support;
+    editable_section.blocks.push_back(unchanged_block);editable_document.sections.push_back(editable_section);
+    std::string editable_markdown;
+    assert(common_agent_artifact_render_editable_markdown(editable_document,editable_markdown,error));
+    auto edited_markdown=editable_markdown;
+    const auto old_text=edited_markdown.find("Supported statement.");assert(old_text!=std::string::npos);
+    edited_markdown.replace(old_text,std::string("Supported statement.").size(),"Revised statement with a table:\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```text\ncode\n```");
+    common_agent_artifact_document edited_document;
+    assert(common_agent_artifact_apply_markdown_edit(editable_document,edited_markdown,edited_document,error));
+    assert(edited_document.revision==editable_document.revision);
+    assert(edited_document.sections.front().blocks.size()==3);
+    const auto & changed_block=edited_document.sections.front().blocks.front();
+    assert(changed_block.author==common_agent_artifact_author::user);
+    assert(changed_block.review_state==common_agent_artifact_review_state::unreviewed);
+    assert(changed_block.support==common_agent_artifact_support::unverified);
+    assert(changed_block.evidence_ids==unchanged_block.evidence_ids&&changed_block.source_refs==unchanged_block.source_refs);
+    assert(edited_document.sections.front().blocks[1].text.find("| A | B |")!=std::string::npos);
+    assert(edited_document.sections.front().blocks[2].text.find("```text")!=std::string::npos);
+    std::string edited_json;assert(common_agent_artifact_document_to_json(edited_document,edited_json,error));
+    common_agent_artifact_document restored_edit;
+    assert(common_agent_artifact_document_from_json(edited_json,restored_edit,error));
+    assert(restored_edit.content_fingerprint==edited_document.content_fingerprint);
+
+    // Identical paragraphs are still distinct authored blocks and must not
+    // collapse onto the first prior block during an unchanged edit.
+    common_agent_artifact_document duplicate_document;
+    duplicate_document.id="report:duplicate-blocks";duplicate_document.title="Duplicate blocks";
+    duplicate_document.schema_version=2;
+    common_agent_artifact_section duplicate_section;duplicate_section.id="results";duplicate_section.title="Results";
+    for(const auto * id : {"results:b1","results:b2"}){
+        common_agent_artifact_block block;block.id=id;block.text="Repeated observation.";
+        block.validation=common_agent_artifact_validation::references_resolve;
+        block.support=common_agent_artifact_support::linked_support;
+        block.review_state=common_agent_artifact_review_state::reviewed;
+        duplicate_section.blocks.push_back(block);
+    }
+    duplicate_document.sections.push_back(duplicate_section);
+    std::string duplicate_markdown;
+    assert(common_agent_artifact_render_editable_markdown(duplicate_document,duplicate_markdown,error));
+    common_agent_artifact_document duplicate_edit;
+    assert(common_agent_artifact_apply_markdown_edit(duplicate_document,duplicate_markdown,duplicate_edit,error));
+    assert(duplicate_edit.sections.front().blocks.size()==2);
+    assert(duplicate_edit.sections.front().blocks[0].id=="results:b1");
+    assert(duplicate_edit.sections.front().blocks[1].id=="results:b2");
+    assert(duplicate_edit.sections.front().blocks[0].review_state==common_agent_artifact_review_state::reviewed);
+    assert(duplicate_edit.sections.front().blocks[1].review_state==common_agent_artifact_review_state::reviewed);
+
+    // Removing or clearing a previously populated section must invalidate
+    // report coverage rather than silently preserving the old complete flag.
+    common_agent_artifact_document covered_document;
+    covered_document.id="report:coverage-edit";covered_document.title="Coverage";covered_document.schema_version=2;
+    covered_document.coverage_complete=true;
+    common_agent_artifact_section kept_section;kept_section.id="kept";kept_section.title="Kept";
+    common_agent_artifact_block kept_block;kept_block.id="kept:b1";kept_block.text="Still present.";
+    kept_section.blocks.push_back(kept_block);
+    common_agent_artifact_section removed_section;removed_section.id="removed";removed_section.title="Removed";
+    common_agent_artifact_block removed_block;removed_block.id="removed:b1";removed_block.text="Must remain covered.";
+    removed_section.blocks.push_back(removed_block);
+    covered_document.sections={kept_section,removed_section};
+    std::string covered_markdown;
+    assert(common_agent_artifact_render_editable_markdown(covered_document,covered_markdown,error));
+    const auto removed_heading=covered_markdown.find("## Removed\n");assert(removed_heading!=std::string::npos);
+    auto without_section=covered_markdown.substr(0,removed_heading);
+    common_agent_artifact_document removed_edit;
+    assert(common_agent_artifact_apply_markdown_edit(covered_document,without_section,removed_edit,error));
+    assert(!removed_edit.coverage_complete);
+    assert(std::any_of(removed_edit.unresolved_gaps.begin(),removed_edit.unresolved_gaps.end(),
+        [](const std::string & gap){return gap.find("section removed by editor: Removed")!=std::string::npos;}));
+    auto cleared_section=covered_markdown.substr(0,removed_heading)+"## Removed\n\n";
+    common_agent_artifact_document cleared_edit;
+    assert(common_agent_artifact_apply_markdown_edit(covered_document,cleared_section,cleared_edit,error));
+    assert(!cleared_edit.coverage_complete);
+    assert(std::any_of(cleared_edit.unresolved_gaps.begin(),cleared_edit.unresolved_gaps.end(),
+        [](const std::string & gap){return gap.find("section cleared by editor: Removed")!=std::string::npos;}));
+
     auto no_findings_profile=profile;no_findings_profile.sections.resize(1);
     common_plan_state no_findings_plan;no_findings_plan.id="plan-no-findings";no_findings_plan.version=1;
     no_findings_plan.observations.push_back({"input","web.search","{}",1.0f,{}, {},0,{}});

@@ -1,6 +1,9 @@
 #include "artifact-contract.h"
 #include "artifact-sources.h"
 #include "hash/hash.h"
+#include "cmark-gfm.h"
+#include "cmark-gfm-core-extensions.h"
+#include "cmark-gfm-extension_api.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -8,6 +11,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <memory>
 
 using json = nlohmann::ordered_json;
 
@@ -27,6 +31,29 @@ std::string bounded_utf8(const std::string & value, size_t max_bytes) {
     while (end > 0 && end < value.size() &&
             (static_cast<unsigned char>(value[end]) & 0xc0u) == 0x80u) --end;
     return value.substr(0, end);
+}
+std::string markdown_inline_text(cmark_node * node) {
+    std::string result;
+    for (auto * child = cmark_node_first_child(node); child != nullptr; child = cmark_node_next(child)) {
+        const auto type = cmark_node_get_type(child);
+        const char * literal = cmark_node_get_literal(child);
+        if (literal != nullptr) result += literal;
+        else if (type == CMARK_NODE_SOFTBREAK || type == CMARK_NODE_LINEBREAK) result += ' ';
+        else result += markdown_inline_text(child);
+    }
+    return result;
+}
+std::string markdown_source_lines(const std::vector<std::string> & lines, int first, int last) {
+    if (first < 1 || last < first || static_cast<size_t>(first) > lines.size()) return {};
+    last = std::min(last, static_cast<int>(lines.size()));
+    std::string result;
+    for (int line = first; line <= last; ++line) {
+        if (!result.empty()) result += '\n';
+        result += lines[static_cast<size_t>(line - 1)];
+    }
+    while (!result.empty() && (result.front() == '\n' || result.front() == '\r')) result.erase(result.begin());
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
+    return result;
 }
 std::string snapshot_fingerprint_v1(const common_agent_artifact_snapshot & snapshot) {
     json material = {{"plan", snapshot.source_plan_id}, {"profile", snapshot.profile_id},
@@ -157,6 +184,14 @@ const char * support_name(common_agent_artifact_support v) {
     switch(v){case common_agent_artifact_support::unverified:return "unverified";case common_agent_artifact_support::linked_support:return "linked_support";case common_agent_artifact_support::contradicted:return "contradicted";case common_agent_artifact_support::mixed:return "mixed";}
     return "unverified";
 }
+const char * author_name(common_agent_artifact_author v) {
+    switch(v){case common_agent_artifact_author::model:return "model";case common_agent_artifact_author::user:return "user";case common_agent_artifact_author::host:return "host";}return "model";
+}
+const char * review_state_name(common_agent_artifact_review_state v) {
+    switch(v){case common_agent_artifact_review_state::reviewed:return "reviewed";case common_agent_artifact_review_state::unreviewed:return "unreviewed";case common_agent_artifact_review_state::requires_research:return "requires_research";}return "unreviewed";
+}
+bool parse_author(const std::string & s,common_agent_artifact_author & v){if(s=="model")v=common_agent_artifact_author::model;else if(s=="user")v=common_agent_artifact_author::user;else if(s=="host")v=common_agent_artifact_author::host;else return false;return true;}
+bool parse_review_state(const std::string & s,common_agent_artifact_review_state & v){if(s=="reviewed")v=common_agent_artifact_review_state::reviewed;else if(s=="unreviewed")v=common_agent_artifact_review_state::unreviewed;else if(s=="requires_research")v=common_agent_artifact_review_state::requires_research;else return false;return true;}
 bool parse_validation(const std::string & s, common_agent_artifact_validation & v) {
     if (s == "unvalidated") v = common_agent_artifact_validation::unvalidated;
     else if (s == "references_resolve") v = common_agent_artifact_validation::references_resolve;
@@ -534,11 +569,14 @@ bool common_agent_artifact_section_from_stored_json(const std::string & text,
 }
 
 bool common_agent_artifact_document_to_json(const common_agent_artifact_document & d, std::string & out, std::string & error) {
-    json value = {{"schema_version",1},{"markdown_renderer_version",d.markdown_renderer_version},
+    if(d.schema_version>=2){std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(d,editable,render_error)){error=render_error;return false;}const auto expected="sha256:"+hash_sha256_hex(editable.data(),editable.size());if(d.content_fingerprint.empty()||d.content_fingerprint!=expected){error="artifact document content fingerprint is missing or stale";return false;}}
+    json value = {{"schema_version",d.schema_version},{"markdown_renderer_version",d.markdown_renderer_version},
         {"id",d.id},{"title",d.title},{"purpose",d.purpose},
         {"profile_id",d.profile_id},{"profile_revision",d.profile_revision},{"revision",d.revision},
         {"previous_revision_uri",d.previous_revision_uri},{"snapshot_uri",d.snapshot_uri},
         {"snapshot_fingerprint",d.snapshot_fingerprint},
+        {"content_fingerprint",d.content_fingerprint},{"editor_parent_uri",d.editor_parent_uri},
+        {"editor_operation_id",d.editor_operation_id},{"editor_markdown_uri",d.editor_markdown_uri},
         {"source_plan_id",d.source_plan_id},{"source_plan_version",d.source_plan_version},
         {"coverage_complete",d.coverage_complete},{"unresolved_gaps",d.unresolved_gaps},
         {"source_bibliography",json::array()},{"sections",json::array()}};
@@ -548,7 +586,8 @@ bool common_agent_artifact_document_to_json(const common_agent_artifact_document
             {"out_of_scope_refs",s.out_of_scope_refs},{"blocks",json::array()}};
         for (const auto & b : s.blocks) section["blocks"].push_back({{"id",b.id},{"kind",block_kind(b.kind)},
             {"text",b.text},{"evidence_ids",b.evidence_ids},{"source_refs",b.source_refs},
-            {"validation",validation_name(b.validation)},{"validation_note",b.validation_note},{"support",support_name(b.support)},{"origin",b.origin}});
+            {"validation",validation_name(b.validation)},{"validation_note",b.validation_note},{"support",support_name(b.support)},{"origin",b.origin},
+            {"author",author_name(b.author)},{"review_state",review_state_name(b.review_state)}});
         value["sections"].push_back(std::move(section));
     }
     for(const auto & source:d.source_bibliography)value["source_bibliography"].push_back({{"source_id",source.source_id},
@@ -1003,23 +1042,28 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
         }
         out.sections.push_back(std::move(section));}
     out.coverage_complete=report_coverage&&out.unresolved_gaps.empty();
+    out.schema_version=2;
+    std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(out,editable,render_error)){error=render_error;return false;}
+    out.content_fingerprint="sha256:"+hash_sha256_hex(editable.data(),editable.size());
     error.clear();return true;
 }
 
 bool common_agent_artifact_document_from_json(const std::string & text, common_agent_artifact_document & d, std::string & error) {
     const auto v=json::parse(text,nullptr,false);
-    if (!v.is_object() || v.value("schema_version",0)!=1 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
+    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>2 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
     d={}; d.id=v.value("id",std::string{}); d.title=v.value("title",std::string{}); d.purpose=v.value("purpose",std::string{});
     if(v.contains("markdown_renderer_version")&&!v["markdown_renderer_version"].is_number_unsigned()){
         error="artifact Markdown renderer version is malformed";return false;
     }
+    d.schema_version=v.value("schema_version",uint32_t(1));
+    if(d.schema_version<1||d.schema_version>2){error="unsupported artifact document schema version";return false;}
     d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
-    if(d.markdown_renderer_version<1||d.markdown_renderer_version>3){
+    if(d.markdown_renderer_version<1||d.markdown_renderer_version>4){
         error="unsupported artifact Markdown renderer version";return false;
     }
     d.profile_id=v.value("profile_id",std::string{}); d.profile_revision=v.value("profile_revision",std::string{});
     d.revision=v.value("revision",uint64_t(1)); d.previous_revision_uri=v.value("previous_revision_uri",std::string{});
-    d.snapshot_uri=v.value("snapshot_uri",std::string{});d.snapshot_fingerprint=v.value("snapshot_fingerprint",std::string{}); d.source_plan_id=v.value("source_plan_id",std::string{}); d.source_plan_version=v.value("source_plan_version",uint64_t(0));
+    d.snapshot_uri=v.value("snapshot_uri",std::string{});d.snapshot_fingerprint=v.value("snapshot_fingerprint",std::string{});d.content_fingerprint=v.value("content_fingerprint",std::string{});d.editor_parent_uri=v.value("editor_parent_uri",std::string{});d.editor_operation_id=v.value("editor_operation_id",std::string{});d.editor_markdown_uri=v.value("editor_markdown_uri",std::string{}); d.source_plan_id=v.value("source_plan_id",std::string{}); d.source_plan_version=v.value("source_plan_version",uint64_t(0));
     d.coverage_complete=v.value("coverage_complete",false);
     for(const auto & gap:v.value("unresolved_gaps",json::array())){if(!gap.is_string()){error="artifact document gap is not text";return false;}d.unresolved_gaps.push_back(gap.get<std::string>());}
     for(const auto & item:v.value("source_bibliography",json::array())){
@@ -1040,14 +1084,16 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
             if (!bj.is_object() || !bj.contains("evidence_ids") || !bj["evidence_ids"].is_array() || !bj.contains("source_refs") || !bj["source_refs"].is_array()) { error="artifact block is malformed"; return false; }
             common_agent_artifact_block b; b.id=bj.value("id",std::string{}); b.text=bj.value("text",std::string{});
             b.origin=bj.value("origin",std::string("model")); b.validation_note=bj.value("validation_note",std::string{});
-            if (!parse_kind(bj.value("kind",std::string{}),b.kind) || !parse_validation(bj.value("validation",std::string("unvalidated")),b.validation) || !parse_support(bj.value("support",std::string("unverified")),b.support)) { error="artifact block enum is invalid"; return false; }
+            if (!parse_kind(bj.value("kind",std::string{}),b.kind) || !parse_validation(bj.value("validation",std::string("unvalidated")),b.validation) || !parse_support(bj.value("support",std::string("unverified")),b.support)||!parse_author(bj.value("author",std::string("model")),b.author)||!parse_review_state(bj.value("review_state",std::string("reviewed")),b.review_state)) { error="artifact block enum is invalid"; return false; }
             for (const auto & x:bj["evidence_ids"]) { if(!x.is_string()){error="artifact evidence id is not text";return false;} b.evidence_ids.push_back(x.get<std::string>()); }
             for (const auto & x:bj["source_refs"]) { if(!x.is_string()){error="artifact source ref is not text";return false;} b.source_refs.push_back(x.get<std::string>()); }
             s.blocks.push_back(std::move(b));
         }
         d.sections.push_back(std::move(s));
     }
-    if(d.id.empty()||d.title.empty()){error="artifact document identity is missing";return false;} error.clear();return true;
+    if(d.id.empty()||d.title.empty()){error="artifact document identity is missing";return false;}
+    if(d.schema_version>=2){std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(d,editable,render_error)){error=render_error;return false;}const auto expected="sha256:"+hash_sha256_hex(editable.data(),editable.size());if(d.content_fingerprint.empty()||d.content_fingerprint!=expected){error="artifact document content fingerprint is invalid";return false;}}
+    error.clear();return true;
 }
 
 bool common_agent_artifact_render_markdown(const common_agent_artifact_document & d, std::string & out, std::string & error) {
@@ -1058,6 +1104,7 @@ bool common_agent_artifact_render_markdown(const common_agent_artifact_document 
     for(const auto & s:d.sections){out+="## "+s.title+"\n\n";
         if(d.markdown_renderer_version>=2&&s.no_findings&&s.blocks.empty())out+="No findings were produced for this section. This does not establish absence.\n\n";
         for(const auto & b:s.blocks){
+        if(d.markdown_renderer_version>=4&&b.author==common_agent_artifact_author::user){out+=b.text;if(out.empty()||out.back()!='\n')out+='\n';out+='\n';continue;}
         out+=(b.kind==common_agent_artifact_block_kind::observation?"- ":b.kind==common_agent_artifact_block_kind::conclusion?"**Conclusion.** ":"**Recommendation.** ")+b.text;
         if(!b.evidence_ids.empty()||!b.source_refs.empty()){out+="  \n  Sources: ";bool first=true;for(const auto & x:b.evidence_ids){if(!first)out+=", ";out+=x;first=false;}for(const auto & x:b.source_refs){if(!first)out+=", ";out+=x;first=false;}}
         if(b.validation==common_agent_artifact_validation::gap||b.validation==common_agent_artifact_validation::contradicted) out+="  \n  **Reference status: "+std::string(validation_name(b.validation))+" — "+b.validation_note+"**";
@@ -1077,6 +1124,110 @@ bool common_agent_artifact_render_markdown(const common_agent_artifact_document 
         }
         out+="\n";
     }
+    error.clear();return true;
+}
+
+bool common_agent_artifact_render_editable_markdown(
+        const common_agent_artifact_document & document,std::string & out,std::string & error) {
+    if(document.id.empty()||document.title.empty()){error="artifact document identity is missing";return false;}
+    out="# "+document.title+"\n\n";
+    for(const auto & section:document.sections){
+        out+="## "+section.title+"\n\n";
+        for(const auto & block:section.blocks){out+=block.text;if(block.text.empty()||block.text.back()!='\n')out+='\n';out+='\n';}
+    }
+    error.clear();return true;
+}
+
+bool common_agent_artifact_apply_markdown_edit(
+        const common_agent_artifact_document & original,const std::string & markdown,
+        common_agent_artifact_document & edited,std::string & error) {
+    if(markdown.empty()||markdown.size()>4*1024*1024){error="edited Markdown is empty or exceeds the 4 MiB limit";return false;}
+    struct parsed_section {std::string title;std::vector<std::string> blocks;};
+    std::vector<parsed_section> parsed;
+    std::vector<std::string> lines;
+    size_t pos=0;
+    while(pos<=markdown.size()){
+        const size_t end=markdown.find('\n',pos);
+        auto line=markdown.substr(pos,end==std::string::npos?markdown.size()-pos:end-pos);
+        if(!line.empty()&&line.back()=='\r')line.pop_back();
+        lines.push_back(std::move(line));
+        if(end==std::string::npos)break;
+        pos=end+1;
+    }
+    cmark_gfm_core_extensions_ensure_registered();
+    std::unique_ptr<cmark_parser, decltype(&cmark_parser_free)> parser(cmark_parser_new(CMARK_OPT_DEFAULT), cmark_parser_free);
+    if(!parser){error="Markdown parser could not be allocated";return false;}
+    for(const char * extension_name : {"table","strikethrough","autolink","tagfilter","tasklist","footnotes"}){
+        if(auto * extension=cmark_find_syntax_extension(extension_name))cmark_parser_attach_syntax_extension(parser.get(),extension);
+    }
+    cmark_parser_feed(parser.get(),markdown.data(),markdown.size());
+    std::unique_ptr<cmark_node, decltype(&cmark_node_free)> root(cmark_parser_finish(parser.get()),cmark_node_free);
+    if(!root){error="Markdown could not be parsed as GFM";return false;}
+    std::string title;
+    bool seen_title=false;
+    for(auto * node=cmark_node_first_child(root.get());node!=nullptr;node=cmark_node_next(node)){
+        if(cmark_node_get_type(node)==CMARK_NODE_HEADING){
+            const int level=cmark_node_get_heading_level(node);
+            const auto heading=markdown_inline_text(node);
+            if(level==1){
+                if(seen_title||!parsed.empty()){error="edited Markdown must contain exactly one document title before sections";return false;}
+                title=heading;seen_title=true;
+                continue;
+            }
+            if(level==2){
+                if(!seen_title){error="edited Markdown requires a title before report sections";return false;}
+                parsed.push_back({heading,{}});
+                continue;
+            }
+        }
+        if(parsed.empty()){
+            error="edited Markdown has content outside the document title and report sections";
+            return false;
+        }
+        auto block=markdown_source_lines(lines,cmark_node_get_start_line(node),cmark_node_get_end_line(node));
+        if(!block.empty())parsed.back().blocks.push_back(std::move(block));
+    }
+    if(!seen_title||title.empty()||parsed.empty()){error="edited Markdown requires a title and at least one section";return false;}
+    edited=original;edited.title=title;edited.schema_version=2;edited.markdown_renderer_version=4;
+    std::vector<bool> used(original.sections.size(),false);std::vector<common_agent_artifact_section> sections;
+    for(size_t si=0;si<parsed.size();++si){
+        auto & source=parsed[si];if(source.title.empty()){error="edited report section title is empty";return false;}
+        size_t prior=original.sections.size();
+        for(size_t i=0;i<original.sections.size();++i)if(!used[i]&&original.sections[i].title==source.title){prior=i;break;}
+        if(prior==original.sections.size()&&si<original.sections.size()&&!used[si])prior=si;
+        common_agent_artifact_section section;
+        if(prior<original.sections.size()){used[prior]=true;section=original.sections[prior];section.title=source.title;}
+        else {section.id="user-section-"+fingerprint(source.title+std::to_string(si));section.title=source.title;}
+        if(source.blocks.empty()&&!section.blocks.empty()){
+            edited.coverage_complete=false;
+            edited.unresolved_gaps.push_back("Report section cleared by editor: "+section.title+". Review coverage before relying on this revision.");
+        }
+        section.no_findings=source.blocks.empty();
+        std::vector<common_agent_artifact_block> blocks;
+        std::vector<bool> prior_blocks_used(section.blocks.size(),false);
+        for(size_t bi=0;bi<source.blocks.size();++bi){
+            common_agent_artifact_block block;bool unchanged=false;
+            for(size_t pi=0;pi<section.blocks.size();++pi)if(!prior_blocks_used[pi]&&section.blocks[pi].text==source.blocks[bi]){
+                block=section.blocks[pi];prior_blocks_used[pi]=true;unchanged=true;break;
+            }
+            if(!unchanged&&bi<section.blocks.size()&&!prior_blocks_used[bi]){block=section.blocks[bi];prior_blocks_used[bi]=true;}
+            block.id=unchanged&&!block.id.empty()?block.id:"user-block-"+fingerprint(section.id+"\n"+std::to_string(bi)+"\n"+source.blocks[bi]);
+            block.kind=unchanged?block.kind:common_agent_artifact_block_kind::observation;
+            block.text=source.blocks[bi];block.author=unchanged?block.author:common_agent_artifact_author::user;
+            block.origin=unchanged?block.origin:"user_edit";block.review_state=unchanged?block.review_state:common_agent_artifact_review_state::unreviewed;
+            if(!unchanged){block.validation=block.evidence_ids.empty()&&block.source_refs.empty()?common_agent_artifact_validation::unvalidated:common_agent_artifact_validation::references_resolve;
+                block.support=common_agent_artifact_support::unverified;block.validation_note="Text changed by user; existing references were retained but the revised claim has not been reviewed.";}
+            blocks.push_back(std::move(block));
+        }
+        section.blocks=std::move(blocks);sections.push_back(std::move(section));
+    }
+    edited.sections=std::move(sections);
+    for(size_t i=0;i<used.size();++i)if(!used[i]){
+        edited.coverage_complete=false;
+        edited.unresolved_gaps.push_back("Report section removed by editor: "+original.sections[i].title+". Review coverage before relying on this revision.");
+    }
+    std::string canonical,render_error;if(!common_agent_artifact_render_editable_markdown(edited,canonical,render_error)){error=render_error;return false;}
+    edited.content_fingerprint="sha256:"+hash_sha256_hex(canonical.data(),canonical.size());
     error.clear();return true;
 }
 

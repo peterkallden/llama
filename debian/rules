@@ -46,6 +46,7 @@ endif
 	dh $@ --buildsystem=cmake --builddirectory=debian/build
 
 override_dh_auto_configure:
+	cd examples/llama-agent.web && npm ci --no-audit --no-fund
 	dh_auto_configure -- \
 		-G Ninja \
 		-DCMAKE_BUILD_TYPE=RelWithDebInfo \

@@ -98,7 +98,7 @@ int main() {
     assert(common_agent_artifact_render_source(*dataset_source).find("[Saved source](<dataset://works>)")!=std::string::npos);
 
     common_agent_artifact_document document;
-    document.id="report";document.title="Report";
+    document.schema_version=1;document.id="report";document.title="Report";
     document.source_bibliography=api_citations;
     assert(common_agent_artifact_document_to_json(document,text,error));
     common_agent_artifact_document restored;

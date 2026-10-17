@@ -496,6 +496,94 @@ common_tool_execution_result export_dataset_csv(
         "Exported a bounded CSV artifact from the dataset.", {std::move(resource)});
 }
 
+common_tool_execution_result export_saved_document(
+        const common_native_tool_bindings & bindings, const json & arguments) {
+    const auto uri=arguments.value("source_document",std::string{});
+    const auto format=arguments.value("format",std::string("markdown"));
+    if(uri.empty()||(format!="markdown"&&format!="docx"))
+        return tool_validation_failure("tool.artifact.export.invalid_document_export","source_document requires a report resource and format markdown or docx");
+    if(bindings.resource_runtime.store==nullptr)
+        return tool_execution_failure("tool.artifact.export.store_unavailable","resource store is unavailable","Document export is unavailable.");
+    const auto authority=make_agent_resource_read_authority(bindings.resource_runtime,static_cast<int64_t>(std::time(nullptr)));
+    agent_resource_descriptor report_descriptor;std::string error;
+    if(!bindings.resource_runtime.store->stat(uri,authority,report_descriptor,error)||report_descriptor.mime_type!="application/vnd.llama-agent.report+json")
+        return tool_not_found_failure("tool.artifact.export.document_unavailable",std::move(error),"The saved report revision is not available in this scope.");
+    std::string serialized;
+    if(!bindings.resource_runtime.store->read_text(uri,authority,4*1024*1024,serialized,error))
+        return tool_execution_failure("tool.artifact.export.document_read_failed",std::move(error),"The saved report could not be read.");
+    common_agent_artifact_document document;
+    if(!common_agent_artifact_document_from_json(serialized,document,error))
+        return tool_validation_failure("tool.artifact.export.document_invalid",std::move(error));
+    std::string markdown;
+    if(!common_agent_artifact_render_markdown(document,markdown,error))
+        return tool_execution_failure("tool.artifact.export.document_render_failed",std::move(error),"The saved report could not be rendered.");
+    std::string editable;
+    if(!common_agent_artifact_render_editable_markdown(document,editable,error))
+        return tool_execution_failure("tool.artifact.export.document_render_failed",std::move(error),"The saved report could not be rendered.");
+    const auto markdown_key="document-export:"+document.id+":r"+std::to_string(document.revision)+":markdown";
+    common_runtime_resource_ref markdown_resource;
+    bool have_markdown=false;
+    if(!document.editor_markdown_uri.empty()){
+        agent_resource_descriptor descriptor;
+        if(bindings.resource_runtime.store->stat(document.editor_markdown_uri,authority,descriptor,error)&&descriptor.mime_type=="text/markdown"){
+            std::string stored;if(bindings.resource_runtime.store->read_text(descriptor.uri,authority,4*1024*1024,stored,error)&&stored==markdown){
+                markdown_resource.uri=descriptor.uri;markdown_resource.name=descriptor.name;markdown_resource.mime_type=descriptor.mime_type;
+                markdown_resource.size_bytes=descriptor.size_bytes;markdown_resource.scope=descriptor.scope;markdown_resource.metadata=descriptor.metadata;markdown_resource.lineage=descriptor.lineage;have_markdown=true;
+            }
+        }
+        error.clear();
+    }
+    if(!have_markdown){
+        std::vector<agent_resource_descriptor> resources;
+        if(!bindings.resource_runtime.store->list(authority,resources,error))return tool_execution_failure("tool.artifact.export.document_index_failed",std::move(error),"The document export index could not be read.");
+        for(const auto & resource:resources)if(resource.metadata.processing_cache_key==markdown_key){
+            std::string stored;if(resource.mime_type!="text/markdown"||!bindings.resource_runtime.store->read_text(resource.uri,authority,4*1024*1024,stored,error)||stored!=markdown)
+                return tool_execution_failure("tool.artifact.export.document_cache_invalid","cached Markdown differs from the immutable report revision","The document export cache could not be verified.");
+            markdown_resource.uri=resource.uri;markdown_resource.name=resource.name;markdown_resource.mime_type=resource.mime_type;markdown_resource.size_bytes=resource.size_bytes;markdown_resource.scope=resource.scope;markdown_resource.metadata=resource.metadata;markdown_resource.lineage=resource.lineage;have_markdown=true;break;
+        }
+        if(!have_markdown){
+            agent_resource_put_request put;put.name=document.id+"-r"+std::to_string(document.revision)+".md";put.description=document.title;put.mime_type="text/markdown";put.text=markdown;
+            put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;
+            put.source_provider="native";put.source_tool="artifact.export";put.metadata=make_tool_resource_metadata("Editable Markdown projection of a saved report revision.",document.title,"Use this resource as the Markdown export.","The structured report revision remains authoritative.");put.metadata.processing_cache_key=markdown_key;
+            put.lineage.parent_uri=uri;put.lineage.chunk_count=1;put.lineage.byte_length=markdown.size();put.lineage.derivation="artifact.export:document-markdown";
+            apply_agent_resource_runtime(bindings.resource_runtime,put);agent_resource_descriptor descriptor;
+            if(!bindings.resource_runtime.store->put_text(put,descriptor,error))return tool_execution_failure("tool.artifact.export.markdown_store_failed",std::move(error),"The Markdown export could not be stored.");
+            markdown_resource.uri=descriptor.uri;markdown_resource.name=descriptor.name;markdown_resource.mime_type=descriptor.mime_type;markdown_resource.size_bytes=descriptor.size_bytes;markdown_resource.scope=descriptor.scope;markdown_resource.metadata=descriptor.metadata;markdown_resource.lineage=descriptor.lineage;
+        }
+    }
+    common_runtime_resource_ref final_resource=markdown_resource;
+    if(format=="docx"){
+        const auto cache_key="document-export:"+document.id+":r"+std::to_string(document.revision)+":docx";
+        std::vector<agent_resource_descriptor> resources;
+        if(!bindings.resource_runtime.store->list(authority,resources,error))return tool_execution_failure("tool.artifact.export.document_index_failed",std::move(error),"The document export index could not be read.");
+        bool cached=false;
+        for(const auto & resource:resources)if(resource.metadata.processing_cache_key==cache_key){
+            if(resource.mime_type!="application/vnd.openxmlformats-officedocument.wordprocessingml.document"||resource.size_bytes==0)return tool_execution_failure("tool.artifact.export.docx_cache_invalid","cached DOCX has an invalid media type or empty content","The DOCX export cache could not be verified.");
+            final_resource.uri=resource.uri;final_resource.name=resource.name;final_resource.mime_type=resource.mime_type;final_resource.size_bytes=resource.size_bytes;final_resource.scope=resource.scope;final_resource.metadata=resource.metadata;final_resource.lineage=resource.lineage;cached=true;break;
+        }
+        if(!cached){
+            if(bindings.resource_processing_service==nullptr&&!bindings.resource_processing_provider_factory)return tool_execution_failure("tool.artifact.export.docx_unavailable","resource processing is unavailable","DOCX export is unavailable.");
+            agent_resource_processing_binding_request request;request.source_uri=markdown_resource.uri;request.operation_id=cache_key;request.authority=authority;request.media_type.declared_type="text/markdown";request.media_type.resolved_type="text/markdown";request.target_representation="docx";request.target_media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document";request.purpose=agent_resource_processing_purpose::artifact_generation;request.limits.max_source_bytes=4*1024*1024;request.limits.max_output_bytes=8*1024*1024;request.limits.max_duration_ms=180000;request.limits.max_generated_resources=1;
+            std::shared_ptr<agent_resource_processing_provider> owned;auto * processor=bindings.resource_processing_service;
+            if(bindings.resource_processing_provider_factory){owned=bindings.resource_processing_provider_factory(request);processor=owned.get();}
+            if(processor==nullptr)return tool_execution_failure("tool.artifact.export.docx_unavailable","resource processor provider could not be created","DOCX export is unavailable.");
+            const auto processed=processor->process(request);
+            if(!processed.success||processed.outputs.size()!=1||processed.outputs.front().bytes.empty()||common_normalize_resource_media_type(processed.outputs.front().mime_type)!=common_normalize_resource_media_type(request.target_media_type))
+                return tool_execution_failure("tool.artifact.export.docx_failed",processed.failure_code+": "+processed.safe_summary,"The report could not be converted to DOCX.");
+            agent_resource_put_request put;put.name=document.id+"-r"+std::to_string(document.revision)+".docx";put.description=document.title;put.mime_type=request.target_media_type;put.bytes=processed.outputs.front().bytes;put.bytes_are_authoritative=true;
+            put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;put.source_provider="native";put.source_tool="artifact.export";put.metadata=processed.outputs.front().metadata;put.metadata.processing_cache_key=cache_key;put.lineage.parent_uri=markdown_resource.uri;put.lineage.chunk_count=1;put.lineage.byte_length=put.bytes.size();put.lineage.derivation="artifact.export:document-docx";
+            apply_agent_resource_runtime(bindings.resource_runtime,put);agent_resource_descriptor descriptor;
+            if(!bindings.resource_runtime.store->put_bytes(put,descriptor,error))return tool_execution_failure("tool.artifact.export.docx_store_failed",std::move(error),"The DOCX export could not be stored.");
+            final_resource.uri=descriptor.uri;final_resource.name=descriptor.name;final_resource.mime_type=descriptor.mime_type;final_resource.size_bytes=descriptor.size_bytes;final_resource.scope=descriptor.scope;final_resource.metadata=descriptor.metadata;final_resource.lineage=descriptor.lineage;
+        }
+    }
+    const auto result=json{{"resource",final_resource.uri},{"report_resource",uri},{"markdown_resource",markdown_resource.uri},
+        {"report_id",document.id},{"revision",document.revision},{"content_fingerprint",document.content_fingerprint},
+        {"previous_revision_uri",document.previous_revision_uri},{"format",format}}.dump();
+    std::vector<common_runtime_resource_ref> refs{final_resource};if(final_resource.uri!=markdown_resource.uri)refs.push_back(markdown_resource);refs.push_back(report_descriptor);
+    return common_tool_execution_result::success(result,"Exported the selected immutable report revision.",std::move(refs));
+}
+
 common_tool_execution_result export_plan_report(
         const common_native_tool_bindings & bindings, const json & arguments) {
     if (bindings.plan_store == nullptr || bindings.plan_id == nullptr || bindings.plan_id->empty())
@@ -1212,6 +1300,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 std::string err; json arguments;
                 if (!parse_object(input, arguments, err)) return tool_validation_failure("tool.artifact.export.invalid_arguments", std::move(err));
+                if (arguments.contains("source_document")) return export_saved_document(bindings, arguments);
                 if (arguments.contains("source_dataset")) return export_dataset_csv(bindings, arguments);
                 if (arguments.contains("source_plan") || arguments.value("format", std::string{}) == "markdown" || arguments.value("format", std::string{}) == "docx") return export_plan_report(bindings, arguments);
                 if (!arguments.contains("name") || !arguments["name"].is_string() || !arguments.contains("content") || !arguments["content"].is_string()) return tool_validation_failure("tool.artifact.export.invalid_arguments", "artifact.export requires name and content, or source_dataset");

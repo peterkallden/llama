@@ -14,6 +14,8 @@ using common_agent_artifact_profile = common_plan_artifact_profile;
 enum class common_agent_artifact_block_kind { observation, conclusion, recommendation };
 enum class common_agent_artifact_validation { unvalidated, references_resolve, gap, contradicted };
 enum class common_agent_artifact_support { unverified, linked_support, contradicted, mixed };
+enum class common_agent_artifact_author { model, user, host };
+enum class common_agent_artifact_review_state { reviewed, unreviewed, requires_research };
 
 struct common_agent_artifact_block {
     std::string id;
@@ -25,6 +27,8 @@ struct common_agent_artifact_block {
     common_agent_artifact_support support = common_agent_artifact_support::unverified;
     std::string validation_note;
     std::string origin = "model";
+    common_agent_artifact_author author = common_agent_artifact_author::model;
+    common_agent_artifact_review_state review_state = common_agent_artifact_review_state::reviewed;
 };
 
 struct common_agent_artifact_section {
@@ -71,6 +75,7 @@ struct common_agent_artifact_snapshot {
 };
 
 struct common_agent_artifact_document {
+    uint32_t schema_version = 2;
     // Stored documents retain their renderer semantics for manifest readback.
     uint32_t markdown_renderer_version = 3;
     std::string id;
@@ -82,6 +87,10 @@ struct common_agent_artifact_document {
     std::string previous_revision_uri;
     std::string snapshot_fingerprint;
     std::string snapshot_uri;
+    std::string content_fingerprint;
+    std::string editor_parent_uri;
+    std::string editor_operation_id;
+    std::string editor_markdown_uri;
     std::string source_plan_id;
     uint64_t source_plan_version = 0;
     bool coverage_complete = false;
@@ -138,3 +147,7 @@ bool common_agent_artifact_document_from_plan(
     const std::string & snapshot_uri, common_agent_artifact_document &, std::string & error,
     const std::string & report_id = {});
 bool common_agent_artifact_render_markdown(const common_agent_artifact_document &, std::string & out, std::string & error);
+bool common_agent_artifact_render_editable_markdown(const common_agent_artifact_document &, std::string & out, std::string & error);
+bool common_agent_artifact_apply_markdown_edit(
+    const common_agent_artifact_document &, const std::string & markdown,
+    common_agent_artifact_document &, std::string & error);

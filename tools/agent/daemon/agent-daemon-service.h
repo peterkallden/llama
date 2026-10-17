@@ -365,6 +365,7 @@ struct common_agent_daemon_tool_status {
     std::string server_tool_name;
     bool read_only = false;
     bool app_read_only = false;
+    bool app_write_authorized = false;
     bool policy_gated = false;
 };
 

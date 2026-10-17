@@ -33,7 +33,7 @@ struct common_tool_http_metadata {
     int retry_after_seconds = -1;
 };
 
-enum class common_tool_failure_class { validation, policy, not_found, timeout, network, execution, limit };
+enum class common_tool_failure_class { validation, policy, not_found, timeout, network, execution, limit, conflict };
 
 inline const char * common_tool_failure_class_name(common_tool_failure_class value) {
     switch (value) {
@@ -44,6 +44,7 @@ inline const char * common_tool_failure_class_name(common_tool_failure_class val
         case common_tool_failure_class::network: return "network";
         case common_tool_failure_class::execution: return "execution";
         case common_tool_failure_class::limit: return "limit";
+        case common_tool_failure_class::conflict: return "conflict";
     }
     return "execution";
 }

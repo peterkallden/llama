@@ -7,6 +7,10 @@
 
 #include <exception>
 
+#ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
+#include "agent-document-editor-html.h"
+#endif
+
 namespace {
 
 const agent_mcp_server_tool * find_tool(
@@ -40,6 +44,14 @@ agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name)
     if (tool_name == "plan.get") {
         return {{"resourceUri", "ui://llama-agent/apps/workflow-inspector"}, {"visibility", {"model", "app"}}};
     }
+    if (tool_name == "document.open" || tool_name == "document.save" ||
+            tool_name == "document.propose_patch" || tool_name == "document.apply_patch") {
+#ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
+        return {{"resourceUri", "ui://llama-agent/apps/document-editor"}, {"visibility", {"model", "app"}}};
+#else
+        return agent_mcp_json::object();
+#endif
+    }
     return agent_mcp_json::object();
 }
 
@@ -58,10 +70,14 @@ agent_mcp_json agent_mcp_first_party_app_resources() {
             {"_meta", {{"ui", ui_metadata}}},
         };
     };
-    return {{"resources", agent_mcp_json::array({
+    auto resources=agent_mcp_json::array({
         make_resource("ui://llama-agent/apps/data-explorer", "Data Explorer", "Read-only dataset schema and sample viewer."),
         make_resource("ui://llama-agent/apps/workflow-inspector", "Workflow Inspector", "Read-only view of the active plan."),
-    })}};
+    });
+#ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
+    resources.push_back(make_resource("ui://llama-agent/apps/document-editor", "Document Editor", "Edit a saved report revision and request an agent review."));
+#endif
+    return {{"resources", std::move(resources)}};
 }
 
 bool agent_mcp_read_first_party_app_resource(
@@ -73,6 +89,9 @@ bool agent_mcp_read_first_party_app_resource(
     const char * text = nullptr;
     if (uri == "ui://llama-agent/apps/data-explorer") text = data_app.c_str();
     else if (uri == "ui://llama-agent/apps/workflow-inspector") text = workflow_app.c_str();
+#ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
+    else if (uri == "ui://llama-agent/apps/document-editor") text = LLAMA_AGENT_DOCUMENT_EDITOR_HTML;
+#endif
     else {
         error = "unknown first-party MCP App resource URI";
         return false;
@@ -86,7 +105,7 @@ bool agent_mcp_read_first_party_app_resource(
     };
     const agent_mcp_json resource_content = {
         {"uri", uri},
-        {"name", uri.find("data-explorer") != std::string::npos ? "Data Explorer" : "Workflow Inspector"},
+        {"name", uri.find("data-explorer") != std::string::npos ? "Data Explorer" : uri.find("workflow-inspector") != std::string::npos ? "Workflow Inspector" : "Document Editor"},
         {"mimeType", "text/html;profile=mcp-app"},
         {"text", text},
         {"_meta", {{"ui", ui_metadata}}},

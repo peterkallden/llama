@@ -387,7 +387,7 @@ int main() {
         common_tool_model_result_schema(*artifact_export),
         compact_error);
     assert(compact_error.empty());
-    assert(artifact_compact.find("rule: Choose one mode: name+content for text, source_dataset+format=csv for data, or format=markdown|docx to export the active host-composed report.") != std::string::npos);
+    assert(artifact_compact.find("rule: Choose one mode: name+content for text, source_dataset+format=csv for data, source_document+format=markdown|docx to export a saved immutable report revision, or format=markdown|docx to compose the active report.") != std::string::npos);
     assert(artifact_compact.find("example:\nopen! artifact.export\nname: summary.txt\ncontent: \"Total orders: 42\"") != std::string::npos);
 
     std::vector<common_plan_schema_field> extracted_fields;
@@ -442,6 +442,8 @@ int main() {
             assert(definition.requires_confirmation);
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
                 "artifact.export") != definition.capabilities.end());
+        } else if (definition.name == "document.save" || definition.name == "document.apply_patch") {
+            assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);
         }

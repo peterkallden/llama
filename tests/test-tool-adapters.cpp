@@ -395,6 +395,10 @@ int main() {
         {"diagnostics.include_graph", 1, true, "{}"},
         {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
+        {"document.open", 1, true, "{}"},
+        {"document.save", 1, true, "{}"},
+        {"document.propose_patch", 1, true, "{}"},
+        {"document.apply_patch", 1, true, "{}"},
         {"openapi.connect", 1, true, "{}"},
         {"resource.read", 1, true, "{}"},
     };
@@ -798,6 +802,49 @@ int main() {
             request.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
             request.text == "test-docx-bytes";
     }));
+    const auto document_uri=report_export.value("report_resource",std::string{});
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",document_uri}}.dump()});
+    assert(result.ok);
+    auto opened_document=nlohmann::json::parse(result.output);
+    assert(opened_document.value("revision",uint64_t(0))==1&&opened_document.contains("markdown"));
+    auto edited_markdown=opened_document.value("markdown",std::string{});
+    edited_markdown+="\n## User edits\n\nUser-edited report text.\n";
+    const auto save_args=nlohmann::json{{"document_uri",document_uri},{"expected_revision",1},
+        {"markdown",edited_markdown},{"operation_id","adapter-test-save-1"}};
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok);
+    const auto saved_document=nlohmann::json::parse(result.output);
+    assert(saved_document.value("revision",uint64_t(0))==2&&!saved_document.value("reused",false));
+    assert(saved_document["diff"].value("base_revision",uint64_t(0))==1&&
+        saved_document["diff"]["blocks"].size()>=1&&
+        saved_document["diff"]["blocks"][0].value("new_text",std::string{}).find("User-edited")!=std::string::npos);
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("reused",false));
+    auto conflict_args=save_args;conflict_args["operation_id"]="adapter-test-save-conflict";
+    result=foundation_registry.execute({"document.save",conflict_args.dump()});
+    assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("markdown",std::string{}).find("User-edited report text.")!=std::string::npos);
+    result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_document.value("document_uri",std::string{})},{"format","markdown"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("report_resource",std::string{})==saved_document.value("document_uri",std::string{}));
+    const auto saved_document_export=nlohmann::json::parse(result.output);
+    const auto saved_export_markdown=foundation_resources.contents.at(saved_document_export.value("markdown_resource",std::string{}));
+    assert(saved_export_markdown.find("User-edited report text.")!=std::string::npos&&
+        saved_export_markdown.find("Coverage incomplete")!=std::string::npos);
+    auto proposal_markdown=edited_markdown+"\n## Reviewer note\n\nProposed clarification.\n";
+    result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"expected_revision",2},{"markdown",proposal_markdown},{"summary","Clarify the edited result."}}.dump()});
+    assert(result.ok);
+    const auto proposal=nlohmann::json::parse(result.output);
+    result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"proposal_uri",proposal.value("proposal_uri",std::string{})},{"expected_revision",2},{"operation_id","adapter-test-apply-1"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==3);
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==2&&nlohmann::json::parse(result.output).value("reused",false));
+    auto stale_apply=nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"proposal_uri",proposal.value("proposal_uri",std::string{})},{"expected_revision",2},{"operation_id","adapter-test-stale-apply"}};
+    result=foundation_registry.execute({"document.apply_patch",stale_apply.dump()});
+    assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
     result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
     assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
            foundation_resources.last_request.mime_type == "text/csv" &&

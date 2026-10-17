@@ -121,7 +121,7 @@ async function connect() {
   }
 }
 
-async function submit(prompt: string) {
+async function submit(prompt: string, additionalResourceRefs: string[] = []) {
   error.value = ""; busy.value = true;
   const turnId = crypto.randomUUID();
   activeTurnId.value = turnId;
@@ -130,7 +130,7 @@ async function submit(prompt: string) {
   const turn: TurnRequest = {
     prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
     turn_id: turnId, mode: "agent", n_predict: 384, include_summary: true,
-    ...(resourceRefs.value.length ? { resource_refs: [...resourceRefs.value] } : {}),
+    ...([...resourceRefs.value, ...additionalResourceRefs].length ? { resource_refs: [...new Set([...resourceRefs.value, ...additionalResourceRefs])] } : {}),
   };
   try {
     const result = await api.value.submitTurn(turn) as TurnResult;

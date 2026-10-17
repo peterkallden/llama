@@ -419,6 +419,7 @@ common_agent_daemon_readiness make_daemon_readiness(
                 status.read_only = runtime.provider_probe_tooling.tool_view->is_read_only(tool.name);
                 status.policy_gated = runtime.provider_probe_tooling.tool_view->is_policy_gated(tool.name);
                 status.app_read_only = runtime.provider_probe_tooling.tool_view->is_mcp_app_read_only(tool.name);
+                status.app_write_authorized = runtime.provider_probe_tooling.tool_view->is_mcp_app_write_authorized(tool.name);
             }
             readiness.tools.push_back(std::move(status));
         }
@@ -432,6 +433,8 @@ common_agent_daemon_readiness make_daemon_readiness(
         status.provider_id = tool.mcp_provider_id;
         status.server_tool_name = tool.mcp_server_tool_name;
         status.app_read_only = tool.mcp_app_read_only;
+        status.app_write_authorized = runtime.provider_probe_tooling.tool_view != nullptr &&
+            runtime.provider_probe_tooling.tool_view->is_mcp_app_write_authorized(tool.name);
         status.read_only = runtime.provider_probe_tooling.tool_view != nullptr &&
             runtime.provider_probe_tooling.tool_view->is_read_only(tool.name);
         status.policy_gated = runtime.provider_probe_tooling.tool_view != nullptr &&

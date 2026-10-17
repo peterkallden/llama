@@ -89,7 +89,10 @@ int main() {
     assert(listed["tools"][0]["_meta"]["ui"]["visibility"] == agent_mcp_json::array({"model", "app"}));
 
     const auto resources = agent_mcp_first_party_app_resources();
-    assert(resources["resources"].size() == 2);
+    assert(resources["resources"].size() == 2 || resources["resources"].size() == 3);
+    bool has_document_editor=false;
+    for(const auto & resource:resources["resources"])if(resource.value("uri",std::string{})=="ui://llama-agent/apps/document-editor")has_document_editor=true;
+    assert(has_document_editor==(resources["resources"].size()==3));
     assert(resources["resources"][0]["mimeType"] == "text/html;profile=mcp-app");
     assert(agent_mcp_first_party_app_metadata("dataset.schema").value("resourceUri", "") ==
         "ui://llama-agent/apps/data-explorer");

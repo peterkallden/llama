@@ -175,7 +175,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
 
     <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
     <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!), activeAppInvocation()?.id])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :invocation="activeAppInvocation()" />
+    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!), activeAppInvocation()?.id])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submit" :invocation="activeAppInvocation()" />
 
     <section v-else class="grid">
       <div class="primary">

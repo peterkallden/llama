@@ -251,6 +251,9 @@ struct common_chat_tool {
     // Optional MCP Apps presentation metadata. It is transport metadata only;
     // the tool runtime and policy remain authoritative for execution.
     std::string mcp_ui_metadata;
+    // Narrow first-party MCP App capability for host-authorized document
+    // editing. This does not make the tool read-only or model policy-free.
+    bool mcp_app_write_authorized = false;
     // Host/provider provenance for web app discovery. These are not model
     // instructions; they support provider-scoped UI routing and authorization.
     std::string mcp_provider_id;

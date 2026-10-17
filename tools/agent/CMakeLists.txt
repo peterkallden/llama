@@ -822,6 +822,63 @@ set(AGENT_MCP_SERVER_SOURCES
 )
 
 add_library(llama-agent-mcp-server ${AGENT_MCP_SERVER_SOURCES})
+find_program(LLAMA_AGENT_NPM_EXECUTABLE npm)
+set(LLAMA_AGENT_DOCUMENT_EDITOR_DEPS
+    ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/@toast-ui/editor/package.json)
+if(LLAMA_AGENT_NPM_EXECUTABLE AND EXISTS ${LLAMA_AGENT_DOCUMENT_EDITOR_DEPS})
+    set(LLAMA_AGENT_DOCUMENT_EDITOR_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/agent-document-editor-html.h)
+    add_custom_command(
+        OUTPUT ${LLAMA_AGENT_DOCUMENT_EDITOR_HEADER}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+        COMMAND ${LLAMA_AGENT_NPM_EXECUTABLE} run build:document-editor
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/dist/document-editor-html.h
+            ${LLAMA_AGENT_DOCUMENT_EDITOR_HEADER}
+        DEPENDS
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/package.json
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/package-lock.json
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/vite.document-editor.config.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/document-editor.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/document-editor.css
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/document-editor.html
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/scripts/embed-document-editor.mjs
+            ${PROJECT_SOURCE_DIR}/docs/third-party/NOTICE.md
+            ${PROJECT_SOURCE_DIR}/docs/third-party/TOAST-UI-MIT.txt
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/dompurify/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-commands/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-history/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-inputrules/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-keymap/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-model/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-state/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-transform/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/prosemirror-view/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/orderedmap/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/rope-sequence/LICENSE
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/w3c-keyname/LICENSE
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/examples/llama-agent.web
+        VERBATIM)
+    add_custom_target(llama-agent-document-editor-bundle DEPENDS ${LLAMA_AGENT_DOCUMENT_EDITOR_HEADER})
+    add_dependencies(llama-agent-mcp-server llama-agent-document-editor-bundle)
+    target_sources(llama-agent-mcp-server PRIVATE ${LLAMA_AGENT_DOCUMENT_EDITOR_HEADER})
+    target_include_directories(llama-agent-mcp-server PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    target_compile_definitions(llama-agent-mcp-server PRIVATE LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE=1)
+    target_compile_definitions(llama-agent-tool-provider PRIVATE LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE=1)
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/docs/third-party/NOTICE.md
+        ${PROJECT_SOURCE_DIR}/docs/third-party/TOAST-UI-MIT.txt
+        ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/dompurify/LICENSE
+        DESTINATION share/doc/llama-agent/third-party)
+    foreach(LLAMA_AGENT_PM_PACKAGE IN ITEMS
+        prosemirror-commands prosemirror-history prosemirror-inputrules
+        prosemirror-keymap prosemirror-model prosemirror-state
+        prosemirror-transform prosemirror-view orderedmap rope-sequence w3c-keyname)
+        install(FILES
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/${LLAMA_AGENT_PM_PACKAGE}/LICENSE
+            DESTINATION share/doc/llama-agent/third-party
+            RENAME ${LLAMA_AGENT_PM_PACKAGE}-LICENSE)
+    endforeach()
+endif()
 target_include_directories(llama-agent-mcp-server
     PUBLIC
         ${PROJECT_SOURCE_DIR}

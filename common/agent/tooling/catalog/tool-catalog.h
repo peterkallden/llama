@@ -31,6 +31,7 @@ struct common_tool_definition {
     uint32_t timeout_ms = 1000;
     size_t max_result_bytes = 16384;
     std::string policy_json = "{}";
+    bool mcp_app_write_authorized = false;
 };
 
 // Model-facing schemas are projections of the host contract. An empty
