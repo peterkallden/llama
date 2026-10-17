@@ -55,6 +55,10 @@ A later published report composition supersedes an older editor head. Both
 export and editor revision selection consult the same current-revision check,
 so continued editing follows the recomposed report's revision and lineage.
 
+The toolbar uses outlined icons: a counterclockwise arrow reloads the saved
+revision, a floppy disk saves, and a scientist face saves and requests review.
+Each icon retains a tooltip and accessible action name. Licenses remains a text button.
+
 “Save” performs no model call. Before an ordinary chat message is sent while a
 document is open, the editor saves pending changes and returns a typed binding
 for the saved document URI, immutable revision, and selected block IDs. The
