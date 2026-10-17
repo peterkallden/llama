@@ -31,8 +31,13 @@ DOCX images become alternative text with an explicit import limitation. The
 original DOCX retains its media; exported Markdown does not refer to temporary
 image files belonging to the conversion process.
 
-The attachment list offers an explicit “Open in editor” action for supported
-file types; uploading alone does not import or open a document.
+The attachment list offers an explicit pen icon named “Redigera dokument” for
+supported file types; uploading alone does not import or open a document. The
+editor opens in a shared workspace: the document stays in the main pane and the
+existing chat moves to a narrow side column. The editor iframe remains mounted
+while chat updates, so its selection and local draft survive the layout change.
+At widths below 1,000 px the document, chat and status panels stack vertically.
+Closing restores the prior workspace view and panel expansion states.
 `document.open` returns the saved immutable report or imported document revision and an editable
 Markdown projection. `document.save` compares `expected_revision` with the
 current host manifest, parses the full document, and publishes a new immutable
@@ -50,11 +55,23 @@ A later published report composition supersedes an older editor head. Both
 export and editor revision selection consult the same current-revision check,
 so continued editing follows the recomposed report's revision and lineage.
 
-“Save” performs no model call. “Save and review” saves first and submits a
-normal daemon turn with a typed document URI, immutable revision, and selected
-block IDs. The host re-authorizes the resource and validates the revision and
+“Save” performs no model call. Before an ordinary chat message is sent while a
+document is open, the editor saves pending changes and returns a typed binding
+for the saved document URI, immutable revision, and selected block IDs. The
+message is not sent if save or revision checks fail, and the chat draft remains
+in place. The host re-authorizes the resource and validates the revision and
 block IDs before adding bounded document context. An empty block selection
-means the whole document. The turn asks the agent to
+means the whole document. Sending a chat message saves the document but does
+not start a separate review.
+
+“Save and review” registers a normal daemon turn after saving. The × button
+“Spara, granska och stäng” saves and queues the changes since the editing
+session opened or since the previous review request, then restores the prior
+workspace as soon as the request is registered. If another turn is running, the
+review waits in a session-scoped browser queue and starts when that turn
+finishes. A failed review stays visible in chat with a retry action. Queue
+entries use a stable operation/turn ID so retry does not create duplicate chat
+turns. The review turn asks the agent to
 review the changed content. The agent may use existing research/tool routes
 and may create a bounded `document.propose_patch` proposal. The model supplies
 `section_id`, `block_id`, replacement `text` (up to 16 KiB), and `summary`.
@@ -71,8 +88,9 @@ IDs needed for bounded patch proposals. The first-party host checks the review
 binding against the editor's currently opened revision before submitting it.
 The sidebar displays the host-computed diff before acceptance. Accepted model
 changes remain model-authored and unreviewed; accepting them does not transfer
-the original block's factual support. Save/review failures are returned to the
-editor rather than acknowledged as successful review starts.
+the original block's factual support. Save failures keep the editor open. A
+queued review is reported separately from its eventual model result; turn
+failures appear in chat and can be retried without saving another revision.
 
 Changed blocks are marked as user-authored and unreviewed. Their old evidence
 references may remain for navigation, but they do not confer support on the

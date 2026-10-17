@@ -15,9 +15,16 @@ const toolsExpanded = ref(false);
 const expandedTools = ref<Set<string>>(new Set());
 const sessionsExpanded = ref(false);
 const webClientExpanded = ref(true);
+const statusExpanded = ref(true);
+const eventsExpanded = ref(true);
 const eventsViewport = ref<HTMLElement | null>(null);
 const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
 const activeAppTool = ref("");
+const documentMode = ref(false);
+const chatSending = ref(false);
+const documentStatus = ref<{ title: string; revision: number; dirty: boolean; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
+const editorHost = ref<InstanceType<typeof McpAppHost> | null>(null);
+const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string; web: boolean; status: boolean; events: boolean } | null>(null);
 const localDocumentEvent = ref<AgentEvent>();
 const openingAttachmentUri = ref("");
 const attachmentEditorError = ref("");
@@ -47,11 +54,13 @@ const activeAppInvocation = () => {
 };
 
 watch(() => session.events[0], (event) => {
+  if (documentMode.value) return;
   const targetApp = findAppForInvocationEvent(event, session.tools, session.sessionId);
   if (targetApp) {
     localDocumentEvent.value = undefined;
     activeAppTool.value = mcpAppKey(targetApp);
-    activeView.value = "app";
+    if (targetApp._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor") enterDocumentMode();
+    else activeView.value = "app";
   }
 }, { flush: "sync" });
 
@@ -77,11 +86,70 @@ watch(() => session.events.length, () => {
   });
 });
 
-function send() {
-  const value = prompt.value.trim();
-  if ((!value && !session.attachments.length) || session.busy) return;
-  prompt.value = "";
-  void session.submit(value || "Please process the attached audio.");
+async function send() {
+  const draftAtSubmit = prompt.value;
+  const value = draftAtSubmit.trim();
+  if ((!value && !session.attachments.length) || session.busy || chatSending.value) return;
+  chatSending.value = true;
+  const sendingSession = session.sessionId;
+  try {
+    const context = documentMode.value ? await editorHost.value?.prepareForChat() : undefined;
+    if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
+    if (prompt.value === draftAtSubmit) prompt.value = "";
+    await session.submit(value || "Please process the attached audio.", [], false, context);
+  } catch (cause) {
+    session.error = cause instanceof Error ? cause.message : String(cause);
+  } finally { chatSending.value = false; }
+}
+
+function enterDocumentMode() {
+  if (!savedWorkspaceState.value) savedWorkspaceState.value = {
+    view: activeView.value, app: activeAppTool.value, web: webClientExpanded.value, status: statusExpanded.value, events: eventsExpanded.value,
+  };
+  documentMode.value = true; activeView.value = "app";
+  webClientExpanded.value = false; statusExpanded.value = false; eventsExpanded.value = false;
+}
+
+function restoreDocumentMode() {
+  documentMode.value = false;
+  const previous = savedWorkspaceState.value;
+  if (previous) {
+    activeView.value = previous.view;
+    activeAppTool.value = previous.app;
+    webClientExpanded.value = previous.web; statusExpanded.value = previous.status; eventsExpanded.value = previous.events;
+  } else activeView.value = "chat";
+  savedWorkspaceState.value = null;
+}
+
+async function navigateWorkspace(view: typeof activeView.value, appKey = "") {
+  if (documentMode.value) {
+    try { await editorHost.value?.closeDocument(); }
+    catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
+    restoreDocumentMode();
+  }
+  activeView.value = view;
+  if (appKey) activeAppTool.value = appKey;
+}
+
+async function startNewSession() {
+  if (documentMode.value) {
+    try { await editorHost.value?.closeDocument(); }
+    catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return; }
+    restoreDocumentMode();
+  }
+  if (session.busy || session.documentReviews.some((item) => item.state !== "completed")) {
+    session.error = "The current session still has an active turn or document review. It will remain available here; start a new session after it finishes.";
+    return;
+  }
+  session.newSession();
+}
+
+function onDocumentClosed() { restoreDocumentMode(); }
+function onDocumentStatus(value: Record<string, unknown>) {
+  documentStatus.value = {
+    title: String(value.title ?? "Document"), revision: Number(value.revision ?? 0),
+    dirty: Boolean(value.dirty), message: String(value.message ?? ""), error: Boolean(value.error),
+  };
 }
 
 async function openAttachmentInEditor(file: (typeof session.attachments)[number]) {
@@ -114,7 +182,7 @@ async function openAttachmentInEditor(file: (typeof session.attachments)[number]
       tool_result: { isError: false, structuredContent: opened },
     };
     activeAppTool.value = mcpAppKey(openTool);
-    activeView.value = "app";
+    enterDocumentMode();
   } catch (cause) {
     attachmentEditorError.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -207,40 +275,48 @@ function isArtifactEvent(event: Record<string, unknown>) {
       <div><p class="eyebrow">EXAMPLE APPLICATION</p><h1>llama-agent</h1></div>
       <div class="connection" :class="`connection-${session.connectionState}`">
         <span class="dot" /> {{ connectionLabel[session.connectionState] }}
-        <button class="quiet" @click="session.connect">reconnect</button><button class="quiet" @click="session.newSession">new session</button>
+        <button class="quiet" @click="session.connect">reconnect</button><button class="quiet" @click="startNewSession">new session</button>
       </div>
     </header>
 
     <section class="notice">This is an example client for the daemon's HTTP/SSE adapter. Agent planning, tools, MCP and policy remain in the daemon.</section>
 
     <nav class="workspace-nav" aria-label="Agent workspace">
-      <button :class="{ selected: activeView === 'chat' }" @click="activeView = 'chat'">Chat</button>
-      <button :class="{ selected: activeView === 'data' }" @click="activeView = 'data'">Data Explorer</button>
-      <button :class="{ selected: activeView === 'workflow' }" @click="activeView = 'workflow'">Workflow Inspector</button>
-      <button v-for="tool in mcpApps()" :key="mcpAppKey(tool)" :class="{ selected: activeAppTool === mcpAppKey(tool) }" @click="activeView = 'app'; activeAppTool = mcpAppKey(tool)">{{ tool.name }} app</button>
+      <button :class="{ selected: activeView === 'chat' && !documentMode }" @click="navigateWorkspace('chat')">Chat</button>
+      <button :class="{ selected: activeView === 'data' }" @click="navigateWorkspace('data')">Data Explorer</button>
+      <button :class="{ selected: activeView === 'workflow' }" @click="navigateWorkspace('workflow')">Workflow Inspector</button>
+      <button v-for="tool in mcpApps()" :key="mcpAppKey(tool)" :class="{ selected: activeAppTool === mcpAppKey(tool) }" @click="navigateWorkspace('app', mcpAppKey(tool))">{{ tool.name }} app</button>
     </nav>
 
-    <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { activeView = 'chat'; prompt = text; }" />
-    <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-    <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation()" />
-
-    <section v-else class="grid">
+    <section class="grid" :class="{ 'document-layout': documentMode, 'chat-layout': activeView === 'chat' && !documentMode }">
+      <div v-show="activeView !== 'chat' || documentMode" class="workspace-main">
+        <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { void navigateWorkspace('chat'); prompt = text; }" />
+        <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
+        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation()" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" />
+      </div>
       <div class="primary">
-        <section class="card chat">
-          <div class="card-title"><h2>Chat</h2></div>
+        <section v-show="activeView === 'chat' || documentMode" class="card chat chat-panel">
+          <div class="card-title chat-heading"><h2>Chat</h2><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
           <div v-for="message in session.messages" :key="message.id" class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>Send</span></button></div></div>
+            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="session.busy || chatSending || (!prompt.trim() && !session.attachments.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>{{ chatSending ? 'Saving…' : 'Send' }}</span></button></div></div>
           </form>
-          <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="quiet" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) || Boolean(openingAttachmentUri)" :title="!file.uri ? 'Upload is still in progress.' : !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) ? 'The daemon has not authorized document import for the editor app.' : undefined" @click="openAttachmentInEditor(file)">{{ openingAttachmentUri === file.uri ? 'Opening…' : 'Open in editor' }}</button><small v-if="file.uri && !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" class="muted">Document editor import is not authorized by the daemon profile.</small><small v-if="openingAttachmentUri === file.uri" class="muted">Importing the document and opening its saved revision…</small><small v-if="attachmentEditorError" class="error">{{ attachmentEditorError }}</small></div></div>
+          <div v-if="session.attachments.length" class="attachments"><strong>Attachments</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input type="checkbox" checked @change="session.removeAttachment(index)" />{{ file.name }}</label><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="attachment-editor-button" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) || Boolean(openingAttachmentUri)" :title="!file.uri ? 'Upload is still in progress.' : !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) ? 'The daemon has not authorized document import for the editor app.' : 'Redigera dokument'" aria-label="Redigera dokument" @click="openAttachmentInEditor(file)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3M4 20l4.4-.9L19 8.5a2.1 2.1 0 0 0-3-3L5.4 16.1 4 20Z"/><path d="M3 22h18"/></svg></button><small v-if="file.uri && !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" class="muted">Document editor import is not authorized by the daemon profile.</small><small v-if="openingAttachmentUri === file.uri" class="muted">Importing the document and opening its saved revision…</small><small v-if="attachmentEditorError" class="error">{{ attachmentEditorError }}</small></div></div>
           <div v-if="session.busy" class="chat-cancel"><button class="cancel-button" @click="session.cancel">Cancel</button></div>
+          <section v-if="session.documentReviews.some((item) => item.state !== 'completed')" class="document-review-queue" aria-label="Document review status">
+            <div v-for="review in session.documentReviews.filter((item) => item.state !== 'completed')" :key="review.operation_id" class="review-queue-item" :class="`review-${review.state}`">
+              <span>{{ review.state === 'queued' ? 'Review waiting for the current turn' : review.state === 'running' ? 'Document review running in chat' : `Review failed: ${review.error ?? 'unknown error'}` }}</span>
+              <button v-if="review.state === 'failed'" class="quiet" @click="session.retryDocumentReview(review.operation_id)">Retry review</button>
+            </div>
+          </section>
         </section>
 
-        <section class="card">
-          <div class="card-title"><h2>Events</h2><span class="muted">{{ session.events.length }}</span></div>
+        <section v-show="activeView === 'chat' || documentMode" class="card events-panel">
+          <button class="section-toggle" @click="eventsExpanded = !eventsExpanded"><h2>Events</h2><span>{{ eventsExpanded ? '−' : '+' }} · {{ session.events.length }}</span></button>
+          <template v-if="eventsExpanded">
           <div v-if="!session.events.length" class="empty">Runtime events will appear here while the daemon is working.</div>
           <div ref="eventsViewport" class="events-viewport">
           <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
@@ -249,12 +325,13 @@ function isArtifactEvent(event: Record<string, unknown>) {
             <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
           </div>
           </div>
+          </template>
         </section>
       </div>
 
       <aside class="side">
         <section class="card web-client-panel"><button class="section-toggle" :disabled="session.connectionState !== 'connected'" @click="webClientExpanded = !webClientExpanded"><h2>Web client</h2><span v-if="session.connectionState === 'connected'">{{ webClientExpanded ? "−" : "+" }}</span></button><div v-if="webClientExpanded"><p class="muted">HTTP commands go to the daemon. SSE is used only for the server event stream.</p><label class="field token-field" :class="{ 'token-missing': !session.token.trim(), 'token-unconnected': session.token.trim() && !session.connected }">Bearer token<input v-model="session.token" type="password" autocomplete="off" placeholder="enter token" :aria-invalid="!session.token.trim() || undefined" /><small v-if="!session.token.trim()">No token entered. An authenticated daemon may reject requests.</small><small v-else-if="session.connectionState === 'auth-error'">The token was rejected. Check it and reconnect.</small><small v-else-if="!session.connected">Token entered, but the event connection is not established yet. Try reconnect.</small><small v-else>Token accepted and event connection is active.</small></label><p v-if="session.connectionError" class="connection-error">{{ session.connectionError }}</p></div></section>
-        <section class="card status-card"><div class="card-title"><h2>Status and capabilities</h2><button class="quiet" @click="session.refreshStatus">refresh</button></div><dl class="status-summary"><template v-for="key in ['state', 'live', 'ready', 'worker_running', 'accepting_commands']" :key="key"><template v-if="session.status[key] !== undefined"><dt>{{ displayLabel(key) }}</dt><dd>{{ String(session.status[key]) }}</dd></template></template></dl><div class="readiness"><h3>Readiness</h3><div class="readiness-list"><div v-for="([name, value]) in readinessComponents()" :key="name" class="readiness-row"><span>{{ name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(value)}`" />{{ value }}</span></div></div><div v-if="readinessToolProfile()" class="readiness-meta"><span class="meta-label">Tool profile</span><span>{{ readinessToolProfile() }}</span></div><div v-if="readinessProviders().length" class="readiness-meta provider-list"><span class="meta-label">Providers</span><span v-for="provider in readinessProviders()" :key="String(provider.id ?? provider.name ?? 'provider')" class="provider-item"><span>{{ provider.id ?? provider.name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(provider.status)}`" />{{ provider.status }}</span></span></div><div v-if="readinessWarnings().length" class="readiness-warnings"><span class="meta-label">Warnings</span><p v-for="warning in readinessWarnings()" :key="warning">{{ warning }}</p></div></div><div v-if="Object.keys(metrics()).length" class="metrics"><h3>Metrics</h3><div v-for="(value, key) in metrics()" :key="key" class="metric-row"><span>{{ displayLabel(key) }}</span><strong>{{ value }}</strong></div></div><div v-if="session.capabilities.length" class="capabilities"><strong>Capabilities</strong><span v-for="capability in session.capabilities" :key="capability" class="tag">{{ capability }}</span></div><div class="session-keys"><button class="section-toggle" @click="sessionsExpanded = !sessionsExpanded"><strong>Session keys</strong><span>{{ sessionsExpanded ? "−" : "+" }}</span></button><div v-if="sessionsExpanded" class="session-key-list"><div v-if="!sessionKeys().length" class="muted">No active sessions.</div><pre v-for="(item, index) in sessionKeys()" :key="index">{{ JSON.stringify(item, null, 2) }}</pre></div></div></section>
+        <section class="card status-card"><button class="section-toggle status-heading" @click="statusExpanded = !statusExpanded"><h2>Status and capabilities</h2><span>{{ statusExpanded ? "−" : "+" }}</span></button><div v-if="statusExpanded"><div class="card-title status-refresh"><span></span><button class="quiet" @click="session.refreshStatus">refresh</button></div><dl class="status-summary"><template v-for="key in ['state', 'live', 'ready', 'worker_running', 'accepting_commands']" :key="key"><template v-if="session.status[key] !== undefined"><dt>{{ displayLabel(key) }}</dt><dd>{{ String(session.status[key]) }}</dd></template></template></dl><div class="readiness"><h3>Readiness</h3><div class="readiness-list"><div v-for="([name, value]) in readinessComponents()" :key="name" class="readiness-row"><span>{{ name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(value)}`" />{{ value }}</span></div></div><div v-if="readinessToolProfile()" class="readiness-meta"><span class="meta-label">Tool profile</span><span>{{ readinessToolProfile() }}</span></div><div v-if="readinessProviders().length" class="readiness-meta provider-list"><span class="meta-label">Providers</span><span v-for="provider in readinessProviders()" :key="String(provider.id ?? provider.name ?? 'provider')" class="provider-item"><span>{{ provider.id ?? provider.name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(provider.status)}`" />{{ provider.status }}</span></span></div><div v-if="readinessWarnings().length" class="readiness-warnings"><span class="meta-label">Warnings</span><p v-for="warning in readinessWarnings()" :key="warning">{{ warning }}</p></div></div><div v-if="Object.keys(metrics()).length" class="metrics"><h3>Metrics</h3><div v-for="(value, key) in metrics()" :key="key" class="metric-row"><span>{{ displayLabel(key) }}</span><strong>{{ value }}</strong></div></div><div v-if="session.capabilities.length" class="capabilities"><strong>Capabilities</strong><span v-for="capability in session.capabilities" :key="capability" class="tag">{{ capability }}</span></div><div class="session-keys"><button class="section-toggle" @click="sessionsExpanded = !sessionsExpanded"><strong>Session keys</strong><span>{{ sessionsExpanded ? "−" : "+" }}</span></button><div v-if="sessionsExpanded" class="session-key-list"><div v-if="!sessionKeys().length" class="muted">No active sessions.</div><pre v-for="(item, index) in sessionKeys()" :key="index">{{ JSON.stringify(item, null, 2) }}</pre></div></div></div></section>
         <section class="card tool-panel"><button class="tool-panel-toggle" @click="toolsExpanded = !toolsExpanded"><span><strong>MCP tools</strong><small>{{ session.tools.length }} active</small></span><span class="collapse-icon">{{ toolsExpanded ? "−" : "+" }}</span></button><p class="muted">Host-approved tools exposed to the agent.</p><div v-if="toolsExpanded" class="tool-list"><div v-if="!session.tools.length" class="empty">No tool snapshot is available.</div><div v-for="tool in session.tools" :key="tool.name" class="tool-entry"><button class="tool-name" @click="toggleTool(tool.name)"><span class="tool-dot" :class="`tool-dot-${tool.state || 'active'}`" /><span>{{ tool.name }}</span><span class="tool-chevron">{{ expandedTools.has(tool.name) ? "−" : "+" }}</span></button><div v-if="expandedTools.has(tool.name)" class="tool-details"><p>{{ tool.description || "No description provided." }}</p><span v-if="tool.source" class="tool-source">source: {{ tool.source }}</span></div></div></div></section>
       </aside>
     </section>

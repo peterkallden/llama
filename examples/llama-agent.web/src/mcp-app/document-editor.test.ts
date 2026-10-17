@@ -27,8 +27,8 @@ function app() {
   const parent = { postMessage(request: Fields) {
     requests.push(request);
     if (request.id === undefined) return;
-    queueMicrotask(() => {
-      try { const value = handler(request); if (value !== undefined) receive({ source: parent, data: { jsonrpc: "2.0", id: request.id, result: value } }); }
+    queueMicrotask(async () => {
+      try { const value = await handler(request); if (value !== undefined) receive({ source: parent, data: { jsonrpc: "2.0", id: request.id, result: value } }); }
       catch (error) { receive({ source: parent, data: { jsonrpc: "2.0", id: request.id, error: { message: String(error) } } }); }
     });
   } };
@@ -55,6 +55,7 @@ function app() {
     node, requests, drafts, Editor,
     handle(next: typeof handler) { const previous = handler; handler = (request) => next(request) ?? previous(request); },
     deliver(method: string, params: Fields) { receive({ source: parent, data: { jsonrpc: "2.0", method, params } }); },
+    deliverRequest(id: number, method: string, params: Fields = {}) { receive({ source: parent, data: { jsonrpc: "2.0", id, method, params } }); },
     respond(id: number, value: unknown) { receive({ source: parent, data: { jsonrpc: "2.0", id, result: value } }); },
   };
 }
@@ -112,16 +113,90 @@ describe("document editor sandbox script", () => {
     view.handle((request) => {
       if (request.method !== "tools/call") return undefined;
       if (request.params.name === "document.save") return { structuredContent: {
-        document_uri: opened.document_uri, markdown_uri: "resource://md1", revision: 1, reused: true, diff: { blocks: [] },
+        document_uri: "resource://r2", markdown_uri: "resource://md2", revision: 2, reused: false, diff: { blocks: [{ id: "block-1", text: "Changed" }] },
       } };
-      if (request.params.name === "document.open") return { structuredContent: documentOpen };
+      if (request.params.name === "document.open") return { structuredContent: { ...documentOpen, document_uri: "resource://r2", revision: 2, markdown: "Changed" } };
       return undefined;
     });
     view.deliver("ui/notifications/tool-result", { structuredContent: documentOpen }); await settle();
+    view.Editor.current.edit("Changed"); await settle();
     view.node("#review").click(); await settle();
     const message = view.requests.findLast((request) => request.method === "ui/message")!;
-    expect(message.params.document_context).toEqual({ document_uri: opened.document_uri, revision: 1, block_ids: ["block-1"] });
-    expect(String(message.params.content.text)).toContain("Review document report revision 1");
+    expect(message.params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: ["block-1"] });
+    expect(message.params.action).toBe("review-document");
+    expect(String(message.params.content.text)).toContain("Review document report revision 2");
     expect(String(message.params.content.text)).not.toContain("Document resource:");
+  });
+
+  it("saves before answering a host chat request and returns the new revision binding", async () => {
+    const view = app();
+    view.handle((request) => {
+      if (request.method !== "tools/call") return undefined;
+      if (request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", revision: 2, reused: false, diff: { changed: true },
+      } };
+      if (request.params.name === "document.open") return { structuredContent: {
+        ...opened, document_uri: "resource://r2", revision: 2, markdown: "Edited", document: {},
+      } };
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
+    view.Editor.current.edit("Edited"); await settle();
+    view.deliverRequest(77, "ui/llama-agent/prepare-chat"); await settle();
+    const saveIndex = view.requests.findIndex((request) => request.params?.name === "document.save");
+    const hostReplyIndex = view.requests.findIndex((request) => request.id === 77 && request.result?.document_uri === "resource://r2");
+    expect(saveIndex).toBeGreaterThanOrEqual(0);
+    expect(hostReplyIndex).toBeGreaterThan(saveIndex);
+    expect(view.requests[hostReplyIndex].result).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: [] });
+  });
+
+  it("queues review on close after saving and deduplicates a rapid second close", async () => {
+    const view = app();
+    view.handle((request) => {
+      if (request.method === "tools/call" && request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", revision: 2, reused: false, diff: { changed: true },
+      } };
+      if (request.method === "tools/call" && request.params.name === "document.open") return { structuredContent: {
+        ...opened, document_uri: "resource://r2", revision: 2, markdown: "Edited",
+        document: { sections: [{ blocks: [{ id: "block-2", text: "Edited" }] }] },
+      } };
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
+    view.Editor.current.edit("Edited"); await settle();
+    view.node("#close-editor").click(); view.node("#close-editor").click();
+    view.deliverRequest(78, "ui/llama-agent/close-document"); await settle();
+    await new Promise((resolve) => setTimeout(resolve, 0)); await settle();
+    const saves = view.requests.filter((request) => request.params?.name === "document.save");
+    const reviews = view.requests.filter((request) => request.method === "ui/message" && request.params?.action === "review-document");
+    const closes = view.requests.filter((request) => request.method === "ui/message" && request.params?.action === "close-document");
+    expect(saves).toHaveLength(1);
+    expect(reviews).toHaveLength(1);
+    expect(closes).toHaveLength(1);
+    expect(reviews[0].params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: ["block-2"] });
+    expect(reviews[0].params.operation_id).toBeTruthy();
+    expect(view.requests.some((request) => request.id === 78 && request.result?.closed === true)).toBe(true);
+    expect(view.node("#status").textContent).toContain("Review queued; closing editor");
+  });
+
+  it("locks edits while close-review context is being registered and keeps the editor open on a changed draft", async () => {
+    const view = app();
+    let releaseOpen!: (value: unknown) => void;
+    view.handle((request) => {
+      if (request.method === "tools/call" && request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", revision: 2, reused: false, diff: { changed: true },
+      } };
+      if (request.method === "tools/call" && request.params.name === "document.open") return new Promise((resolve) => { releaseOpen = resolve; });
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
+    view.Editor.current.edit("Edited"); await settle();
+    view.node("#close-editor").click(); await settle();
+    expect(view.node("#editor").inert).toBe(true);
+    view.Editor.current.edit("Changed while preparing review");
+    releaseOpen({ structuredContent: { ...opened, document_uri: "resource://r2", revision: 2, document: {} } }); await settle();
+    expect(view.requests.some((request) => request.method === "ui/message" && request.params?.action === "close-document")).toBe(false);
+    expect(view.node("#status").textContent).toContain("changed while review context was being prepared");
+    expect(view.node("#editor").inert).toBe(false);
   });
 });

@@ -181,3 +181,23 @@ first-party Data Explorer and Workflow Inspector resources
 corresponding dataset and `plan.get` tools. `resources/read` serves only those
 known first-party URIs for these bundled apps; external app resources remain
 provider-owned and are fetched through that provider.
+
+## Shared document and chat workspace
+
+Use the pen icon on a supported TXT, Markdown, or DOCX attachment to import and
+open it in the document editor. The editor stays in the main pane while the
+same chat, including its unsent text and attachments, moves to the right. At
+screen widths below 1,000 px the panes stack. The Web client, Status and
+capabilities, and Events panels collapse while editing and return to their
+previous states on close.
+
+Before a chat message is sent from this layout, the editor saves its current
+draft and attaches the resulting immutable document revision as typed context.
+A failed save keeps the message draft and prevents submission. This save does
+not trigger a separate review. The editor's × action saves and queues review of
+unreviewed changes, then returns to the previous view; chat shows the queued,
+running or failed state and offers a retry. If another turn is active, the
+review waits in session-scoped browser storage until the turn finishes. A retry
+reuses its stable turn ID. Model edit proposals still require explicit
+acceptance in the editor. Starting a new session is blocked while a turn or
+document review is pending so the session-bound review queue cannot be orphaned.

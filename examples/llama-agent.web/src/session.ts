@@ -30,6 +30,37 @@ let recordedChunks: Blob[] = [];
 const sessionStorageKey = "llama-agent-web.session-id";
 const sessionId = ref(sessionStorage.getItem(sessionStorageKey) || `web-${crypto.randomUUID()}`);
 sessionStorage.setItem(sessionStorageKey, sessionId.value);
+export type DocumentReviewState = "queued" | "running" | "failed" | "completed";
+export type PendingDocumentReview = {
+  operation_id: string;
+  turn_id: string;
+  session_id: string;
+  prompt: string;
+  document_context: NonNullable<TurnRequest["document_context"]>;
+  state: DocumentReviewState;
+  error?: string;
+};
+const documentReviews = ref<PendingDocumentReview[]>(restoreDocumentReviews());
+let drainingDocumentReviews = false;
+
+function reviewQueueKey(id = sessionId.value) { return `llama-agent-web.document-reviews:${id}`; }
+function restoreDocumentReviews(): PendingDocumentReview[] {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(reviewQueueKey()) ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter((item): item is PendingDocumentReview => item && typeof item === "object" &&
+      typeof item.operation_id === "string" && typeof item.turn_id === "string" && item.session_id === sessionId.value &&
+      typeof item.prompt === "string" && item.document_context && typeof item.document_context.document_uri === "string" &&
+      Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))
+      .map((item) => ({ ...item, state: item.state === "completed" || item.state === "failed" ? item.state : "queued" }));
+  } catch { return []; }
+}
+function persistDocumentReviews() {
+  try {
+    documentReviews.value = documentReviews.value.slice(-10);
+    sessionStorage.setItem(reviewQueueKey(), JSON.stringify(documentReviews.value));
+  } catch { error.value = "A pending document review could not be persisted in this browser session."; }
+}
 
 function base64Encode(bytes: Uint8Array): string {
   let binary = "";
@@ -65,6 +96,7 @@ function observe(event: AgentEvent) {
   if (kind === "turn.completed" || kind === "turn.failed" || kind === "turn.cancelled") {
     busy.value = false;
     if (turnId === activeTurnId.value) activeTurnId.value = "";
+    void drainDocumentReviews();
   } else if (kind.startsWith("turn.")) busy.value = true;
 }
 
@@ -110,6 +142,7 @@ async function connect() {
       connected.value = true;
       connectionState.value = "connected";
       void refreshStatus().catch(() => undefined);
+      void drainDocumentReviews();
     });
   } catch (cause) {
     if (!controller.signal.aborted) {
@@ -129,16 +162,21 @@ async function connect() {
 }
 
 async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false,
-    documentContext?: TurnRequest["document_context"]) {
+    documentContext?: TurnRequest["document_context"], stableTurnId?: string) {
   if (busy.value) {
     if (propagateFailure) throw new Error("An agent turn is already running. Retry the review when it finishes.");
     return;
   }
   error.value = ""; busy.value = true;
-  const turnId = crypto.randomUUID();
+  const turnId = stableTurnId ?? crypto.randomUUID();
   activeTurnId.value = turnId;
-  messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: prompt });
-  messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant", content: "", pending: true });
+  if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
+    messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: prompt });
+    messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant", content: "", pending: true });
+  } else {
+    const assistant = messages.value.find((message) => message.id === `${turnId}-assistant`);
+    if (assistant) { assistant.content = ""; assistant.pending = true; }
+  }
   const turn: TurnRequest = {
     prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
     turn_id: turnId, mode: "agent", n_predict: 384, include_summary: true,
@@ -156,17 +194,53 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     }
     busy.value = false;
     activeTurnId.value = "";
+    void drainDocumentReviews();
   } catch (cause) {
     busy.value = false; activeTurnId.value = "";
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
     error.value = cause instanceof Error ? cause.message : String(cause);
+    void drainDocumentReviews();
     if (propagateFailure) throw cause;
   }
 }
 
-async function submitReview(prompt: string, documentContext: NonNullable<TurnRequest["document_context"]>) {
-  await submit(prompt, [documentContext.document_uri], true, documentContext);
+async function submitReview(prompt: string, documentContext: NonNullable<TurnRequest["document_context"]>, operationId: string = crypto.randomUUID()) {
+  const existing = documentReviews.value.find((item) => item.operation_id === operationId && item.session_id === sessionId.value);
+  if (existing) return { queued: true, operation_id: operationId, state: existing.state };
+  documentReviews.value.push({
+    operation_id: operationId, turn_id: operationId, session_id: sessionId.value,
+    prompt, document_context: { ...documentContext, block_ids: [...documentContext.block_ids] }, state: "queued",
+  });
+  persistDocumentReviews();
+  void drainDocumentReviews();
+  return { queued: true, operation_id: operationId, state: "queued" as const };
+}
+
+async function drainDocumentReviews() {
+  if (drainingDocumentReviews || busy.value) return;
+  const item = documentReviews.value.find((review) => review.state === "queued" && review.session_id === sessionId.value);
+  if (!item) return;
+  drainingDocumentReviews = true;
+  item.state = "running"; item.error = undefined; persistDocumentReviews();
+  try {
+    await submit(item.prompt, [item.document_context.document_uri], true, item.document_context, item.turn_id);
+    item.state = error.value ? "failed" : "completed";
+    if (item.state === "failed") item.error = error.value;
+  } catch (cause) {
+    item.state = "failed"; item.error = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    drainingDocumentReviews = false;
+    persistDocumentReviews();
+    if (!busy.value) void drainDocumentReviews();
+  }
+}
+
+function retryDocumentReview(operationId: string) {
+  const item = documentReviews.value.find((review) => review.operation_id === operationId && review.session_id === sessionId.value);
+  if (!item || item.state !== "failed") return;
+  item.state = "queued"; item.error = undefined; persistDocumentReviews();
+  void drainDocumentReviews();
 }
 
 async function cancel() {
@@ -286,8 +360,9 @@ function newSession() {
   activeTurnId.value = "";
   busy.value = false;
   error.value = "";
+  documentReviews.value = restoreDocumentReviews();
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, refreshStatus, connect, submit, submitReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, documentReviews, refreshStatus, connect, submit, submitReview, retryDocumentReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }

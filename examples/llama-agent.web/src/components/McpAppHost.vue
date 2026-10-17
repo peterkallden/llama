@@ -10,8 +10,12 @@ const props = defineProps<{
   sessionId: string;
   readResource: (toolName: string, uri: string) => Promise<unknown>;
   callTool: (appTool: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
-  submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[] }) => Promise<unknown>;
+  submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[] }, operationId?: string) => Promise<unknown>;
   invocation?: { input?: Record<string, unknown>; result?: unknown };
+}>();
+const emit = defineEmits<{
+  documentStatus: [status: Record<string, unknown>];
+  documentClosed: [];
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const proxyUrl = ref("");
@@ -22,6 +26,8 @@ const uri = computed(() => String(props.tool._meta?.ui?.resourceUri ?? ""));
 const appVisible = computed(() => (props.tool._meta?.ui?.visibility ?? []).includes("app"));
 let initialized = false;
 let initializeAccepted = false;
+let hostRequestId = 1_000_000_000;
+const hostRequests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let lastInvocationSignature = "";
 let documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
 
@@ -100,6 +106,12 @@ async function onMessage(event: MessageEvent) {
   const requestGeneration = loadGeneration;
   const message = event.data as Record<string, unknown>;
   if (!message || typeof message !== "object" || message.jsonrpc !== "2.0") return;
+  if (typeof message.id === "number" && hostRequests.has(message.id)) {
+    const request = hostRequests.get(message.id)!; hostRequests.delete(message.id); clearTimeout(request.timer);
+    if (message.error && typeof message.error === "object") request.reject(new Error(String((message.error as Record<string, unknown>).message ?? "Editor request failed.")));
+    else request.resolve(message.result);
+    return;
+  }
   const method = typeof message.method === "string" ? message.method : "";
   const id = message.id;
   const reply = (result: unknown, errorText?: string) => {
@@ -142,10 +154,20 @@ async function onMessage(event: MessageEvent) {
   if (method === "ui/notifications/size-changed") return;
   if (method === "ping") { reply({}); return; }
   if (method === "notifications/message") return;
+  if (method === "ui/llama-agent/editor-status") {
+    const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
+    emit("documentStatus", params);
+    return;
+  }
   if (method === "ui/message") {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
+    const action = String(params.action ?? "");
+    if (action === "close-document") {
+      if (uri.value !== "ui://llama-agent/apps/document-editor") { reply(undefined, "Only the document editor may close its document view."); return; }
+      reply({ closed: true }); window.setTimeout(() => emit("documentClosed"), 0); return;
+    }
     if (typeof content.text === "string" && uri.value === "ui://llama-agent/apps/document-editor") {
       const rawBinding = params.document_context && typeof params.document_context === "object"
         ? params.document_context as Record<string, unknown> : {};
@@ -158,12 +180,13 @@ async function onMessage(event: MessageEvent) {
         documentAccess.authorize("document.propose_patch", {
           document_uri: rawBinding.document_uri, expected_revision: rawBinding.revision,
         });
-        await props.submitReview(content.text, {
+        const queued = await props.submitReview(content.text, {
           document_uri: rawBinding.document_uri,
           revision: rawBinding.revision as number,
           block_ids: rawBinding.block_ids as string[],
-        });
-        reply({});
+        }, typeof params.operation_id === "string" ? params.operation_id : undefined);
+        reply({ queued: true, ...(queued && typeof queued === "object" ? queued as Record<string, unknown> : {}) });
+        if (action === "close-review") window.setTimeout(() => emit("documentClosed"), 0);
       } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
     } else {
       reply({});
@@ -236,11 +259,40 @@ async function onMessage(event: MessageEvent) {
   } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
 }
 
+function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/close-document"): Promise<unknown> {
+  const target = frame.value?.contentWindow;
+  if (!target || !initialized || uri.value !== "ui://llama-agent/apps/document-editor") {
+    return Promise.reject(new Error("The document editor is not ready."));
+  }
+  const id = hostRequestId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      hostRequests.delete(id); reject(new Error("The editor did not respond; its local draft is still preserved."));
+    }, 210000);
+    hostRequests.set(id, { resolve, reject, timer });
+    target.postMessage({ jsonrpc: "2.0", id, method, params: {} }, "*");
+  });
+}
+
+async function prepareForChat(): Promise<{ document_uri: string; revision: number; block_ids: string[] }> {
+  const result = await requestEditor("ui/llama-agent/prepare-chat");
+  if (!result || typeof result !== "object") throw new Error("The editor returned no saved document context.");
+  const value = result as Record<string, unknown>;
+  if (typeof value.document_uri !== "string" || !Number.isSafeInteger(value.revision) ||
+      !Array.isArray(value.block_ids) || !value.block_ids.every((item) => typeof item === "string")) {
+    throw new Error("The editor returned an invalid saved document context.");
+  }
+  return { document_uri: value.document_uri, revision: value.revision as number, block_ids: value.block_ids as string[] };
+}
+
+async function closeDocument() { await requestEditor("ui/llama-agent/close-document"); }
+defineExpose({ prepareForChat, closeDocument });
+
 watch(() => [props.tool.name, props.tool.provider_id, uri.value, props.sessionId], () => { initialized = false; void load(); }, { flush: "sync" });
 watch(() => props.invocation, publishInvocation, { deep: true });
 if (typeof window !== "undefined") window.addEventListener("message", onMessage);
 void load();
-onBeforeUnmount(() => { ++loadGeneration; window.removeEventListener("message", onMessage); });
+onBeforeUnmount(() => { ++loadGeneration; window.removeEventListener("message", onMessage); for (const request of hostRequests.values()) { clearTimeout(request.timer); request.reject(new Error("The editor host was closed.")); } hostRequests.clear(); });
 </script>
 
 <template>
