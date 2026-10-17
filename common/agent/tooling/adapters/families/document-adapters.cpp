@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/families/document-adapters.h"
 
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "agent/tooling/adapters/support/processing-output.h"
 #include "agent/artifact/artifact-contract.h"
 #include "resource/resource-contract.h"
 #include "hash/hash.h"
@@ -297,6 +298,7 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
 }
 
 std::string plain_text_as_markdown(const std::string & text) {
+    if(text.empty())return {};
     size_t fence_size=3;
     size_t run=0;
     for(char c:text){if(c=='`'){++run;fence_size=std::max(fence_size,run+1);}else run=0;}
@@ -313,7 +315,8 @@ common_tool_execution_result import_document(const common_native_tool_bindings &
     if(!bindings.resource_runtime.store->stat(source_uri,authority,source,error))return common_adapter_not_found_failure("tool.document.import.source_unavailable",error,"The selected source file is unavailable in this session.");
     if(source.size_bytes>document_max_bytes)return common_adapter_validation_failure("tool.document.import.source_too_large","source exceeds the 4 MiB import limit","The selected file is too large to import.");
     std::string source_bytes;
-    if(!bindings.resource_runtime.store->read_bytes(source_uri,authority,document_max_bytes,source_bytes,error))return common_adapter_execution_failure("tool.document.import.source_read_failed",error,"The selected file could not be read.");
+    if(!bindings.resource_runtime.store->read_bytes(source_uri,authority,document_max_bytes+1,source_bytes,error))return common_adapter_execution_failure("tool.document.import.source_read_failed",error,"The selected file could not be read.");
+    if(source_bytes.size()>document_max_bytes)return common_adapter_validation_failure("tool.document.import.source_too_large","source exceeds the 4 MiB import limit","The selected file is too large to import.");
     std::string extension=source.name.substr(source.name.find_last_of('.')==std::string::npos?source.name.size():source.name.find_last_of('.')+1);
     std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
     const auto mime=common_normalize_resource_media_type(source.mime_type);
@@ -335,20 +338,22 @@ common_tool_execution_result import_document(const common_native_tool_bindings &
         const auto prior_uri=record.value("document_uri",std::string{});common_agent_artifact_document prior_document;
         if(prior_uri.empty()||!read_document(bindings,prior_uri,prior_document,error))return common_adapter_execution_failure("tool.document.import.retry_unavailable",error,"The previous imported document revision could not be restored.");
         std::string current,md,op;uint64_t revision=0;
-        if(!latest_document_head(bindings,prior_document.id,current,md,revision,op,error)){
-            error.clear();
+        if(!latest_document_head(bindings,prior_document.id,current,md,revision,op,error))
+            return common_adapter_execution_failure("tool.document.import.retry_unavailable",error,"The previous document publication could not be verified.");
+        if(current.empty()){
             if(prior_document.editor_markdown_uri.empty()||!publish_document_head(bindings,prior_document.id,prior_uri,
                     prior_document.editor_markdown_uri,prior_document.revision,operation_id,prior_document.content_fingerprint,error))
                 return common_adapter_execution_failure("tool.document.import.retry_publish_failed",error,"The previous import was stored but its head could not be recovered.");
             current=prior_uri;revision=prior_document.revision;
         }
         return common_adapter_success_json(json{{"document_uri",current.empty()?prior_uri:current},{"document_id",prior_document.id},
-            {"revision",revision?revision:prior_document.revision},{"original_uri",source_uri},{"reused",true},{"limitations",json::array()}});
+            {"revision",revision?revision:prior_document.revision},{"original_uri",source_uri},{"reused",true},
+            {"limitations",record.value("limitations",json::array())}});
     }
     std::string markdown=source_bytes;
-    std::string importer_version="document-import-v1";
+    std::string importer_version="document-import-v2";
     std::vector<std::string> limitations;
-    if(is_text)markdown=plain_text_as_markdown(source_bytes);
+    if(is_text&&!is_markdown&&!is_docx)markdown=plain_text_as_markdown(source_bytes);
     else if(is_docx){
         if(bindings.resource_processing_service==nullptr&&!bindings.resource_processing_provider_factory)return common_adapter_execution_failure("tool.document.import.processor_unavailable","DOCX Markdown processor is not configured","DOCX import is unavailable because its document processor is not configured.");
         agent_resource_processing_binding_request request;request.source_uri=source_uri;request.operation_id="document-import:"+source_hash;request.authority=authority;
@@ -361,11 +366,17 @@ common_tool_execution_result import_document(const common_native_tool_bindings &
         if(bindings.resource_processing_provider_factory){owned=bindings.resource_processing_provider_factory(request);processor=owned.get();}
         if(processor==nullptr)return common_adapter_execution_failure("tool.document.import.processor_unavailable","DOCX processor provider could not be created","DOCX import is unavailable.");
         const auto processed=processor->process(request);
-        if(!processed.success||processed.outputs.size()!=1||processed.outputs.front().bytes.empty()||
-                common_normalize_resource_media_type(processed.outputs.front().mime_type)!="text/markdown")
-            return common_adapter_execution_failure("tool.document.import.conversion_failed",processed.failure_code+": "+processed.safe_summary,"The DOCX could not be converted into editable Markdown.");
-        markdown=processed.outputs.front().bytes;importer_version=processed.processor_id.empty()?"pandoc-docx-markdown-v1":processed.processor_id;
-        if(!processed.outputs.front().metadata.limitations.empty())limitations.push_back(processed.outputs.front().metadata.limitations);
+        agent_resource_processing_output output;
+        if(!common_adapter_read_processing_output(processed,*bindings.resource_runtime.store,authority,"text/markdown",document_max_bytes,output,error))
+            return common_adapter_execution_failure("tool.document.import.conversion_failed",error,"The DOCX could not be converted into editable Markdown.");
+        markdown=std::move(output.bytes);importer_version=processed.processor_id.empty()?"pandoc-docx-markdown-v1":processed.processor_id;
+        if(!output.metadata.limitations.empty())limitations.push_back(output.metadata.limitations);
+        bool omitted_images=false;std::string prepared;
+        if(!common_agent_artifact_prepare_docx_markdown(markdown,prepared,omitted_images,error))
+            return common_adapter_execution_failure("tool.document.import.invalid_markdown",error,"The DOCX Markdown could not be prepared.");
+        markdown=std::move(prepared);
+        if(omitted_images)limitations.push_back("Images are represented by alternative text; their original media remains in the original DOCX.");
+        importer_version="document-import-v2:"+importer_version;
     }
     const auto material=source_uri+"\n"+source_hash+"\n"+importer_version;
     const auto import_hash=hash_sha256_hex(material.data(),material.size());
@@ -376,9 +387,15 @@ common_tool_execution_result import_document(const common_native_tool_bindings &
         if(!read_document(bindings,candidate.uri,existing,error))return common_adapter_execution_failure("tool.document.import.cache_invalid",error,"A prior imported document could not be verified.");
         std::string current,md,op;uint64_t revision=0;
         if(!latest_document_head(bindings,existing.id,current,md,revision,op,error))return common_adapter_execution_failure("tool.document.import.head_failed",error,"The current imported document revision could not be checked.");
+        if(current.empty()){
+            if(existing.editor_markdown_uri.empty()||!publish_document_head(bindings,existing.id,candidate.uri,
+                    existing.editor_markdown_uri,existing.revision,operation_id,existing.content_fingerprint,error))
+                return common_adapter_execution_failure("tool.document.import.retry_publish_failed",error,"The stored import could not be published.");
+            current=candidate.uri;revision=existing.revision;
+        }
         const auto selected=current.empty()?candidate.uri:current;
         const json operation_record={{"schema_version",1},{"operation_id",operation_id},{"source_uri",source_uri},
-            {"source_fingerprint",source_hash},{"document_uri",selected},{"document_id",existing.id}};
+            {"source_fingerprint",source_hash},{"document_uri",selected},{"document_id",existing.id},{"limitations",limitations}};
         std::string operation_uri;
         if(!put_document_resource(bindings,existing.id+"-import-operation-"+operation_id+".json","application/vnd.llama-agent.document-operation+json",
                 operation_record.dump(),"document.import",operation_cache_key,selected,operation_uri,error))return common_adapter_execution_failure("tool.document.import.operation_write_failed",error,"The import could not be made retry-safe.");
@@ -401,7 +418,7 @@ common_tool_execution_result import_document(const common_native_tool_bindings &
     if(!common_agent_artifact_document_to_json(document,serialized,error))return common_adapter_execution_failure("tool.document.import.serialize_failed",error,"The imported document metadata could not be validated.");
     if(!put_document_resource(bindings,document.id+"-r1-document.json","application/vnd.llama-agent.document+json",serialized,"document.import",import_key,source_uri,document_uri,error))return common_adapter_execution_failure("tool.document.import.document_store_failed",error,"The imported document could not be stored.");
     const json operation_record={{"schema_version",1},{"operation_id",operation_id},{"source_uri",source_uri},
-        {"source_fingerprint",source_hash},{"document_uri",document_uri},{"document_id",document.id}};
+        {"source_fingerprint",source_hash},{"document_uri",document_uri},{"document_id",document.id},{"limitations",limitations}};
     std::string operation_uri;
     if(!put_document_resource(bindings,document.id+"-import-operation-"+operation_id+".json","application/vnd.llama-agent.document-operation+json",
             operation_record.dump(),"document.import",operation_cache_key,document_uri,operation_uri,error))return common_adapter_execution_failure("tool.document.import.operation_write_failed",error,"The imported document could not be made retry-safe.");

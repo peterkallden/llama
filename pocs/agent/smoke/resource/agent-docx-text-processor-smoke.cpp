@@ -1,6 +1,9 @@
 #include "tools/agent/resource/processors/agent-docx-text-processor.h"
 #include "tools/agent/resource/processors/agent-xlsx-workbook-json-processor.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 
 class fixture_processing_host final : public agent_resource_processing_host {
@@ -14,15 +17,18 @@ public:
         last_request = std::move(request);
         result = {};
         result.status = common_agent_sandbox_status::completed;
-        const bool markdown = request.command.arguments.size() > 2 && request.command.arguments[2] == "--to=markdown";
+        const bool markdown = last_request.command.arguments.size() > 2 &&
+            (last_request.command.arguments[2] == "--to=markdown" || last_request.command.arguments[2] == "--to=gfm");
         artifacts = {{markdown ? "docx-report.md" : "docx-text-report.docx.txt",
             markdown ? "text/markdown" : "text/plain",
             markdown ? "# Heading\n\n| A | B |\n|---|---|\n| 1 | 2 |\n" : "Heading\nBody text\n", {}}};
+        if(empty_output)artifacts.front().bytes.clear();
         error.clear();
         return true;
     }
 
     common_agent_sandbox_request last_request;
+    bool empty_output=false;
 };
 
 int main() {
@@ -59,7 +65,7 @@ int main() {
 
     agent_pandoc_options markdown_options;
     markdown_options.input_format = "docx";
-    markdown_options.output_format = "markdown";
+    markdown_options.output_format = "gfm";
     markdown_options.output_extension = "md";
     agent_pandoc_processor markdown_processor(host, context, agent_resource_backend_kind::local_pandoc,
         "E:\\tools\\pandoc-3.10.1\\pandoc.exe", markdown_options);
@@ -72,7 +78,14 @@ int main() {
     assert(markdown_result.outputs[0].bytes.find("| A | B |") != std::string::npos);
     assert(markdown_result.outputs[0].metadata.limitations.find("does not guarantee original Word layout") != std::string::npos);
     assert(host.last_request.command.arguments[1] == "--from=docx");
-    assert(host.last_request.command.arguments[2] == "--to=markdown");
+    assert(host.last_request.command.arguments[2] == "--to=gfm");
+    assert(!processor.supports(request.source.mime_type,"markdown"));
+    assert(!markdown_processor.supports(request.source.mime_type,"text"));
+    assert(!markdown_processor.supports(request).supported);
+    host.empty_output=true;
+    const auto empty_markdown=markdown_processor.process(markdown_request);
+    assert(empty_markdown.success && empty_markdown.outputs.size()==1 && empty_markdown.outputs[0].bytes.empty());
+    host.empty_output=false;
 
     agent_pandoc_options reverse_options;
     reverse_options.input_format = "markdown";

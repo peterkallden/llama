@@ -104,9 +104,13 @@ public:
         agent_resource_processing_output output;
         output.name = markdown ? "pandoc-output.md" : "pandoc-output.docx";
         output.mime_type = request.target_media_type;
-        output.bytes = markdown ? "# Imported DOCX\n\n| Name | Value |\n|---|---|\n| alpha | 1 |\n" : "test-docx-bytes";
+        output.bytes = markdown ? (request.source_uri.find("empty.docx")!=std::string::npos ? "" : "# Imported DOCX\n\n| Name | Value |\n|---|---|\n| alpha | 1 |\n") : "test-docx-bytes";
         output.metadata.limitations = markdown ? "Images or unsupported Word formatting may not be preserved." : "";
-        result.outputs.push_back(std::move(output));
+        agent_resource_put_request put;put.name=output.name;put.mime_type=output.mime_type;
+        put.bytes=output.bytes;put.bytes_are_authoritative=true;put.metadata=output.metadata;
+        agent_resource_descriptor resource;std::string error;
+        assert(store_.put_bytes(put,resource,error));
+        result.resources.push_back(std::move(resource));
         return result;
     }
 
@@ -549,6 +553,62 @@ int main() {
         const auto generic_markdown = foundation_resources.contents.at(generic_export.value("markdown_resource",std::string{}));
         assert(generic_markdown.find("Coverage incomplete") == std::string::npos);
         assert(generic_markdown.find("A user paragraph.") != std::string::npos);
+        result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","docx"}}.dump()});
+        assert(result.ok);
+        const auto docx_export=nlohmann::json::parse(result.output);
+        assert(foundation_resources.contents.at(docx_export["resource"].get<std::string>())=="test-docx-bytes");
+        const auto before_docx_retry=foundation_resources.requests.size();
+        result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","docx"}}.dump()});
+        assert(result.ok && foundation_resources.requests.size()==before_docx_retry);
+
+        auto install_upload = [&](const std::string & name, const std::string & content) {
+            auto descriptor=uploaded;descriptor.uri="resource://session/"+name;descriptor.name=name;
+            descriptor.size_bytes=content.size();
+            foundation_resources.resources[descriptor.uri]=descriptor;
+            foundation_resources.contents[descriptor.uri]=content;
+            return descriptor.uri;
+        };
+        const auto markdown_source=install_upload("actual.md","# A heading\n\nA paragraph.");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",markdown_source},{"operation_id","import-markdown"}}.dump()});
+        assert(result.ok);
+        auto markdown_document_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",markdown_document_uri}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"].get<std::string>().find("# A heading")==0);
+        const auto empty_source=install_upload("empty.md","");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",empty_source},{"operation_id","import-empty"}}.dump()});
+        assert(result.ok);
+        const auto empty_document_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",empty_document_uri},{"expected_revision",1},
+            {"operation","append"},{"text","First paragraph.\n\nSecond paragraph."},{"summary","Add two paragraphs."}}.dump()});
+        assert(result.ok);
+        const auto empty_proposal=nlohmann::json::parse(result.output)["proposal_uri"];
+        result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",empty_document_uri},{"expected_revision",1},
+            {"proposal_uri",empty_proposal},{"operation_id","append-to-empty"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["revision"]==2);
+        const auto empty_text=install_upload("empty.txt","");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",empty_text},{"operation_id","import-empty-txt"}}.dump()});
+        assert(result.ok);
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",nlohmann::json::parse(result.output)["document_uri"]}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"]=="");
+        for(const auto * failed_mime : {"application/vnd.llama-agent.document-operation+json","application/vnd.llama-agent.document-head+json"}) {
+            const std::string suffix=std::string(failed_mime).find("head")!=std::string::npos ? "head" : "operation";
+            const auto source_uri=install_upload("interrupt-"+suffix+".md","Restorable document.");
+            const auto args=nlohmann::json{{"source_uri",source_uri},{"operation_id","import-interrupt-"+suffix}};
+            foundation_resources.fail_mime=failed_mime;
+            result=foundation_registry.execute({"document.import",args.dump()});assert(!result.ok);
+            foundation_resources.fail_mime.clear();
+            result=foundation_registry.execute({"document.import",args.dump()});assert(result.ok);
+            const auto recovered=nlohmann::json::parse(result.output);
+            bool published=false;std::string head_uri;
+            for(const auto & entry : foundation_resources.resources)
+                if(entry.second.metadata.processing_cache_key=="document-head:"+recovered["document_id"].get<std::string>()){published=true;head_uri=entry.first;}
+            assert(published);
+            const auto head_contents=foundation_resources.contents.at(head_uri);
+            foundation_resources.contents[head_uri]="{}";
+            result=foundation_registry.execute({"document.import",args.dump()});
+            assert(!result.ok && foundation_resources.contents.at(head_uri)=="{}");
+            foundation_resources.contents[head_uri]=head_contents;
+        }
 
         agent_resource_descriptor uploaded_docx;
         uploaded_docx.uri = "resource://session/word.docx";
@@ -562,8 +622,18 @@ int main() {
         result = foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-docx-1"}}.dump()});
         assert(result.ok && docx_processing_request.target_representation == "markdown");
         const auto imported_docx = nlohmann::json::parse(result.output);
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-docx-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["limitations"]==imported_docx["limitations"] && !imported_docx["limitations"].empty());
         result = foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",imported_docx.value("document_uri",std::string{})}}.dump()});
         assert(result.ok && nlohmann::json::parse(result.output).value("markdown",std::string{}).find("| Name | Value |") != std::string::npos);
+        uploaded_docx.uri="resource://session/empty.docx";uploaded_docx.name="empty.docx";
+        foundation_resources.resources[uploaded_docx.uri]=uploaded_docx;
+        foundation_resources.contents[uploaded_docx.uri]="empty docx bytes";
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-empty-docx"}}.dump()});
+        assert(result.ok);
+        const auto empty_docx_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",empty_docx_uri}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"]=="");
     }
     result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
     assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&

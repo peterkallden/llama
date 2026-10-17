@@ -32,7 +32,7 @@ const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAp
 const activeAppInvocation = () => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const event = localDocumentEvent.value?.provider_id === app.provider_id
+  const event = findLatestAppInvocation(localDocumentEvent.value ? [localDocumentEvent.value] : [], session.tools, app, session.sessionId)
     ? localDocumentEvent.value
     : findLatestAppInvocation(session.events, session.tools, app, session.sessionId);
   if (!event) return undefined;
@@ -46,10 +46,13 @@ const activeAppInvocation = () => {
 watch(() => session.events[0], (event) => {
   const targetApp = findAppForInvocationEvent(event, session.tools, session.sessionId);
   if (targetApp) {
+    localDocumentEvent.value = undefined;
     activeAppTool.value = mcpAppKey(targetApp);
     activeView.value = "app";
   }
 }, { flush: "sync" });
+
+watch(() => session.sessionId, () => { localDocumentEvent.value = undefined; });
 
 const connectionLabel = {
   connecting: "connecting",
@@ -90,11 +93,14 @@ function structuredToolResult(payload: unknown): Record<string, unknown> {
 
 async function openAttachmentInEditor(file: (typeof session.attachments)[number]) {
   if (!file.uri || !session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) return;
+  const importingSession = session.sessionId;
   try {
     const imported = structuredToolResult(await session.importDocument(file.uri));
+    if (session.sessionId !== importingSession) return;
     const documentUri = String(imported.document_uri ?? "");
     if (!documentUri) throw new Error("Import completed without a document revision reference.");
     const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: documentUri }));
+    if (session.sessionId !== importingSession) return;
     const openTool = session.tools.find((tool) => tool.name === "document.open");
     if (!openTool) throw new Error("The document editor app is unavailable.");
     localDocumentEvent.value = {

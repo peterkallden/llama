@@ -29,13 +29,14 @@ bool validate_agent_pandoc_options(
         return false;
     }
     if (options.output_format != "plain" && options.output_format != "docx" &&
-            options.output_format != "markdown" && options.output_format != "json") {
-        error = "Pandoc output format must be plain, docx, markdown or json";
+            options.output_format != "markdown" && options.output_format != "gfm" && options.output_format != "json") {
+        error = "Pandoc output format must be plain, docx, markdown, gfm or json";
         return false;
     }
     const bool valid_direction =
         (options.input_format == "docx" && options.output_format == "plain") ||
         (options.input_format == "docx" && options.output_format == "markdown") ||
+        (options.input_format == "docx" && options.output_format == "gfm") ||
         (options.input_format == "docx" && options.output_format == "json") ||
         (options.input_format == "markdown" && options.output_format == "docx") ||
         (options.input_format == "odt" && options.output_format == "markdown") ||

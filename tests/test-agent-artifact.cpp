@@ -588,6 +588,36 @@ int main() {
         "```text\n# literal heading\n*not a list*\n```", literal_text_edit, error));
     assert(literal_text_edit.sections.front().blocks.size() == 1);
     assert(literal_text_edit.sections.front().blocks.front().text.find("# literal heading") != std::string::npos);
+    common_agent_artifact_document review_document;
+    assert(common_agent_artifact_apply_markdown_edit(imported_roundtrip,
+        "First.\n\nSecond.\n\nThird.\n\nFourth.\n\nFifth.", review_document, error));
+    std::string review_context;
+    assert(common_agent_artifact_render_document_context(review_document,"resource://review",{},review_context,error));
+    auto review_json=nlohmann::json::parse(review_context);
+    assert(review_json["blocks"].size()==5 && review_json["blocks"][4]["selected"]==true);
+    const auto & review_blocks=review_document.sections.front().blocks;
+    assert(common_agent_artifact_render_document_context(review_document,"resource://review",
+        {review_blocks[2].id,review_blocks[1].id},review_context,error));
+    review_json=nlohmann::json::parse(review_context);
+    assert(review_json["document_uri"]=="resource://review" && review_json["blocks"].size()==4);
+    assert(review_json["blocks"][0]["block_id"]==review_blocks[0].id && review_json["blocks"][0]["selected"]==false);
+    assert(review_json["blocks"][1]["selected"]==true && review_json["blocks"][2]["selected"]==true);
+    assert(review_json["blocks"][2]["section_id"]=="document-content");
+    assert(!common_agent_artifact_render_document_context(review_document,"resource://review",{"missing"},review_context,error));
+    assert(!common_agent_artifact_render_document_context(review_document,"resource://review",
+        {review_blocks[0].id,review_blocks[0].id},review_context,error));
+    assert(common_agent_artifact_render_document_context(imported_roundtrip,"resource://empty",{},review_context,error));
+    assert(nlohmann::json::parse(review_context)["blocks"].empty());
+    std::string prepared_docx;bool omitted_images=false;
+    assert(common_agent_artifact_prepare_docx_markdown(
+        "# Title\n\n![A chart](media/image1.png)\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n`![literal](media/code.png)`\n",
+        prepared_docx,omitted_images,error));
+    assert(omitted_images && prepared_docx.find("media/image1.png")==std::string::npos);
+    assert(prepared_docx.find("A chart")!=std::string::npos && prepared_docx.find('|')!=std::string::npos);
+    common_agent_artifact_document prepared_document;
+    assert(common_agent_artifact_apply_markdown_edit(imported_roundtrip,prepared_docx,prepared_document,error));
+    assert(prepared_document.sections.front().blocks.size()==4);
+    assert(prepared_docx.find("media/code.png")!=std::string::npos);
     assert(literal_text_edit.sections.front().blocks.front().support == common_agent_artifact_support::unverified);
     return 0;
 }

@@ -13,12 +13,23 @@ resource and an operation ID. It supports TXT, Markdown, and DOCX. The
 original resource is never changed; imported documents retain its URI,
 content fingerprint, and importer version. TXT is represented as a fenced
 literal-text block so Markdown punctuation is not interpreted as formatting.
-DOCX import uses the configured Pandoc DOCX-to-Markdown processor; missing
+DOCX import uses the configured Pandoc DOCX-to-Markdown processor with GFM
+output so tables are compatible with cmark-gfm and the editor; missing
 processors, invalid files, limits, and conversion failures are explicit and
 leave the original intact. Unsupported formatting or images may be reported
 as import limitations. Reimporting the same source content and importer
 version reopens the existing document's latest published revision. A distinct
 uploaded resource creates a distinct document identity.
+
+Markdown filename extensions take precedence over a generic `text/plain`
+upload type. A successful empty DOCX conversion is an empty editable document.
+The host accepts either a direct processor output or the persisted resource
+returned by the processing service, re-authorizing and checking its media type
+and byte limit. Interrupted imports publish a verified head manifest on retry;
+an existing corrupt manifest is an error and is not silently replaced.
+DOCX images become alternative text with an explicit import limitation. The
+original DOCX retains its media; exported Markdown does not refer to temporary
+image files belonging to the conversion process.
 
 The attachment list offers an explicit “Open in editor” action for supported
 file types; uploading alone does not import or open a document.
@@ -54,6 +65,10 @@ changes the document. The user must accept it in the editor, which invokes
 `document.apply_patch` against the expected current revision. Stale proposals
 are rejected and must be reviewed again. Accepting a proposal is not a factual
 verification verdict.
+Review context retains document order and the selected flag on adjacent selected
+blocks. It includes the immutable document URI, revision, section IDs and block
+IDs needed for bounded patch proposals. The first-party host checks the review
+binding against the editor's currently opened revision before submitting it.
 The sidebar displays the host-computed diff before acceptance. Accepted model
 changes remain model-authored and unreviewed; accepting them does not transfer
 the original block's factual support. Save/review failures are returned to the
@@ -113,6 +128,31 @@ in the MCP resource; it does not load a CDN at runtime. The host rejects UI
 resources above 2 MiB. The Debian package installs third-party notices beside
 the application documentation. Project code remains MIT; bundled dependencies
 retain their own licenses. See [`../third-party/NOTICE.md`](../third-party/NOTICE.md).
+
+## Verification
+
+`test-agent-artifact` covers whole-document and selected-block context, source
+order, stable patch references, and DOCX image alternatives with retained GFM
+tables. `test-tool-adapters` covers persisted processor results, empty documents,
+import publication failures, retry, and cached DOCX export. The DOCX processor
+CTest keeps assertions enabled in release builds and checks the `--to=gfm`
+command, output media type, and conversion direction.
+
+Run the focused tests with the configured build tree:
+
+```sh
+ctest --test-dir <build-dir> -R '^(test-agent-artifact|test-tool-adapters|llama-agent-docx-text-processor-ctest)$' --output-on-failure
+```
+
+The existing Swedish table fixture can also check the installed converter;
+put its output in the configured smoke directory:
+
+```sh
+pandoc --from=docx --to=gfm --wrap=none pocs/agent/smoke/data/fixtures/document-table/TAB6695_sv.docx -o <smoke-dir>/imported.md
+```
+
+This converter check and the model-free tests do not establish a completed
+browser/daemon/model editing session.
 
 ## Current scope
 

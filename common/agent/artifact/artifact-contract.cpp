@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <memory>
@@ -1164,6 +1165,68 @@ bool common_agent_artifact_render_editable_markdown(
         for(const auto & block:section.blocks){out+=block.text;if(block.text.empty()||block.text.back()!='\n')out+='\n';out+='\n';}
     }
     error.clear();return true;
+}
+
+bool common_agent_artifact_prepare_docx_markdown(
+        const std::string & markdown, std::string & out, bool & omitted_images, std::string & error) {
+    out=markdown;omitted_images=false;
+    cmark_gfm_core_extensions_ensure_registered();
+    std::unique_ptr<cmark_parser,decltype(&cmark_parser_free)> parser(cmark_parser_new(CMARK_OPT_DEFAULT),cmark_parser_free);
+    if(!parser){error="Markdown parser could not be allocated";return false;}
+    for(const char * name : {"table","strikethrough","autolink","tagfilter","tasklist","footnotes"})
+        if(auto * extension=cmark_find_syntax_extension(name))cmark_parser_attach_syntax_extension(parser.get(),extension);
+    cmark_parser_feed(parser.get(),markdown.data(),markdown.size());
+    std::unique_ptr<cmark_node,decltype(&cmark_node_free)> root(cmark_parser_finish(parser.get()),cmark_node_free);
+    if(!root){error="DOCX Markdown could not be parsed";return false;}
+    std::vector<cmark_node *> images;
+    std::unique_ptr<cmark_iter,decltype(&cmark_iter_free)> iter(cmark_iter_new(root.get()),cmark_iter_free);
+    if(!iter){error="Markdown traversal could not be allocated";return false;}
+    for(auto event=cmark_iter_next(iter.get());event!=CMARK_EVENT_DONE;event=cmark_iter_next(iter.get()))
+        if(event==CMARK_EVENT_ENTER && cmark_node_get_type(cmark_iter_get_node(iter.get()))==CMARK_NODE_IMAGE)
+            images.push_back(cmark_iter_get_node(iter.get()));
+    // Replace innermost images first, keeping nested alternative text valid.
+    for(auto it=images.rbegin();it!=images.rend();++it){
+        const auto alt=markdown_inline_text(*it);
+        auto * text=cmark_node_new(CMARK_NODE_TEXT);
+        if(!text){error="Image alternative text could not be allocated";return false;}
+        cmark_node_set_literal(text,(alt.empty()?"[Image omitted]":"[Image: "+alt+"]").c_str());
+        if(!cmark_node_replace(*it,text)){cmark_node_free(text);error="Image replacement failed";return false;}
+        cmark_node_free(*it);
+    }
+    if(!images.empty()){
+        char * rendered=cmark_render_commonmark(root.get(),CMARK_OPT_DEFAULT,0);
+        if(!rendered){error="DOCX Markdown could not be rendered";return false;}
+        out=rendered;std::free(rendered);omitted_images=true;
+    }
+    error.clear();return true;
+}
+
+bool common_agent_artifact_render_document_context(
+        const common_agent_artifact_document & document, const std::string & document_uri,
+        const std::vector<std::string> & block_ids, std::string & out, std::string & error) {
+    out.clear();
+    const std::set<std::string> requested(block_ids.begin(), block_ids.end());
+    if (requested.size() != block_ids.size()) { error="document context contains duplicate block IDs"; return false; }
+    std::set<std::string> found;
+    json blocks=json::array();
+    for (const auto & section : document.sections) {
+        for (size_t i=0; i<section.blocks.size(); ++i) {
+            const auto & block=section.blocks[i];
+            const bool selected=requested.empty() || requested.count(block.id)>0;
+            if (selected && !requested.empty()) found.insert(block.id);
+            const bool neighbor=!requested.empty() &&
+                ((i>0 && requested.count(section.blocks[i-1].id)>0) ||
+                 (i+1<section.blocks.size() && requested.count(section.blocks[i+1].id)>0));
+            if (!selected && !neighbor) continue;
+            blocks.push_back({{"block_id",block.id},{"selected",selected},
+                {"section_id",section.id},{"section",section.title},{"text",block.text},
+                {"evidence_ids",block.evidence_ids},{"source_refs",block.source_refs}});
+        }
+    }
+    if (found.size()!=requested.size()) { error="document context contains a block ID not present in the requested revision"; return false; }
+    out=json{{"document_uri",document_uri},{"document_id",document.id},
+        {"revision",document.revision},{"blocks",std::move(blocks)}}.dump();
+    error.clear(); return true;
 }
 
 bool common_agent_artifact_apply_markdown_edit(

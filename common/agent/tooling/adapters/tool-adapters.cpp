@@ -6,6 +6,7 @@
 #include "agent/tooling/adapters/families/oracle-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
 #include "agent/tooling/adapters/families/resource-adapters.h"
+#include "agent/tooling/adapters/support/processing-output.h"
 #include "agent/artifact/artifact-contract.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
@@ -569,10 +570,11 @@ common_tool_execution_result export_saved_document(
             if(bindings.resource_processing_provider_factory){owned=bindings.resource_processing_provider_factory(request);processor=owned.get();}
             if(processor==nullptr)return tool_execution_failure("tool.artifact.export.docx_unavailable","resource processor provider could not be created","DOCX export is unavailable.");
             const auto processed=processor->process(request);
-            if(!processed.success||processed.outputs.size()!=1||processed.outputs.front().bytes.empty()||common_normalize_resource_media_type(processed.outputs.front().mime_type)!=common_normalize_resource_media_type(request.target_media_type))
-                return tool_execution_failure("tool.artifact.export.docx_failed",processed.failure_code+": "+processed.safe_summary,"The report could not be converted to DOCX.");
-            agent_resource_put_request put;put.name=document.id+"-r"+std::to_string(document.revision)+".docx";put.description=document.title;put.mime_type=request.target_media_type;put.bytes=processed.outputs.front().bytes;put.bytes_are_authoritative=true;
-            put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;put.source_provider="native";put.source_tool="artifact.export";put.metadata=processed.outputs.front().metadata;put.metadata.processing_cache_key=cache_key;put.lineage.parent_uri=markdown_resource.uri;put.lineage.chunk_count=1;put.lineage.byte_length=put.bytes.size();put.lineage.derivation="artifact.export:document-docx";
+            agent_resource_processing_output output;
+            if(!common_adapter_read_processing_output(processed,*bindings.resource_runtime.store,authority,request.target_media_type,request.limits.max_output_bytes,output,error)||output.bytes.empty())
+                return tool_execution_failure("tool.artifact.export.docx_failed",error,"The document could not be converted to DOCX.");
+            agent_resource_put_request put;put.name=document.id+"-r"+std::to_string(document.revision)+".docx";put.description=document.title;put.mime_type=request.target_media_type;put.bytes=std::move(output.bytes);put.bytes_are_authoritative=true;
+            put.scope=bindings.resource_runtime.project_id.empty()?common_runtime_resource_scope::session:common_runtime_resource_scope::project;put.source_provider="native";put.source_tool="artifact.export";put.metadata=output.metadata;put.metadata.processing_cache_key=cache_key;put.lineage.parent_uri=markdown_resource.uri;put.lineage.chunk_count=1;put.lineage.byte_length=put.bytes.size();put.lineage.derivation="artifact.export:document-docx";
             apply_agent_resource_runtime(bindings.resource_runtime,put);agent_resource_descriptor descriptor;
             if(!bindings.resource_runtime.store->put_bytes(put,descriptor,error))return tool_execution_failure("tool.artifact.export.docx_store_failed",std::move(error),"The DOCX export could not be stored.");
             final_resource.uri=descriptor.uri;final_resource.name=descriptor.name;final_resource.mime_type=descriptor.mime_type;final_resource.size_bytes=descriptor.size_bytes;final_resource.scope=descriptor.scope;final_resource.metadata=descriptor.metadata;final_resource.lineage=descriptor.lineage;

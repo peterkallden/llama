@@ -37,10 +37,15 @@ bool is_markdown_normalization(const agent_pandoc_options & options) {
         options.output_format == "markdown";
 }
 
+bool is_docx_markdown(const agent_pandoc_options & options) {
+    return options.input_format == "docx" &&
+        (options.output_format == "markdown" || options.output_format == "gfm");
+}
+
 } // namespace
 
 std::string agent_pandoc_processor::id() const {
-    if (options_.input_format == "docx" && options_.output_format == "markdown") return "pandoc-docx-markdown-v1";
+    if (is_docx_markdown(options_)) return "pandoc-docx-markdown-v1";
     if (options_.input_format == "markdown") return "pandoc-markdown-docx-v1";
     if (options_.input_format == "odt") return "pandoc-odt-markdown-v1";
     if (options_.input_format == "docx" && options_.output_format == "json") {
@@ -61,11 +66,11 @@ bool agent_pandoc_processor::supports(
         const std::string & mime_type,
         const std::string & target_representation) const {
     const auto normalized = common_normalize_resource_media_type(mime_type);
-    return (options_.input_format == "docx" && normalized == docx_mime &&
+    return (options_.input_format == "docx" && options_.output_format == "plain" && normalized == docx_mime &&
             target_representation == "text") ||
-        (options_.input_format == "docx" && normalized == docx_mime &&
+        (is_docx_markdown(options_) && normalized == docx_mime &&
             target_representation == "markdown") ||
-        (options_.input_format == "docx" && normalized == docx_mime &&
+        (options_.input_format == "docx" && options_.output_format == "json" && normalized == docx_mime &&
             target_representation == "document-json") ||
         (options_.input_format == "markdown" && normalized == markdown_mime &&
             target_representation == "docx") ||
@@ -82,12 +87,12 @@ agent_resource_processor::support agent_pandoc_processor::supports(
     const auto source_type = request.media_type.resolved_type.empty()
         ? request.source.mime_type
         : request.media_type.resolved_type;
-    const bool forward = options_.input_format == "docx" &&
+    const bool forward = options_.input_format == "docx" && options_.output_format == "plain" &&
         common_normalize_resource_media_type(source_type) == docx_mime &&
         request.target_representation == "text" &&
         (request.target_media_type.empty() ||
          common_normalize_resource_media_type(request.target_media_type) == "text/plain");
-    const bool docx_markdown = options_.input_format == "docx" && options_.output_format == "markdown" &&
+    const bool docx_markdown = is_docx_markdown(options_) &&
         common_normalize_resource_media_type(source_type) == docx_mime &&
         request.target_representation == "markdown" &&
         (request.target_media_type.empty() || common_normalize_resource_media_type(request.target_media_type) == markdown_mime);
@@ -158,13 +163,13 @@ agent_resource_processing_result agent_pandoc_processor::process(
                 ? "resource.processing_timeout" : "resource.processor_failed",
             sandbox_result.error.empty() ? "Pandoc did not complete successfully." : sandbox_result.error);
     }
-    if (artifacts.size() != 1 || artifacts.front().bytes.empty()) {
+    const bool markdown_forward = is_docx_markdown(options_);
+    if (artifacts.size() != 1 || (artifacts.front().bytes.empty() && !markdown_forward)) {
         return failure(id(), "resource.output_invalid", "Pandoc did not return one bounded output artifact.");
     }
 
     const auto & artifact = artifacts.front();
     const bool text_forward = (forward || odt_forward) && !document_json;
-    const bool markdown_forward = options_.input_format == "docx" && options_.output_format == "markdown";
     agent_resource_processing_result result;
     result.success = true;
     result.processor_id = id();
@@ -223,6 +228,8 @@ agent_resource_processing_result agent_pandoc_processor::process(
             : "Download or export this derived artifact resource.";
     output.metadata.limitations = document_json
         ? "Pandoc JSON preserves document structure but does not by itself infer table semantics or create datasets."
+        : markdown_forward
+        ? "Pandoc Markdown conversion does not guarantee original Word layout or all formatting; embedded images may be unavailable."
         : text_forward
         ? "Pandoc plain-text conversion may not preserve complete document layout or complex tables."
         : markdown_normalization

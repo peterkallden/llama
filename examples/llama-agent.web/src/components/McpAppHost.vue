@@ -155,6 +155,9 @@ async function onMessage(event: MessageEvent) {
             !Array.isArray(rawBinding.block_ids) || !rawBinding.block_ids.every((item) => typeof item === "string")) {
           throw new Error("The editor did not provide a valid typed document binding.");
         }
+        documentAccess.authorize("document.propose_patch", {
+          document_uri: rawBinding.document_uri, expected_revision: rawBinding.revision,
+        });
         await props.submitReview(content.text, {
           document_uri: rawBinding.document_uri,
           revision: rawBinding.revision as number,

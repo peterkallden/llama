@@ -153,6 +153,15 @@ bool common_agent_artifact_document_from_plan(
     const std::string & report_id = {});
 bool common_agent_artifact_render_markdown(const common_agent_artifact_document &, std::string & out, std::string & error);
 bool common_agent_artifact_render_editable_markdown(const common_agent_artifact_document &, std::string & out, std::string & error);
+// Project an already authorized immutable document in source order. An empty
+// selection means all blocks; neighbors retain their own selection status.
+bool common_agent_artifact_render_document_context(
+    const common_agent_artifact_document &, const std::string & document_uri,
+    const std::vector<std::string> & block_ids, std::string & out, std::string & error);
+// DOCX conversion has no published media attachments. Retain image alt text
+// instead of exporting links into the processor's temporary filesystem.
+bool common_agent_artifact_prepare_docx_markdown(
+    const std::string &, std::string & out, bool & omitted_images, std::string & error);
 bool common_agent_artifact_apply_markdown_edit(
     const common_agent_artifact_document &, const std::string & markdown,
     common_agent_artifact_document &, std::string & error);
