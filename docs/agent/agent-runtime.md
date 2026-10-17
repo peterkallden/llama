@@ -533,6 +533,9 @@ resolved view; it cannot select a profile or expand it.
 active tool catalog; it has no separately maintained tool-name list. Network,
 write, confirmation, scope and provider policies remain independent gates on
 whether each exposed tool may actually run.
+Configuring `tools.profiles.all-configured` preserves this dynamic selection;
+capability exclusions and explicit policy settings still apply. Explicit members
+and included capabilities do not duplicate catalog entries.
 
 The daemon `ready` response includes a `tooling` diagnostic with the active
 profile, configured capabilities, resolved tool names and effective policy.

@@ -481,8 +481,33 @@ int main() {
         return definition.name == "document.import";
     }));
     const auto * all_configured_profile = catalog.find_profile("all-configured");
-    assert(all_configured_profile && all_configured_profile->include_all_configured_tools);
+    assert(all_configured_profile);
     assert(all_configured_profile->members.empty());
+
+    // Configuration may narrow policy and exclude capabilities without
+    // replacing the dynamic catalog selection with an empty/static list.
+    common_tool_profile configured_all;
+    configured_all.allow_network = false;
+    configured_all.allow_policy_gated_writes = false;
+    configured_all.members.push_back({"document.import", 1});
+    configured_all.members.push_back({"document.import", 1});
+    configured_all.include_capabilities = {"documents"};
+    configured_all.exclude_capabilities = {"math"};
+    common_tool_catalog configured_catalog;
+    common_tool_bootstrap_result configured_bootstrap;
+    assert(configured_catalog.bootstrap("all-configured", configured_bootstrap, error,
+        {{"documents", {"document.import", "document.open"}}, {"math", {"math.calculate"}}},
+        {{"all-configured", configured_all}}));
+    common_tool_profile_snapshot configured_snapshot;
+    assert(configured_catalog.resolve_profile("all-configured", configured_snapshot, error));
+    assert(error.empty());
+    assert(configured_snapshot.allow_network == false);
+    assert(configured_snapshot.allow_policy_gated_writes == false);
+    assert(configured_snapshot.tools.size() + 1 == all_configured.size());
+    assert(std::count_if(configured_snapshot.tools.begin(), configured_snapshot.tools.end(),
+        [](const auto & definition) { return definition.name == "document.import"; }) == 1);
+    assert(std::none_of(configured_snapshot.tools.begin(), configured_snapshot.tools.end(),
+        [](const auto & definition) { return definition.name == "math.calculate"; }));
 
     common_tool_bootstrap_result second;
     assert(catalog.bootstrap("memory", second, error));

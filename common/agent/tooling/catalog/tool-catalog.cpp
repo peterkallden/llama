@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <set>
+#include <utility>
 
 using json = nlohmann::ordered_json;
 
@@ -382,7 +383,6 @@ std::vector<common_tool_profile> builtin_profiles() {
     common_tool_profile all_configured;
     all_configured.id = "all-configured";
     all_configured.description = "All configured catalog tools, still subject to host policy and confirmation.";
-    all_configured.include_all_configured_tools = true;
     all_configured.allow_network = true;
     all_configured.allow_policy_gated_writes = true;
     return {
@@ -533,20 +533,26 @@ bool common_tool_catalog::resolve_profile(
     snapshot.allow_network = profile->allow_network;
     snapshot.allow_policy_gated_writes = profile->allow_policy_gated_writes;
     std::vector<common_tool_definition> loaded;
-    if (profile->include_all_configured_tools) {
+    std::set<std::pair<std::string, uint32_t>> loaded_definitions;
+    const auto append_definition = [&](const common_tool_definition & definition) {
+        if (loaded_definitions.emplace(definition.name, definition.version).second) {
+            loaded.push_back(definition);
+        }
+    };
+    // The named profile stays dynamic even when configuration replaces its
+    // policy or capability filters. No separately serialized flag is needed.
+    if (profile->id == "all-configured") {
         for (const auto & entry : definitions) {
             const auto & definition = entry.second;
-            if (definition.enabled) loaded.push_back(definition);
+            if (definition.enabled) append_definition(definition);
         }
     }
     for (const auto & member : profile->members) {
         if (!member.enabled) continue;
         const auto * definition = find_definition(member.tool_name, member.tool_version);
         if (!definition || !definition->enabled) { error = "tool profile references an unavailable tool"; return false; }
-        loaded.push_back(*definition);
+        append_definition(*definition);
     }
-    std::set<std::string> loaded_names;
-    for (const auto & definition : loaded) loaded_names.insert(definition.name);
     for (const auto & capability_id : profile->include_capabilities) {
         const auto capability = capabilities.find(capability_id);
         if (capability == capabilities.end()) {
@@ -559,7 +565,7 @@ bool common_tool_catalog::resolve_profile(
                 error = "tool capability references an unavailable tool";
                 return false;
             }
-            if (loaded_names.insert(definition->name).second) loaded.push_back(*definition);
+            append_definition(*definition);
         }
     }
     if (!profile->exclude_capabilities.empty()) {

@@ -51,10 +51,6 @@ struct common_tool_profile {
     std::string description;
     bool enabled = true;
     std::vector<common_tool_profile_member> members;
-    // Include every enabled tool registered in the catalog at resolution
-    // time. This is used by the built-in all-configured profile so new tools
-    // cannot silently fall out of a duplicated allow-list.
-    bool include_all_configured_tools = false;
     std::vector<std::string> include_capabilities;
     std::vector<std::string> exclude_capabilities;
     std::optional<bool> allow_network;
