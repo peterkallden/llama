@@ -42,6 +42,7 @@ export type PendingDocumentReview = {
 };
 const documentReviews = ref<PendingDocumentReview[]>(restoreDocumentReviews());
 let drainingDocumentReviews = false;
+let turnRequestInFlight = false;
 
 function reviewQueueKey(id = sessionId.value) { return `llama-agent-web.document-reviews:${id}`; }
 function restoreDocumentReviews(): PendingDocumentReview[] {
@@ -87,6 +88,7 @@ function observe(event: AgentEvent) {
   // Daemon events do not consistently carry a presentation timestamp. Keep
   // the server payload intact while recording when the browser received it.
   events.value.unshift({ ...event, client_received_at: Date.now() });
+  if (event.session_id && event.session_id !== sessionId.value) return;
   const kind = eventType(event);
   const turnId = String(event.turn_id ?? activeTurnId.value);
   const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
@@ -94,9 +96,11 @@ function observe(event: AgentEvent) {
   if (kind === "turn.completed" && assistant && typeof event.response === "string") assistant.content = event.response;
   if (kind === "turn.failed") error.value = String(event.error ?? event.detail ?? "Turn failed");
   if (kind === "turn.completed" || kind === "turn.failed" || kind === "turn.cancelled") {
-    busy.value = false;
-    if (turnId === activeTurnId.value) activeTurnId.value = "";
-    void drainDocumentReviews();
+    if (!turnRequestInFlight) {
+      busy.value = false;
+      if (turnId === activeTurnId.value) activeTurnId.value = "";
+      void drainDocumentReviews();
+    }
   } else if (kind.startsWith("turn.")) busy.value = true;
 }
 
@@ -163,11 +167,11 @@ async function connect() {
 
 async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false,
     documentContext?: TurnRequest["document_context"], stableTurnId?: string) {
-  if (busy.value) {
+  if (busy.value || turnRequestInFlight) {
     if (propagateFailure) throw new Error("An agent turn is already running. Retry the review when it finishes.");
     return;
   }
-  error.value = ""; busy.value = true;
+  error.value = ""; busy.value = true; turnRequestInFlight = true;
   const turnId = stableTurnId ?? crypto.randomUUID();
   activeTurnId.value = turnId;
   if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
@@ -194,14 +198,15 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     }
     busy.value = false;
     activeTurnId.value = "";
-    void drainDocumentReviews();
   } catch (cause) {
     busy.value = false; activeTurnId.value = "";
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
     error.value = cause instanceof Error ? cause.message : String(cause);
-    void drainDocumentReviews();
     if (propagateFailure) throw cause;
+  } finally {
+    turnRequestInFlight = false;
+    void drainDocumentReviews();
   }
 }
 
@@ -218,7 +223,7 @@ async function submitReview(prompt: string, documentContext: NonNullable<TurnReq
 }
 
 async function drainDocumentReviews() {
-  if (drainingDocumentReviews || busy.value) return;
+  if (drainingDocumentReviews || busy.value || turnRequestInFlight) return;
   const item = documentReviews.value.find((review) => review.state === "queued" && review.session_id === sessionId.value);
   if (!item) return;
   drainingDocumentReviews = true;
@@ -366,3 +371,7 @@ function newSession() {
 export function useAgentSession() {
   return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, activeTurnId, recording, documentReviews, refreshStatus, connect, submit, submitReview, retryDocumentReview, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }
+
+// Replacing this module during Vite development must release its long-lived
+// stream; otherwise abandoned modules keep browser connection slots occupied.
+import.meta.hot?.dispose(() => abortController.value?.abort());

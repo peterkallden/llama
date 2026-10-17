@@ -35,10 +35,11 @@ export function findLatestAppInvocation(
   tools: DaemonToolStatus[],
   app: DaemonToolStatus,
   sessionId?: string,
+  localInvocation?: AgentEvent,
 ): AgentEvent | undefined {
   const appUri = app._meta?.ui?.resourceUri;
   if (!appUri) return undefined;
-  return eventsNewestFirst.find((event) => {
+  const matches = (event: AgentEvent) => {
     if (sessionId !== undefined && event.session_id !== sessionId) return false;
     if (event.app_context_available !== true || !event.tool_input || typeof event.tool_input !== "object" ||
         Array.isArray(event.tool_input) || !event.server_tool_name) return false;
@@ -47,5 +48,9 @@ export function findLatestAppInvocation(
     const origin = tools.find((tool) => providerId(tool.provider_id) === eventProvider &&
       (tool.server_tool_name || tool.name) === event.server_tool_name);
     return origin?._meta?.ui?.resourceUri === appUri;
-  });
+  };
+  const latest = eventsNewestFirst.find(matches);
+  const local = localInvocation && matches(localInvocation) ? localInvocation : undefined;
+  return local && (!latest || Number(local.client_received_at ?? 0) >= Number(latest.client_received_at ?? 0))
+    ? local : latest;
 }

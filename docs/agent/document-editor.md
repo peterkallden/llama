@@ -91,6 +91,15 @@ changes remain model-authored and unreviewed; accepting them does not transfer
 the original block's factual support. Save failures keep the editor open. A
 queued review is reported separately from its eventual model result; turn
 failures appear in chat and can be retried without saving another revision.
+If newer edits appear during review registration, the registered review keeps
+its saved revision and the editor stays open with the newer draft. Navigation
+only proceeds after the editor explicitly confirms that it has closed.
+The host waits for that acknowledgement before unmounting a navigation-driven
+close; an editor-driven close restores the layout through its close event.
+Locally opening an attachment does not pin its initial tool result: later
+agent patch proposals continue to reach the same mounted editor.
+Queued reviews wait for the current HTTP turn response as well as its event
+stream, so an early completion event cannot start the next turn prematurely.
 
 Changed blocks are marked as user-authored and unreviewed. Their old evidence
 references may remain for navigation, but they do not confer support on the

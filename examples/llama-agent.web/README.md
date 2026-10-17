@@ -201,3 +201,5 @@ review waits in session-scoped browser storage until the turn finishes. A retry
 reuses its stable turn ID. Model edit proposals still require explicit
 acceptance in the editor. Starting a new session is blocked while a turn or
 document review is pending so the session-bound review queue cannot be orphaned.
+Development hot reload closes the previous session module's SSE connection;
+otherwise repeated edits can leave stale streams occupying browser connections.

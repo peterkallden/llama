@@ -42,9 +42,7 @@ const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAp
 const activeAppInvocation = () => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const event = findLatestAppInvocation(localDocumentEvent.value ? [localDocumentEvent.value] : [], session.tools, app, session.sessionId)
-    ? localDocumentEvent.value
-    : findLatestAppInvocation(session.events, session.tools, app, session.sessionId);
+  const event = findLatestAppInvocation(session.events, session.tools, app, session.sessionId, localDocumentEvent.value);
   if (!event) return undefined;
   return {
     id: mcpAppInvocationKey(event),
@@ -58,9 +56,9 @@ watch(() => session.events[0], (event) => {
   const targetApp = findAppForInvocationEvent(event, session.tools, session.sessionId);
   if (targetApp) {
     localDocumentEvent.value = undefined;
-    activeAppTool.value = mcpAppKey(targetApp);
     if (targetApp._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor") enterDocumentMode();
     else activeView.value = "app";
+    activeAppTool.value = mcpAppKey(targetApp);
   }
 }, { flush: "sync" });
 
@@ -93,7 +91,8 @@ async function send() {
   chatSending.value = true;
   const sendingSession = session.sessionId;
   try {
-    const context = documentMode.value ? await editorHost.value?.prepareForChat() : undefined;
+    if (documentMode.value && !editorHost.value) throw new Error("The document editor is not ready. Your message is preserved.");
+    const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
     if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
     if (prompt.value === draftAtSubmit) prompt.value = "";
     await session.submit(value || "Please process the attached audio.", [], false, context);
@@ -111,6 +110,7 @@ function enterDocumentMode() {
 }
 
 function restoreDocumentMode() {
+  if (!documentMode.value && !savedWorkspaceState.value) return;
   documentMode.value = false;
   const previous = savedWorkspaceState.value;
   if (previous) {
@@ -177,12 +177,12 @@ async function openAttachmentInEditor(file: (typeof session.attachments)[number]
     if (!openTool) throw new Error("The document editor app is unavailable.");
     localDocumentEvent.value = {
       session_id: session.sessionId, request_id: crypto.randomUUID(), turn_id: crypto.randomUUID(),
-      sequence: Date.now(), provider_id: openTool.provider_id ?? "", server_tool_name: openTool.server_tool_name ?? openTool.name,
+      sequence: Date.now(), client_received_at: Date.now(), provider_id: openTool.provider_id ?? "", server_tool_name: openTool.server_tool_name ?? openTool.name,
       app_context_available: true, tool_input: { document_uri: documentUri },
       tool_result: { isError: false, structuredContent: opened },
     };
-    activeAppTool.value = mcpAppKey(openTool);
     enterDocumentMode();
+    activeAppTool.value = mcpAppKey(openTool);
   } catch (cause) {
     attachmentEditorError.value = cause instanceof Error ? cause.message : String(cause);
   } finally {

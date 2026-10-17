@@ -265,7 +265,7 @@ async function refreshedSelection() {
   return [...selectedBlockIds];
 }
 
-async function registerReview(closeAfter = false) {
+async function registerReview(closeAfter = false): Promise<boolean> {
   if (reviewBusy) throw new Error("A document review operation is already running.");
   reviewBusy = true; lockEditor(true); updateButtons();
   let closeAccepted = false;
@@ -278,7 +278,7 @@ async function registerReview(closeAfter = false) {
         closeAccepted = true;
       }
       status("No unreviewed document changes.");
-      return;
+      return closeAccepted;
     }
     const expectedEditSequence = editSequence;
     const blockIds = await refreshedSelection();
@@ -297,12 +297,13 @@ async function registerReview(closeAfter = false) {
     if (closeAfter) {
       if (dirty || editSequence !== expectedEditSequence) {
         status("Review queued; newer edits remain unsaved. Save them before closing.", true);
-        return;
+        return false;
       }
       await rpc("ui/message", { action: "close-document" });
       closeAccepted = true;
     }
     status(closeAfter ? "Review queued; closing editor." : "Review queued in chat.");
+    return closeAccepted;
   } finally {
     reviewBusy = false;
     if (!closeAccepted) lockEditor(false);
@@ -321,7 +322,7 @@ function closeEditor(): Promise<boolean> {
   if (mutationBusy) return Promise.resolve(false);
   closing = true; updateButtons();
   closePromise = (async () => {
-    try { await registerReview(true); return true; }
+    try { return await registerReview(true); }
     catch (cause) { status(String(cause), true); return false; }
     finally { closing = false; closePromise = undefined; updateButtons(); }
   })();

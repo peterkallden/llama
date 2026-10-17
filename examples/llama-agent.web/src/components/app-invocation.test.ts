@@ -10,6 +10,16 @@ const appTool = (provider_id: string, name: string, uri: string, server_tool_nam
 });
 
 describe("MCP App invocation routing", () => {
+  it("delivers newer agent proposals after a locally opened document", () => {
+    const app = appTool("", "document.open", "ui://llama-agent/apps/document-editor");
+    const tools = [app, { ...app, name: "document.propose_patch", server_tool_name: "document.propose_patch" }];
+    const local: AgentEvent = { session_id: "s", provider_id: "", server_tool_name: "document.open",
+      app_context_available: true, tool_input: { document_uri: "resource://doc" }, client_received_at: 20 };
+    const old = { ...local, client_received_at: 10 };
+    const proposal = { ...local, server_tool_name: "document.propose_patch", client_received_at: 30 };
+    expect(findLatestAppInvocation([old], tools, app, "s", local)).toBe(local);
+    expect(findLatestAppInvocation([proposal, old], tools, app, "s", local)).toBe(proposal);
+  });
   it("gives repeated identical calls separate app instances using host event identity", () => {
     const event = { session_id: "s", request_id: "r", sequence: 3, tool_input: {}, tool_result: {} };
     expect(mcpAppInvocationKey(event)).not.toBe(mcpAppInvocationKey({ ...event, sequence: 4 }));

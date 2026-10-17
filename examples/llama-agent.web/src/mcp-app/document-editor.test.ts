@@ -179,6 +179,31 @@ describe("document editor sandbox script", () => {
     expect(view.node("#status").textContent).toContain("Review queued; closing editor");
   });
 
+  it("does not acknowledge a host close if edits arrive after review registration", async () => {
+    const view = app();
+    view.handle((request) => {
+      if (request.method === "tools/call" && request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", revision: 2, reused: false, diff: { changed: true },
+      } };
+      if (request.method === "tools/call" && request.params.name === "document.open") return { structuredContent: {
+        ...opened, document_uri: "resource://r2", revision: 2,
+      } };
+      if (request.method === "ui/message" && request.params.action === "review-document") {
+        view.Editor.current.edit("Newer draft after review registration");
+        return { queued: true };
+      }
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
+    view.Editor.current.edit("Edited"); await settle();
+    view.deliverRequest(79, "ui/llama-agent/close-document"); await settle();
+    await new Promise((resolve) => setTimeout(resolve, 0)); await settle();
+    expect(view.requests.some((request) => request.id === 79 && request.error)).toBe(true);
+    expect(view.requests.some((request) => request.method === "ui/message" && request.params?.action === "close-document")).toBe(false);
+    expect(view.Editor.current.getMarkdown()).toBe("Newer draft after review registration");
+    expect(view.node("#editor").inert).toBe(false);
+  });
+
   it("locks edits while close-review context is being registered and keeps the editor open on a changed draft", async () => {
     const view = app();
     let releaseOpen!: (value: unknown) => void;

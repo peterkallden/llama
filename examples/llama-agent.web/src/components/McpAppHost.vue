@@ -27,7 +27,7 @@ const appVisible = computed(() => (props.tool._meta?.ui?.visibility ?? []).inclu
 let initialized = false;
 let initializeAccepted = false;
 let hostRequestId = 1_000_000_000;
-const hostRequests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+const hostRequests = new Map<number, { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let lastInvocationSignature = "";
 let documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
 
@@ -166,7 +166,13 @@ async function onMessage(event: MessageEvent) {
     const action = String(params.action ?? "");
     if (action === "close-document") {
       if (uri.value !== "ui://llama-agent/apps/document-editor") { reply(undefined, "Only the document editor may close its document view."); return; }
-      reply({ closed: true }); window.setTimeout(() => emit("documentClosed"), 0); return;
+      reply({ closed: true });
+      // Navigation awaits its own editor RPC before unmounting. Only an
+      // editor-initiated close emits here; otherwise unmount rejects that RPC.
+      if (![...hostRequests.values()].some((request) => request.method === "ui/llama-agent/close-document")) {
+        window.setTimeout(() => emit("documentClosed"), 0);
+      }
+      return;
     }
     if (typeof content.text === "string" && uri.value === "ui://llama-agent/apps/document-editor") {
       const rawBinding = params.document_context && typeof params.document_context === "object"
@@ -269,7 +275,7 @@ function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/c
     const timer = setTimeout(() => {
       hostRequests.delete(id); reject(new Error("The editor did not respond; its local draft is still preserved."));
     }, 210000);
-    hostRequests.set(id, { resolve, reject, timer });
+    hostRequests.set(id, { method, resolve, reject, timer });
     target.postMessage({ jsonrpc: "2.0", id, method, params: {} }, "*");
   });
 }
