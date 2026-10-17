@@ -6,15 +6,21 @@ button { cursor: pointer; } .shell { width: min(1180px, calc(100% - 32px)); marg
 .connection { color: #9aa9bf; } .connection-connected { color: #86efac; } .connection-connecting { color: #fbbf24; } .connection-error, .connection-auth-error { color: #fca5a5; } .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
 .notice { margin: 24px 0; padding: 12px 14px; border: 1px solid #25405b; border-radius: 10px; color: #b9c7da; background: #101c2d; }
 .workspace-nav { display: flex; gap: 8px; margin: 0 0 16px; border-bottom: 1px solid #25405b; }
-.workspace-nav button, .explorer-actions button, .handoff-button { border: 1px solid #30445f; border-radius: 7px 7px 0 0; padding: 8px 12px; color: #b9c7da; background: #111b2b; }
+.workspace-nav button, .explorer-actions button, .handoff-button, .explorer-toggle { border: 1px solid #30445f; border-radius: 7px 7px 0 0; padding: 8px 12px; color: #b9c7da; background: #111b2b; }
 .workspace-nav button.selected { color: #07111d; border-color: #7dd3fc; background: #7dd3fc; font-weight: 700; }
 .explorer-card, .workflow-card { min-height: 360px; }
 .explorer-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .explorer-actions label { display: grid; gap: 4px; color: #a9bdd5; font-size: 12px; }
 .explorer-actions label input { width: 100px; }
-.explorer-actions button, .handoff-button { border-radius: 7px; color: #c6d6eb; background: #1a2c43; }
+.explorer-actions button, .handoff-button, .explorer-toggle { border-radius: 7px; color: #c6d6eb; background: #1a2c43; }
+.explorer-card select { padding: 10px 12px; border: 1px solid #30445f; border-radius: 7px; color: #e7edf7; background: #111b2b; font: inherit; }
 .explorer-actions button:disabled { opacity: .5; cursor: default; }
 .explorer-result { max-height: 360px; overflow: auto; margin: 16px 0; padding: 12px; border-radius: 7px; background: #0a111d; color: #b9d5f2; }
+.dataset-table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
+.dataset-table th, .dataset-table td { padding: 9px 12px; border-bottom: 1px solid #30445f; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dataset-table th { position: sticky; top: 0; background: #142237; }
+.dataset-table th button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 4px; font: inherit; font-weight: 600; text-align: left; }
+.dataset-table tbody tr:nth-child(even) { background: #111e30; }
 .workflow-list { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
 .workflow-list li { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; padding: 11px; border: 1px solid #263951; border-radius: 8px; background: #0d1726; }
 .workflow-state { align-self: start; color: #fbbf24; text-transform: uppercase; font-size: 11px; letter-spacing: .06em; }

@@ -120,12 +120,23 @@ authorization and retention remain outside this example.
 
 ## Data and MCP Apps
 
-The example client includes a read-only Data Explorer (`dataset.schema` and
-bounded `dataset.sample`) and a Workflow Inspector over the daemon's structured
+The example client includes a read-only Data Explorer (`dataset.inspect`,
+`dataset.schema` and bounded `dataset.sample`) and a Workflow Inspector over the daemon's structured
 runtime events. Direct data calls go through `POST /api/v1/tools/call`; the web
 adapter asks the daemon to resolve and execute the selected tool and forces
 read-only policy. Tool input/output schemas and MCP UI metadata are carried in
 `/api/v1/status`.
+
+Both Data Explorer views (the web panel and the sandboxed MCP App) accept exactly
+one source: a dataset reference, an authorized resource reference, or a path
+relative to the configured repository root. Inspection metadata, schema and sample
+rows are displayed as tables. Click a column heading to toggle ascending and
+descending sorting; numbers sort numerically and missing values remain last.
+Sorting applies only to the rows displayed, not to the entire remote dataset.
+The **Show raw JSON** button displays the structured result without its transport
+envelope. Truncated samples are labelled explicitly. Source changes discard old
+results and pending replies cannot replace a newer source's view. These operations
+do not start a model turn.
 
 Tools that advertise an MCP App UI can be opened in the app tabs. The browser
 host fetches the UI resource through `POST /api/v1/mcp-apps/resource` and brokers

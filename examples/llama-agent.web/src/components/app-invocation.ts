@@ -4,6 +4,10 @@ export function mcpAppKey(tool: DaemonToolStatus): string {
   return `${tool.provider_id ?? "native"}\u0000${tool._meta?.ui?.resourceUri ?? ""}`;
 }
 
+function providerId(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 export function mcpAppInvocationKey(event: AgentEvent): string {
   return JSON.stringify([event.session_id, event.request_id, event.turn_id,
     event.sequence ?? event.client_received_at, event.operation_id,
@@ -16,12 +20,13 @@ export function findAppForInvocationEvent(
   sessionId?: string,
 ): DaemonToolStatus | undefined {
   if (sessionId !== undefined && event?.session_id !== sessionId) return undefined;
-  if (!event || event.app_context_available !== true || typeof event.provider_id !== "string" || !event.server_tool_name) return undefined;
-  const origin = tools.find((tool) => tool.provider_id === event.provider_id &&
+  if (!event || event.app_context_available !== true || !event.server_tool_name) return undefined;
+  const eventProvider = providerId(event.provider_id);
+  const origin = tools.find((tool) => providerId(tool.provider_id) === eventProvider &&
     (tool.server_tool_name || tool.name) === event.server_tool_name);
   const uri = origin?._meta?.ui?.resourceUri;
   if (!uri) return undefined;
-  return tools.find((tool) => tool.provider_id === origin.provider_id &&
+  return tools.find((tool) => providerId(tool.provider_id) === providerId(origin.provider_id) &&
     tool._meta?.ui?.resourceUri === uri && (tool._meta?.ui?.visibility ?? []).includes("app"));
 }
 
@@ -36,9 +41,10 @@ export function findLatestAppInvocation(
   return eventsNewestFirst.find((event) => {
     if (sessionId !== undefined && event.session_id !== sessionId) return false;
     if (event.app_context_available !== true || !event.tool_input || typeof event.tool_input !== "object" ||
-        Array.isArray(event.tool_input) || typeof event.provider_id !== "string" || !event.server_tool_name) return false;
-    if (event.provider_id !== app.provider_id) return false;
-    const origin = tools.find((tool) => tool.provider_id === event.provider_id &&
+        Array.isArray(event.tool_input) || !event.server_tool_name) return false;
+    if (providerId(event.provider_id) !== providerId(app.provider_id)) return false;
+    const eventProvider = providerId(event.provider_id);
+    const origin = tools.find((tool) => providerId(tool.provider_id) === eventProvider &&
       (tool.server_tool_name || tool.name) === event.server_tool_name);
     return origin?._meta?.ui?.resourceUri === appUri;
   });

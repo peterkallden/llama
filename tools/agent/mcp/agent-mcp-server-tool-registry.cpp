@@ -84,7 +84,76 @@ bool agent_mcp_read_first_party_app_resource(
         const std::string & uri,
         agent_mcp_json & content,
         std::string & error) {
-    const std::string data_app = R"HTML(<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>body{font:14px system-ui;background:#101827;color:#e5edf7;padding:18px}input,button{padding:8px;margin:4px;background:#1b2b40;color:inherit;border:1px solid #55708e;border-radius:6px}pre{white-space:pre-wrap;background:#09111d;padding:10px}</style></head><body><h2>Data Explorer</h2><p>Read a host-authorized dataset schema or bounded sample.</p><input id="dataset" placeholder="dataset://local/name"><button onclick="run('dataset.schema')">Schema</button><button onclick="run('dataset.sample')">Sample</button><pre id="out">Enter a dataset reference.</pre><script>let seq=1;function send(method,params){const id=seq++;parent.postMessage({jsonrpc:'2.0',id,method,params},'*');return id}function renderResult(r){if(!r)return;const out=document.querySelector('#out');if(r.isError)out.textContent=(r.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n')||'Tool execution failed.';else if(r.structuredContent!==undefined)out.textContent=JSON.stringify(r.structuredContent,null,2);else if(Array.isArray(r.content))out.textContent=r.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')}addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(m?.jsonrpc!=='2.0')return;if(m.id===1&&m.result?.protocolVersion){send('ui/notifications/initialized',{});return}if(m.method==='ui/notifications/tool-input'){const value=m.params?.arguments?.dataset;if(typeof value==='string')document.querySelector('#dataset').value=value;return}if(m.method==='ui/notifications/tool-result'){renderResult(m.params);return}if(m.result)renderResult(m.result);if(m.error)document.querySelector('#out').textContent=m.error.message});send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-data-explorer',version:'0.1'},appCapabilities:{tools:{}}});function run(name){const dataset=document.querySelector('#dataset').value;send('tools/call',{name,arguments:name==='dataset.sample'?{dataset,rows:8}:{dataset}})}</script></body></html>)HTML";
+    const std::string data_app = R"HTML(<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>
+body{font:14px system-ui;background:#101827;color:#e5edf7;padding:18px}
+input,select,button{padding:8px;margin:4px;background:#1b2b40;color:inherit;border:1px solid #55708e;border-radius:6px}
+button{cursor:pointer}button:disabled{opacity:.5}input#dataset{width:min(520px,85%)}
+.scroll{overflow:auto;max-height:480px;margin-top:14px}table{border-collapse:collapse;width:100%;text-align:left}
+td,th{padding:8px 12px;border-bottom:1px solid #30445f;white-space:pre-wrap;overflow-wrap:anywhere;vertical-align:top}
+th{position:sticky;top:0;background:#1b2b40}th button{border:0;margin:0;padding:4px;font:inherit;font-weight:bold}
+tr:nth-child(even){background:#152238}pre{white-space:pre-wrap;background:#09111d;padding:10px}#out{white-space:pre-wrap}
+</style></head><body><h2>Data Explorer</h2><p>Browse a dataset, uploaded resource or repository file.</p>
+<label>Source type <select id="source"><option value="dataset">Dataset reference</option><option value="resource">Resource reference</option><option value="path">Repository-relative path</option></select></label>
+<label>Source <input id="dataset" placeholder="dataset://local/name"></label>
+<div><button id="inspect">Inspect</button><button id="schema">Schema</button><label>Sample rows <input id="rows" type="number" value="8" min="1" max="100"></label><button id="sample">Sample</button></div>
+<p id="out" role="status">Enter a source.</p><button id="raw-toggle" hidden aria-pressed="false">Show raw JSON</button>
+<div id="table" class="scroll"></div><pre id="raw" hidden></pre><script>
+let seq=1,generation=0,current=null,columns=[],tableRows=[],sortColumn='',descending=false,rawVisible=false;
+const pending=new Map(),q=s=>document.querySelector(s),collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
+function send(method,params){const id=seq++;parent.postMessage({jsonrpc:'2.0',id,method,params},'*');return id}
+function cell(value){return value==null?'—':typeof value==='object'?JSON.stringify(value):String(value)}
+function numericValue(value){if(typeof value==='number'&&Number.isFinite(value))return value;if(typeof value==='string'&&/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())){const parsed=Number(value);if(Number.isFinite(parsed))return parsed}return undefined}
+function setBusy(value){for(const id of ['inspect','schema','sample'])q('#'+id).disabled=value}
+function reset(){generation++;pending.clear();current=null;columns=[];tableRows=[];sortColumn='';descending=false;q('#table').replaceChildren();q('#raw').textContent='';q('#raw').hidden=true;q('#raw-toggle').hidden=true;q('#out').textContent='Enter a source.';setBusy(false)}
+function sortBy(column){descending=sortColumn===column?!descending:false;sortColumn=column;drawTable()}
+function drawTable(){
+  const table=document.createElement('table'),head=document.createElement('thead'),header=document.createElement('tr');
+  for(const column of columns){const th=document.createElement('th'),button=document.createElement('button');th.setAttribute('scope','col');th.setAttribute('aria-sort',sortColumn===column?(descending?'descending':'ascending'):'none');button.textContent=column+(sortColumn===column?(descending?' ↓':' ↑'):'');button.addEventListener('click',()=>sortBy(column));th.appendChild(button);header.appendChild(th)}
+  head.appendChild(header);table.appendChild(head);const body=document.createElement('tbody');
+  const ordered=tableRows.map((row,index)=>({row,index}));
+  if(sortColumn)ordered.sort((a,b)=>{const left=a.row[sortColumn],right=b.row[sortColumn];if(left==null||right==null)return left==null&&right==null?a.index-b.index:left==null?1:-1;const ln=numericValue(left),rn=numericValue(right);const value=ln!==undefined&&rn!==undefined?ln-rn:collator.compare(cell(left),cell(right));return(descending?-value:value)||a.index-b.index});
+  for(const {row} of ordered){const tr=document.createElement('tr');for(const column of columns){const td=document.createElement('td');td.textContent=cell(row[column]);tr.appendChild(td)}body.appendChild(tr)}
+  table.appendChild(body);q('#table').replaceChildren(table);q('#table').hidden=rawVisible;q('#raw').hidden=!rawVisible;
+}
+function renderResult(response){
+  if(!response)return;
+  let value=response.structuredContent??response.structured_content;
+  if(response.isError||value?.ok===false){reset();q('#out').textContent=value?.error?.safe_summary||(response.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n')||'Tool execution failed.';return}
+  if(value?.ok===true&&value.result&&typeof value.result==='object')value=value.result;
+  if(!value||typeof value!=='object'||Array.isArray(value)){reset();q('#out').textContent=(response.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n')||'No structured result returned.';return}
+  current=value;sortColumn='';descending=false;
+  if(Array.isArray(value.rows)){
+    columns=Array.isArray(value.columns)?value.columns.map(c=>typeof c==='string'?c:c?.name).filter(Boolean):[];
+    tableRows=value.rows.map(row=>Array.isArray(row)?Object.fromEntries(row.map((v,i)=>[columns[i]??String(i+1),v])):row&&typeof row==='object'?row:{value:row});
+    for(const row of tableRows)for(const key of Object.keys(row))if(!columns.includes(key))columns.push(key);
+  }else if(Array.isArray(value.columns)){tableRows=value.columns.map(c=>typeof c==='string'?{name:c}:c);columns=[...new Set(tableRows.flatMap(row=>Object.keys(row??{})))];}
+  else{columns=['Field','Value'];tableRows=Object.entries(value).map(([Field,Value])=>({Field,Value}));}
+  q('#raw').textContent=JSON.stringify(value,null,2);q('#raw-toggle').hidden=false;
+  q('#out').textContent=tableRows.length+' displayed rows. Click a column heading to sort the displayed rows.'+(value.scan_truncated||value.result_truncated?' This is a bounded sample; more rows exist outside this view.':'');
+  drawTable();
+}
+function run(name){
+  const source=q('#source').value,value=q('#dataset').value.trim();
+  if(!value){reset();q('#out').textContent='Enter a source first.';return}
+  generation++;pending.clear();setBusy(true);q('#out').textContent='Loading…';q('#table').replaceChildren();q('#raw').hidden=true;q('#raw-toggle').hidden=true;
+  const args={[source]:value};if(name==='dataset.sample'){const count=Number(q('#rows').value);args.rows=Number.isFinite(count)?Math.max(1,Math.min(100,Math.trunc(count))):8}
+  pending.set(send('tools/call',{name,arguments:args}),generation);
+}
+q('#source').addEventListener('change',()=>{reset();q('#dataset').placeholder=q('#source').value==='path'?'datasets/example.csv':q('#source').value==='resource'?'agent-resource://resource/…':'dataset://local/name'});
+q('#dataset').addEventListener('input',reset);
+for(const [id,name] of Object.entries({inspect:'dataset.inspect',schema:'dataset.schema',sample:'dataset.sample'}))q('#'+id).addEventListener('click',()=>run(name));
+q('#raw-toggle').addEventListener('click',()=>{rawVisible=!rawVisible;q('#raw-toggle').textContent=rawVisible?'Show table':'Show raw JSON';q('#raw-toggle').setAttribute('aria-pressed',String(rawVisible));q('#table').hidden=rawVisible;q('#raw').hidden=!rawVisible});
+addEventListener('message',event=>{
+  if(event.source!==parent)return;const message=event.data;if(message?.jsonrpc!=='2.0')return;
+  if(message.id===1&&message.result?.protocolVersion){parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');return}
+  if(message.method==='ui/notifications/tool-input'){reset();const args=message.params?.arguments;for(const source of ['dataset','resource','path'])if(typeof args?.[source]==='string'){q('#source').value=source;q('#dataset').value=args[source];break}return}
+  if(message.method==='ui/notifications/tool-result'){renderResult(message.params);return}
+  if(pending.get(message.id)!==generation)return;pending.delete(message.id);setBusy(false);
+  if(message.error){reset();q('#out').textContent=message.error.message;return}if(message.result)renderResult(message.result);
+});
+send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-data-explorer',version:'0.2'},appCapabilities:{tools:{}}});
+</script></body></html>)HTML";
     const std::string workflow_app = R"HTML(<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>body{font:14px system-ui;background:#101827;color:#e5edf7;padding:18px}input,button{padding:8px;margin:4px;background:#1b2b40;color:inherit;border:1px solid #55708e;border-radius:6px}pre{white-space:pre-wrap;background:#09111d;padding:10px}</style></head><body><h2>Workflow Inspector</h2><p>Load a host-owned plan by its plan ID. Missing verification fields are not treated as success.</p><input id="plan" placeholder="plan ID"><button onclick="loadPlan()">Load plan</button><pre id="out">Enter a plan ID.</pre><script>let seq=1;function send(method,params){const id=seq++;parent.postMessage({jsonrpc:'2.0',id,method,params},'*');return id}function renderResult(r){if(!r)return;const out=document.querySelector('#out');if(r.isError)out.textContent=(r.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n')||'Tool execution failed.';else if(r.structuredContent!==undefined)out.textContent=JSON.stringify(r.structuredContent,null,2);else if(Array.isArray(r.content))out.textContent=r.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')}addEventListener('message',e=>{if(e.source!==parent)return;const m=e.data;if(m?.jsonrpc!=='2.0')return;if(m.id===1&&m.result?.protocolVersion){send('ui/notifications/initialized',{});return}if(m.method==='ui/notifications/tool-input'){const value=m.params?.arguments?.plan_id;if(typeof value==='string')document.querySelector('#plan').value=value;return}if(m.method==='ui/notifications/tool-result'){renderResult(m.params);return}if(m.result)renderResult(m.result);if(m.error)document.querySelector('#out').textContent=m.error.message});send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-workflow-inspector',version:'0.1'},appCapabilities:{tools:{}}});function loadPlan(){send('tools/call',{name:'plan.get',arguments:{plan_id:document.querySelector('#plan').value}})}</script></body></html>)HTML";
     const char * text = nullptr;
     if (uri == "ui://llama-agent/apps/data-explorer") text = data_app.c_str();

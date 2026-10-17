@@ -92,6 +92,19 @@ export function invocationNotifications(invocation: {
   return messages;
 }
 
+export function canonicalToolStructuredContent(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const structured = value as Record<string, unknown>;
+  if (structured.ok === false) return undefined;
+  return structured.ok === true && structured.result && typeof structured.result === "object" && !Array.isArray(structured.result)
+    ? structured.result as Record<string, unknown>
+    : structured;
+}
+
+export function cloneJsonMessage<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 export function isCurrentAppRequest(
   request: AppRequestGeneration,
   generation: number,

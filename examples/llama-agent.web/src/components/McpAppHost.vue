@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
-import { invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
 import { DocumentEditorAccess } from "./document-editor-access";
 
 const props = defineProps<{
@@ -75,7 +75,7 @@ async function load() {
 let pendingHtml = "";
 let pendingCsp: Record<string, string[]> = {};
 function send(message: Record<string, unknown>) {
-  frame.value?.contentWindow?.postMessage(message, "*");
+  frame.value?.contentWindow?.postMessage(cloneJsonMessage(message), "*");
 }
 
 function publishInvocation() {
@@ -105,10 +105,10 @@ async function onMessage(event: MessageEvent) {
   const reply = (result: unknown, errorText?: string) => {
     if (id === undefined || !isCurrentAppRequest(
       { generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) return;
-    targetWindow.postMessage({
+    targetWindow.postMessage(cloneJsonMessage({
       jsonrpc: "2.0", id,
       ...(errorText ? { error: { code: -32000, message: errorText } } : { result }),
-    }, "*");
+    }), "*");
   };
   if (method === "ui/notifications/sandbox-proxy-ready") {
     send({ jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready", params: { html: pendingHtml, csp: pendingCsp } });
@@ -202,15 +202,19 @@ async function onMessage(event: MessageEvent) {
         try {
           if (uri.value === "ui://llama-agent/apps/document-editor") documentAccess.authorize(name, args);
           const result = toolEnvelope(await props.callTool(props.tool.name, name, args));
-          const failed = result.ok === false || Boolean(result.error);
-          const errorInfo = result.error && typeof result.error === "object" ? result.error as Record<string, unknown> : {};
-          if (!failed && uri.value === "ui://llama-agent/apps/document-editor" && result.structured_content && typeof result.structured_content === "object" &&
+          const structured = canonicalToolStructuredContent(result.structured_content ?? result.structuredContent);
+          const nestedError = result.structured_content && typeof result.structured_content === "object" && !Array.isArray(result.structured_content)
+            ? (result.structured_content as Record<string, unknown>).error : undefined;
+          const errorInfo = result.error && typeof result.error === "object" ? result.error as Record<string, unknown>
+            : nestedError && typeof nestedError === "object" ? nestedError as Record<string, unknown> : {};
+          const failed = result.ok === false || Boolean(result.error) || !structured;
+          if (!failed && uri.value === "ui://llama-agent/apps/document-editor" && structured &&
               isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) {
-            documentAccess.observe(name, args, result.structured_content as Record<string, unknown>);
+            documentAccess.observe(name, args, structured);
           }
           reply({
             isError: failed,
-            ...(result.structured_content !== undefined ? { structuredContent: result.structured_content } : {}),
+            ...(structured ? { structuredContent: structured } : {}),
             content: [{ type: "text", text: String(result.content_summary ?? errorInfo.safe_summary ?? "Tool call completed.") }],
           });
         } catch (cause) {

@@ -37,6 +37,17 @@ describe("MCP App invocation routing", () => {
     expect(mcpAppKey(tools[0])).not.toBe(mcpAppKey(tools[1]));
   });
 
+  it("routes native first-party tools whose provider ID is omitted", () => {
+    const app = appTool("", "document.open", "ui://llama-agent/apps/document-editor");
+    const tools = [app, { ...app, name: "document.import", server_tool_name: "document.import" }];
+    const event: AgentEvent = {
+      session_id: "s", provider_id: "", server_tool_name: "document.open", app_context_available: true,
+      tool_input: { document_uri: "resource://doc" },
+    };
+    expect(findLatestAppInvocation([event], tools, app, "s")).toBe(event);
+    expect(findAppForInvocationEvent(event, tools, "s")).toBe(app);
+  });
+
   it("does not select an older app invocation for a newer unrelated event", () => {
     const tools = [appTool("provider-a", "app-a", "ui://a/app", "run")];
     const invocation: AgentEvent = { provider_id: "provider-a", server_tool_name: "run", app_context_available: true, tool_input: { value: 1 } };
