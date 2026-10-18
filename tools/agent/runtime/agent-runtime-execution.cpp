@@ -585,11 +585,13 @@ bool prepare_resource_chunk_observations(
     const auto authority = make_agent_resource_read_authority(
         execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
     const size_t input_count = execution.input_resources.size();
+    const bool initial_orientation = execution.resource_read_binding &&
+        execution.resource_read_binding->intent == common_agent_resource_read_intent::orientation;
     for (size_t input_index = 0; input_index < input_count; ++input_index) {
         const auto & input = execution.input_resources[input_index];
         if (input.resource.uri.empty() ||
                 common_runtime_resource_lineage_is_chunk(input.resource.lineage) ||
-                input.resource.size_bytes <= policy.max_bytes) {
+                (input.resource.size_bytes <= policy.max_bytes && !initial_orientation)) {
             continue;
         }
         agent_resource_evidence_session evidence_session;
@@ -1881,6 +1883,8 @@ bool run_agent_runtime_driver(
         execution.pre_turn_trace,
         execution.tool_output_format,
         &execution.tool_argument_bindings,
+        execution.resource_read_binding && execution.resource_read_binding->intent ==
+            common_agent_resource_read_intent::orientation,
     };
 
     const std::string original_prompt = execution.orchestration_config.prompt;

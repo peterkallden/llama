@@ -1099,6 +1099,20 @@ duplicate normalized names fail with an ambiguity error rather than selecting
 arbitrarily. The catalog can therefore expose both `Budget summary` and table
 index `1` without making a display name part of the canonical dataset URI.
 
+### Initial orientation of uploaded resources
+
+The first turn for a newly attached document is host-orchestrated. A typed
+orientation binding selects the registered `workflow://resource/document-analysis`
+route without a model route/family/tool-selection pass. The host creates the
+workflow plan and its final-response step, then the existing resource reader
+processes required chunks and records validated evidence. Model inference is
+used for bounded extraction and final synthesis, not to decide which resource
+to open. The route requires `resource.read`; metadata and table/dataset
+inspection capabilities are optional enrichments. Missing optional inspection
+tools therefore do not prevent the document from being read and initially
+explained. Explicit document questions and later review turns retain their
+existing task-specific routing.
+
 ### Family, workflow, blueprint and procedure
 
 These four terms are deliberately different and must not become four names

@@ -213,6 +213,27 @@ bool maybe_export_agent_package(
 bool maybe_auto_select_plan(
     const common_agent_orchestration_runtime_context & context,
     std::string & error) {
+    if (context.attachment_orientation) {
+        // Do not resume an unrelated conversational task for the host-created
+        // first-read operation. Keep only this turn's already-materialized
+        // orientation plan so retries remain idempotent.
+        if (!context.current_plan_id.empty()) {
+            std::string lookup_error;
+            const auto current = context.plan_store.get(context.current_plan_id, lookup_error);
+            if (!lookup_error.empty()) {
+                error = "attachment orientation plan lookup failed: " + lookup_error;
+                return false;
+            }
+            const bool same_orientation_turn = current &&
+                current->turn_id == context.scope.turn_id &&
+                current->session_id == context.scope.session_id &&
+                current->route_binding &&
+                current->route_binding->workflow_ref == "workflow://resource/document-analysis";
+            if (!same_orientation_turn) context.current_plan_id.clear();
+        }
+        error.clear();
+        return true;
+    }
     if (context.config.agent_plan != "auto" || !context.current_plan_id.empty()) {
         error.clear();
         return true;
@@ -382,7 +403,9 @@ bool maybe_select_agent_route(
     selected_route = {};
     route_selected = false;
     error.clear();
-    if (!context.current_plan_id.empty() || context.config.agent_blueprint == "off" ||
+    const bool host_orientation = context.attachment_orientation;
+    if (!context.current_plan_id.empty() ||
+            (context.config.agent_blueprint == "off" && !host_orientation) ||
             context.scope.session_id.empty() || context.tooling == nullptr) return true;
 
     common_agent_route_catalog catalog;
@@ -390,7 +413,8 @@ bool maybe_select_agent_route(
             make_orchestration_selection_request(context.config, context.scope),
             context.plan_store, context.scope, context.installed_blueprint_candidates,
             *context.tooling,
-            context.config.agent_blueprint == "auto" ? std::string{} : context.config.agent_blueprint,
+            (context.config.agent_blueprint == "auto" || host_orientation)
+                ? std::string{} : context.config.agent_blueprint,
             catalog, error)) {
         error = "route compilation failed: " + error;
         return false;
@@ -403,7 +427,7 @@ bool maybe_select_agent_route(
     std::string selection_mode = "deterministic";
     float confidence = 1.0f;
     std::string reason;
-    if (context.config.agent_blueprint != "auto") {
+    if (context.config.agent_blueprint != "auto" && !host_orientation) {
         const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
             [&](const auto & candidate) {
                 return !is_normal(candidate) && candidate.blueprint_logical_id == context.config.agent_blueprint;
@@ -421,6 +445,26 @@ bool maybe_select_agent_route(
         }
         chosen = *found;
         reason = "explicit blueprint route";
+    } else if (host_orientation) {
+        const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
+            [&](const auto & candidate) {
+                return candidate.kind == common_agent_route_kind::blueprint_workflow &&
+                    candidate.workflow &&
+                    candidate.workflow->workflow_ref == "workflow://resource/document-analysis";
+            });
+        if (found == catalog.candidates.end()) {
+            error = "host attachment orientation route is unavailable or not eligible";
+            for (const auto & rejection : catalog.rejections) {
+                if (rejection.workflow_ref == "workflow://resource/document-analysis") {
+                    error += ": " + rejection.reason;
+                    break;
+                }
+            }
+            return false;
+        }
+        chosen = *found;
+        selection_mode = "host";
+        reason = "host-selected initial resource orientation";
     } else if (catalog.candidates.size() == 1) {
         chosen = catalog.candidates.front();
         reason = "single host-compiled route";
@@ -585,7 +629,10 @@ bool maybe_select_agent_route(
                 }
                 graph_entry_tools.push_back(*found);
             }
-            if (graph_entry_tools.empty() && !initial_artifact_transition) { error = "workflow graph has no materializable entry transition"; return false; }
+            if (graph_entry_tools.empty() && !initial_artifact_transition && !host_orientation) {
+                error = "workflow graph has no materializable entry transition";
+                return false;
+            }
         }
         std::vector<std::string> host_resolved_dataset_tools;
         if (selected_route.workflow_definition &&
@@ -619,7 +666,10 @@ bool maybe_select_agent_route(
                 }
             }
         }
-        if (initial_artifact_transition && graph_entry_tools.empty()) {
+        if (host_orientation) {
+            // The bounded resource reader below owns acquisition. Do not ask
+            // the model to rediscover the resource or choose a read tool.
+        } else if (initial_artifact_transition && graph_entry_tools.empty()) {
             // This entry is a host-owned plan operation, not a tool call.
         } else if (deterministic_graph_entry) {
             workflow_action = common_agent_tool_argument_binding{
@@ -651,18 +701,19 @@ bool maybe_select_agent_route(
             context.current_plan_id,
             {}, workflow_action->tool_name, {}, selected_route.id});
     }
-    if (context.config.blueprint_instance_materializer) {
+    if (context.config.blueprint_instance_materializer && !host_orientation) {
         selection_config.materialize_instance = context.config.blueprint_instance_materializer;
     } else if (selected_route.kind == common_agent_route_kind::blueprint_workflow) {
         selection_config.materialize_instance = make_agent_dataset_workflow_materializer(
             context.plan_store, context.tooling);
     }
-    if (selected_route.kind == common_agent_route_kind::blueprint_workflow && (workflow_action || initial_artifact_transition)) {
+    if (selected_route.kind == common_agent_route_kind::blueprint_workflow &&
+            (workflow_action || initial_artifact_transition || host_orientation)) {
         const auto workflow_materializer = selection_config.materialize_instance;
         const auto action = workflow_action;
         const auto artifact_entry = initial_artifact_transition;
         const auto graph_definition = selected_route.workflow_definition;
-        selection_config.materialize_instance = [workflow_materializer, action, artifact_entry, graph_definition](
+        selection_config.materialize_instance = [workflow_materializer, action, artifact_entry, graph_definition, host_orientation](
                 const common_agent_request & materialization_request,
                 const common_plan_state & instance,
                 common_plan_state & materialized,
@@ -687,6 +738,23 @@ bool maybe_select_agent_route(
             out.active_step_id.reset();
             out.next_action.reset();
             out.status = common_plan_status::active;
+            if (host_orientation) {
+                common_plan_step answer;
+                answer.id = instance.id + ":resource-orientation:answer";
+                answer.title = "Orient to supplied resource";
+                answer.objective = instance.goal;
+                answer.intended_contribution = instance.success_criteria.empty()
+                    ? instance.goal : instance.success_criteria;
+                answer.mode = common_plan_step_mode::final_response;
+                answer.status = common_plan_step_status::pending;
+                answer.created_at = instance.created_at;
+                answer.updated_at = instance.updated_at;
+                out.steps.push_back(std::move(answer));
+                out.next_action = out.steps.front().id;
+                materialized = std::move(out);
+                materialization_error.clear();
+                return common_blueprint_materialization_outcome::applied;
+            }
             if (!action && artifact_entry && graph_definition) {
                 common_agent_artifact_profile profile;
                 if (!common_agent_artifact_profile_from_json(artifact_entry->artifact_profile_json, profile, materialization_error))

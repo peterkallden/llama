@@ -80,6 +80,9 @@ struct common_agent_orchestration_runtime_context {
     std::vector<common_runtime_trace_entry> & pre_turn_trace;
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     const std::vector<common_agent_tool_argument_binding> * tool_argument_bindings = nullptr;
+    // Initial attachment orientation is a host-owned route, not a model route
+    // classification or model-selected tool action.
+    bool attachment_orientation = false;
 };
 
 bool maybe_auto_select_plan(

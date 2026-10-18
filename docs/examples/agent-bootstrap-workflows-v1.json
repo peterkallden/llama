@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v28",
+  "version": "v29",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -213,15 +213,15 @@
       "required_context": ["context.repository.available"]
     },
     {
-      "id": "resource-document-analysis-path-v7",
-      "source_revision": "agent-workflows-starter@v28",
+      "id": "resource-document-analysis-path-v8",
+      "source_revision": "agent-workflows-starter@v29",
       "workflow_ref": "workflow://resource/document-analysis",
-      "workflow_revision": "v6",
+      "workflow_revision": "v7",
       "family": "resource",
-      "graph_revision": "resource-document-analysis-graph@v6",
+      "graph_revision": "resource-document-analysis-graph@v7",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["resource.inspect", "resource.read", "document.inspect", "dataset.inspect"],
-      "optional_capabilities": ["artifact.export"],
+      "required_capabilities": ["resource.read"],
+      "optional_capabilities": ["resource.inspect", "document.inspect", "dataset.inspect", "artifact.export"],
       "required_context": ["context.resource.available"]
     },
     {
@@ -661,17 +661,17 @@
       ]
     },
     {
-      "id": "resource-document-analysis-v7",
-      "source_revision": "agent-workflows-starter@v28",
+      "id": "resource-document-analysis-v8",
+      "source_revision": "agent-workflows-starter@v29",
       "selection_description": "Give an initial orientation to an uploaded document or answer an explicit question about a supplied resource, using host-resolved representations.",
       "purpose": "Orient the user to a supplied resource or answer their explicit document question from bounded content and structured tables.",
       "goal": "Establish a concise, source-grounded understanding of the supplied resource and identify what the user may want to do next.",
       "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, extraction limits are stated, no unsupported research or edits are introduced, and the user is asked what they want next when intent is still open.",
-      "required_capabilities": ["resource.read", "document.inspect", "dataset.inspect"],
+      "required_capabilities": ["resource.read"],
       "workflow_policy": "preferred",
       "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v6"}
+        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v7"}
       ],
       "constraints": [
         {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},

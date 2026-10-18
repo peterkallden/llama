@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v28");
+        checked_in_starter.version == "v29");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -464,10 +464,10 @@ int main() {
         });
     assert(resource_workflow != checked_in_starter.workflows.end());
     assert(resource_workflow->definition.required_capabilities ==
-        std::vector<std::string>({"resource.inspect", "resource.read", "document.inspect", "dataset.inspect"}));
+        std::vector<std::string>({"resource.read"}));
     assert(resource_workflow->definition.optional_capabilities ==
-        std::vector<std::string>({"artifact.export"}));
-    assert(resource_workflow->definition.workflow_revision == "v6");
+        std::vector<std::string>({"resource.inspect", "document.inspect", "dataset.inspect", "artifact.export"}));
+    assert(resource_workflow->definition.workflow_revision == "v7");
     assert(resource_workflow->definition.continuation_workflow_targets ==
         std::vector<std::string>{});
     assert(resource_workflow->definition.resource_read_policy ==

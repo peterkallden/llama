@@ -244,16 +244,23 @@ the complete text. The typed resource reference comes from the read adapter's
 actual text descriptor (including PDF/OCR-derived text), not by parsing the
 tool's JSON output. Small resources retain the ordinary single-read path.
 
-The `resource-document-analysis` starter is revision `v6` and its path/graph
-are revisioned accordingly. Attachment orientation and explicit attachment
-questions use typed host read bindings. Binary inputs (including DOCX/PDF) are
-converted by the configured resource processor before chunk planning; the
-model receives only the derived readable representation. Orientation requires
-complete validated coverage. If processing or a chunk fails, the runtime
-reports the limitation and does not treat metadata inspection as a content
-read. Selected document reviews use a host-generated Markdown projection of
-the selected blocks plus immediate neighboring blocks, avoiding a full
-document dump into the prompt.
+The `resource-document-analysis` starter is revision `v7` and its path/graph
+are revisioned accordingly. For an initial upload orientation, the host now
+selects this route directly and materializes a read-only final-response plan;
+it does not ask the model to classify tool families, choose a workflow route,
+or select a resource tool before reading. The host's typed resource binding
+and bounded resource reader own acquisition. The model first participates in
+bounded chunk extraction and then synthesizes the validated findings.
+`resource.read` is the only mandatory capability. Resource metadata,
+document-table inspection and dataset inspection are optional enrichments, so
+a missing optional processor does not make ordinary text orientation
+ineligible. Binary inputs (including DOCX/PDF) are converted by the configured
+resource processor before chunk planning; the model receives only the derived
+readable representation. Orientation requires complete validated coverage.
+If processing or a chunk fails, the runtime reports the limitation and does
+not treat metadata inspection as a content read. Selected document reviews
+use a host-generated Markdown projection of the selected blocks plus immediate
+neighboring blocks, avoiding a full document dump into the prompt.
 
 If reflection subsequently requests research, the runtime can seed its
 research workspace with those validated finding/quote pairs and their source
