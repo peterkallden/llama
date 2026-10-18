@@ -260,7 +260,10 @@ async function connect() {
   } finally {
     if (current()) {
       connected.value = false;
-      if (connectionState.value === "connected" || connectionState.value === "connecting") connectionState.value = "disconnected";
+      // connectEvents may update this ref from its connection callback, which
+      // TypeScript cannot observe across the callback boundary.
+      const finalState = connectionState.value as string;
+      if (finalState === "connected" || finalState === "connecting") connectionState.value = "disconnected";
     }
     if (current() && connectionState.value !== "auth-error") {
       await new Promise((resolve) => window.setTimeout(resolve, 1500));

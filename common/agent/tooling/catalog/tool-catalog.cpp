@@ -231,7 +231,7 @@ std::vector<common_tool_definition> builtin_definitions() {
     }
     for(auto & definition:definitions){
         definition.mcp_app_write_authorized=definition.name=="document.import"||definition.name=="document.save"||definition.name=="document.propose_patch"||definition.name=="document.apply_patch";
-        if(definition.name=="document.open")definition.max_result_bytes=8*1024*1024;
+        if(definition.name=="document.open")definition.max_result_bytes=32*1024*1024;
         else if(definition.name=="document.import"||definition.name=="document.save"||definition.name=="document.propose_patch"||definition.name=="document.apply_patch")definition.max_result_bytes=64*1024;
         if(definition.name=="document.import"||definition.name=="document.save"||definition.name=="document.apply_patch") definition.requires_confirmation=true;
     }
