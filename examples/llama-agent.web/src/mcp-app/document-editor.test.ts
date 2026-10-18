@@ -147,9 +147,9 @@ describe("document editor sandbox script", () => {
     view.Editor.current.edit("Changed"); await settle();
     view.node("#review").click(); await settle();
     const message = view.requests.findLast((request) => request.method === "ui/message")!;
-    expect(message.params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: ["block-1"] });
+    expect(message.params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: [], base_document_uri: "resource://r1" });
     expect(message.params.action).toBe("review-document");
-    expect(String(message.params.content.text)).toContain("Review document report revision 2");
+    expect(String(message.params.content.text)).toContain("Review changes between the bound saved document revisions");
     expect(String(message.params.content.text)).not.toContain("Document resource:");
   });
 
@@ -189,7 +189,8 @@ describe("document editor sandbox script", () => {
     });
     view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
     view.Editor.current.edit("Edited"); await settle();
-    view.node("#close-editor").click(); view.node("#close-editor").click();
+    view.deliverRequest(76, "ui/llama-agent/close-document");
+    view.deliverRequest(77, "ui/llama-agent/close-document");
     view.deliverRequest(78, "ui/llama-agent/close-document"); await settle();
     await new Promise((resolve) => setTimeout(resolve, 0)); await settle();
     const saves = view.requests.filter((request) => request.params?.name === "document.save");
@@ -198,7 +199,7 @@ describe("document editor sandbox script", () => {
     expect(saves).toHaveLength(1);
     expect(reviews).toHaveLength(1);
     expect(closes).toHaveLength(1);
-    expect(reviews[0].params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: ["block-2"] });
+    expect(reviews[0].params.document_context).toEqual({ document_uri: "resource://r2", revision: 2, block_ids: [], base_document_uri: "resource://r1" });
     expect(reviews[0].params.operation_id).toBeTruthy();
     expect(view.requests.some((request) => request.id === 78 && request.result?.closed === true)).toBe(true);
     expect(view.node("#status").textContent).toContain("Review queued; closing editor");
@@ -241,7 +242,7 @@ describe("document editor sandbox script", () => {
     });
     view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
     view.Editor.current.edit("Edited"); await settle();
-    view.node("#close-editor").click(); await settle();
+    view.deliverRequest(80, "ui/llama-agent/close-document"); await settle();
     expect(view.node("#editor").inert).toBe(true);
     view.Editor.current.edit("Changed while preparing review");
     releaseOpen({ structuredContent: { ...opened, document_uri: "resource://r2", revision: 2, document: {} } }); await settle();

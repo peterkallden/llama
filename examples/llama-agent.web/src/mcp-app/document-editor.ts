@@ -28,7 +28,7 @@ let closing = false;
 let closePromise: Promise<boolean> | undefined;
 
 function updateButtons() {
-  for (const id of ["save", "review", "reload", "accept-proposal", "close-editor"]) {
+  for (const id of ["save", "review", "reload", "accept-proposal"]) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);
     if (button) button.disabled = mutationBusy || reviewBusy || !editor;
   }
@@ -394,7 +394,6 @@ window.addEventListener("message", (event) => {
 
 document.querySelector<HTMLButtonElement>("#save")?.addEventListener("click", () => void save(false).catch((error) => status(String(error), true)));
 document.querySelector<HTMLButtonElement>("#review")?.addEventListener("click", () => void save(true).catch((error) => status(String(error), true)));
-document.querySelector<HTMLButtonElement>("#close-editor")?.addEventListener("click", () => void closeEditor());
 document.querySelector<HTMLButtonElement>("#toggle-side")?.addEventListener("click", () => {
   const side = document.querySelector<HTMLElement>("#side-content");
   const button = document.querySelector<HTMLButtonElement>("#toggle-side");

@@ -42,6 +42,13 @@ launchers and events remain in the independent toolbar floater; authentication
 expands when required and collapses when connected. The main workspace follows
 viewport width, with a compact chat column beside the editor or another app.
 
+The document title and close icon form one workspace tab. While editing,
+the Chat tab, app launchers, new-session action, and other document-open actions
+are disabled. Close the document through its tab to save and queue review before
+switching views. The embedded editor has no second close button. Attachment
+removal uses an outlined trash icon and removes only the session attachment;
+it does not delete the original file or saved document revisions.
+
 Saved report revisions appear in chat as read-only structured cards. Their Edit
 action opens this same editor, and Download uses the host's `rendered_markdown`
 for that saved revision. Report blocks expose their saved support/review status
@@ -72,6 +79,7 @@ so continued editing follows the recomposed report's revision and lineage.
 The toolbar uses outlined icons: a counterclockwise arrow reloads the saved
 revision, a floppy disk saves, and a scientist face saves and requests review.
 Each icon retains a tooltip and accessible action name. Licenses remains a text button.
+The editor toolbar stays visible while scrolling the document.
 
 “Save” performs no model call. Before an ordinary chat message is sent while a
 document is open, the editor saves pending changes and returns a typed binding
@@ -93,7 +101,7 @@ the same processor and chunk path as other text, and the read gate checks the
 exact projection revision and required chunk coverage before synthesis.
 Sending a chat message saves the document but does not start a separate review.
 
-“Save and review” registers a normal daemon turn after saving. The × button
+"Save and review" registers a normal daemon turn after saving. The document tab's × button
 “Spara, granska och stäng” saves and queues the changes since the editing
 session opened or since the previous review request, then restores the prior
 workspace as soon as the request is registered. If another turn is running, the

@@ -46,6 +46,12 @@ dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 16px 
 .workspace-toolbar { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin: 18px 0; position: relative; z-index: 20; }
 .workspace-nav { flex: 1; min-width: 0; align-items: center; margin: 0; min-height: 40px; }
 .workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a9bdd5; }
+.workspace-tab { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: min(60vw, 480px); padding: 4px 5px 4px 12px; border: 1px solid #385b7d; border-bottom-color: #7dd3fc; border-radius: 7px 7px 0 0; background: #142237; }
+.workspace-tab .workspace-title { color: #e7edf7; }
+.workspace-nav .workspace-close { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 5px; background: transparent; }
+.workspace-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.workspace-nav .workspace-close:hover:not(:disabled) { color: #fff; background: #30445f; }
+.workspace-nav button:disabled, .app-launcher button:disabled, .floater-actions button:disabled { opacity: .45; cursor: default; }
 .session-caption { color: #8494aa; font-size: 13px; }
 .grid.chat-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chat"; }
 .grid.workspace-layout { grid-template-columns: minmax(0, 1fr) clamp(320px, 27vw, 430px); grid-template-areas: "work chat"; }

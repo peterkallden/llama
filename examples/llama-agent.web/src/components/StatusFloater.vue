@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "../session";
 import { mcpAppKey } from "./app-invocation";
 import type { DaemonToolStatus } from "../types/agent";
-const props = defineProps<{ activeView: string; activeApp: string }>();
+const props = defineProps<{ activeView: string; activeApp: string; navigationLocked?: boolean }>();
 const emit = defineEmits<{ navigate: [view: "chat" | "data" | "workflow" | "app", app?: string]; newSession: [] }>();
 const session = useAgentSession();
 const root = ref<HTMLElement | null>(null);
@@ -29,7 +29,10 @@ const apps = computed(() => {
 function label(tool: DaemonToolStatus) {
   return tool._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor" ? "Document editor" : tool.name;
 }
-function navigate(view: "data" | "workflow" | "app", app = "") { emit("navigate", view, app); open.value = false; }
+function navigate(view: "data" | "workflow" | "app", app = "") {
+  if (props.navigationLocked) return;
+  emit("navigate", view, app); open.value = false;
+}
 function outside(event: PointerEvent) { if (event.target instanceof Node && !root.value?.contains(event.target)) open.value = false; }
 async function refresh() {
   refreshing.value = true; refreshError.value = "";
@@ -50,7 +53,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside));
     <div v-show="open" id="workspace-controls" class="floater-content">
       <section class="floater-section"><button type="button" class="section-toggle" :aria-expanded="authExpanded" @click="authExpanded = !authExpanded"><h2>Web client</h2><span>{{ authExpanded ? '−' : '+' }}</span></button>
         <div v-show="authExpanded"><label class="field token-field" :class="{ 'token-missing': session.connectionState === 'auth-error' }">API / bearer token<input v-model="session.token" type="password" autocomplete="off" :aria-invalid="session.connectionState === 'auth-error' || undefined" @keydown.enter.prevent="session.connect()" /><small>{{ session.connectionState === 'auth-error' ? 'Enter the required token and reconnect.' : session.connected && !session.token ? 'Connected without a browser token.' : 'Credentials remain in this browser tab.' }}</small></label></div>
-        <p v-if="session.connectionError" class="connection-error" role="alert">{{ session.connectionError }}</p><div class="floater-actions"><button type="button" class="quiet" @click="session.connect()">Reconnect</button><button type="button" class="quiet" @click="emit('newSession')">New session</button></div>
+        <p v-if="session.connectionError" class="connection-error" role="alert">{{ session.connectionError }}</p><div class="floater-actions"><button type="button" class="quiet" @click="session.connect()">Reconnect</button><button type="button" class="quiet" :disabled="navigationLocked" @click="emit('newSession')">New session</button></div>
       </section>
       <section class="floater-section"><button type="button" class="section-toggle" :aria-expanded="statusExpanded" @click="statusExpanded = !statusExpanded"><h2>Status and capabilities</h2><span>{{ statusExpanded ? '−' : '+' }}</span></button>
         <div v-show="statusExpanded"><button type="button" class="quiet" :disabled="refreshing" @click="refresh">{{ refreshing ? 'Refreshing…' : 'Refresh' }}</button><p v-if="refreshError" class="error" role="alert">{{ refreshError }}</p>
@@ -63,7 +66,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside));
           <details><summary>Session keys</summary><pre>{{ JSON.stringify(session.status.session_keys ?? [], null, 2) }}</pre></details>
         </div>
       </section>
-      <section class="floater-section"><h2>Applications</h2><nav class="app-launcher" aria-label="Open an application in the main workspace"><button type="button" :class="{ selected: activeView === 'data' }" @click="navigate('data')">Data Explorer ↗</button><button type="button" :class="{ selected: activeView === 'workflow' }" @click="navigate('workflow')">Workflow Inspector ↗</button><button v-for="tool in apps" :key="mcpAppKey(tool)" type="button" :class="{ selected: activeView === 'app' && activeApp === mcpAppKey(tool) }" @click="navigate('app', mcpAppKey(tool))">{{ label(tool) }} ↗</button></nav></section>
+      <section class="floater-section"><h2>Applications</h2><nav class="app-launcher" aria-label="Open an application in the main workspace"><button type="button" :disabled="navigationLocked" :title="navigationLocked ? 'Close the current document tab before switching workspace' : undefined" :class="{ selected: activeView === 'data' }" @click="navigate('data')">Data Explorer ↗</button><button type="button" :disabled="navigationLocked" :title="navigationLocked ? 'Close the current document tab before switching workspace' : undefined" :class="{ selected: activeView === 'workflow' }" @click="navigate('workflow')">Workflow Inspector ↗</button><button v-for="tool in apps" :key="mcpAppKey(tool)" type="button" :disabled="navigationLocked" :title="navigationLocked ? 'Close the current document tab before switching workspace' : undefined" :class="{ selected: activeView === 'app' && activeApp === mcpAppKey(tool) }" @click="navigate('app', mcpAppKey(tool))">{{ label(tool) }} ↗</button></nav></section>
       <section class="floater-section"><button type="button" class="section-toggle" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded"><h2>MCP tools · {{ session.tools.length }}</h2><span>{{ toolsExpanded ? '−' : '+' }}</span></button><div v-if="toolsExpanded" class="tool-list"><div v-for="tool in session.tools" :key="tool.name" class="tool-entry"><button type="button" class="tool-name" :aria-expanded="expandedTool === tool.name" @click="expandedTool = expandedTool === tool.name ? '' : tool.name"><span class="tool-dot" :class="`tool-dot-${tool.state || 'active'}`" />{{ tool.name }}</button><p v-if="expandedTool === tool.name" class="tool-details">{{ tool.description || 'No description provided.' }}</p></div></div></section>
       <section class="floater-section"><slot name="events" /></section>
       <section class="floater-section"><a href="./third-party-notices.txt" target="_blank" rel="noopener noreferrer">Third-party licenses</a></section>
