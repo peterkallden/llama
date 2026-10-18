@@ -75,6 +75,8 @@ struct common_agent_generation_options {
     bool generation_trace = false;
     std::optional<int64_t> t_max_prompt_ms;
     std::optional<int64_t> t_max_predict_ms;
+    // Transient host control for this request. Never serialized or persisted.
+    std::function<bool()> should_stop;
 };
 
 // Resource identity crossing the orchestration/inference boundary. Bytes and

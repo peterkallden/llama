@@ -20,6 +20,10 @@
 
 namespace {
 
+bool generation_should_stop(const common_agent_generation_request & request) {
+    return request.options.should_stop && request.options.should_stop();
+}
+
 struct schema_stream_state {
     std::string content;
     std::string first_valid_json;
@@ -408,6 +412,11 @@ private:
             const common_agent_generation_request & request,
             common_agent_generation_result & result) {
         result = {};
+        if (generation_should_stop(request)) {
+            apply_server_error(nullptr, result, common_agent_generation_status::cancelled,
+                common_agent_generation_stop_reason::cancelled, "generation cancelled by host");
+            return false;
+        }
 
         try {
             resident_trace("start", request);
@@ -511,7 +520,7 @@ private:
             if (task.params.stream) {
                 schema_stream_state state;
 
-                while (auto response = reader.next([]() { return false; })) {
+                while (auto response = reader.next([&request] { return generation_should_stop(request); })) {
                     if (response->is_error()) {
                         resident_trace("error", request);
                         apply_server_error(response.get(), result);
@@ -531,6 +540,11 @@ private:
                     }
                 }
 
+                if (generation_should_stop(request)) {
+                    apply_server_error(nullptr, result, common_agent_generation_status::cancelled,
+                        common_agent_generation_stop_reason::cancelled, "generation cancelled by host");
+                    return false;
+                }
                 if (apply_schema_final_response(request, state, result)) {
                     return common_agent_generation_succeeded(result);
                 }
@@ -574,7 +588,7 @@ private:
                 return false;
             }
 
-            auto responses = reader.wait_for_all([]() { return false; });
+            auto responses = reader.wait_for_all([&request] { return generation_should_stop(request); });
             if (responses.is_terminated || responses.error || responses.results.empty()) {
                 if (responses.error) {
                     apply_server_error(responses.error.get(), result);
@@ -705,7 +719,9 @@ private:
         }
 
         reader.post_tasks(std::move(tasks));
-        auto responses = reader.wait_for_all([]() { return false; });
+        auto responses = reader.wait_for_all([&requests] {
+            return std::any_of(requests.begin(), requests.end(), generation_should_stop);
+        });
         if (responses.is_terminated || responses.error ||
                 responses.results.size() != requests.size()) {
             for (auto & result : results) {
@@ -873,7 +889,7 @@ private:
                 server_response_reader reader = server.get_response_reader();
                 server_task task = make_score_task(reader, continuation);
                 reader.post_task(std::move(task));
-                auto responses = reader.wait_for_all([]() { return false; });
+                auto responses = reader.wait_for_all([&request] { return generation_should_stop(request.context); });
                 if (responses.is_terminated || responses.error || responses.results.size() != 1) {
                     if (responses.error && responses.error->is_error()) {
                         const auto * error = static_cast<const server_task_result_error *>(responses.error.get());
@@ -1041,7 +1057,11 @@ private:
             task.id = reader.get_new_id();
         }
         reader.post_tasks(std::move(tasks));
-        const auto responses = reader.wait_for_all([]() { return false; });
+        const auto responses = reader.wait_for_all([&request] {
+            return std::any_of(request.choices.begin(), request.choices.end(), [](const auto & choice) {
+                return generation_should_stop(choice.context);
+            });
+        });
         if (responses.is_terminated || responses.error) {
             if (responses.error && responses.error->is_error()) {
                 const auto * error =

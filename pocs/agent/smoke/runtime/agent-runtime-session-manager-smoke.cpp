@@ -10,6 +10,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -69,6 +70,72 @@ private:
     std::shared_ptr<int> cancel_calls;
 };
 
+class throwing_inference_executor final : public common_agent_runtime_inference_executor {
+public:
+    size_t submissions = 0;
+    std::shared_ptr<common_agent_runtime_inference_task> submit(
+            common_agent_runtime_session_host *, common_agent_runtime_session_host_turn_request,
+            const std::shared_ptr<common_agent_inference_capacity_gate> &, std::string,
+            std::string &) override {
+        ++submissions;
+        throw std::runtime_error("private executor exception");
+    }
+};
+
+bool check_admission_boundaries() {
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        auto gate = std::make_shared<common_agent_inference_capacity_gate>(1);
+        auto executor = std::make_shared<throwing_inference_executor>();
+        common_runtime_operation_manager operations;
+        std::optional<common_agent_runtime_session_manager_pending_operation> pending;
+        common_agent_runtime_session_host_turn_request request;
+        request.execution_control = make_common_agent_runtime_execution_control({});
+        auto active = std::make_optional(make_common_agent_runtime_turn_execution(
+            "admission-boundary", "boundary-turn", common_agent_runtime_host_mode::chat,
+            false, request.execution_control.cancellation));
+        active->phase = common_agent_runtime_turn_phase::awaiting_inference;
+        common_agent_runtime_session_host_turn_result result;
+        std::mutex mutex;
+        std::string error;
+        bool inference_started = false;
+        common_agent_event_emitter events([&](const common_agent_daemon_event & event) {
+            if (event.type == "inference.started") inference_started = true;
+            if (scenario == 1 && event.type == "inference.capacity_granted") {
+                request.execution_control.cancellation->request_cancel("cancelled at admission boundary");
+            }
+        });
+        const auto advance = [&] {
+            return advance_common_agent_runtime_turn(nullptr, pending, active, mutex, operations,
+                {}, gate, executor, "admission-boundary", request, result, error, events);
+        };
+        if (scenario != 0) {
+            if (!gate->try_acquire() || advance() != common_agent_runtime_turn_disposition::wait_for_inference ||
+                    gate->waiting() != 1 || inference_started) return false;
+            if (scenario == 1) gate->release();
+            else request.execution_control.deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+        }
+        const auto disposition = advance();
+        if (scenario == 2) gate->release();
+        if (gate->active() != 0 || gate->waiting() != 0 || inference_started ||
+                (scenario == 0 && (disposition != common_agent_runtime_turn_disposition::failed ||
+                    executor->submissions != 1 || error != "inference executor failed before task registration")) ||
+                (scenario != 0 && (disposition != common_agent_runtime_turn_disposition::cancelled ||
+                    executor->submissions != 0)) ||
+                (scenario == 2 && error != "turn deadline exceeded while waiting for inference capacity")) {
+            std::fprintf(stderr, "inference admission boundary failed: scenario=%d active=%zu waiting=%zu error=%s\n",
+                scenario, gate->active(), gate->waiting(), error.c_str());
+            return false;
+        }
+        // A failed/cancelled attempt must not retain the stable retry identity.
+        if (!gate->enqueue({"inference-capacity:admission-boundary"}, error) ||
+                !gate->try_acquire("inference-capacity:admission-boundary")) return false;
+        gate->release("inference-capacity:admission-boundary");
+        operations.cleanup_terminal();
+    }
+    std::printf("inference_admission_boundaries=exception_cancel_timeout_next_turn\n");
+    return true;
+}
+
 bool contains_event_type(
         const std::vector<common_agent_daemon_event> & events,
         const char * type) {
@@ -80,9 +147,63 @@ bool contains_event_type(
     return false;
 }
 
+bool check_cancelled_executor_lifetime(common_memory_store & memory, common_plan_store & plans) {
+    auto gate = std::make_shared<common_agent_inference_capacity_gate>(1);
+    auto entered = std::make_shared<std::promise<void>>();
+    auto entered_future = entered->get_future();
+    std::promise<void> finish;
+    const auto finish_future = finish.get_future().share();
+    common_agent_runtime_session_host_config config{memory, plans};
+    config.flydelta_deployment_resolver = [entered, finish_future](
+            const common_agent_runtime_session_host_turn_request &,
+            common_flydelta_deployment_result &, std::string & error) {
+        entered->set_value();
+        finish_future.wait();
+        error = "controlled host failure after cancellation";
+        return false;
+    };
+    common_agent_runtime_session_host host(std::move(config));
+    common_agent_runtime_session_host_turn_request request;
+    request.prompt = "lifetime fixture";
+    request.session_id = "lifetime-session";
+    request.namespace_id = "lifetime-namespace";
+    request.turn_id = "lifetime-turn";
+    request.execution_control = make_common_agent_runtime_execution_control({});
+    // Use a heap-backed identity so retaining only a pointer into a destroyed
+    // task cannot accidentally work because of small-string storage.
+    const std::string lease = "inference-capacity:" + std::string(128, 'x');
+    std::string error;
+    if (!gate->enqueue({lease}, error) || !gate->try_acquire(lease)) return false;
+    auto task = make_common_agent_runtime_async_inference_executor()->submit(
+        &host, request, gate, lease, error);
+    if (!task || entered_future.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        finish.set_value();
+        return false;
+    }
+    if (!task->cancel(error)) { finish.set_value(); return false; }
+    auto dropped = std::async(std::launch::async, [task = std::move(task)]() mutable {
+        task.reset();
+    });
+    // Dropping the final task handle must retain its worker inputs until the
+    // host exits, including the gate and the exact named lease identity.
+    const bool waited_for_host = dropped.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout;
+    finish.set_value();
+    dropped.get();
+    if (!waited_for_host || gate->active() != 0 || gate->waiting() != 0 ||
+            !gate->enqueue({lease}, error) || !gate->try_acquire(lease)) {
+        std::fprintf(stderr, "cancelled async task leaked its inference lease: active=%zu error=%s\n",
+            gate->active(), error.c_str());
+        return false;
+    }
+    gate->release(lease);
+    std::printf("cancelled_executor_lifetime=next_turn_admitted\n");
+    return true;
+}
+
 } // namespace
 
 int main() {
+    if (!check_admission_boundaries()) return 1;
     common_agent_inference_capacity_gate capacity_gate(1);
     if (!capacity_gate.try_acquire() || capacity_gate.try_acquire() ||
             capacity_gate.active() != 1 || capacity_gate.capacity() != 1) {
@@ -232,6 +353,7 @@ int main() {
 
     common_memory_in_memory_store memory_store;
     common_plan_in_memory_store plan_store;
+    if (!check_cancelled_executor_lifetime(memory_store, plan_store)) return 1;
     common_memory_policy_pack session_policy_pack;
     session_policy_pack.id = "session-policy-a";
     session_policy_pack.purpose = "Keep this session on the host-owned policy path.";

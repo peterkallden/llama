@@ -16,6 +16,7 @@
 #include "agent/runtime-json-contracts.h"
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/agent/runtime/agent-runtime-tooling.h"
+#include "tools/server/server-queue.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "chat-peg-parser.h"
 #include "tools/agent/cli/agent-cli-scope.h"
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
@@ -1914,6 +1916,53 @@ static void test_truncated_tool_call_is_not_dispatched() {
     assert(error.find("before parsing or dispatch") != std::string::npos);
 }
 
+static void test_runtime_cancellation_contract() {
+    // Even a stream which always has another token available must honour
+    // cancellation before consuming that token and cancel its server task.
+    server_queue tasks;
+    server_response responses;
+    server_response_reader reader(tasks, responses, 1);
+    server_task task(SERVER_TASK_TYPE_COMPLETION);
+    task.id = reader.get_new_id();
+    const int id = task.id;
+    reader.post_task(std::move(task));
+    auto partial = std::make_unique<server_task_result_cmpl_partial>();
+    partial->id = id;
+    partial->index = 0;
+    responses.send(std::move(partial));
+    if (reader.next([] { return true; }) || !reader.cancelled) {
+        throw std::runtime_error("server reader consumed a token after cancellation");
+    }
+
+    fake_agent_inference inference;
+    inference.queued = {make_success("4", 1)};
+    common_memory_in_memory_store memories;
+    std::string error;
+    if (!memories.open("", error)) throw std::runtime_error(error);
+    common_agent_runtime_turn_request turn;
+    turn.request = make_request();
+    turn.request.messages = {{"user", "2 + 2"}};
+    turn.generation_options.n_predict = 8;
+    turn.execution_control = make_common_agent_runtime_execution_control({});
+    const auto control = turn.execution_control;
+    common_agent_runtime_tooling tooling;
+    common_agent_runtime_host_inputs inputs{
+        common_agent_runtime_host_mode::chat, memories, nullptr, turn,
+        nullptr, nullptr, nullptr, tooling, false, {},
+    };
+    auto execution = make_agent_runtime_host_execution(inputs, inference);
+    common_agent_result result;
+    if (!run_agent_runtime_host(execution, result, error) || inference.seen.size() != 1 ||
+            !inference.seen[0].options.should_stop || inference.seen[0].options.should_stop()) {
+        throw std::runtime_error("runtime host did not bind request-scoped cancellation: " + error);
+    }
+    control.cancellation->request_cancel("fixture cancellation");
+    if (!inference.seen[0].options.should_stop()) {
+        throw std::runtime_error("backend callback did not observe cancellation of its turn");
+    }
+    std::puts("runtime_cancellation=request_to_backend_and_server_reader");
+}
+
 static void test_runtime_host_chat_smoke() {
     fake_agent_inference inference;
     const std::vector<common_chat_tool> tools = {
@@ -2673,7 +2722,9 @@ static void test_runtime_session_reuse() {
 }
 
 static bool run_named_test(const std::string & name) {
-    if (name == "generation-contract") {
+    if (name == "runtime-cancellation") {
+        test_runtime_cancellation_contract();
+    } else if (name == "generation-contract") {
         test_generation_contract_helpers();
     } else if (name == "cli-scope") {
         test_cli_scope_helpers();
@@ -2769,6 +2820,7 @@ int main(int argc, char ** argv) {
     }
 
     const char * tests[] = {
+        "runtime-cancellation",
         "generation-contract",
         "cli-scope",
         "runtime-assembly",

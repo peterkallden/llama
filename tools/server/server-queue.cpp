@@ -549,10 +549,15 @@ bool server_response_reader::has_next() const {
 // note: if one error is received, it will stop further processing and return error result
 server_task_result_ptr server_response_reader::next(const std::function<bool()> & should_stop) {
     while (true) {
+        if (should_stop()) {
+            stop();
+            return nullptr;
+        }
         server_task_result_ptr result = queue_results.recv_with_timeout(id_tasks, polling_interval_seconds);
         if (result == nullptr) {
             // timeout, check stop condition
             if (should_stop()) {
+                stop();
                 return nullptr;
             }
         } else {

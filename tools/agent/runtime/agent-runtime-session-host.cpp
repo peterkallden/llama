@@ -76,6 +76,7 @@ bool parse_context_summary_proposal(const std::string & content,
 
 bool generate_context_summary(common_agent_inference & inference,
         common_agent_tool_output_format format, int n_predict,
+        const common_agent_runtime_execution_control & control,
         const std::optional<common_agent_context_checkpoint> & previous,
         const std::vector<common_agent_conversation_segment> & source,
         context_summary_proposal & proposal, size_t & call_count) {
@@ -108,6 +109,7 @@ bool generate_context_summary(common_agent_inference & inference,
         ? "Return only compact DSL in the supplied output template. Replace placeholders with concise content; preserve every covered_turn handle exactly."
         : "Return only the requested JSON object."}, {"user", prompt.str()}};
     request.options.n_predict = n_predict;
+    request.options.should_stop = [control] { return control.should_stop(); };
     if (format != common_agent_tool_output_format::compact_dsl) {
         request.json_schema = R"({"type":"object","additionalProperties":false,"required":["summary","covered_turn_refs"],"properties":{"summary":{"type":"string","minLength":1},"goal":{"type":"string"},"decisions":{"type":"array","items":{"type":"string"}},"open_questions":{"type":"array","items":{"type":"string"}},"tried":{"type":"array","items":{"type":"string"}},"covered_turn_refs":{"type":"array","items":{"type":"string","minLength":1}}}})";
     }
@@ -1067,6 +1069,7 @@ bool common_agent_runtime_session_host::run_turn(
                     context_summary_proposal proposal;
                     if (generate_context_summary(*inference, runtime->configured_tool_output_format(),
                             config.runtime_config.context_management.summary_max_tokens,
+                            request.execution_control,
                             context_checkpoint, bounded_older, proposal, result.context_compaction_calls)) {
                         common_agent_context_checkpoint next = context_checkpoint.value_or(common_agent_context_checkpoint{});
                         next.epoch = context_epoch;

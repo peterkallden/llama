@@ -1661,6 +1661,17 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:llama-agent-inference-smoke>)
     set_property(TEST llama-agent-inference-ctest PROPERTY LABELS agent)
 
+    add_test(NAME llama-agent-runtime-cancellation-ctest
+        COMMAND $<TARGET_FILE:llama-agent-inference-smoke> runtime-cancellation)
+    set_tests_properties(llama-agent-runtime-cancellation-ctest PROPERTIES LABELS agent TIMEOUT 15)
+
+    add_test(NAME llama-agent-runtime-session-manager-ctest
+        COMMAND $<TARGET_FILE:llama-agent-runtime-session-manager-smoke>)
+    add_test(NAME llama-agent-runtime-operation-manager-ctest
+        COMMAND $<TARGET_FILE:llama-agent-runtime-operation-manager-smoke>)
+    set_tests_properties(llama-agent-runtime-session-manager-ctest
+        llama-agent-runtime-operation-manager-ctest PROPERTIES LABELS agent TIMEOUT 60)
+
     add_test(NAME llama-agent-sandbox-contract-ctest
         COMMAND $<TARGET_FILE:llama-agent-sandbox-contract-smoke>)
     set_property(TEST llama-agent-sandbox-contract-ctest PROPERTY LABELS agent)

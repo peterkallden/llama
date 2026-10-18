@@ -5320,6 +5320,23 @@ scheduler / dispatcher
 
 The dispatcher already supports a configurable worker pool, with one worker as the compatibility default. A global inference admission scheduler now sits above the resident host execution path: it enforces `limits.inference_max_active` independently of worker count, admits named waiters using priority-aware FIFO ordering with bounded aging, and parks excess turns through the existing pending-operation/status/event seam. Backend slot and batch awareness remain deferred to the model-serving adapter.
 
+Admission waiting counts toward `limits.turn_timeout_ms`. The
+`turn.waiting_for_inference` event with detail `turn awaiting inference admission`
+does not mean model execution has started; `inference.started` marks submission
+of the host turn to the executor. A timeout in the admission queue explicitly
+reports `turn deadline exceeded while waiting for inference capacity`.
+Cancelled workers retain their request, result, gate and named lease until the
+host exits, then release the lease on success, failure or exception. Cancelling
+admission also returns a just-granted lease before an executor can own it.
+Document import, editor opening and saving use the tool path and can proceed
+while an orientation or document review runs in the adjacent chat.
+Generation requests carry a transient host stop callback. The runtime binds it
+per turn, including context compaction, and the resident server reader checks
+it for streaming, non-streaming, batched and teacher-scoring requests. Reader
+cancellation sends cancellation to the server tasks, including when a stream
+keeps returning tokens without a polling timeout. The callback is not part of
+model-facing instructions or persisted artifacts.
+
 Admission priority is currently derived from the host turn: chat is
 interactive, normal agent work is normal, and research is background. Waiters
 remain FIFO within an effective priority; aging raises a waiter's effective

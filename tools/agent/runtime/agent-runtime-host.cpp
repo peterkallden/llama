@@ -6,6 +6,48 @@ const std::vector<common_blueprint_candidate> k_empty_blueprints;
 const std::vector<common_memory_hit> k_empty_memories;
 const std::string k_empty_fallback_reason;
 
+// Bind cancellation to each request rather than mutable backend/session state.
+// All purposes (planner, extraction, draft, reflection) cross this boundary.
+class controlled_inference final : public common_agent_inference {
+public:
+    controlled_inference(common_agent_inference & backend,
+            common_agent_runtime_execution_control control)
+        : backend(backend), control(std::move(control)) {}
+
+    common_agent_generation_request bind(common_agent_generation_request request) const {
+        request.options.should_stop = [control = control, prior = request.options.should_stop] {
+            return control.should_stop() || (prior && prior());
+        };
+        return request;
+    }
+    bool generate(const common_agent_generation_request & request,
+            common_agent_generation_result & result) override {
+        return backend.generate(bind(request), result);
+    }
+    bool generate_batch(const std::vector<common_agent_generation_request> & requests,
+            std::vector<common_agent_generation_result> & results) override {
+        std::vector<common_agent_generation_request> bounded;
+        bounded.reserve(requests.size());
+        for (const auto & request : requests) bounded.push_back(bind(request));
+        return backend.generate_batch(bounded, results);
+    }
+    bool score_teacher_forced_choice(const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        auto bounded = request;
+        bounded.context = bind(request.context);
+        return backend.score_teacher_forced_choice(bounded, result);
+    }
+    bool score_teacher_forced_choice_batch(const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) override {
+        auto bounded = request;
+        for (auto & choice : bounded.choices) choice.context = bind(choice.context);
+        return backend.score_teacher_forced_choice_batch(bounded, result);
+    }
+private:
+    common_agent_inference & backend;
+    common_agent_runtime_execution_control control;
+};
+
 } // namespace
 
 common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
@@ -152,6 +194,7 @@ bool run_agent_runtime_host(
         common_agent_runtime_host_execution & execution,
         common_agent_result & result,
         std::string & error) {
+    controlled_inference inference(execution.inference, execution.turn_request.execution_control);
     switch (execution.mode) {
         case common_agent_runtime_host_mode::agent: {
             if (execution.plan_store == nullptr) {
@@ -167,7 +210,7 @@ bool run_agent_runtime_host(
             common_agent_runtime_driver_execution driver_execution{
                 execution.memory_store,
                 *execution.plan_store,
-                execution.inference,
+                inference,
                 execution.turn_request.policy,
                 execution.turn_request.runtime_config,
                 execution.turn_request.orchestration_config,
@@ -200,7 +243,7 @@ bool run_agent_runtime_host(
 
         case common_agent_runtime_host_mode::chat: {
             common_agent_chat_runtime_execution chat_execution{
-                execution.inference,
+                inference,
                 execution.turn_request.request,
                 execution.turn_request.generation_options,
                 {execution.turn_request.policy.max_tool_rounds,

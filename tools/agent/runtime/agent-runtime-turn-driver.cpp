@@ -82,6 +82,9 @@ common_agent_runtime_turn_disposition poll_common_agent_runtime_pending_operatio
         result = {};
         result.cancelled = true;
         result.error = request.execution_control.stop_reason();
+        if (operation_detail == "waiting for inference capacity") {
+            result.error += " while waiting for inference capacity";
+        }
         error = result.error;
         turn_events.emit(common_agent_daemon_event_type::turn_cancelled, result.error);
         return common_agent_runtime_turn_disposition::cancelled;
@@ -301,13 +304,34 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                 .with_operation("inference:" + request_id)
                 .emit(
                     common_agent_daemon_event_type::turn_waiting_for_inference,
-                    "turn entered inference execution");
+                    "turn awaiting inference admission");
             return common_agent_runtime_turn_disposition::continue_immediately;
 
         case common_agent_runtime_turn_phase::awaiting_inference: {
             const bool waiting_for_inference_capacity = pending_operation.has_value() &&
                 pending_operation->pending_operation.detail == "waiting for inference capacity";
             if (!pending_operation.has_value()) {
+                if (request.execution_control.should_stop()) {
+                    bool acquired = false;
+                    {
+                        std::lock_guard<std::mutex> lock(lane_mutex);
+                        if (active_turn) {
+                            acquired = active_turn->inference_capacity_acquired;
+                            active_turn->inference_capacity_acquired = false;
+                            active_turn->cancellation_requested = true;
+                            active_turn->pending_operation.reset();
+                            active_turn->phase = common_agent_runtime_turn_phase::cancelled;
+                            active_turn->disposition = common_agent_runtime_turn_disposition::cancelled;
+                        }
+                    }
+                    if (acquired && inference_gate) inference_gate->release("inference-capacity:" + request_id);
+                    result = {};
+                    result.cancelled = true;
+                    result.error = request.execution_control.stop_reason();
+                    error = result.error;
+                    turn_events.emit(common_agent_daemon_event_type::turn_cancelled, error);
+                    return common_agent_runtime_turn_disposition::cancelled;
+                }
                 if (inference_gate) {
                     bool acquired = false;
                     {
@@ -353,7 +377,12 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                             return true;
                         };
                         pending.cancel = [inference_gate, waiter_id](std::string & cancel_error) {
-                            return inference_gate->cancel(waiter_id, cancel_error);
+                            // Admission may have succeeded just before cancellation.
+                            // No executor owns this lease until the next driver step.
+                            inference_gate->cancel(waiter_id, cancel_error);
+                            inference_gate->release(waiter_id);
+                            cancel_error.clear();
+                            return true;
                         };
                         std::string operation_error;
                         if (!operation_manager.begin(
@@ -406,8 +435,12 @@ common_agent_runtime_turn_disposition advance_common_agent_runtime_turn(
                     ? inference_executor
                     : make_common_agent_runtime_async_inference_executor();
                 std::string executor_error;
-                const auto inference_task = executor->submit(
-                    host, request, inference_gate, lease_id, executor_error);
+                std::shared_ptr<common_agent_runtime_inference_task> inference_task;
+                try {
+                    inference_task = executor->submit(host, request, inference_gate, lease_id, executor_error);
+                } catch (...) {
+                    executor_error = "inference executor failed before task registration";
+                }
                 if (!inference_task) {
                     if (inference_gate) inference_gate->release(lease_id);
                     {

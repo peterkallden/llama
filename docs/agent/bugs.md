@@ -137,6 +137,39 @@ running CTest; CTest alone does not build them. The low-rank and dataset-repair
 launchers now pass their actual executable targets to the shared optional
 build helper instead of only rebuilding `llama-agent`.
 
+## Cancelled inference task retained an occupied admission slot
+
+- Status: Reproduced with a model-free regression; corrected locally. Final
+  combined runtime/UI verification is deferred to the user's next browser run.
+- Affected area: asynchronous session turns, cancellation and inference admission
+
+In the local web session, document turns accepted at 15:43:06, 15:46:22
+and 15:49:23 on 2026-10-18 waited for inference capacity until their
+180-second turn deadlines. No `inference.started` event followed admission
+queueing. An earlier retry also reported an already registered waiter ID.
+
+The asynchronous worker captured its task through `this`. On destruction,
+the task's request, gate pointer and heap-backed lease identity were destroyed
+before the future joined the worker. Cancellation could therefore leave
+`active=1` after host execution had exited. A regression holding host execution
+across cancellation and final-handle destruction reproduced this exact leak.
+
+The worker now captures its inputs by value and the future joins before
+task-owned state is destroyed. Admission cancellation releases a just-granted
+lease, cancelled admission cannot submit a host turn, and executor submission
+exceptions release capacity. Queue timeouts identify the waiting phase.
+Session-manager and operation-manager smokes are registered as CTests.
+
+Live verification also exposed missing propagation below the host: resident
+server inference passed an always-false stop predicate to every response reader.
+Thus a cancelled host turn could continue model generation and legitimately
+retain its slot until generation finished. Generation options now carry the
+turn's transient stop callback; the runtime binds it for all generation purposes
+and compaction, and server generation/scoring readers consume it. The shared
+server reader checks cancellation before consuming a queued token and sends
+task cancellation immediately. A release-safe CTest covers runtime-to-backend
+callback propagation and cancellation with a partial response already queued.
+
 ## Structured agent grammar failure before tool-family selection
 
 - Status: Fixed locally; contract tests and Qwen web smoke verified

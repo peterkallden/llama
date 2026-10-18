@@ -31,21 +31,26 @@ public:
             std::string lease_id)
         : result(std::make_shared<common_agent_runtime_session_host_turn_result>()),
           error(std::make_shared<std::string>()),
-          request(std::move(request)),
           inference_gate(std::move(inference_gate)),
-          lease_id(std::move(lease_id)) {
+          lease_id(std::move(lease_id)),
+          request(std::move(request)) {
         future = std::async(
             std::launch::async,
-            [this, host]() {
+            // Cancellation can drop the last task handle while run_turn is
+            // still unwinding. The worker must own every input it uses,
+            // including the exact named lease, independently of that handle.
+            [host, result = this->result, error = this->error,
+             request = this->request, inference_gate = this->inference_gate,
+             lease_id = this->lease_id]() {
                 agent_async_trace("worker-start");
                 const auto release = [&]() {
-                    if (this->inference_gate) {
-                        this->inference_gate->release(this->lease_id);
+                    if (inference_gate) {
+                        inference_gate->release(lease_id);
                     }
                 };
                 try {
                     agent_async_trace("before-host-run-turn");
-                    const bool ok = host->run_turn(this->request, *this->result, *this->error);
+                    const bool ok = host->run_turn(request, *result, *error);
                     agent_async_trace("after-host-run-turn", ok ? "ok" : "failed");
                     release();
                     return ok;
@@ -96,10 +101,11 @@ public:
 private:
     std::shared_ptr<common_agent_runtime_session_host_turn_result> result;
     std::shared_ptr<std::string> error;
-    std::future<bool> future;
     std::shared_ptr<common_agent_inference_capacity_gate> inference_gate;
     std::string lease_id;
     common_agent_runtime_session_host_turn_request request;
+    // Join before destroying task-owned cancellation and lease state.
+    std::future<bool> future;
 };
 
 class async_inference_executor final : public common_agent_runtime_inference_executor {
