@@ -72,13 +72,25 @@ static void assert_lifecycle_round_trip(common_learning_lifecycle_store & store)
     const auto value = lifecycle_record();
     require(store.append(value, error));
     if (!store.append(value, error)) {
-        std::cerr << "lifecycle duplicate append error: " << error << '\n';
-        require(false);
-    }
+            std::cerr << "lifecycle duplicate append error: " << error << '\n';
+            require(false);
+        }
+    auto second = lifecycle_record();
+    second.event_id += "-second";
+    second.idempotency_key += "-second";
+    second.subject_id += "/second";
+    require(store.append(second, error));
     const auto values = store.list(error);
     require(error.empty());
-    require(values.size() == 1);
+    require(values.size() == 2);
     require(values.front().subject_id == value.subject_id);
+    require(values[0].registration_order > 0 && values[1].registration_order > values[0].registration_order);
+    std::vector<common_learning_lifecycle_record> scoped;
+    uint64_t watermark = 0;
+    require(store.list_scope_with_watermark("local", "project-1", "session-1",
+        scoped, watermark, error));
+    require(error.empty() && scoped.size() == 2);
+    require(watermark == scoped.back().registration_order);
     bool contains = false;
     require(store.contains_idempotency(value.idempotency_key, contains, error));
     require(contains);

@@ -336,6 +336,12 @@ bool daemon_flydelta_score_teacher_forced_margin_batch(
         error = "FlyDelta teacher-forced batch scoring returned incomplete results";
         return false;
     }
+    std::fprintf(stderr,
+        "flydelta_teacher_scoring batch_choices=%zu physical_tasks=%zu representation=%s "
+        "device_scoring=%s returned_score_bytes=%zu wall_ms=%.3f\n",
+        score_batch.choices.size(), scores.physical_task_count,
+        scores.scoring_representation.c_str(), scores.device_scoring ? "yes" : "no",
+        scores.returned_score_bytes, scores.scoring_wall_ms);
     for (size_t index = 0; index < score_indices.size(); ++index) {
         const auto & score = scores.choices[index];
         auto & margin = margins[score_indices[index]];

@@ -36,6 +36,10 @@ daemon_flydelta_provider_for_scope(
     scoped->n_threads = source->n_threads;
     scoped->model_n_embd = source->model_n_embd;
     scoped->model_n_layers = source->model_n_layers;
+    // These are immutable runtime policies/projections, not scope authority.
+    // Preserve them when narrowing the provider to a job so `off` and
+    // experimental settings cannot silently revert to provider defaults.
+    scoped->outcome_guidance_config = source->outcome_guidance_config;
     // Semantic verification is host-owned configuration, just like the
     // model profile and capture layout. Preserve it when narrowing resource
     // authority to a job scope.

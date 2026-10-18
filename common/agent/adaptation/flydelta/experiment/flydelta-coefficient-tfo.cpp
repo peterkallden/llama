@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 
 #include <algorithm>
+#include <numeric>
 #include <random>
 #include <utility>
 
@@ -115,7 +116,15 @@ bool run_tfo_lite_coefficient_search(
         std::vector<coefficient_arm_result> pending_results;
         if (!run_coefficient_arms_batched(fixture, basis, config, batch_runner,
                 dose_state, pending_coefficients, pending_results, error)) return false;
-        for (size_t pending = 0; pending < pending_results.size(); ++pending) {
+        // The adviser changes execution order only. Feed results back in the
+        // population's original order so tie-breaks and next-generation
+        // parent selection do not depend on physical scheduling.
+        std::vector<size_t> result_order(pending_results.size());
+        std::iota(result_order.begin(), result_order.end(), 0);
+        std::stable_sort(result_order.begin(), result_order.end(), [&](size_t left, size_t right) {
+            return pending_indices[left] < pending_indices[right];
+        });
+        for (const size_t pending : result_order) {
             const size_t population_index = pending_indices[pending];
             const auto & arm = pending_results[pending];
             common_flydelta_coefficient_trial trial;
@@ -137,6 +146,11 @@ bool run_tfo_lite_coefficient_search(
             trial.iteration = iteration;
             trial.parent_trial_index = population_parents[population_index];
             trial.mutation_kind = population_mutations[population_index];
+            const auto forecast = guidance_candidate(
+                population[population_index], basis, config);
+            trial.guidance_arm_id = forecast.arm_id;
+            trial.guidance_basis_id = forecast.basis_identity;
+            trial.guidance_margin_sign = forecast.diagnostic_margin_sign;
             trial.search_fitness = diagnostic_fitness(
                 trial, baseline_margin, arm.margin, config);
             evaluated_coefficients.push_back(pending_coefficients[pending]);

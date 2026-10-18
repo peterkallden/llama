@@ -52,8 +52,12 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         candidates.reserve(ranking.size());
         for (const size_t index : ranking) {
             const auto & trial = diagnostic_trials[index];
-            candidates.push_back(common_flydelta_coefficient_detail::guidance_candidate(
-                trial.coefficients, basis, config, &trial.margin_comparison));
+            const auto forecast = common_flydelta_coefficient_detail::guidance_candidate(
+                trial.coefficients, basis, config, &trial.margin_comparison);
+            diagnostic_trials[index].guidance_arm_id = forecast.arm_id;
+            diagnostic_trials[index].guidance_basis_id = forecast.basis_identity;
+            diagnostic_trials[index].guidance_margin_sign = forecast.diagnostic_margin_sign;
+            candidates.push_back(forecast);
         }
         common_flydelta_outcome_guidance_decision guidance;
         std::string guidance_error;

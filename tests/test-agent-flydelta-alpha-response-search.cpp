@@ -5,6 +5,18 @@
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
+static common_flydelta_experiment_fixture make_fixture(const char * id) {
+    common_flydelta_experiment_fixture value;
+    value.id = id;
+    value.task_fingerprint = "task";
+    value.model_profile_fingerprint = "model";
+    value.tokenizer_fingerprint = "tokenizer";
+    value.template_fingerprint = "template";
+    value.execution_context_fingerprint = "context";
+    value.verifier_revision = "verifier";
+    return value;
+}
+
 static bool scripted_alpha_runner(
         const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
         common_flydelta_counterfactual_trial & counterfactual,
@@ -47,10 +59,7 @@ int main() {
     std::vector<common_flydelta_alpha_response_trial> trials;
     size_t calls = 0;
     CHECK(common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, config,
+        make_fixture("fixture:alpha-response"), config,
         [&](const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & counterfactual,
                 common_flydelta_decision_margin & margin,
@@ -97,10 +106,7 @@ int main() {
     common_flydelta_alpha_response_selection no_selection;
     std::vector<common_flydelta_alpha_response_trial> no_selection_trials;
     CHECK(common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response-no-selection", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, no_selection_config, scripted_alpha_runner,
+        make_fixture("fixture:alpha-response-no-selection"), no_selection_config, scripted_alpha_runner,
         no_selection_trials, no_selection, error));
     CHECK(!no_selection.selected);
     CHECK(!no_selection.minimum_effective_available);
@@ -120,10 +126,7 @@ int main() {
     std::vector<common_flydelta_alpha_response_trial> bounded_zoom_trials;
     common_flydelta_alpha_response_selection bounded_zoom_selection;
     CHECK(common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response-zoom-budget", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, bounded_zoom_config, scripted_alpha_runner,
+        make_fixture("fixture:alpha-response-zoom-budget"), bounded_zoom_config, scripted_alpha_runner,
         bounded_zoom_trials, bounded_zoom_selection, error));
     CHECK(bounded_zoom_trials.size() ==
         bounded_zoom_config.max_expansion_trials + bounded_zoom_config.max_zoom_trials);
@@ -133,10 +136,7 @@ int main() {
     common_flydelta_alpha_response_selection failing_selection;
     std::vector<common_flydelta_alpha_response_trial> failing_trials;
     CHECK(!common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response-failure", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, config,
+        make_fixture("fixture:alpha-response-failure"), config,
         [](const common_flydelta_experiment_fixture &, float, bool,
                 common_flydelta_counterfactual_trial &, common_flydelta_decision_margin &,
                 common_flydelta_representation_diagnostics &, bool &, std::string & runner_error) {
@@ -153,10 +153,7 @@ int main() {
     std::vector<common_flydelta_alpha_response_trial> early_helped_trials;
     common_flydelta_alpha_response_selection early_helped_selection;
     CHECK(common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response-early-helped", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, early_helped_config, scripted_alpha_runner,
+        make_fixture("fixture:alpha-response-early-helped"), early_helped_config, scripted_alpha_runner,
         early_helped_trials, early_helped_selection, error));
     CHECK(early_helped_selection.minimum_effective_available);
     CHECK(early_helped_selection.response_status == common_flydelta_alpha_response_status::helped);
@@ -185,10 +182,7 @@ int main() {
     common_flydelta_alpha_response_selection dose_selection;
     std::vector<common_flydelta_alpha_response_trial> dose_trials;
     CHECK(common_flydelta_run_alpha_response_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:alpha-response-dose-retry", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, dose_config,
+        make_fixture("fixture:alpha-response-dose-retry"), dose_config,
         [](const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & counterfactual,
                 common_flydelta_decision_margin & margin,

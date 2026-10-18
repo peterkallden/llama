@@ -83,6 +83,10 @@ struct llama_context {
 
     float * get_logits();
     float * get_logits_ith(int32_t i);
+    float get_teacher_forced_logprob_ith(int32_t i);
+    bool get_teacher_forced_logprob_is_device(int32_t i);
+    void set_teacher_forced_targets(
+            const llama_seq_id * seq_ids, const llama_token * target_tokens, size_t n_targets);
 
     float * get_embeddings();
     float * get_embeddings_ith(int32_t i);
@@ -323,6 +327,9 @@ private:
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     buffer_view<float> logits = {nullptr, 0};
+    buffer_view<float> teacher_logprobs = {nullptr, 0};
+    std::vector<uint8_t> teacher_score_device;
+    std::map<llama_seq_id, llama_token> teacher_score_targets;
 
     // embeddings output (2-dimensional array: [n_outputs][n_embd])
     // populated only when pooling_type == LLAMA_POOLING_TYPE_NONE

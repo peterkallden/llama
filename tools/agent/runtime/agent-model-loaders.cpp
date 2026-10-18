@@ -102,6 +102,7 @@ bool common_agent_runtime_server_context_model_loader::load(
     options.per_sequence_cvec_batch = config_.per_sequence_cvec_batch;
     options.per_sequence_factorized_cvec_batch =
         config_.per_sequence_factorized_cvec_batch;
+    options.teacher_scoring_backend = config_.teacher_scoring_backend;
     options.agent_trace = config_.agent_trace;
     options.reserve_flydelta_workspace = config_.reserve_flydelta_workspace;
     auto host = std::make_shared<common_agent_server_context_host>();

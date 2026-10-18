@@ -1393,6 +1393,8 @@ void llm_graph_result::reset() {
     t_sampled_probs.clear();
     t_sampled_logits.clear();
     t_candidates.clear();
+    t_teacher_logprobs.clear();
+    teacher_score_seq_ids.clear();
 
     params = {};
 
@@ -1431,6 +1433,79 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
     }
     if (t_h_nextn != nullptr) {
         ggml_set_output(t_h_nextn);
+    }
+
+    if (t_logits != nullptr && params.teacher_score_targets != nullptr &&
+            !params.teacher_score_targets->empty()) {
+        class teacher_target_input final : public llm_graph_input_i {
+        public:
+            teacher_target_input(
+                    const std::map<llama_seq_id, llama_token> * targets, int64_t n_outputs)
+                : targets(targets), n_outputs(n_outputs) {}
+
+            void set_input(const llama_ubatch * ubatch) override {
+                GGML_ASSERT(ids != nullptr && ggml_backend_buffer_is_host(ids->buffer));
+                auto * out = static_cast<int32_t *>(ids->data);
+                int64_t row = 0;
+                for (uint32_t i = 0; i < ubatch->n_tokens; ++i) {
+                    if (ubatch->output != nullptr && !ubatch->output[i]) continue;
+                    llama_token target = 0;
+                    for (int32_t j = 0; j < ubatch->n_seq_id[i]; ++j) {
+                        const auto found = targets->find(ubatch->seq_id[i][j]);
+                        if (found != targets->end()) {
+                            target = found->second;
+                            break;
+                        }
+                    }
+                    if (row < n_outputs) out[row++] = target;
+                }
+                while (row < n_outputs) out[row++] = 0;
+            }
+
+            bool can_reuse(const llm_graph_params & params) override {
+                if (params.teacher_score_targets == nullptr ||
+                        params.teacher_score_targets->empty()) return false;
+                targets = params.teacher_score_targets;
+                return true;
+            }
+
+            const std::map<llama_seq_id, llama_token> * targets;
+            int64_t n_outputs;
+            ggml_tensor * ids = nullptr;
+        };
+
+        const int64_t n_vocab = t_logits->ne[0];
+        const int64_t n_outputs = t_logits->ne[1];
+        auto input = std::make_unique<teacher_target_input>(
+            params.teacher_score_targets, n_outputs);
+        input->ids = ggml_new_tensor_1d(ctx_compute.get(), GGML_TYPE_I32, n_outputs);
+        ggml_set_input(input->ids);
+        ggml_set_name(input->ids, "teacher_score_targets");
+        ggml_tensor * target_ids = input->ids;
+        add_input(std::move(input));
+
+        t_teacher_logprobs.reserve(n_outputs);
+        for (int64_t i = 0; i < n_outputs; ++i) {
+            ggml_tensor * logits_row = ggml_view_1d(ctx_compute.get(), t_logits,
+                n_vocab, static_cast<size_t>(i) * t_logits->nb[1]);
+            ggml_tensor * logits_matrix = ggml_reshape_2d(ctx_compute.get(),
+                logits_row, n_vocab, 1);
+            ggml_tensor * logits_by_token = ggml_transpose(ctx_compute.get(), logits_matrix);
+            ggml_tensor * target_id = ggml_view_1d(ctx_compute.get(), target_ids, 1,
+                static_cast<size_t>(i) * sizeof(int32_t));
+            ggml_tensor * max_id = ggml_argmax(ctx_compute.get(), logits_matrix);
+            ggml_tensor * target_logit = ggml_get_rows(ctx_compute.get(), logits_by_token, target_id);
+            ggml_tensor * max_logit = ggml_get_rows(ctx_compute.get(), logits_by_token, max_id);
+            ggml_tensor * shifted = ggml_sub(ctx_compute.get(), logits_row, max_logit);
+            ggml_tensor * log_normalizer = ggml_log(ctx_compute.get(),
+                ggml_sum(ctx_compute.get(), ggml_exp(ctx_compute.get(), shifted)));
+            ggml_tensor * logprob = ggml_sub(ctx_compute.get(),
+                ggml_sub(ctx_compute.get(), target_logit, max_logit), log_normalizer);
+            ggml_set_name(logprob, "teacher_forced_logprob");
+            ggml_build_forward_expand(gf, logprob);
+            ggml_set_output(logprob);
+            t_teacher_logprobs.push_back(logprob);
+        }
     }
 
     if (params.layer_reductions != nullptr) {

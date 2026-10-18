@@ -87,6 +87,7 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
         LOG_LEVEL_WARN,
         options.per_sequence_cvec_batch,
         options.per_sequence_factorized_cvec_batch,
+        options.teacher_scoring_backend,
         options.agent_trace,
     };
 }
@@ -222,6 +223,7 @@ bool common_agent_server_context_host::start(
         config.per_sequence_cvec_batch);
     instance->server->set_per_sequence_factorized_cvec_batch_enabled(
         config.per_sequence_factorized_cvec_batch);
+    instance->server->set_teacher_scoring_backend(config.teacher_scoring_backend);
     instance->server->set_agent_trace_enabled(config.agent_trace);
     instance->params = make_agent_server_context_params(config);
 

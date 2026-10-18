@@ -810,6 +810,7 @@ struct llm_graph_params {
     const llama_hadamard * hdmd = nullptr;
 
     std::map<llama_seq_id, llama_sampler *> samplers;
+    const std::map<llama_seq_id, llama_token> * teacher_score_targets = nullptr;
 
     static bool samplers_equal(
           const std::map<llama_seq_id, llama_sampler *> & lhs,
@@ -871,6 +872,9 @@ struct llm_graph_params {
         if (n_outputs != other.n_outputs) {
             return false;
         }
+        if (static_cast<bool>(teacher_score_targets) != static_cast<bool>(other.teacher_score_targets)) {
+            return false;
+        }
 
         if (!samplers_equal(samplers, other.samplers)) {
             return false;
@@ -928,6 +932,7 @@ public:
     ggml_tensor * get_embd()        const { return t_embd; }
     ggml_tensor * get_embd_pooled() const { return t_embd_pooled; }
     ggml_tensor * get_h_nextn()     const { return t_h_nextn; }
+    const std::vector<ggml_tensor *> & get_teacher_logprobs() const { return t_teacher_logprobs; }
 
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
 
@@ -983,6 +988,8 @@ public:
     std::vector<ggml_tensor *> t_sampled_probs;
     std::vector<ggml_tensor *> t_sampled_logits;
     std::vector<ggml_tensor *> t_candidates;
+    std::vector<ggml_tensor *> t_teacher_logprobs;
+    std::vector<llama_seq_id> teacher_score_seq_ids;
 
     std::vector<llm_graph_input_ptr> inputs;
     std::vector<llm_graph_fused_node> fused_nodes;

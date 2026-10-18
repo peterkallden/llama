@@ -5,10 +5,15 @@
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 static common_flydelta_experiment_fixture make_fixture() {
-    return {
-        1, "fixture:search-pipeline", "task", "model", "tokenizer",
-        "template", "execution-context", "verifier"
-    };
+    common_flydelta_experiment_fixture value;
+    value.id = "fixture:search-pipeline";
+    value.task_fingerprint = "task";
+    value.model_profile_fingerprint = "model";
+    value.tokenizer_fingerprint = "tokenizer";
+    value.template_fingerprint = "template";
+    value.execution_context_fingerprint = "execution-context";
+    value.verifier_revision = "verifier";
+    return value;
 }
 
 int main() {

@@ -7,6 +7,7 @@ extern "C" {
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <unordered_map>
 
 using json = nlohmann::ordered_json;
 
@@ -36,11 +37,25 @@ const char * schema = R"COZO(
     }
 )COZO";
 
-bool relation_exists(const json & relations) {
+const char * order_schema = R"COZO(
+    {
+        ?[event_id, registration_order] <- [['__probe__', 0]]
+        :create agent_learning_lifecycle_order {
+            event_id: String =>
+            registration_order: Int
+        }
+    }
+    {
+        ?[event_id] <- [['__probe__']]
+        :delete agent_learning_lifecycle_order { event_id }
+    }
+)COZO";
+
+bool relation_exists(const json & relations, const std::string & name = "agent_learning_lifecycle") {
     if (!relations.is_object() || !relations.contains("rows") || !relations["rows"].is_array()) return false;
     for (const auto & row : relations["rows"]) {
         if (row.is_array() && !row.empty() && row[0].is_string() &&
-                row[0].get<std::string>() == "agent_learning_lifecycle") return true;
+                row[0].get<std::string>() == name) return true;
     }
     return false;
 }
@@ -109,9 +124,16 @@ bool common_agent_cozo_learning_lifecycle_store::open(const std::string & path, 
     if (open_error) { error = open_error; cozo_free_str(open_error); db_id_ = -1; return false; }
     std::string relations;
     if (!run("::relations", "{}", relations, error)) { close(); return false; }
-    if (!relation_exists(json::parse(relations, nullptr, false))) {
+    const auto relation_set = json::parse(relations, nullptr, false);
+    const bool have_lifecycle = relation_exists(relation_set);
+    const bool have_order = relation_exists(relation_set, "agent_learning_lifecycle_order");
+    if (!have_lifecycle) {
         std::string ignored;
         if (!run(schema, "{}", ignored, error)) { close(); return false; }
+    }
+    if (!have_order) {
+        std::string ignored;
+        if (!run(order_schema, "{}", ignored, error)) { close(); return false; }
     }
     return true;
 }
@@ -122,6 +144,7 @@ void common_agent_cozo_learning_lifecycle_store::close() {
 
 bool common_agent_cozo_learning_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
+    std::lock_guard<std::mutex> lock(append_mutex_);
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
     bool exists = false;
     if (!contains_idempotency(record.idempotency_key, exists, error)) return false;
@@ -136,6 +159,11 @@ bool common_agent_cozo_learning_lifecycle_store::append(
             return true;
         }
     }
+    const auto existing = list(error);
+    if (!error.empty()) return false;
+    uint64_t registration_order = 1;
+    for (const auto & item : existing)
+        registration_order = std::max(registration_order, item.registration_order + 1);
     const auto params = json{
         {"event_id", record.event_id},
         {"idempotency_key", record.idempotency_key},
@@ -149,9 +177,13 @@ bool common_agent_cozo_learning_lifecycle_store::append(
         {"content_hash", record.content_hash},
         {"created_at", record.created_at},
         {"payload_json", record.payload_json},
+        {"registration_order", registration_order},
     };
     std::string result;
-    return run("?[event_id, idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json] <- [[$event_id, $idempotency_key, $subject_id, $kind, $status, $namespace_id, $project_id, $session_id, $source_id, $content_hash, $created_at, $payload_json]] :put agent_learning_lifecycle { event_id => idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json }", params.dump(), result, error);
+    const std::string script =
+        "{ ?[event_id, idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json] <- [[$event_id, $idempotency_key, $subject_id, $kind, $status, $namespace_id, $project_id, $session_id, $source_id, $content_hash, $created_at, $payload_json]] :put agent_learning_lifecycle { event_id => idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json } } "
+        "{ ?[event_id, registration_order] <- [[$event_id, $registration_order]] :put agent_learning_lifecycle_order { event_id => registration_order } }";
+    return run(script, params.dump(), result, error);
 }
 
 bool common_agent_cozo_learning_lifecycle_store::contains_idempotency(
@@ -172,5 +204,32 @@ std::vector<common_learning_lifecycle_record> common_agent_cozo_learning_lifecyc
     std::string raw;
     if (!run("?[event_id, idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json] := *agent_learning_lifecycle[event_id, idempotency_key, subject_id, kind, status, namespace_id, project_id, session_id, source_id, content_hash, created_at, payload_json]", "{}", raw, error)) return result;
     if (!parse_rows(raw, result, error)) result.clear();
+    if (!error.empty()) return {};
+    std::string order_raw;
+    if (!run("?[event_id, registration_order] := *agent_learning_lifecycle_order[event_id, registration_order]", "{}", order_raw, error)) return {};
+    const auto order_json = json::parse(order_raw, nullptr, false);
+    if (!order_json.is_object() || !order_json.contains("rows") || !order_json["rows"].is_array()) {
+        error = "Cozo lifecycle registration-order query returned invalid rows";
+        return {};
+    }
+    std::unordered_map<std::string, uint64_t> orders;
+    for (const auto & row : order_json["rows"]) {
+        if (row.is_array() && row.size() >= 2 && row[0].is_string() && row[1].is_number_integer())
+            orders[row[0].get<std::string>()] = row[1].get<uint64_t>();
+    }
+    for (auto & record : result) {
+        const auto found = orders.find(record.event_id);
+        if (found != orders.end()) {
+            record.schema_version = 2;
+            record.registration_order = found->second;
+        } else {
+            record.schema_version = 1;
+            record.registration_order = 0;
+        }
+    }
+    std::stable_sort(result.begin(), result.end(), [](const auto & a, const auto & b) {
+        if (a.registration_order == 0 || b.registration_order == 0) return a.registration_order > b.registration_order;
+        return a.registration_order < b.registration_order;
+    });
     return result;
 }

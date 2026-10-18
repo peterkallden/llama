@@ -42,6 +42,11 @@ struct common_agent_inference_options {
     // This is deliberately separate from the general batch opt-in: existing
     // requests retain the established sparse/dense behavior by default.
     bool per_sequence_factorized_cvec_batch = false;
+    // Teacher-forced scoring can reduce target-token log probabilities in the
+    // model graph and return one scalar per output. `cpu` keeps the legacy
+    // host reduction; `backend` requires non-CPU graph placement; `auto` uses
+    // graph reduction when available and retains a CPU-safe fallback.
+    std::string teacher_scoring_backend = "auto";
     // Explicitly carries --agent-trace into the resident context.
     bool agent_trace = false;
     std::string mmproj;

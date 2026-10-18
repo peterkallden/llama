@@ -98,6 +98,7 @@ struct agent_host_config {
     size_t adaptation_flydelta_max_capture_candidates = 64;
     common_flydelta_canary_policy adaptation_flydelta_canary_policy;
     common_flydelta_outcome_guidance_config adaptation_flydelta_outcome_guidance;
+    std::string adaptation_flydelta_teacher_scoring_backend = "auto";
 
     std::string memory_backend = "auto";
     std::string memory_db;

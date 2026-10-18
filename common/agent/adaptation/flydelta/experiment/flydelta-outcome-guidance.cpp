@@ -9,13 +9,14 @@
 #include <set>
 #include <sstream>
 #include <tuple>
+#include "hash/hash.h"
 
 namespace {
 
 using context_key = std::tuple<std::string, std::string, std::string, std::string,
     std::string, std::string, std::string, std::string>;
 using bucket_key = std::tuple<std::string, std::string, std::string, size_t,
-    int, int, int, int>;
+    int, int, int, int, std::string>;
 
 context_key hard_key(const common_flydelta_outcome_guidance_context & c) {
     return {c.scope_fingerprint, c.model_profile_fingerprint,
@@ -32,7 +33,7 @@ bucket_key key_for(const common_flydelta_outcome_guidance_context & c,
     return {c.semantic_domain, c.strategy, c.estimator, a.rank,
         layer_bucket(a.relative_layer), dose_bucket(a.relative_dose),
         a.mixed_coefficients ? 1 : 0, a.diagnostic_margin_sign < 0 ? -1 :
-            (a.diagnostic_margin_sign > 0 ? 1 : 0)};
+            (a.diagnostic_margin_sign > 0 ? 1 : 0), a.basis_identity};
 }
 
 bucket_key key_for(const common_flydelta_outcome_guidance_observation & o) {
@@ -47,7 +48,11 @@ bucket_key key_for(const common_flydelta_outcome_guidance_observation & o) {
     return key_for(o.context, candidate);
 }
 
-struct counts { double known=0, unknown=0, helped=0, neutral=0, harmed=0; };
+struct counts {
+    double known = 0.0, unknown = 0.0, helped = 0.0, neutral = 0.0, harmed = 0.0;
+    size_t fixture_groups = 0;
+    size_t categorical_groups = 0;
+};
 
 template<class Predicate>
 counts aggregate(const std::vector<const common_flydelta_outcome_guidance_observation*> & rows,
@@ -57,17 +62,29 @@ counts aggregate(const std::vector<const common_flydelta_outcome_guidance_observ
         groups[o->fixture_group_id].push_back(o);
     counts c;
     for (const auto & group : groups) {
-        const double w = 1.0 / static_cast<double>(group.second.size());
+        ++c.fixture_groups;
+        size_t known_rows = 0;
         for (const auto * o : group.second) {
-            if (!o->verifier_known) { c.unknown += w; continue; }
-            c.known += w;
+            known_rows += o->outcome != common_flydelta_counterfactual_outcome::unknown;
+        }
+        const double verifiability_weight = 1.0 / static_cast<double>(group.second.size());
+        const double categorical_weight = known_rows > 0
+            ? 1.0 / static_cast<double>(known_rows) : 0.0;
+        bool group_has_category = false;
+        for (const auto * o : group.second) {
+            if (o->outcome == common_flydelta_counterfactual_outcome::unknown) {
+                c.unknown += verifiability_weight;
+                continue;
+            }
+            c.known += verifiability_weight;
             switch (o->outcome) {
-                case common_flydelta_counterfactual_outcome::helped: c.helped += w; break;
-                case common_flydelta_counterfactual_outcome::neutral: c.neutral += w; break;
-                case common_flydelta_counterfactual_outcome::harmed: c.harmed += w; break;
+                case common_flydelta_counterfactual_outcome::helped: c.helped += categorical_weight; group_has_category = true; break;
+                case common_flydelta_counterfactual_outcome::neutral: c.neutral += categorical_weight; group_has_category = true; break;
+                case common_flydelta_counterfactual_outcome::harmed: c.harmed += categorical_weight; group_has_category = true; break;
                 case common_flydelta_counterfactual_outcome::unknown: break;
             }
         }
+        if (group_has_category) ++c.categorical_groups;
     }
     return c;
 }
@@ -77,31 +94,35 @@ std::string history_hash(const std::vector<const common_flydelta_outcome_guidanc
     std::sort(sorted.begin(), sorted.end(), [](const auto * a, const auto * b) {
         return a->stable_observation_id < b->stable_observation_id;
     });
-    uint64_t h = 1469598103934665603ULL;
-    const auto add = [&h](const std::string & s) {
-        for (const unsigned char ch : s) { h ^= ch; h *= 1099511628211ULL; }
-        h ^= 0xff; h *= 1099511628211ULL;
-    };
-    const auto add_number = [&add](double v) {
-        std::ostringstream value;
-        value.precision(17);
-        value << v;
-        add(value.str());
+    nlohmann::ordered_json canonical = {
+        {"builder_revision", "flydelta-outcome-projection-v2"},
+        {"observations", nlohmann::ordered_json::array()},
     };
     for (const auto * o : sorted) {
-        add(o->stable_observation_id);
-        add(o->fixture_group_id);
-        add(o->basis_identity);
-        add(std::to_string(static_cast<int>(o->outcome)));
-        add(o->verifier_known ? "known" : "unknown");
-        add(std::to_string(o->rank));
-        add_number(o->relative_layer);
-        add_number(o->relative_dose);
-        add(o->mixed_coefficients ? "mixed" : "single");
-        add(std::to_string(o->diagnostic_margin_sign));
+        canonical["observations"].push_back({
+            {"id", o->stable_observation_id}, {"fixture_group", o->fixture_group_id},
+            {"basis", o->basis_identity}, {"outcome", static_cast<int>(o->outcome)},
+            {"outcome_known", o->outcome_known}, {"verifier_known", o->verifier_known},
+            {"comparison_completed", o->comparison_completed}, {"overlay_applied", o->overlay_applied},
+            {"rank", o->rank}, {"relative_layer", o->relative_layer},
+            {"relative_dose", o->relative_dose}, {"mixed", o->mixed_coefficients},
+            {"margin_sign", o->diagnostic_margin_sign},
+            {"context", {
+                {"scope", o->context.scope_fingerprint},
+                {"model", o->context.model_profile_fingerprint},
+                {"tokenizer", o->context.tokenizer_fingerprint},
+                {"template", o->context.template_fingerprint},
+                {"deployment", o->context.baseline_deployment_fingerprint},
+                {"verifier", o->context.verifier_revision},
+                {"ruleset", o->context.ruleset_revision},
+                {"action_contract", o->context.action_contract_fingerprint},
+                {"domain", o->context.semantic_domain}, {"strategy", o->context.strategy},
+                {"estimator", o->context.estimator},
+            }},
+        });
     }
-    std::ostringstream out; out << std::hex << h;
-    return out.str();
+    const std::string material = canonical.dump();
+    return "sha256:" + hash_sha256_hex(material.data(), material.size());
 }
 
 double sample_beta(double a, double b, std::mt19937_64 & rng) {
@@ -156,7 +177,8 @@ bool common_flydelta_outcome_guidance_build_decision(
         const std::vector<common_flydelta_outcome_guidance_observation> & history,
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const size_t selection_limit, const uint64_t job_seed,
-        common_flydelta_outcome_guidance_decision & d, std::string & error) {
+        common_flydelta_outcome_guidance_decision & d, std::string & error,
+        const common_flydelta_outcome_guidance_policy policy) {
     d = {}; error.clear();
     if (!common_flydelta_outcome_guidance_config_validate(config, error) ||
             context.scope_fingerprint.empty() || context.model_profile_fingerprint.empty() ||
@@ -180,60 +202,141 @@ bool common_flydelta_outcome_guidance_build_decision(
         d.original_order.push_back(i);
     }
     std::vector<const common_flydelta_outcome_guidance_observation*> rows;
-    std::set<std::string> seen;
+    d.read_history_rows = history.size();
+    std::map<std::string, std::string> signatures;
+    std::set<std::string> conflicted;
+    auto observation_signature = [](const auto & o) {
+        return nlohmann::ordered_json{
+            {"fixture_group", o.fixture_group_id}, {"basis", o.basis_identity},
+            {"scope", o.context.scope_fingerprint}, {"model", o.context.model_profile_fingerprint},
+            {"tokenizer", o.context.tokenizer_fingerprint}, {"template", o.context.template_fingerprint},
+            {"deployment", o.context.baseline_deployment_fingerprint}, {"verifier", o.context.verifier_revision},
+            {"ruleset", o.context.ruleset_revision}, {"action", o.context.action_contract_fingerprint},
+            {"domain", o.context.semantic_domain}, {"strategy", o.context.strategy},
+            {"estimator", o.context.estimator}, {"rank", o.rank},
+            {"layer", o.relative_layer}, {"dose", o.relative_dose},
+            {"mixed", o.mixed_coefficients}, {"margin", o.diagnostic_margin_sign},
+            {"completed", o.comparison_completed}, {"overlay", o.overlay_applied},
+            {"outcome_known", o.outcome != common_flydelta_counterfactual_outcome::unknown},
+            {"verifier_known", o.verifier_known},
+            {"outcome", static_cast<int>(o.outcome)},
+        }.dump();
+    };
     for (const auto & o : history) {
         if (o.stable_observation_id.empty() || o.fixture_group_id.empty() ||
                 !o.comparison_completed || !o.overlay_applied ||
                 hard_key(o.context) != hard_key(context) ||
                 !std::isfinite(o.relative_layer) || !std::isfinite(o.relative_dose) ||
-                o.relative_layer < 0 || o.relative_layer > 1 || o.relative_dose < 0 || o.relative_dose > 1) continue;
-        if (o.verifier_known && o.outcome == common_flydelta_counterfactual_outcome::unknown) continue;
-        if (!o.verifier_known && o.outcome != common_flydelta_counterfactual_outcome::unknown) continue;
-        if (!seen.insert(o.stable_observation_id).second) continue;
+                o.relative_layer < 0 || o.relative_layer > 1 || o.relative_dose < 0 || o.relative_dose > 1 ||
+                o.outcome_known != (o.outcome != common_flydelta_counterfactual_outcome::unknown) ||
+                (o.outcome_known && !o.verifier_known)) {
+            ++d.rejected_history_rows;
+            continue;
+        }
+        const std::string signature = observation_signature(o);
+        const auto inserted = signatures.emplace(o.stable_observation_id, signature);
+        if (!inserted.second) {
+            if (inserted.first->second != signature) conflicted.insert(o.stable_observation_id);
+            else ++d.deduplicated_history_rows;
+        }
+    }
+    for (const auto & o : history) {
+        const auto found = signatures.find(o.stable_observation_id);
+        if (found == signatures.end()) continue;
+        if (conflicted.count(o.stable_observation_id)) { ++d.rejected_history_rows; continue; }
+        if (observation_signature(o) != found->second) continue;
+        // Identical retries are accepted once; a conflicting id is excluded
+        // entirely so append order cannot choose the winning observation.
+        if (std::find_if(rows.begin(), rows.end(), [&](const auto * prior) {
+                return prior->stable_observation_id == o.stable_observation_id;
+            }) != rows.end()) continue;
+        if (!o.comparison_completed || !o.overlay_applied ||
+                hard_key(o.context) != hard_key(context) || o.fixture_group_id.empty()) continue;
         rows.push_back(&o);
     }
+    d.compatible_history_rows = rows.size();
     d.history_fingerprint = history_hash(rows);
     d.shadow_order = d.original_order;
+    d.mixed_policy_order = d.original_order;
     d.selected_order = d.original_order;
     d.selection_reasons.assign(candidates.size(), config.mode == common_flydelta_outcome_guidance_mode::off
         ? "guidance_off_existing_order" : "shadow_preserved_existing_order");
+    d.mixed_policy_reasons = d.selection_reasons;
     if (config.mode == common_flydelta_outcome_guidance_mode::off || candidates.empty()) return true;
     d.selected_order.clear();
     d.selection_reasons.clear();
+    d.mixed_policy_reasons.clear();
 
     std::mt19937_64 rng(config.seed ^ job_seed);
     struct scored { size_t index; double utility; };
     std::vector<scored> sampled;
+    std::vector<scored> by_mean;
+    struct cached_bucket {
+        counts leaf;
+        std::set<std::string> leaf_groups;
+        counts strategy_backoff;
+        counts domain_backoff;
+        size_t raw_observations = 0;
+    };
+    std::map<bucket_key, cached_bucket> bucket_cache;
+    for (const auto * row : rows) {
+        const auto key = key_for(*row);
+        auto & cached = bucket_cache[key];
+        cached.leaf_groups.insert(row->fixture_group_id);
+        ++cached.raw_observations;
+    }
+    for (auto & [key, cached] : bucket_cache) {
+        const auto & [domain, strategy_name, estimator_name, rank,
+            layer, dose, mixed, margin, basis_identity] = key;
+        (void) rank; (void) layer; (void) dose; (void) mixed; (void) margin;
+        cached.leaf = aggregate(rows, [&](const auto & o) { return key_for(o) == key; });
+        cached.strategy_backoff = aggregate(rows, [&](const auto & o) {
+            return o.context.semantic_domain == domain &&
+                o.context.strategy == strategy_name && o.context.estimator == estimator_name;
+        }, cached.leaf_groups);
+        cached.domain_backoff = aggregate(rows, [&](const auto & o) {
+            return o.context.semantic_domain == domain;
+        }, cached.leaf_groups);
+        (void) basis_identity;
+    }
     for (size_t i=0; i<candidates.size(); ++i) {
         const auto exact = key_for(context, candidates[i]);
-        const counts leaf = aggregate(rows, [&](const auto & o) { return key_for(o) == exact; });
-        std::set<std::string> leaf_group_ids;
-        for (auto * o : rows) if (key_for(*o) == exact) leaf_group_ids.insert(o->fixture_group_id);
-        const counts strategy = aggregate(rows, [&](const auto & o) {
-            return o.context.semantic_domain == context.semantic_domain &&
-                o.context.strategy == context.strategy && o.context.estimator == context.estimator;
-        }, leaf_group_ids);
-        const counts domain = aggregate(rows, [&](const auto & o) {
-            return o.context.semantic_domain == context.semantic_domain;
-        }, leaf_group_ids);
-        const size_t leaf_groups = leaf_group_ids.size();
-        const size_t strategy_groups = static_cast<size_t>(std::ceil(strategy.known + strategy.unknown));
-        const counts & base = strategy_groups >= config.min_backoff_groups ? strategy : domain;
-        const size_t base_groups = base.known + base.unknown > 0
-            ? static_cast<size_t>(std::ceil(base.known + base.unknown)) : 0;
+        auto cached_it = bucket_cache.find(exact);
+        if (cached_it == bucket_cache.end()) {
+            cached_it = bucket_cache.emplace(exact, cached_bucket{}).first;
+            auto & cached = cached_it->second;
+            cached.strategy_backoff = aggregate(rows, [&](const auto & o) {
+                return o.context.semantic_domain == context.semantic_domain &&
+                    o.context.strategy == context.strategy && o.context.estimator == context.estimator;
+            });
+            cached.domain_backoff = aggregate(rows, [&](const auto & o) {
+                return o.context.semantic_domain == context.semantic_domain;
+            });
+        }
+        const auto & cached = cached_it->second;
+        const counts & leaf = cached.leaf;
+        const size_t leaf_groups = cached.leaf_groups.size();
+        const counts & strategy = cached.strategy_backoff;
+        const counts & domain = cached.domain_backoff;
+        const counts & known_base = strategy.fixture_groups >= config.min_backoff_groups ? strategy : domain;
+        const size_t base_groups = known_base.fixture_groups;
         const double prior = base_groups >= config.min_backoff_groups ?
             std::min(config.max_prior_strength, 4.0) : 0.0;
-        const double total = base.known + base.unknown;
-        const double known_mean = total > 0 ? base.known / total : 0.5;
-        const double outcome_total = base.helped + base.neutral + base.harmed;
-        const double helped_mean = outcome_total > 0 ? base.helped / outcome_total : 1.0/3.0;
-        const double neutral_mean = outcome_total > 0 ? base.neutral / outcome_total : 1.0/3.0;
-        const double harmed_mean = outcome_total > 0 ? base.harmed / outcome_total : 1.0/3.0;
+        const double known_total = known_base.known + known_base.unknown;
+        const double known_mean = known_total > 0 ? known_base.known / known_total : 0.5;
+        const counts & category_base = strategy.categorical_groups >= config.min_backoff_groups
+            ? strategy : domain;
+        const double category_prior = category_base.categorical_groups >= config.min_backoff_groups
+            ? std::min(config.max_prior_strength, 4.0) : 0.0;
+        const double outcome_total = category_base.helped + category_base.neutral + category_base.harmed;
+        const double helped_mean = outcome_total > 0 ? category_base.helped / outcome_total : 1.0/3.0;
+        const double neutral_mean = outcome_total > 0 ? category_base.neutral / outcome_total : 1.0/3.0;
+        const double harmed_mean = outcome_total > 0 ? category_base.harmed / outcome_total : 1.0/3.0;
         const double pka = 1.0 + leaf.known + prior * known_mean;
         const double pkb = 1.0 + leaf.unknown + prior * (1.0-known_mean);
-        const double pha = 1.0 + leaf.helped + prior * helped_mean;
-        const double pna = 1.0 + leaf.neutral + prior * neutral_mean;
-        const double pda = 1.0 + leaf.harmed + prior * harmed_mean;
+        const double pha = 1.0 + leaf.helped + category_prior * helped_mean;
+        const double pna = 1.0 + leaf.neutral + category_prior * neutral_mean;
+        const double pda = 1.0 + leaf.harmed + category_prior * harmed_mean;
         common_flydelta_outcome_guidance_prediction p;
         p.arm_id = candidates[i].arm_id;
         p.level = leaf_groups ? "arm_category" : (prior > 0 ? "backoff" : "global_prior");
@@ -256,10 +359,11 @@ bool common_flydelta_outcome_guidance_build_decision(
         p.effective_unknown_observations = leaf.unknown;
         p.backoff_fixture_groups = base_groups;
         p.backoff_prior_strength = prior;
-        p.raw_observations = 0;
-        for (auto * o:rows) if (key_for(*o)==exact) ++p.raw_observations;
+        p.backoff_categorical_prior_strength = category_prior;
+        p.raw_observations = cached.raw_observations;
         p.fixture_groups = leaf_groups;
         d.predictions.push_back(p);
+        by_mean.push_back({i, p.expected_utility});
         const double sk = sample_beta(pka, pkb, rng);
         std::gamma_distribution<double> g1(pha,1.0),g2(pna,1.0),g3(pda,1.0);
         const double x=g1(rng),y=g2(rng),z=g3(rng),sum=x+y+z;
@@ -267,32 +371,59 @@ bool common_flydelta_outcome_guidance_build_decision(
         sampled.push_back({i,utility});
     }
     std::stable_sort(sampled.begin(),sampled.end(),[](const auto & a,const auto & b){return a.utility>b.utility;});
+    std::stable_sort(by_mean.begin(), by_mean.end(), [](const auto & a, const auto & b) {
+        return a.utility > b.utility;
+    });
     d.shadow_order.clear();
     for (const auto & s:sampled) d.shadow_order.push_back(s.index);
     std::set<size_t> selected;
-    for (size_t slot=0; slot<selection_limit;) {
-        // Keep two existing choices, then draw one posterior choice and one
-        // uniform exploration choice when the candidate/budget pool permits.
-        for (int k=0;k<2 && slot<selection_limit;++k) {
-            for (size_t ix:d.original_order) if (!selected.count(ix)) {
-                d.selected_order.push_back(ix); d.selection_reasons.push_back("existing_order");
-                selected.insert(ix); ++slot; break;
+    size_t existing_cursor = 0;
+    for (size_t slot=0; slot<selection_limit; ++slot) {
+        const size_t policy_slot = static_cast<size_t>((job_seed + slot) % 4);
+        size_t choice = candidates.size();
+        const char * reason = "existing_order";
+        if (policy_slot < 2) {
+            while (existing_cursor < d.original_order.size() &&
+                    selected.count(d.original_order[existing_cursor])) ++existing_cursor;
+            if (existing_cursor < d.original_order.size()) choice = d.original_order[existing_cursor++];
+        } else if (policy_slot == 2) {
+            reason = policy == common_flydelta_outcome_guidance_policy::posterior_mean
+                ? "posterior_mean" : "posterior_sample";
+            const auto & posterior_order =
+                policy == common_flydelta_outcome_guidance_policy::posterior_mean
+                    ? by_mean : sampled;
+            for (const auto & s : posterior_order) if (!selected.count(s.index)) {
+                choice = s.index;
+                break;
+            }
+        } else {
+            reason = "uniform_exploration";
+            std::vector<size_t> remaining;
+            for (size_t i=0; i<candidates.size(); ++i) if (!selected.count(i)) remaining.push_back(i);
+            if (!remaining.empty()) {
+                std::uniform_int_distribution<size_t> pick(0, remaining.size()-1);
+                choice = remaining[pick(rng)];
             }
         }
-        if (slot<selection_limit) {
-            for (const auto & s:sampled) if (!selected.count(s.index)) {
-                d.selected_order.push_back(s.index); d.selection_reasons.push_back("posterior_sample");
-                selected.insert(s.index); ++slot; break;
+        // Empty policy classes are filled from the existing ordering without
+        // duplication; the bounded pool is still fully ordered for callers.
+        if (choice == candidates.size()) {
+            for (const size_t ix : d.original_order) if (!selected.count(ix)) {
+                choice = ix;
+                reason = "existing_order_policy_fallback";
+                break;
             }
         }
-        if (slot<selection_limit) {
-            std::vector<size_t> remaining; for (size_t i=0;i<candidates.size();++i) if (!selected.count(i)) remaining.push_back(i);
-            if (!remaining.empty()) { std::uniform_int_distribution<size_t> pick(0,remaining.size()-1); const auto ix=remaining[pick(rng)]; d.selected_order.push_back(ix); d.selection_reasons.push_back("uniform_exploration"); selected.insert(ix); ++slot; }
-        }
+        if (choice == candidates.size()) break;
+        d.selected_order.push_back(choice);
+        d.selection_reasons.push_back(reason);
+        selected.insert(choice);
     }
     for (size_t ix : d.original_order) if (!selected.count(ix)) {
         d.selected_order.push_back(ix); d.selection_reasons.push_back("remaining_existing_order");
     }
+    d.mixed_policy_order = d.selected_order;
+    d.mixed_policy_reasons = d.selection_reasons;
     if (config.mode == common_flydelta_outcome_guidance_mode::shadow) {
         d.selected_order = d.original_order;
         d.selection_reasons.assign(candidates.size(), "shadow_preserved_existing_order");
@@ -316,13 +447,42 @@ bool common_flydelta_outcome_guidance_replay(
     std::array<size_t, 10> calibration_count{};
     std::array<double, 10> calibration_prediction{}, calibration_actual{};
     uint64_t replay_seed = config.seed;
+    std::map<std::string, std::string> replay_seen;
+    std::set<std::string> replay_conflicts;
+    const auto replay_signature = [](const auto & row) {
+        return nlohmann::ordered_json{
+            {"group", row.fixture_group_id},
+            {"context", {row.context.scope_fingerprint, row.context.model_profile_fingerprint,
+                row.context.tokenizer_fingerprint, row.context.template_fingerprint,
+                row.context.verifier_revision, row.context.baseline_deployment_fingerprint,
+                row.context.ruleset_revision, row.context.action_contract_fingerprint,
+                row.context.semantic_domain, row.context.strategy, row.context.estimator}},
+            {"rank", row.rank}, {"layer", row.relative_layer}, {"dose", row.relative_dose},
+            {"basis", row.basis_identity}, {"outcome", static_cast<int>(row.outcome)},
+            {"outcome_known", row.outcome_known}, {"verifier_known", row.verifier_known},
+            {"margin_sign", row.diagnostic_margin_sign},
+            {"completed", row.comparison_completed}, {"overlay", row.overlay_applied},
+        }.dump();
+    };
+    for (const auto & row : chronological) {
+        if (!row.comparison_completed || !row.overlay_applied || row.fixture_group_id.empty() ||
+                row.stable_observation_id.empty() ||
+                row.outcome_known != (row.outcome != common_flydelta_counterfactual_outcome::unknown) ||
+                (row.outcome_known && !row.verifier_known) ||
+                (row.outcome != common_flydelta_counterfactual_outcome::unknown && !row.verifier_known)) continue;
+        const auto signature = replay_signature(row);
+        const auto found = replay_seen.emplace(row.stable_observation_id, signature);
+        if (!found.second && found.first->second != signature)
+            replay_conflicts.insert(row.stable_observation_id);
+    }
+    replay_seen.clear();
     for (const auto & observed : chronological) {
         const bool eligible = observed.comparison_completed && observed.overlay_applied &&
             !observed.fixture_group_id.empty() && !observed.stable_observation_id.empty() &&
-            (!observed.verifier_known
-                ? observed.outcome == common_flydelta_counterfactual_outcome::unknown
-                : observed.outcome != common_flydelta_counterfactual_outcome::unknown);
-        if (!eligible) continue;
+            (observed.outcome == common_flydelta_counterfactual_outcome::unknown ||
+                observed.verifier_known);
+        if (!eligible || replay_conflicts.count(observed.stable_observation_id)) continue;
+        if (!replay_seen.emplace(observed.stable_observation_id, replay_signature(observed)).second) continue;
         if (holdout.count(observed.fixture_group_id)) {
             common_flydelta_outcome_guidance_config scoring_config = config;
             scoring_config.mode = common_flydelta_outcome_guidance_mode::shadow;
@@ -343,7 +503,8 @@ bool common_flydelta_outcome_guidance_replay(
                 return false;
             }
             const auto & prediction = decision.predictions.front();
-            const double known_target = observed.verifier_known ? 1.0 : 0.0;
+            const bool outcome_known = observed.outcome != common_flydelta_counterfactual_outcome::unknown;
+            const double known_target = outcome_known ? 1.0 : 0.0;
             model_known_brier += std::pow(prediction.p_known - known_target, 2);
             const size_t calibration_bin = std::min<size_t>(9,
                 static_cast<size_t>(prediction.p_known * 10.0));
@@ -363,7 +524,7 @@ bool common_flydelta_outcome_guidance_replay(
             const double historical_known = past_total > 0 ? past.known / past_total : 0.5;
             empirical_known_brier += std::pow(historical_known - known_target, 2);
             ++metrics.eligible_predictions;
-            if (observed.verifier_known) {
+            if (outcome_known) {
                 const double helped_target = observed.outcome == common_flydelta_counterfactual_outcome::helped ? 1.0 : 0.0;
                 const double neutral_target = observed.outcome == common_flydelta_counterfactual_outcome::neutral ? 1.0 : 0.0;
                 const double harmed_target = observed.outcome == common_flydelta_counterfactual_outcome::harmed ? 1.0 : 0.0;
@@ -415,6 +576,8 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         const std::string & job_id,
         const common_flydelta_outcome_guidance_mode mode,
         const uint64_t seed,
+        const int phase_id,
+        const size_t decision_sequence,
         const common_flydelta_outcome_guidance_context & context,
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const common_flydelta_outcome_guidance_decision & decision,
@@ -427,16 +590,31 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
             decision.selected_order.size() != candidates.size() ||
             decision.selection_reasons.size() != candidates.size() ||
             decision.shadow_order.size() != candidates.size() ||
+            decision.mixed_policy_order.size() != candidates.size() ||
+            decision.mixed_policy_reasons.size() != candidates.size() ||
             (decision.predictions.size() != candidates.size() &&
              !(decision.predictions.empty() && !decision.fallback_reason.empty()))) {
         error = "FlyDelta outcome guidance lifecycle decision is incomplete";
         return false;
     }
+    json candidate_pool = json::array();
+    for (const auto & candidate : candidates) candidate_pool.push_back({
+        {"arm_id", candidate.arm_id}, {"basis_identity", candidate.basis_identity},
+        {"rank", candidate.rank}, {"relative_layer", candidate.relative_layer},
+        {"relative_dose", candidate.relative_dose},
+        {"mixed_coefficients", candidate.mixed_coefficients},
+        {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
+    });
+    const std::string candidate_pool_canonical = candidate_pool.dump();
+    const std::string candidate_pool_fingerprint = "sha256:" +
+        hash_sha256_hex(candidate_pool_canonical.data(), candidate_pool_canonical.size());
     json payload = {
         {"record_type", "outcome_guidance_decision"},
-        {"schema_version", 1}, {"job_id", job_id}, {"seed", seed},
+        {"schema_version", 2}, {"job_id", job_id}, {"seed", seed},
+        {"phase_id", phase_id}, {"decision_sequence", decision_sequence},
         {"mode", common_flydelta_outcome_guidance_mode_name(mode)},
         {"history_fingerprint", decision.history_fingerprint},
+        {"candidate_pool_fingerprint", candidate_pool_fingerprint},
         {"context", {
             {"scope_fingerprint", context.scope_fingerprint},
             {"model_profile_fingerprint", context.model_profile_fingerprint},
@@ -449,21 +627,16 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
             {"semantic_domain", context.semantic_domain},
             {"strategy", context.strategy}, {"estimator", context.estimator},
         }},
-        {"candidate_pool", json::array()},
+        {"candidate_pool", candidate_pool},
         {"original_order", decision.original_order},
         {"shadow_order", decision.shadow_order},
+        {"mixed_policy_order", decision.mixed_policy_order},
         {"selected_order", decision.selected_order},
+        {"mixed_policy_reasons", decision.mixed_policy_reasons},
         {"selection_reasons", json::array()},
         {"fallback_reason", decision.fallback_reason},
         {"predictions", json::array()},
     };
-    for (const auto & candidate : candidates) payload["candidate_pool"].push_back({
-        {"arm_id", candidate.arm_id}, {"basis_identity", candidate.basis_identity},
-        {"rank", candidate.rank},
-        {"relative_layer", candidate.relative_layer}, {"relative_dose", candidate.relative_dose},
-        {"mixed_coefficients", candidate.mixed_coefficients},
-        {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
-    });
     for (size_t pos = 0; pos < decision.selected_order.size(); ++pos) {
         const size_t candidate_index = decision.selected_order[pos];
         if (candidate_index >= candidates.size()) {

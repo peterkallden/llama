@@ -328,6 +328,7 @@ bool common_flydelta_append_search_lifecycle(
             {"diagnostic_margin_sign", observation.guidance_margin_sign},
             {"comparison_completed", observation.guidance_comparison_completed},
             {"overlay_applied", observation.guidance_overlay_applied},
+            {"outcome_known", observation.guidance_outcome_known},
         };
     }
     if (observation.diagnostics_available) {

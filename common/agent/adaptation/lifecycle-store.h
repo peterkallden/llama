@@ -47,7 +47,11 @@ bool parse_common_learning_lifecycle_status(
         std::string & error);
 
 struct common_learning_lifecycle_record {
-    int schema_version = 1;
+    int schema_version = 2;
+    // Monotonic append order assigned by the store. Zero means the legacy
+    // record has no trustworthy registration order and must not enter a
+    // chronological replay.
+    uint64_t registration_order = 0;
     std::string event_id;
     std::string subject_id;
     common_learning_lifecycle_kind kind = common_learning_lifecycle_kind::candidate;
@@ -82,6 +86,14 @@ public:
     virtual bool append(const common_learning_lifecycle_record & record, std::string & error) = 0;
     virtual bool contains_idempotency(const std::string & key, bool & contains, std::string & error) const = 0;
     virtual std::vector<common_learning_lifecycle_record> list(std::string & error) const = 0;
+
+    bool list_scope_with_watermark(
+            const std::string & namespace_id,
+            const std::string & project_id,
+            const std::string & session_id,
+            std::vector<common_learning_lifecycle_record> & records,
+            uint64_t & watermark,
+            std::string & error) const;
 };
 
 class common_learning_in_memory_lifecycle_store final : public common_learning_lifecycle_store {
@@ -93,6 +105,7 @@ public:
 private:
     mutable std::mutex mutex_;
     std::vector<common_learning_lifecycle_record> records;
+    uint64_t next_registration_order_ = 1;
 };
 
 class common_learning_jsonl_lifecycle_store final : public common_learning_lifecycle_store {
@@ -103,5 +116,6 @@ public:
     std::vector<common_learning_lifecycle_record> list(std::string & error) const override;
 
 private:
+    mutable std::recursive_mutex mutex_;
     std::filesystem::path path;
 };

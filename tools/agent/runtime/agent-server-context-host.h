@@ -36,6 +36,7 @@ struct common_agent_server_context_host_config {
     int verbosity = LOG_LEVEL_WARN;
     bool per_sequence_cvec_batch = false;
     bool per_sequence_factorized_cvec_batch = false;
+    std::string teacher_scoring_backend = "auto";
     bool agent_trace = false;
 };
 

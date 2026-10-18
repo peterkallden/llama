@@ -1906,6 +1906,9 @@ json server_task_result_teacher_score::to_json() {
     return json {
         {"total_logprob", total_logprob},
         {"token_count",   token_count},
+        {"teacher_scoring_representation", teacher_scoring_representation},
+        {"teacher_scoring_device", teacher_scoring_device},
+        {"teacher_scoring_returned_bytes", teacher_scoring_returned_bytes},
     };
 }
 

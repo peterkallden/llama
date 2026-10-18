@@ -594,6 +594,9 @@ struct completion_token_output {
 struct server_task_result_teacher_score : server_task_result {
     double total_logprob = 0.0;
     size_t token_count = 0;
+    std::string teacher_scoring_representation = "cpu_logits";
+    bool teacher_scoring_device = false;
+    size_t teacher_scoring_returned_bytes = 0;
     // Internal execution provenance; not serialized in public JSON.
     bool flydelta_device_batch = false;
     uint64_t flydelta_cvec_binding_us = 0;

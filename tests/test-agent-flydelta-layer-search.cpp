@@ -23,6 +23,18 @@ static common_flydelta_layer_search_trial trial(
     return value;
 }
 
+static common_flydelta_experiment_fixture make_fixture() {
+    common_flydelta_experiment_fixture value;
+    value.id = "fixture:layer-search";
+    value.task_fingerprint = "task";
+    value.model_profile_fingerprint = "model";
+    value.tokenizer_fingerprint = "tokenizer";
+    value.template_fingerprint = "template";
+    value.execution_context_fingerprint = "context";
+    value.verifier_revision = "verifier";
+    return value;
+}
+
 int main() {
     std::string error;
     common_flydelta_layer_search_config config;
@@ -72,10 +84,7 @@ int main() {
     std::vector<common_flydelta_layer_search_trial> executed_trials;
     common_flydelta_layer_search_selection executed_selection;
     CHECK(common_flydelta_run_layer_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:layer-search", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, plan,
+        make_fixture(), plan,
         [&](const common_flydelta_experiment_fixture &,
                 const common_flydelta_layer_candidate * candidate,
                 bool apply_overlay,

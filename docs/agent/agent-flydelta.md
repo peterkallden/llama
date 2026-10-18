@@ -2175,6 +2175,17 @@ intervals are approximate diagnostics, not safety guarantees or verifier
 results. Guidance cannot grant learning credit, change Oracle truth, promote a
 candidate or activate an overlay.
 
+The daemon reads lifecycle rows in persisted registration order and records a
+scope watermark. It stores a content-fingerprinted immutable history snapshot
+with the job; resume uses that same snapshot, and later registrations are
+available only to later jobs. Placement-game and linear-algebra histories also
+require RuleSet revision and action-contract fingerprint. A fixture group must
+be host-derived; missing group identity is ineligible and cannot be described
+as independent evidence. A completed comparison classified as `UNKNOWN`
+updates only outcome verifiability, even when individual verifier calls had
+known statuses. Legacy rows without required provenance or durable registration
+order are counted as ineligible.
+
 Deep uses experimental ordering when choosing among its existing shortlist
 slots for full generation. TFO-lite can reorder its already proposed
 population before the existing bounded waves; it still evaluates the same
@@ -2184,6 +2195,16 @@ If history access, guidance or lifecycle logging fails, the existing order is
 used and the reason is logged. Compare `off`, `shadow` and `experimental` on
 the same fixtures, basis, dose limits and evaluation budget; report verified
 outcomes and inference cost separately.
+
+Logical arm IDs remain stable across diagnostic and full-verification stages
+and identify the basis, layer and coefficient proposal. Dose retries and
+physical batch positions have separate execution identities. Guidance decisions
+persist phase/sequence and candidate-pool fingerprint, so retries reuse the
+same four-slot policy position. `shadow` separately logs posterior-only rank,
+hypothetical mixed-policy order and unchanged executed order. A lifecycle write
+failure after a search does not rewrite which arms actually ran. History
+aggregation is cached per category for the frozen job projection, rather than
+recomputed by scanning rows for each arm or wave.
 
 The model-free chronological replay API
 `common_flydelta_outcome_guidance_replay` reserves complete fixture groups for
@@ -2197,6 +2218,30 @@ Reported posterior intervals are normal approximations to beta marginals, not
 calibrated guarantees. A deployment comparison still requires matched model
 runs and genuinely disjoint fixture groups with enough compatible history;
 otherwise that comparison is unavailable rather than a negative result.
+For an ordering-policy comparison, the same decision API also accepts the
+evaluation-only `posterior_mean` policy. It keeps the identical two-existing /
+one-guided / one-uniform slot schedule but chooses the guided slot by expected
+utility instead of sampling. Runtime configuration deliberately exposes no
+third production selection policy; `experimental` continues to use posterior
+sampling, while `shadow` keeps the actual arm order unchanged.
+
+### Teacher-forced scoring backend
+
+`runtime.adaptation.flydelta.teacher_scoring_backend` controls teacher-forced
+choice scoring through host configuration, daemon options, model loading and
+the resident server context. It accepts `auto` (default), `cpu`, or `backend`.
+`cpu` retains the full-logit CPU reference. `auto` computes target-token
+log-probabilities in the model graph with max-subtracted stable normalization
+and returns compact scalar scores; the existing scheduler may place that graph
+on an accelerator or CPU. `backend` requires the scoring graph itself to run on
+a non-CPU backend and fails clearly otherwise. An accelerator-resident model or
+cvec overlay alone does not prove device scoring. Telemetry distinguishes
+`device_graph_target_logprob`, `cpu_graph_target_logprob`, and `cpu_logits`,
+and reports returned score bytes separately from model time. Ordinary
+generation still receives logits when required. Positive/negative targets,
+sequence pairing and margin definition are unchanged. The JSON example sets
+`teacher_scoring_backend` to `auto`; choose `cpu` for the reference path or
+`backend` when requiring accelerator-only scoring verification.
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:

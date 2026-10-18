@@ -78,6 +78,7 @@
         "queue_path": "var/agent/flydelta/queue",
         "batch_mode": "auto",
         "batch_parallelism": 2,
+        "teacher_scoring_backend": "auto",
         "disable_factorized_cvec_batch": false,
         "capture_candidates": true,
         "lifecycle_backend": "cozo",

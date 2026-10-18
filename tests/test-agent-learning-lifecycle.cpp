@@ -53,6 +53,12 @@ static void assert_round_trip(common_learning_lifecycle_store & store) {
 
 int main() {
     std::string error;
+    common_learning_lifecycle_record legacy;
+    assert(common_learning_lifecycle_from_json(
+        R"({"schema_version":1,"event_id":"legacy","subject_id":"candidate","kind":"candidate","status":"observed","idempotency_key":"legacy-key","source_id":"source","scope":{"namespace_id":"local","project_id":"agent-tests","session_id":"session-1"},"content_hash":"hash","created_at":"2026-08-29T00:00:00Z","payload":{}})",
+        legacy, error));
+    assert(legacy.registration_order == 0 && legacy.schema_version == 1);
+    assert(common_learning_lifecycle_validate(legacy, 1024, error));
     common_learning_in_memory_lifecycle_store memory;
     assert_round_trip(memory);
 

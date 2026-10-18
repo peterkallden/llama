@@ -104,7 +104,11 @@ bool common_learning_lifecycle_validate(
         size_t max_payload_bytes,
         std::string & error) {
     error.clear();
-    if (record.schema_version != 1) { error = "unsupported lifecycle record schema"; return false; }
+    if (record.schema_version != 1 && record.schema_version != 2) { error = "unsupported lifecycle record schema"; return false; }
+    if (record.schema_version == 1 && record.registration_order != 0) {
+        error = "legacy lifecycle record cannot claim a registration order";
+        return false;
+    }
     if (!bounded_nonempty(record.event_id) || !bounded_nonempty(record.subject_id) ||
             !bounded_nonempty(record.idempotency_key) || !bounded_nonempty(record.created_at) ||
             !bounded_nonempty(record.content_hash) || !bounded_nonempty(record.namespace_id) ||
@@ -129,6 +133,7 @@ std::string common_learning_lifecycle_to_json(
         const common_learning_lifecycle_record & record) {
     return json{
         {"schema_version", record.schema_version},
+        {"registration_order", record.registration_order},
         {"event_id", record.event_id},
         {"subject_id", record.subject_id},
         {"kind", common_learning_lifecycle_kind_name(record.kind)},
@@ -161,6 +166,7 @@ bool common_learning_lifecycle_from_json(
         }
         record = {};
         record.schema_version = value.value("schema_version", 0);
+        record.registration_order = value.value("registration_order", uint64_t{0});
         record.event_id = value.value("event_id", "");
         record.subject_id = value.value("subject_id", "");
         if (!parse_common_learning_lifecycle_kind(value.value("kind", ""), record.kind, error) ||
@@ -180,6 +186,30 @@ bool common_learning_lifecycle_from_json(
     }
 }
 
+bool common_learning_lifecycle_store::list_scope_with_watermark(
+        const std::string & namespace_id,
+        const std::string & project_id,
+        const std::string & session_id,
+        std::vector<common_learning_lifecycle_record> & records,
+        uint64_t & watermark,
+        std::string & error) const {
+    records.clear();
+    watermark = 0;
+    const auto all = list(error);
+    if (!error.empty()) return false;
+    for (const auto & record : all) {
+        if (record.namespace_id != namespace_id || record.project_id != project_id ||
+                record.session_id != session_id) continue;
+        if (record.registration_order == 0) continue;
+        records.push_back(record);
+        watermark = std::max(watermark, record.registration_order);
+    }
+    std::stable_sort(records.begin(), records.end(), [](const auto & a, const auto & b) {
+        return a.registration_order < b.registration_order;
+    });
+    return true;
+}
+
 bool common_learning_in_memory_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
@@ -194,7 +224,10 @@ bool common_learning_in_memory_lifecycle_store::append(
         }
         return true;
     }
-    records.push_back(record);
+    auto stored = record;
+    stored.schema_version = 2;
+    stored.registration_order = next_registration_order_++;
+    records.push_back(std::move(stored));
     return true;
 }
 
@@ -217,6 +250,7 @@ std::vector<common_learning_lifecycle_record> common_learning_in_memory_lifecycl
 
 bool common_learning_jsonl_lifecycle_store::open(
         const std::filesystem::path & value, std::string & error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     error.clear();
     if (value.empty()) { error = "lifecycle store requires a path"; return false; }
     path = value;
@@ -230,6 +264,7 @@ bool common_learning_jsonl_lifecycle_store::open(
 
 std::vector<common_learning_lifecycle_record> common_learning_jsonl_lifecycle_store::list(
         std::string & error) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     error.clear();
     std::vector<common_learning_lifecycle_record> result;
     std::ifstream input(path);
@@ -242,6 +277,10 @@ std::vector<common_learning_lifecycle_record> common_learning_jsonl_lifecycle_st
                 !common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return {};
         result.push_back(std::move(record));
     }
+    std::stable_sort(result.begin(), result.end(), [](const auto & a, const auto & b) {
+        if (a.registration_order == 0 || b.registration_order == 0) return a.registration_order > b.registration_order;
+        return a.registration_order < b.registration_order;
+    });
     return result;
 }
 
@@ -258,6 +297,7 @@ bool common_learning_jsonl_lifecycle_store::contains_idempotency(
 
 bool common_learning_jsonl_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
     const auto values = list(error);
     if (!error.empty()) return false;
@@ -268,5 +308,10 @@ bool common_learning_jsonl_lifecycle_store::append(
         if (!same_record(*match, record)) error = "lifecycle idempotency key conflicts with existing record";
         return error.empty();
     }
-    return write_text(path, common_learning_lifecycle_to_json(record) + "\n", error);
+    auto stored = record;
+    stored.schema_version = 2;
+    uint64_t next_order = 1;
+    for (const auto & item : values) next_order = std::max(next_order, item.registration_order + 1);
+    stored.registration_order = next_order;
+    return write_text(path, common_learning_lifecycle_to_json(stored) + "\n", error);
 }

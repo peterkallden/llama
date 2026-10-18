@@ -377,6 +377,7 @@ struct server_slot {
     llama_tokens teacher_forced_tokens;
     size_t teacher_forced_index = 0;
     double teacher_forced_logprob = 0.0;
+    bool teacher_forced_device = false;
 
     llama_token sampled; // in speculative mode, this is the last accepted token
 
@@ -421,6 +422,7 @@ struct server_slot {
         teacher_forced_tokens.clear();
         teacher_forced_index = 0;
         teacher_forced_logprob = 0.0;
+        teacher_forced_device = false;
         capture_request.reset();
         capture_result = {};
 
@@ -1055,6 +1057,13 @@ public:
         factorized_cvec_batch_enabled = enabled;
     }
 
+    void set_teacher_scoring_backend(const std::string & backend) {
+        if (backend != "auto" && backend != "cpu" && backend != "backend") {
+            throw std::invalid_argument("teacher-scoring backend must be auto, cpu, or backend");
+        }
+        teacher_scoring_backend = backend;
+    }
+
     bool agent_trace_enabled() const {
         return trace_enabled;
     }
@@ -1079,6 +1088,7 @@ private:
     // unless this is explicitly enabled and the current batch is compatible.
     bool cvec_batch_enabled = false;
     bool factorized_cvec_batch_enabled = false;
+    std::string teacher_scoring_backend = "auto";
     bool cvec_batch_active = false;
     server_task_cvec_batch cvec_batch_request;
     llama_adapter_cvec_batch cvec_batch_device;
@@ -2418,6 +2428,10 @@ private:
         slot.teacher_forced_tokens = task.teacher_forced_tokens;
         slot.teacher_forced_index = 0;
         slot.teacher_forced_logprob = 0.0;
+        // This flag describes the complete target sequence, not whether any
+        // one token happened to run on a device. It is narrowed after each
+        // graph execution below.
+        slot.teacher_forced_device = teacher_scoring_backend != "cpu";
 
         SLT_DBG(slot, "launching slot : %s\n", safe_json_to_str(slot.to_json()).c_str());
 
@@ -2777,6 +2791,13 @@ private:
         res->index = slot.task->index;
         res->total_logprob = slot.teacher_forced_logprob;
         res->token_count = slot.teacher_forced_tokens.size();
+        res->teacher_scoring_representation = teacher_scoring_backend == "cpu"
+            ? "cpu_logits" : slot.teacher_forced_device
+                ? "device_graph_target_logprob" : "cpu_graph_target_logprob";
+        res->teacher_scoring_device = slot.teacher_forced_device;
+        res->teacher_scoring_returned_bytes = teacher_scoring_backend == "cpu"
+            ? slot.teacher_forced_tokens.size() * llama_vocab_n_tokens(vocab) * sizeof(float)
+            : slot.teacher_forced_tokens.size() * sizeof(float);
         res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
         res->flydelta_cvec_binding_us = cvec_batch_binding_us;
         res->flydelta_cvec_bound_bytes = cvec_batch_bound_bytes;
@@ -2803,6 +2824,33 @@ private:
         }
 
         const llama_token target = slot.teacher_forced_tokens[slot.teacher_forced_index];
+        if (teacher_scoring_backend != "cpu") {
+            const float logprob = llama_get_teacher_forced_logprob_ith(ctx_tgt, tok_idx);
+            const bool on_device = llama_get_teacher_forced_logprob_is_device(ctx_tgt, tok_idx);
+            if (!std::isfinite(logprob) ||
+                    (teacher_scoring_backend == "backend" && !on_device)) {
+                send_error(slot, teacher_scoring_backend == "backend" && !on_device
+                    ? "teacher-forced backend scoring is unavailable: score graph ran on CPU"
+                    : "teacher-forced graph scoring returned an invalid score",
+                    ERROR_TYPE_SERVER);
+                slot.release();
+                return false;
+            }
+            slot.teacher_forced_logprob += logprob;
+            slot.teacher_forced_device = slot.teacher_forced_device && on_device;
+            slot.teacher_forced_index++;
+            slot.stats.n_gen++;
+            if (slot.teacher_forced_index == slot.teacher_forced_tokens.size()) {
+                send_teacher_score(slot);
+                slot.i_batch = -1;
+                slot.release();
+                return true;
+            }
+            slot.sampled = target;
+            slot.has_next_token = true;
+            slot.i_batch = -1;
+            return true;
+        }
         const float * logits = llama_get_logits_ith(ctx_tgt, tok_idx);
         const size_t n_vocab = llama_vocab_n_tokens(vocab);
         if (logits == nullptr || target < 0 || static_cast<size_t>(target) >= n_vocab) {
@@ -5094,6 +5142,26 @@ private:
             if (cvec_batch_active) {
                 cvec_batch_device.begin_graph_observation();
             }
+            std::vector<llama_seq_id> teacher_seq_ids;
+            std::vector<llama_token> teacher_targets;
+            if (teacher_scoring_backend != "cpu") {
+                teacher_seq_ids.reserve(batch.tokens.size());
+                teacher_targets.reserve(batch.tokens.size());
+                for (int i = off; i < off + batch.view.size(); ++i) {
+                    const auto & token = batch.tokens[i];
+                    if (!token.output || token.id_slot < 0 ||
+                            token.id_slot >= static_cast<int32_t>(slots.size())) continue;
+                    const auto & slot = slots[token.id_slot];
+                    if (!slot.task || slot.task->type != SERVER_TASK_TYPE_TEACHER_FORCED_SCORE ||
+                            slot.teacher_forced_index >= slot.teacher_forced_tokens.size()) continue;
+                    teacher_seq_ids.push_back(slot.id);
+                    teacher_targets.push_back(slot.teacher_forced_tokens[slot.teacher_forced_index]);
+                }
+            }
+            llama_set_teacher_forced_targets(ctx_tgt,
+                teacher_seq_ids.empty() ? nullptr : teacher_seq_ids.data(),
+                teacher_targets.empty() ? nullptr : teacher_targets.data(),
+                teacher_targets.size());
             ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
             if (ret == 0 && has_output) {
                 llama_synchronize(ctx_tgt);
@@ -5705,6 +5773,10 @@ void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
 
 void server_context::set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
     impl->set_per_sequence_factorized_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_teacher_scoring_backend(const std::string & backend) {
+    impl->set_teacher_scoring_backend(backend);
 }
 
 void server_context::set_agent_trace_enabled(const bool enabled) {

@@ -116,6 +116,7 @@ struct server_context {
     // batches.  It has no effect unless per_sequence_cvec_batch is enabled.
     bool per_sequence_factorized_cvec_batch_enabled() const;
     void set_per_sequence_factorized_cvec_batch_enabled(bool enabled);
+    void set_teacher_scoring_backend(const std::string & backend);
 
     void set_agent_trace_enabled(bool enabled);
     bool agent_trace_enabled() const;

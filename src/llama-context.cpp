@@ -1064,6 +1064,44 @@ float * llama_context::get_logits_ith(int32_t i) {
     }
 }
 
+float llama_context::get_teacher_forced_logprob_ith(int32_t i) {
+    output_reorder();
+    try {
+        if (teacher_logprobs.data == nullptr)
+            throw std::runtime_error("teacher-forced score output is unavailable");
+        return teacher_logprobs.data[output_resolve_row(i)];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid teacher score id %d, reason: %s\n", __func__, i, err.what());
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+}
+
+bool llama_context::get_teacher_forced_logprob_is_device(int32_t i) {
+    output_reorder();
+    try {
+        const auto row = output_resolve_row(i);
+        return row >= 0 && static_cast<size_t>(row) < teacher_score_device.size() &&
+            teacher_score_device[row] != 0;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+void llama_context::set_teacher_forced_targets(
+        const llama_seq_id * seq_ids, const llama_token * target_tokens, size_t n_targets) {
+    teacher_score_targets.clear();
+    if (n_targets == 0) return;
+    if (seq_ids == nullptr || target_tokens == nullptr)
+        throw std::invalid_argument("teacher-forced score targets are null");
+    for (size_t i = 0; i < n_targets; ++i) {
+        if (seq_ids[i] < 0 || target_tokens[i] < 0 ||
+                static_cast<size_t>(target_tokens[i]) >= model.vocab.n_tokens()) {
+            throw std::invalid_argument("teacher-forced score target is out of range");
+        }
+        teacher_score_targets[seq_ids[i]] = target_tokens[i];
+    }
+}
+
 float * llama_context::get_embeddings() {
     output_reorder();
 
@@ -1828,21 +1866,17 @@ static void copy_tensor_async_rows(
     }
 }
 
-static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_seq_id, llama_sampler *> & samplers) {
-    for (uint32_t i = 0; i < ubatch.n_tokens; i++) {
-        if (!ubatch.output[i]) {
-            continue;
-        }
-
-        // Check if the output token has at least one sequence without a backend sampler.
-        for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
-            llama_seq_id seq_id = ubatch.seq_id[i][j];
-            if (samplers.find(seq_id) == samplers.end()) {
-                return true;
-            }
-        }
+static bool needs_raw_logits_for_output(
+        const llama_ubatch & ubatch, uint32_t token_index,
+        const std::map<llama_seq_id, llama_sampler *> & samplers,
+        const std::map<llama_seq_id, llama_token> & teacher_targets) {
+    for (int32_t j = 0; j < ubatch.n_seq_id[token_index]; ++j) {
+        const llama_seq_id seq_id = ubatch.seq_id[token_index][j];
+        if (samplers.find(seq_id) != samplers.end()) continue;
+        if (teacher_targets.find(seq_id) != teacher_targets.end()) continue;
+        return true;
     }
-    return false; // all sequences use backend sampling
+    return false;
 }
 
 int llama_context::decode(const llama_batch_ext & batch_inp) {
@@ -2072,17 +2106,48 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
 
         // extract logits
-        if (logits.data && t_logits && n_outputs > 0 && needs_raw_logits(ubatch, sampling.samplers)) {
+        if (logits.data && t_logits && n_outputs > 0) {
             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
             GGML_ASSERT(backend_res != nullptr);
             GGML_ASSERT(logits.data != nullptr);
+            int64_t output_row = 0;
+            for (uint32_t token_row = 0; token_row < ubatch.n_tokens; ++token_row) {
+                if (ubatch.output != nullptr && !ubatch.output[token_row]) continue;
+                if (needs_raw_logits_for_output(
+                        ubatch, token_row, sampling.samplers, teacher_score_targets)) {
+                    GGML_ASSERT(n_outputs_prev + output_row < n_outputs_all);
+                    GGML_ASSERT((n_outputs_prev + output_row + 1)*n_vocab <=
+                        static_cast<int64_t>(logits.size));
+                    ggml_backend_tensor_get_async(backend_res, t_logits,
+                        logits.data + (n_outputs_prev + output_row)*n_vocab,
+                        static_cast<size_t>(output_row)*t_logits->nb[1],
+                        n_vocab*sizeof(float));
+                }
+                ++output_row;
+            }
+            GGML_ASSERT(output_row == n_outputs);
+        }
 
-            float * logits_out = logits.data + n_outputs_prev*n_vocab;
-
-            if (n_outputs) {
-                GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
-                GGML_ASSERT((n_outputs_prev + n_outputs)*n_vocab <= (int64_t) logits.size);
-                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+        if (teacher_logprobs.data && n_outputs > 0) {
+            const auto & scores = res->get_teacher_logprobs();
+            if (scores.size() != static_cast<size_t>(n_outputs)) {
+                LLAMA_LOG_ERROR("%s: teacher score graph returned %zu scores for %d outputs\n",
+                    __func__, scores.size(), n_outputs);
+                return -3;
+            }
+            if (teacher_score_device.size() < static_cast<size_t>(n_outputs_all)) {
+                teacher_score_device.resize(n_outputs_all, 0);
+            }
+            std::fill(teacher_score_device.begin() + n_outputs_prev,
+                teacher_score_device.begin() + n_outputs_prev + n_outputs, 0);
+            for (size_t i = 0; i < scores.size(); ++i) {
+                ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), scores[i]);
+                if (backend == nullptr) return -3;
+                const auto device = ggml_backend_get_device(backend);
+                teacher_score_device[n_outputs_prev + i] = device != nullptr &&
+                    ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU;
+                ggml_backend_tensor_get_async(backend, scores[i],
+                    teacher_logprobs.data + n_outputs_prev + i, 0, sizeof(float));
             }
         }
 
@@ -2276,6 +2341,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     size_t embd_layer_inp_float_count = 0;
 
     logits.size     = has_logits     ? n_vocab*n_outputs_max     : 0;
+    teacher_logprobs.size = teacher_score_targets.empty() ? 0 : n_outputs_max;
     embd.size       = has_embd       ? n_embd_out*n_outputs_max  : 0;
     embd_nextn.size = has_embd_nextn ? n_embd_out*n_outputs_max  : 0;
 
@@ -2305,7 +2371,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     const size_t prev_size = buf_output ? ggml_backend_buffer_get_size(buf_output.get()) : 0;
     const size_t new_size  =
-        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
+        (logits.size + teacher_logprobs.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
         (                                                                         backend_token_count) * sizeof(llama_token);
 
     // alloc only when more than the current capacity is required
@@ -2321,6 +2387,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             // TODO: not needed?
             buf_output = nullptr;
             logits.data = nullptr;
+            teacher_logprobs.data = nullptr;
             embd.data = nullptr;
             embd_nextn.data = nullptr;
             for (auto & layer_inp : embd_layer_inp) {
@@ -2350,6 +2417,11 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     logits = has_logits ? buffer_view<float>{output_base, logits.size} : buffer_view<float>{nullptr, 0};
     offset += logits.size * sizeof(float);
+
+    teacher_logprobs = teacher_score_targets.empty()
+        ? buffer_view<float>{nullptr, 0}
+        : buffer_view<float>{(float *) (base + offset), teacher_logprobs.size};
+    offset += teacher_logprobs.size * sizeof(float);
 
     embd = has_embd ? buffer_view<float>{(float *) (base + offset), embd.size} : buffer_view<float>{nullptr, 0};
     offset += embd.size * sizeof(float);
@@ -2533,6 +2605,12 @@ void llama_context::output_reorder() {
             for (uint64_t k = 0; k < n_vocab; k++) {
                 std::swap(logits.data[i0*n_vocab + k], logits.data[i1*n_vocab + k]);
             }
+        }
+        if (teacher_logprobs.size > 0) {
+            std::swap(teacher_logprobs.data[i0], teacher_logprobs.data[i1]);
+        }
+        if (i0 < teacher_score_device.size() && i1 < teacher_score_device.size()) {
+            std::swap(teacher_score_device[i0], teacher_score_device[i1]);
         }
 
         if (embd.size > 0) {
@@ -2819,6 +2897,7 @@ llm_graph_params llama_context::graph_params(
         /*.prec_policy =*/ &model.prec_policy,
         /*.hdmd        =*/ model.hdmd.rot.empty() ? nullptr : &model.hdmd,
         /*.samplers    =*/ sampling.samplers,
+        /*.teacher_score_targets =*/ teacher_score_targets.empty() ? nullptr : &teacher_score_targets,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
@@ -4349,6 +4428,20 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
     }
 
     return res;
+}
+
+void llama_set_teacher_forced_targets(
+        llama_context * ctx, const llama_seq_id * seq_ids,
+        const llama_token * target_tokens, size_t n_targets) {
+    ctx->set_teacher_forced_targets(seq_ids, target_tokens, n_targets);
+}
+
+float llama_get_teacher_forced_logprob_ith(llama_context * ctx, int32_t i) {
+    return ctx->get_teacher_forced_logprob_ith(i);
+}
+
+bool llama_get_teacher_forced_logprob_is_device(llama_context * ctx, int32_t i) {
+    return ctx->get_teacher_forced_logprob_is_device(i);
 }
 
 float * llama_get_embeddings(llama_context * ctx) {

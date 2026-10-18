@@ -248,6 +248,8 @@ bool common_flydelta_experiment_seed_validate(
             !nonempty_bounded(seed.tokenizer_fingerprint) ||
             !nonempty_bounded(seed.template_fingerprint) ||
             !nonempty_bounded(seed.execution_context_fingerprint) ||
+            seed.verifier_contract_revision.size() > 512 || seed.fixture_group_id.size() > 512 ||
+            seed.ruleset_revision.size() > 512 || seed.action_contract_fingerprint.size() > 512 ||
             !nonempty_bounded(seed.evidence_ref) ||
             !common_adaptation_evidence_validate(evidence, 64, error)) {
         if (error.empty()) error = "FlyDelta experiment seed identity is incomplete";
@@ -290,6 +292,7 @@ bool common_flydelta_experiment_seed_from_evidence(
     seed.baseline_ref = evidence.baseline_ref;
     seed.candidate_ref = evidence.candidate_ref;
     seed.verifier_ref = evidence.verifier_ref;
+    seed.fixture_group_id = evidence.task_fingerprint;
     seed.evidence_ref = evidence.id;
     seed.transaction_ids = evidence.transaction_ids;
     return common_flydelta_experiment_seed_validate(seed, error);
@@ -304,10 +307,21 @@ bool common_flydelta_experiment_fixture_from_seed(
     fixture = {};
     fixture.id = seed.id + "/fixture";
     fixture.task_fingerprint = seed.task_fingerprint;
+    fixture.guidance_fixture_group_id = seed.fixture_group_id;
+    fixture.outcome_guidance_verifier_revision = seed.verifier_contract_revision;
     fixture.model_profile_fingerprint = seed.model_profile_fingerprint;
     fixture.tokenizer_fingerprint = seed.tokenizer_fingerprint;
     fixture.template_fingerprint = seed.template_fingerprint;
     fixture.execution_context_fingerprint = seed.execution_context_fingerprint;
-    fixture.verifier_revision = seed.verifier_ref;
+    // Preserve the legacy fixture contract. Outcome-guidance history uses the
+    // distinct verifier_contract_revision field and remains ineligible when
+    // that host-owned revision is unavailable.
+    fixture.verifier_revision = seed.verifier_contract_revision.empty()
+        ? seed.verifier_ref : seed.verifier_contract_revision;
+    fixture.ruleset_revision = seed.ruleset_revision;
+    fixture.action_contract_fingerprint = seed.action_contract_fingerprint;
+    fixture.scope_fingerprint = seed.scope.session_id.empty()
+        ? seed.scope.project_id : seed.scope.namespace_id + "/" + seed.scope.project_id + "/" + seed.scope.session_id;
+    fixture.semantic_domain = seed.behavior_key;
     return common_flydelta_experiment_fixture_validate(fixture, error);
 }

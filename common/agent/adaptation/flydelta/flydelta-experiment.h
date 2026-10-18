@@ -24,6 +24,8 @@ struct common_flydelta_experiment_fixture {
     int schema_version = 1;
     std::string id;
     std::string task_fingerprint;
+    std::string guidance_fixture_group_id;
+    std::string outcome_guidance_verifier_revision;
     std::string model_profile_fingerprint;
     std::string tokenizer_fingerprint;
     std::string template_fingerprint;

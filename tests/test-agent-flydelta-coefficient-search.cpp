@@ -472,6 +472,8 @@ int main() {
     guidance_fixture.scope_fingerprint = "sha256:scope-guidance";
     guidance_fixture.baseline_deployment_fingerprint = "sha256:baseline-guidance";
     guidance_fixture.semantic_domain = "dataset.grouped_sum";
+    guidance_fixture.guidance_fixture_group_id = "fixture-group:coefficient-search";
+    guidance_fixture.outcome_guidance_verifier_revision = "verifier-contract:revision-2";
     guidance_fixture.model_n_layers = 32;
     guidance_fixture.ruleset_revision = "ruleset:revision-2";
     guidance_fixture.action_contract_fingerprint = "sha256:action-contract";

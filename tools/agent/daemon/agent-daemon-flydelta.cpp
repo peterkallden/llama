@@ -3,8 +3,11 @@
 #include "agent/agent-residual-patch.h"
 
 #include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <set>
+#include <sstream>
 
 namespace agent_daemon_flydelta_internal {
 
@@ -19,8 +22,26 @@ bool daemon_flydelta_fixture_from_job(
     fixture.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
     fixture.template_fingerprint = job.seed.template_fingerprint;
     fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
-    fixture.verifier_revision = job.seed.verifier_ref;
+    fixture.verifier_revision = job.seed.verifier_contract_revision.empty()
+        ? job.seed.verifier_ref : job.seed.verifier_contract_revision;
+    fixture.guidance_fixture_group_id = job.seed.fixture_group_id;
+    fixture.outcome_guidance_verifier_revision = job.seed.verifier_contract_revision;
     return common_flydelta_experiment_fixture_validate(fixture, error);
+}
+
+std::string daemon_flydelta_verifier_contract_revision(
+        const common_flydelta_oracle_registry & registry,
+        const std::string & verifier_ref) {
+    std::set<std::string> revisions;
+    for (const auto & registration : registry.evaluators) {
+        if (registration.evaluator_ref == verifier_ref ||
+                registration.expected_contract_ref == verifier_ref) {
+            const std::string & revision = !registration.expected_contract_revision.empty()
+                ? registration.expected_contract_revision : registration.evaluator_revision;
+            if (!revision.empty()) revisions.insert(revision);
+        }
+    }
+    return revisions.size() == 1 ? *revisions.begin() : std::string();
 }
 
 bool daemon_flydelta_parse_depth(
@@ -1366,10 +1387,13 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     fixture.model_n_layers = provider->model_n_layers;
     const std::string baseline_identity = "flydelta-base-deployment-v1\n" +
         job.seed.model_profile_fingerprint + "\n" + job.seed.tokenizer_fingerprint + "\n" +
-        job.seed.template_fingerprint + "\n" + job.seed.execution_context_fingerprint + "\n" +
-        job.seed.baseline_ref + "\n" + std::to_string(provider->model_n_layers);
+        job.seed.template_fingerprint + "\n" + std::to_string(provider->model_n_layers);
     fixture.baseline_deployment_fingerprint = "sha256:" +
         hash_sha256_hex(baseline_identity.data(), baseline_identity.size());
+    if (fixture.outcome_guidance_verifier_revision.empty()) {
+        fixture.outcome_guidance_verifier_revision = daemon_flydelta_verifier_contract_revision(
+            provider->oracle_registry, job.seed.verifier_ref);
+    }
     const int32_t layer_index = static_cast<int32_t>(plan.continuation.region.anchor_layer_index);
     std::vector<common_flydelta_direction_candidate> candidates;
     const size_t max_rank = plan.phase == common_flydelta_experiment_phase::shallow_controls
@@ -1453,46 +1477,135 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     guidance_context.tokenizer_fingerprint = fixture.tokenizer_fingerprint;
     guidance_context.template_fingerprint = fixture.template_fingerprint;
     guidance_context.baseline_deployment_fingerprint = fixture.baseline_deployment_fingerprint;
-    guidance_context.verifier_revision = fixture.verifier_revision;
+    guidance_context.verifier_revision = fixture.outcome_guidance_verifier_revision;
     guidance_context.ruleset_revision = fixture.ruleset_revision;
     guidance_context.action_contract_fingerprint = fixture.action_contract_fingerprint;
     guidance_context.semantic_domain = fixture.semantic_domain;
     guidance_context.strategy = common_flydelta_coefficient_search_strategy_name(
         coefficient_config.strategy);
     guidance_context.estimator = "coefficient-margin-geometry-v1";
+    coefficient_config.guidance_basis_identity =
+        common_flydelta_coefficient_basis_identity(basis);
     std::vector<common_flydelta_outcome_guidance_observation> guidance_history;
     bool guidance_history_load_failed = false;
     size_t guidance_ineligible_history_rows = 0;
+    size_t guidance_read_history_rows = 0;
+    uint64_t guidance_history_watermark = 0;
+    std::string guidance_history_failure_reason;
     double guidance_projection_ms = 0.0;
+    auto persisted_guidance_sequence_by_pool = std::make_shared<std::map<std::string, size_t>>();
+    auto next_guidance_sequence_by_phase = std::make_shared<std::map<int, size_t>>();
     const auto guidance_config = provider->outcome_guidance_config;
+    const bool guidance_runtime_eligible =
+        plan.phase == common_flydelta_experiment_phase::deep_controls ||
+        plan.run_tfo_lite || coefficient_config.strategy ==
+            common_flydelta_coefficient_search_strategy::tfo_lite;
+    const bool guidance_identity_available = !guidance_context.scope_fingerprint.empty() &&
+        !guidance_context.model_profile_fingerprint.empty() &&
+        !guidance_context.tokenizer_fingerprint.empty() &&
+        !guidance_context.template_fingerprint.empty() &&
+        !guidance_context.baseline_deployment_fingerprint.empty() &&
+        !guidance_context.verifier_revision.empty() &&
+        ((guidance_context.semantic_domain.find("placement_game") == std::string::npos &&
+          guidance_context.semantic_domain.find("linear_algebra") == std::string::npos) ||
+         (!guidance_context.ruleset_revision.empty() &&
+          !guidance_context.action_contract_fingerprint.empty()));
     if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+            guidance_runtime_eligible && guidance_identity_available &&
             provider->lifecycle_store) {
         const auto projection_started = std::chrono::steady_clock::now();
         std::string history_error;
-        const auto records = provider->lifecycle_store->list(history_error);
+        std::vector<common_learning_lifecycle_record> records;
+        if (!provider->lifecycle_store->list_scope_with_watermark(
+                job.seed.scope.namespace_id, job.seed.scope.project_id,
+                job.seed.scope.session_id, records, guidance_history_watermark,
+                history_error)) {
+            records.clear();
+        }
+        guidance_read_history_rows = records.size();
         guidance_projection_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - projection_started).count();
         if (history_error.empty()) {
-            std::set<std::string> observation_ids;
             for (const auto & record : records) {
-                if (record.kind != common_learning_lifecycle_kind::flydelta_result ||
-                        record.namespace_id != job.seed.scope.namespace_id ||
-                        record.project_id != job.seed.scope.project_id ||
-                        record.session_id != job.seed.scope.session_id) continue;
+                if (record.kind != common_learning_lifecycle_kind::flydelta_experiment) continue;
+                try {
+                    const auto payload = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
+                    if (!payload.is_object() || payload.value("record_type", "") !=
+                            "outcome_guidance_decision" || payload.value("job_id", "") != job.id ||
+                            payload.value("schema_version", 0) != 2 ||
+                            !payload.contains("candidate_pool_fingerprint")) continue;
+                    const int phase_id = payload.value("phase_id", -1);
+                    const size_t sequence = payload.value("decision_sequence", size_t{0});
+                    const std::string pool_fingerprint = payload.value(
+                        "candidate_pool_fingerprint", std::string());
+                    if (phase_id < 0 || pool_fingerprint.empty()) continue;
+                    const std::string key = std::to_string(phase_id) + ":" + pool_fingerprint;
+                    (*persisted_guidance_sequence_by_pool)[key] = sequence;
+                    (*next_guidance_sequence_by_phase)[phase_id] = std::max(
+                        (*next_guidance_sequence_by_phase)[phase_id], sequence + 1);
+                } catch (...) {
+                    ++guidance_ineligible_history_rows;
+                }
+            }
+            const nlohmann::ordered_json context_identity = {
+                {"scope", guidance_context.scope_fingerprint},
+                {"model", guidance_context.model_profile_fingerprint},
+                {"tokenizer", guidance_context.tokenizer_fingerprint},
+                {"template", guidance_context.template_fingerprint},
+                {"deployment", guidance_context.baseline_deployment_fingerprint},
+                {"verifier", guidance_context.verifier_revision},
+                {"ruleset", guidance_context.ruleset_revision},
+                {"action_contract", guidance_context.action_contract_fingerprint},
+            };
+            const std::string context_bytes = context_identity.dump();
+            const std::string context_fingerprint = "sha256:" +
+                hash_sha256_hex(context_bytes.data(), context_bytes.size());
+            std::set<std::string> observation_ids;
+            nlohmann::ordered_json frozen_rows;
+            bool snapshot_found = false;
+            bool snapshot_invalid = false;
+            for (const auto & record : records) {
+                if (record.kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                        record.registration_order == 0) continue;
+                try {
                 const auto payload = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
                 if (!payload.is_object() || payload.value("record_type", "") !=
-                        "candidate_search_decision") continue;
-                if (!payload.contains("outcome_guidance") || !payload["outcome_guidance"].is_object()) {
-                    ++guidance_ineligible_history_rows;
-                    continue;
+                        "outcome_guidance_history_snapshot" ||
+                        payload.value("job_id", "") != job.id ||
+                        payload.value("context_fingerprint", "") != context_fingerprint) continue;
+                if (!payload.contains("rows") || !payload["rows"].is_array() ||
+                        payload.value("schema_version", 0) != 2) {
+                    snapshot_invalid = true;
+                    break;
                 }
-                const auto & g = payload["outcome_guidance"];
-                if (g.value("schema_version", 0) != 1 ||
-                        g.value("scope_fingerprint", "") != guidance_context.scope_fingerprint) {
-                    ++guidance_ineligible_history_rows;
-                    continue;
+                const uint64_t source_watermark = payload.value("source_watermark", uint64_t{0});
+                const nlohmann::ordered_json canonical = {
+                    {"builder_revision", "flydelta-outcome-history-snapshot-v2"},
+                    {"context_fingerprint", context_fingerprint},
+                    {"source_watermark", source_watermark},
+                    {"rows", payload["rows"]},
+                };
+                const std::string canonical_bytes = canonical.dump();
+                const std::string expected_fingerprint = "sha256:" +
+                    hash_sha256_hex(canonical_bytes.data(), canonical_bytes.size());
+                if (payload.value("snapshot_fingerprint", std::string()) != expected_fingerprint ||
+                        record.content_hash != expected_fingerprint) {
+                    snapshot_invalid = true;
+                    break;
                 }
-                common_flydelta_outcome_guidance_observation observation;
+                frozen_rows = payload["rows"];
+                guidance_history_watermark = source_watermark;
+                snapshot_found = true;
+                break;
+                } catch (...) {
+                    ++guidance_ineligible_history_rows;
+                }
+            }
+            const auto parse_guidance_row = [&](const nlohmann::ordered_json & g,
+                    const std::string & outcome_value, const bool verifier_known,
+                    common_flydelta_outcome_guidance_observation & observation) {
+                if (!g.is_object() || g.value("schema_version", 0) != 1 ||
+                        g.value("scope_fingerprint", "") != guidance_context.scope_fingerprint) return false;
                 observation.stable_observation_id = g.value("observation_id", "");
                 observation.fixture_group_id = g.value("fixture_group_id", "");
                 observation.context.scope_fingerprint = g.value("scope_fingerprint", "");
@@ -1502,8 +1615,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 observation.context.baseline_deployment_fingerprint = g.value("baseline_deployment_fingerprint", "");
                 observation.context.verifier_revision = g.value("verifier_revision", "");
                 observation.context.ruleset_revision = g.value("ruleset_revision", "");
-                observation.context.action_contract_fingerprint = g.value(
-                    "action_contract_fingerprint", "");
+                observation.context.action_contract_fingerprint = g.value("action_contract_fingerprint", "");
                 observation.context.semantic_domain = g.value("domain", "");
                 observation.context.strategy = g.value("strategy", "");
                 observation.context.estimator = g.value("estimator", "");
@@ -1515,44 +1627,155 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 observation.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
                 observation.comparison_completed = g.value("comparison_completed", false);
                 observation.overlay_applied = g.value("overlay_applied", false);
-                observation.verifier_known = payload.value("verifier_known", false);
-                const std::string outcome = payload.value("outcome", "unknown");
-                observation.outcome = outcome == "helped" ? common_flydelta_counterfactual_outcome::helped :
-                    outcome == "neutral" ? common_flydelta_counterfactual_outcome::neutral :
-                    outcome == "harmed" ? common_flydelta_counterfactual_outcome::harmed :
+                observation.verifier_known = verifier_known;
+                observation.outcome = outcome_value == "helped" ? common_flydelta_counterfactual_outcome::helped :
+                    outcome_value == "neutral" ? common_flydelta_counterfactual_outcome::neutral :
+                    outcome_value == "harmed" ? common_flydelta_counterfactual_outcome::harmed :
                     common_flydelta_counterfactual_outcome::unknown;
-                if (!observation.stable_observation_id.empty() &&
-                        observation_ids.insert(observation.stable_observation_id).second) {
-                    guidance_history.push_back(std::move(observation));
-                } else {
-                    ++guidance_ineligible_history_rows;
+                observation.outcome_known = g.contains("outcome_known")
+                    ? g.at("outcome_known").get<bool>()
+                    : observation.outcome != common_flydelta_counterfactual_outcome::unknown;
+                return observation.outcome_known ==
+                    (observation.outcome != common_flydelta_counterfactual_outcome::unknown);
+            };
+            if (snapshot_invalid) {
+                guidance_history_load_failed = true;
+                guidance_history_failure_reason = "frozen_history_snapshot_fingerprint_invalid";
+            } else if (snapshot_found && frozen_rows.is_array()) {
+                for (const auto & row : frozen_rows) {
+                    try {
+                        common_flydelta_outcome_guidance_observation observation;
+                        if (parse_guidance_row(row.value("outcome_guidance", nlohmann::ordered_json{}),
+                                row.value("outcome", "unknown"), row.value("verifier_known", false),
+                                observation) && !observation.stable_observation_id.empty() &&
+                                observation_ids.insert(observation.stable_observation_id).second) {
+                            guidance_history.push_back(std::move(observation));
+                        } else ++guidance_ineligible_history_rows;
+                    } catch (...) { ++guidance_ineligible_history_rows; }
+                }
+            } else if (!snapshot_found) {
+                frozen_rows = nlohmann::ordered_json::array();
+                for (const auto & record : records) {
+                    if (record.kind != common_learning_lifecycle_kind::flydelta_result ||
+                            record.registration_order == 0) continue;
+                    try {
+                        const auto payload = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
+                        if (!payload.is_object() || payload.value("record_type", "") != "candidate_search_decision") continue;
+                        if (!payload.contains("outcome_guidance") || !payload["outcome_guidance"].is_object()) {
+                            ++guidance_ineligible_history_rows;
+                            continue;
+                        }
+                        common_flydelta_outcome_guidance_observation observation;
+                        if (!parse_guidance_row(payload["outcome_guidance"],
+                                payload.value("outcome", "unknown"),
+                                payload.value("verifier_known", false), observation)) {
+                            ++guidance_ineligible_history_rows;
+                            continue;
+                        }
+                        if (!observation.stable_observation_id.empty() &&
+                                observation_ids.insert(observation.stable_observation_id).second) {
+                            guidance_history.push_back(observation);
+                            frozen_rows.push_back({
+                                {"outcome_guidance", payload["outcome_guidance"]},
+                                {"outcome", payload.value("outcome", "unknown")},
+                                {"verifier_known", payload.value("verifier_known", false)},
+                                {"source_registration_order", record.registration_order},
+                            });
+                        } else ++guidance_ineligible_history_rows;
+                    } catch (...) { ++guidance_ineligible_history_rows; }
+                }
+                const nlohmann::ordered_json canonical = {
+                    {"builder_revision", "flydelta-outcome-history-snapshot-v2"},
+                    {"context_fingerprint", context_fingerprint},
+                    {"source_watermark", guidance_history_watermark},
+                    {"rows", frozen_rows},
+                };
+                const std::string canonical_bytes = canonical.dump();
+                const std::string snapshot_fingerprint = "sha256:" +
+                    hash_sha256_hex(canonical_bytes.data(), canonical_bytes.size());
+                nlohmann::ordered_json snapshot_payload = {
+                    {"record_type", "outcome_guidance_history_snapshot"},
+                    {"schema_version", 2}, {"job_id", job.id},
+                    {"context_fingerprint", context_fingerprint},
+                    {"source_watermark", guidance_history_watermark},
+                    {"snapshot_fingerprint", snapshot_fingerprint},
+                    {"rows", frozen_rows},
+                };
+                common_learning_lifecycle_record snapshot;
+                snapshot.event_id = job.id + ":outcome-guidance-snapshot:" + context_fingerprint;
+                snapshot.idempotency_key = snapshot.event_id;
+                snapshot.subject_id = job.id;
+                snapshot.kind = common_learning_lifecycle_kind::flydelta_experiment;
+                snapshot.status = common_learning_lifecycle_status::observed;
+                snapshot.source_id = "daemon-flydelta-outcome-guidance-snapshot";
+                snapshot.namespace_id = job.seed.scope.namespace_id;
+                snapshot.project_id = job.seed.scope.project_id;
+                snapshot.session_id = job.seed.scope.session_id;
+                snapshot.content_hash = snapshot_fingerprint;
+                snapshot.created_at = std::to_string(std::time(nullptr));
+                snapshot.payload_json = snapshot_payload.dump();
+                std::string snapshot_error;
+                if (!provider->lifecycle_store->append(snapshot, snapshot_error)) {
+                    guidance_history_load_failed = true;
+                    guidance_history_failure_reason = "history_snapshot_persist_failed:" + snapshot_error;
+                    guidance_history.clear();
                 }
             }
         } else {
             guidance_history_load_failed = true;
+            guidance_history_failure_reason = "lifecycle_history_read_failed";
         }
+    } else if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+            guidance_runtime_eligible && !guidance_identity_available) {
+        guidance_history_load_failed = true;
+        guidance_history_failure_reason = "authoritative_guidance_identity_unavailable";
     }
-    auto guidance_call_count = std::make_shared<size_t>(0);
     const common_flydelta_outcome_guidance_adviser outcome_adviser =
-        guidance_config.mode == common_flydelta_outcome_guidance_mode::off
+        guidance_config.mode == common_flydelta_outcome_guidance_mode::off ||
+            !guidance_runtime_eligible
             ? common_flydelta_outcome_guidance_adviser{}
             : common_flydelta_outcome_guidance_adviser(
-            [guidance_context, guidance_history, guidance_config, guidance_call_count,
+            [guidance_context, guidance_history, guidance_config,
+            persisted_guidance_sequence_by_pool, next_guidance_sequence_by_phase,
             lifecycle_store = provider->lifecycle_store, scope = job.seed.scope,
             projection_ms = guidance_projection_ms,
+            history_watermark = guidance_history_watermark,
             phase_id = static_cast<int>(plan.phase),
             job_id = job.id, history_load_failed = guidance_history_load_failed,
+            history_failure_reason = guidance_history_failure_reason,
+            read_history_rows = guidance_read_history_rows,
             ineligible_rows = guidance_ineligible_history_rows](
-                const std::vector<common_flydelta_outcome_guidance_candidate> & pool,
+            const std::vector<common_flydelta_outcome_guidance_candidate> & pool,
                 const size_t limit, common_flydelta_outcome_guidance_decision & decision,
                 std::string & adviser_error) {
             double prediction_ms = 0.0;
+            nlohmann::ordered_json pool_identity = nlohmann::ordered_json::array();
+            for (const auto & candidate : pool) pool_identity.push_back({
+                {"arm_id", candidate.arm_id}, {"basis", candidate.basis_identity},
+                {"rank", candidate.rank}, {"layer", candidate.relative_layer},
+                {"dose", candidate.relative_dose}, {"mixed", candidate.mixed_coefficients},
+                {"margin_sign", candidate.diagnostic_margin_sign},
+            });
+            const std::string pool_bytes = pool_identity.dump();
+            const std::string pool_fingerprint = "sha256:" +
+                hash_sha256_hex(pool_bytes.data(), pool_bytes.size());
+            const std::string sequence_key = std::to_string(phase_id) + ":" + pool_fingerprint;
+            size_t wave_index = 0;
+            const auto persisted = persisted_guidance_sequence_by_pool->find(sequence_key);
+            if (persisted != persisted_guidance_sequence_by_pool->end()) {
+                wave_index = persisted->second;
+            } else {
+                wave_index = (*next_guidance_sequence_by_phase)[phase_id]++;
+                (*persisted_guidance_sequence_by_pool)[sequence_key] = wave_index;
+            }
             uint64_t wave_seed = 1469598103934665603ULL;
             for (const unsigned char ch : job_id) { wave_seed ^= ch; wave_seed *= 1099511628211ULL; }
-            const size_t wave_index = (*guidance_call_count)++;
+            wave_seed ^= static_cast<uint64_t>(phase_id);
+            wave_seed *= 1099511628211ULL;
             wave_seed ^= static_cast<uint64_t>(wave_index);
             if (history_load_failed) {
-                adviser_error = "lifecycle_history_read_failed";
+                adviser_error = history_failure_reason.empty()
+                    ? "lifecycle_history_read_failed" : history_failure_reason;
             }
             const auto prediction_started = std::chrono::steady_clock::now();
             if (history_load_failed || !common_flydelta_outcome_guidance_build_decision(
@@ -1563,8 +1786,10 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 for (size_t i = 0; i < pool.size(); ++i) {
                     decision.original_order.push_back(i);
                     decision.shadow_order.push_back(i);
+                    decision.mixed_policy_order.push_back(i);
                     decision.selected_order.push_back(i);
                     decision.selection_reasons.push_back("fallback_existing_order");
+                    decision.mixed_policy_reasons.push_back("fallback_existing_order");
                 }
                 adviser_error.clear();
             }
@@ -1574,37 +1799,50 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 common_flydelta_lifecycle_event_context event_context;
                 event_context.event_id = job_id + ":outcome-guidance:" +
                     std::to_string(phase_id) + ":" + std::to_string(wave_index) + ":" +
-                    decision.history_fingerprint;
+                    decision.history_fingerprint + ":" + pool_fingerprint;
                 event_context.idempotency_key = event_context.event_id;
                 event_context.source_id = "daemon-flydelta-outcome-guidance";
                 event_context.scope = scope;
                 event_context.content_hash = decision.history_fingerprint + ":" +
                     std::to_string(wave_seed);
-                event_context.created_at = job_id;
+                const auto now = std::chrono::system_clock::now();
+                const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+                std::tm utc{};
+                gmtime_r(&now_time, &utc);
+                std::ostringstream timestamp;
+                timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+                event_context.created_at = timestamp.str();
                 std::string persist_error;
                 if (!common_flydelta_append_outcome_guidance_decision_lifecycle(
-                        *lifecycle_store, event_context, job_id, guidance_config.mode,
-                        wave_seed, guidance_context, pool, decision, persist_error)) {
-                    decision.fallback_reason = "lifecycle_write_failed";
-                    decision.selected_order = decision.original_order;
-                    decision.selection_reasons.assign(pool.size(), "fallback_existing_order");
+                    *lifecycle_store, event_context, job_id, guidance_config.mode,
+                        wave_seed, phase_id, wave_index, guidance_context, pool,
+                        decision, persist_error)) {
+                    // The arms have already been chosen (and may already have
+                    // run). A telemetry persistence failure cannot rewrite
+                    // history to claim a different order was executed.
+                    decision.fallback_reason = "lifecycle_write_failed:" + persist_error;
                 }
             } else {
                 decision.fallback_reason = "lifecycle_store_unavailable";
-                decision.selected_order = decision.original_order;
-                decision.selection_reasons.assign(pool.size(), "fallback_existing_order");
             }
             nlohmann::ordered_json trace = {
                 {"event", "flydelta_outcome_guidance"},
                 {"job_id", job_id},
                 {"mode", common_flydelta_outcome_guidance_mode_name(guidance_config.mode)},
                 {"history_fingerprint", decision.history_fingerprint},
+                {"decision_sequence", wave_index},
+                {"candidate_pool_fingerprint", pool_fingerprint},
                 {"projection_ms", projection_ms},
                 {"prediction_and_ordering_ms", prediction_ms},
-                {"compatible_history_rows", guidance_history.size()},
+            {"read_history_rows", read_history_rows},
+            {"history_watermark", history_watermark},
+                {"compatible_history_rows", decision.compatible_history_rows},
+                {"deduplicated_history_rows", decision.deduplicated_history_rows},
+                {"rejected_history_rows", decision.rejected_history_rows + ineligible_rows},
                 {"ineligible_history_rows", ineligible_rows},
                 {"candidate_count", pool.size()},
                 {"selected_order", decision.selected_order},
+                {"mixed_policy_order", decision.mixed_policy_order},
                 {"selection_reasons", decision.selection_reasons},
                 {"shadow_order", decision.shadow_order},
                 {"fallback_reason", decision.fallback_reason},
@@ -1814,10 +2052,21 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         lifecycle_context.scope = job.seed.scope;
         lifecycle_context.content_hash = job.seed.task_fingerprint + ":" +
             fixture.baseline_deployment_fingerprint;
-        lifecycle_context.created_at = job.id;
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+        std::tm utc{};
+        gmtime_r(&now_time, &utc);
+        std::ostringstream timestamp;
+        timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+        lifecycle_context.created_at = timestamp.str();
+        std::string lifecycle_error;
         if (!common_flydelta_append_coefficient_search_lifecycle(
                 *provider->lifecycle_store, lifecycle_context, fixture, basis,
-                coefficient_config, trials, job.seed.candidate_ref, error)) return false;
+                coefficient_config, trials, job.seed.candidate_ref, lifecycle_error)) {
+            std::clog << "[flydelta] outcome_guidance_result_persistence_failed job="
+                << job.id << " phase=" << common_flydelta_experiment_phase_name(plan.phase)
+                << " error=" << lifecycle_error << '\n';
+        }
     }
 
     common_flydelta_search_pipeline_direction_result direction_result;

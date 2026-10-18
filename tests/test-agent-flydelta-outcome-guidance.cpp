@@ -1,5 +1,6 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -34,6 +35,7 @@ static common_flydelta_outcome_guidance_observation observation(
     o.overlay_applied = true;
     o.verifier_known = outcome != common_flydelta_counterfactual_outcome::unknown;
     o.outcome = outcome;
+    o.outcome_known = outcome != common_flydelta_counterfactual_outcome::unknown;
     return o;
 }
 
@@ -111,12 +113,28 @@ int main() {
     CHECK(direct.predictions[0].effective_known_observations == 9.0);
     CHECK(direct.predictions[0].effective_unknown_observations == 1.0);
 
+    auto mixed_group_history = std::vector{observation("mixed-help", "mixed-group",
+        common_flydelta_counterfactual_outcome::helped)};
+    common_flydelta_outcome_guidance_decision known_only_group;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, mixed_group_history, {direct_candidate}, 1, 9, known_only_group, error));
+    mixed_group_history.push_back(observation("mixed-unknown", "mixed-group",
+        common_flydelta_counterfactual_outcome::unknown));
+    common_flydelta_outcome_guidance_decision mixed_known_unknown_group;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, mixed_group_history, {direct_candidate}, 1, 9,
+        mixed_known_unknown_group, error));
+    CHECK(mixed_known_unknown_group.predictions[0].p_known <
+        known_only_group.predictions[0].p_known);
+    CHECK(std::fabs(mixed_known_unknown_group.predictions[0].p_helped_given_known -
+        known_only_group.predictions[0].p_helped_given_known) < 1e-12);
+
     config.mode = common_flydelta_outcome_guidance_mode::experimental;
     common_flydelta_outcome_guidance_decision experimental_a, experimental_b;
     CHECK(common_flydelta_outcome_guidance_build_decision(
-        config, c, history, candidates, candidates.size(), 55, experimental_a, error));
+        config, c, history, candidates, candidates.size(), 0, experimental_a, error));
     CHECK(common_flydelta_outcome_guidance_build_decision(
-        config, c, history, candidates, candidates.size(), 55, experimental_b, error));
+        config, c, history, candidates, candidates.size(), 0, experimental_b, error));
     CHECK(experimental_a.selected_order == experimental_b.selected_order);
     CHECK(experimental_a.selected_order.size() == candidates.size());
     CHECK(experimental_a.history_fingerprint == experimental_b.history_fingerprint);
@@ -125,6 +143,43 @@ int main() {
     CHECK(experimental_a.selection_reasons[1] == "existing_order");
     CHECK(experimental_a.selection_reasons[2] == "posterior_sample");
     CHECK(experimental_a.selection_reasons[3] == "uniform_exploration");
+    CHECK(experimental_a.mixed_policy_reasons == experimental_a.selection_reasons);
+    CHECK(experimental_a.mixed_policy_order.size() == candidates.size());
+    {
+        auto sorted_order = experimental_a.mixed_policy_order;
+        std::sort(sorted_order.begin(), sorted_order.end());
+        CHECK(sorted_order == experimental_a.original_order);
+    }
+    common_flydelta_outcome_guidance_decision posterior_mean;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, history, candidates, candidates.size(), 0, posterior_mean, error,
+        common_flydelta_outcome_guidance_policy::posterior_mean));
+    CHECK(posterior_mean.selection_reasons[2] == "posterior_mean");
+    CHECK(posterior_mean.selection_reasons[3] == "uniform_exploration");
+    CHECK(posterior_mean.selected_order == posterior_mean.mixed_policy_order);
+    {
+        auto sorted_order = posterior_mean.selected_order;
+        std::sort(sorted_order.begin(), sorted_order.end());
+        CHECK(sorted_order == posterior_mean.original_order);
+    }
+
+    // Exact categories are basis-local; a same-rank arm on a different basis
+    // must not inherit leaf evidence (it may still receive coarse backoff).
+    auto other_basis = candidates[0];
+    other_basis.arm_id = "other-basis";
+    other_basis.rank = 2;
+    other_basis.basis_identity = "basis-C";
+    auto basis_a = observation("basis-a", "basis-fixture-a",
+        common_flydelta_counterfactual_outcome::helped);
+    basis_a.basis_identity = "basis-A";
+    auto basis_b = observation("basis-b", "basis-fixture-b",
+        common_flydelta_counterfactual_outcome::harmed);
+    basis_b.basis_identity = "basis-B";
+    common_flydelta_outcome_guidance_decision basis_decision;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, {basis_a, basis_b}, {other_basis}, 1, 0, basis_decision, error));
+    CHECK(basis_decision.predictions[0].fixture_groups == 0);
+    CHECK(std::abs(basis_decision.predictions[0].p_helped_given_known - 1.0/3.0) < 1e-9);
 
     common_learning_in_memory_lifecycle_store guidance_store;
     common_flydelta_lifecycle_event_context guidance_event;
@@ -137,13 +192,16 @@ int main() {
     guidance_event.content_hash = "sha256:guidance-test";
     guidance_event.created_at = "2026-10-18T00:00:00Z";
     CHECK(common_flydelta_append_outcome_guidance_decision_lifecycle(
-        guidance_store, guidance_event, "job-guidance", config.mode, config.seed,
+        guidance_store, guidance_event, "job-guidance", config.mode, config.seed, 0, 0,
         c, candidates, experimental_a, error));
     const auto guidance_records = guidance_store.list(error);
     CHECK(error.empty() && guidance_records.size() == 1);
     const auto guidance_payload = nlohmann::ordered_json::parse(
         guidance_records.front().payload_json);
     CHECK(guidance_payload["record_type"] == "outcome_guidance_decision");
+    CHECK(guidance_payload["decision_sequence"] == 0);
+    CHECK(guidance_payload["candidate_pool_fingerprint"].get<std::string>().rfind(
+        "sha256:", 0) == 0);
     CHECK(guidance_payload["selection_reasons"].size() == candidates.size());
     CHECK(guidance_payload["predictions"][0].contains("p_harmed_interval_95_approx"));
 
@@ -181,6 +239,15 @@ int main() {
     CHECK(common_flydelta_outcome_guidance_build_decision(
         config, c, original_history, {candidates[0]}, 1, 2, original_decision, error));
     CHECK(changed_decision.history_fingerprint != original_decision.history_fingerprint);
+
+    auto conflict = original_history.front();
+    conflict.outcome = common_flydelta_counterfactual_outcome::harmed;
+    common_flydelta_outcome_guidance_decision conflict_decision;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, {original_history.front(), conflict}, {candidates[0]}, 1, 2,
+        conflict_decision, error));
+    CHECK(conflict_decision.rejected_history_rows == 2);
+    CHECK(conflict_decision.predictions[0].fixture_groups == 0);
 
     // Chronological replay holds out whole fixture groups and compares the
     // posterior with fixed and simple historical-share baselines.

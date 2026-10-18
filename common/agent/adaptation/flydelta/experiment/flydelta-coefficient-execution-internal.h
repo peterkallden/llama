@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include "hash/hash.h"
 
 namespace common_flydelta_coefficient_detail {
 
@@ -43,6 +44,20 @@ struct coefficient_arm_result {
     std::string dose_reason;
 };
 
+inline std::string guidance_basis_identity(
+        const common_flydelta_low_rank_basis & basis) {
+    std::ostringstream material;
+    for (const auto & vector : basis.vectors) {
+        for (const float value : vector) material << std::hexfloat << value << ',';
+        material << ';';
+    }
+    const std::string bytes = material.str();
+    std::ostringstream identity;
+    identity << "layer:" << basis.layer_index << ":rank:" << basis.vectors.size()
+        << ":sha256:" << hash_sha256_hex(bytes.data(), bytes.size());
+    return identity.str();
+}
+
 bool run_coefficient_arms_batched(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_low_rank_basis & basis,
@@ -67,25 +82,13 @@ inline common_flydelta_outcome_guidance_candidate guidance_candidate(
         const common_flydelta_coefficient_search_config & config,
         const common_flydelta_margin_comparison * margin = nullptr) {
     common_flydelta_outcome_guidance_candidate candidate;
+    candidate.rank = basis.vectors.size();
+    candidate.basis_identity = config.guidance_basis_identity.empty()
+        ? guidance_basis_identity(basis) : config.guidance_basis_identity;
     std::ostringstream id;
-    id << "coeff:" << basis.layer_index;
+    id << "arm:" << candidate.basis_identity << ":coeff";
     for (float value : coefficients) id << ':' << std::hexfloat << value;
     candidate.arm_id = id.str();
-    candidate.rank = basis.vectors.size();
-    uint64_t basis_hash = 1469598103934665603ULL;
-    std::ostringstream basis_values;
-    for (const auto & vector : basis.vectors) {
-        for (const float value : vector) basis_values << std::hexfloat << value << ',';
-        basis_values << ';';
-    }
-    for (const unsigned char ch : basis_values.str()) {
-        basis_hash ^= ch;
-        basis_hash *= 1099511628211ULL;
-    }
-    std::ostringstream basis_id;
-    basis_id << "layer:" << basis.layer_index << ":rank:" << basis.vectors.size()
-        << ":fnv64:" << std::hex << basis_hash;
-    candidate.basis_identity = basis_id.str();
     if (config.guidance_model_layer_count > 1 && config.guidance_layer_index >= 0) {
         candidate.relative_layer = static_cast<double>(config.guidance_layer_index) /
             static_cast<double>(config.guidance_model_layer_count - 1);

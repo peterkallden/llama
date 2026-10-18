@@ -1145,6 +1145,19 @@ extern "C" {
     // returns NULL for invalid ids.
     LLAMA_API float * llama_get_logits_ith(struct llama_context * ctx, int32_t i);
 
+    // Optional auxiliary teacher-forced score path. When targets are set,
+    // llama_decode computes per-output target log-probabilities in the model
+    // graph and exposes only scalar scores rather than full vocabulary rows.
+    LLAMA_API void llama_set_teacher_forced_targets(
+            struct llama_context * ctx,
+            const llama_seq_id * seq_ids,
+            const llama_token * target_tokens,
+            size_t n_targets);
+    LLAMA_API float llama_get_teacher_forced_logprob_ith(
+            struct llama_context * ctx, int32_t i);
+    LLAMA_API bool llama_get_teacher_forced_logprob_is_device(
+            struct llama_context * ctx, int32_t i);
+
     // Get all output token embeddings.
     // when pooling_type == LLAMA_POOLING_TYPE_NONE or when using a generative model,
     // the embeddings for which llama_batch.logits[i] != 0 are stored contiguously

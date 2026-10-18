@@ -26,16 +26,35 @@ bool common_agent_sqlite_learning_lifecycle_store::open(const std::string & path
 void common_agent_sqlite_learning_lifecycle_store::close() { database_.close(); }
 
 bool common_agent_sqlite_learning_lifecycle_store::ensure_schema(std::string & error) {
-    return database_.execute(
+    if (!database_.execute(
         "CREATE TABLE IF NOT EXISTS agent_learning_lifecycle("
         "event_id TEXT PRIMARY KEY,"
         "idempotency_key TEXT NOT NULL UNIQUE,"
         "subject_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,"
         "namespace_id TEXT NOT NULL, project_id TEXT NOT NULL, session_id TEXT NOT NULL,"
         "source_id TEXT NOT NULL, content_hash TEXT NOT NULL, created_at TEXT NOT NULL,"
-        "payload_json TEXT NOT NULL);"
+        "payload_json TEXT NOT NULL, registration_order INTEGER NOT NULL DEFAULT 0);"
         "CREATE INDEX IF NOT EXISTS agent_learning_lifecycle_subject "
         "ON agent_learning_lifecycle(subject_id,created_at,event_id);",
+        error)) return false;
+    bool has_order = false;
+    common_sqlite_statement columns;
+    if (!database_.prepare("PRAGMA table_info(agent_learning_lifecycle);", columns, error)) return false;
+    bool row = false;
+    while (columns.step(row, error) && row) {
+        const auto * name = columns.column_text(1);
+        if (name && std::string(reinterpret_cast<const char *>(name)) == "registration_order") has_order = true;
+    }
+    if (!error.empty()) return false;
+    if (!has_order && !database_.execute(
+            "ALTER TABLE agent_learning_lifecycle ADD COLUMN registration_order INTEGER NOT NULL DEFAULT 0;",
+            error)) return false;
+    // SQLite rowid is the durable insertion sequence for this rowid table.
+    // It gives pre-upgrade rows an authoritative order without interpreting
+    // timestamps or event-id spelling.
+    return database_.execute(
+        "UPDATE agent_learning_lifecycle SET registration_order=rowid "
+        "WHERE registration_order=0;",
         error);
 }
 
@@ -56,9 +75,21 @@ bool common_agent_sqlite_learning_lifecycle_store::append(
         }
     }
     common_sqlite_statement statement;
+    common_sqlite_transaction transaction(database_);
+    if (!transaction.begin(error)) return false;
+    int64_t registration_order = 0;
+    {
+        common_sqlite_statement maximum;
+        if (!database_.prepare(
+                "SELECT COALESCE(MAX(registration_order),0)+1 FROM agent_learning_lifecycle;",
+                maximum, error)) return false;
+        bool has_row = false;
+        if (!maximum.step(has_row, error) || !has_row) return false;
+        registration_order = maximum.column_int64(0);
+    }
     const auto sql = "INSERT INTO agent_learning_lifecycle("
         "event_id,idempotency_key,subject_id,kind,status,namespace_id,project_id,session_id,"
-        "source_id,content_hash,created_at,payload_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);";
+        "source_id,content_hash,created_at,payload_json,registration_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);";
     if (!database_.prepare(sql, statement, error) ||
             !statement.bind_text(1, record.event_id, error) ||
             !statement.bind_text(2, record.idempotency_key, error) ||
@@ -71,9 +102,11 @@ bool common_agent_sqlite_learning_lifecycle_store::append(
             !statement.bind_text(9, record.source_id, error) ||
             !statement.bind_text(10, record.content_hash, error) ||
             !statement.bind_text(11, record.created_at, error) ||
-            !statement.bind_text(12, record.payload_json, error)) return false;
+            !statement.bind_text(12, record.payload_json, error) ||
+            !statement.bind_int64(13, registration_order, error)) return false;
     bool row = false;
-    return statement.step(row, error);
+    if (!statement.step(row, error)) return false;
+    return transaction.commit(error);
 }
 
 bool common_agent_sqlite_learning_lifecycle_store::contains_idempotency(
@@ -91,10 +124,11 @@ std::vector<common_learning_lifecycle_record> common_agent_sqlite_learning_lifec
     error.clear();
     std::vector<common_learning_lifecycle_record> result;
     common_sqlite_statement statement;
-    if (!database_.prepare("SELECT event_id,idempotency_key,subject_id,kind,status,namespace_id,project_id,session_id,source_id,content_hash,created_at,payload_json FROM agent_learning_lifecycle ORDER BY event_id;", statement, error)) return result;
+    if (!database_.prepare("SELECT event_id,idempotency_key,subject_id,kind,status,namespace_id,project_id,session_id,source_id,content_hash,created_at,payload_json,registration_order FROM agent_learning_lifecycle ORDER BY registration_order,event_id;", statement, error)) return result;
     bool row = false;
     while (statement.step(row, error) && row) {
         common_learning_lifecycle_record record;
+        record.schema_version = 2;
         record.event_id = text_column(statement, 0);
         record.idempotency_key = text_column(statement, 1);
         record.subject_id = text_column(statement, 2);
@@ -111,6 +145,7 @@ std::vector<common_learning_lifecycle_record> common_agent_sqlite_learning_lifec
         record.content_hash = text_column(statement, 9);
         record.created_at = text_column(statement, 10);
         record.payload_json = text_column(statement, 11);
+        record.registration_order = static_cast<uint64_t>(statement.column_int64(12));
         if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return {};
         result.push_back(std::move(record));
     }

@@ -12,7 +12,8 @@ int main() {
     if (!parse_agent_host_config_json(json::object(), config, error) ||
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
             config.adaptation_flydelta_outcome_guidance.mode !=
-                common_flydelta_outcome_guidance_mode::shadow) {
+                common_flydelta_outcome_guidance_mode::shadow ||
+            config.adaptation_flydelta_teacher_scoring_backend != "auto") {
         std::cerr << "factorized cvec must not be disabled by default: " << error << '\n';
         return 1;
     }
@@ -20,7 +21,8 @@ int main() {
     if (!serialized["runtime"]["adaptation"]["flydelta"].contains("disable_factorized_cvec_batch") ||
             serialized["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] != false ||
             serialized["runtime"]["adaptation"]["flydelta"].contains("factorized_cvec_batch") ||
-            serialized["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["mode"] != "shadow") {
+            serialized["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["mode"] != "shadow" ||
+            serialized["runtime"]["adaptation"]["flydelta"]["teacher_scoring_backend"] != "auto") {
         std::cerr << "factorized cvec opt-out default was not serialized canonically\n";
         return 1;
     }
@@ -38,6 +40,7 @@ int main() {
         }},
         {"runtime", {{"adaptation", {{"flydelta", {
             {"enabled", true},
+            {"teacher_scoring_backend", "backend"},
             {"worker_count", 1},
             {"queue_path", "var/flydelta/queue"},
             {"batch_mode", "auto"},
@@ -46,7 +49,8 @@ int main() {
         {"limits", {{"worker_count", 2}}},
     };
     if (!parse_agent_host_config_json(compatible, config, error) ||
-            config.adaptation_flydelta_disable_factorized_cvec_batch) {
+            config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            config.adaptation_flydelta_teacher_scoring_backend != "backend") {
         std::cerr << "default compatible factorized cvec config rejected: " << error << '\n';
         return 1;
     }
@@ -68,7 +72,8 @@ int main() {
     apply_agent_host_config_to_daemon_options(config, guidance_options);
     if (guidance_options.adaptation_flydelta_outcome_guidance.mode !=
             common_flydelta_outcome_guidance_mode::experimental ||
-            guidance_options.adaptation_flydelta_outcome_guidance.seed != 71) {
+            guidance_options.adaptation_flydelta_outcome_guidance.seed != 71 ||
+            guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend") {
         std::cerr << "outcome guidance config did not reach daemon options\n";
         return 1;
     }
@@ -82,7 +87,8 @@ int main() {
     const auto roundtrip = agent_host_config_to_json(config);
     agent_host_config roundtrip_config;
     if (!parse_agent_host_config_json(roundtrip, roundtrip_config, error) ||
-            roundtrip_config.adaptation_flydelta_disable_factorized_cvec_batch) {
+            roundtrip_config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend") {
         std::cerr << "factorized cvec config did not round-trip: " << error << '\n';
         return 1;
     }
@@ -133,6 +139,13 @@ int main() {
     conflicting["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] = true;
     if (parse_agent_host_config_json(conflicting, config, error)) {
         std::cerr << "ambiguous legacy and opt-out settings were accepted\n";
+        return 1;
+    }
+
+    auto unsupported_teacher_backend = compatible;
+    unsupported_teacher_backend["runtime"]["adaptation"]["flydelta"]["teacher_scoring_backend"] = "cuda-maybe";
+    if (parse_agent_host_config_json(unsupported_teacher_backend, config, error)) {
+        std::cerr << "unknown teacher scoring backend was accepted\n";
         return 1;
     }
 

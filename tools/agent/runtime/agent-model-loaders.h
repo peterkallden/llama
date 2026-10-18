@@ -28,6 +28,7 @@ struct common_agent_runtime_model_loader_config {
     bool fit_params = true;
     bool per_sequence_cvec_batch = false;
     bool per_sequence_factorized_cvec_batch = false;
+    std::string teacher_scoring_backend = "auto";
     bool agent_trace = false;
     bool allow_flydelta_scalar_fallback = true;
     bool reserve_flydelta_workspace = true;

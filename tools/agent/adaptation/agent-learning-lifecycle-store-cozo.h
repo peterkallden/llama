@@ -3,6 +3,7 @@
 #include "agent/adaptation/lifecycle-store.h"
 
 #include <cstdint>
+#include <mutex>
 
 class common_agent_cozo_learning_lifecycle_store final
     : public common_learning_lifecycle_store {
@@ -20,4 +21,5 @@ private:
              std::string & result_json, std::string & error) const;
 
     int32_t db_id_ = -1;
+    mutable std::mutex append_mutex_;
 };

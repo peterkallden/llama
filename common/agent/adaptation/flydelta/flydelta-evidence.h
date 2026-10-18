@@ -112,6 +112,12 @@ struct common_flydelta_experiment_seed {
     std::string baseline_ref;
     std::string candidate_ref;
     std::string verifier_ref;
+    // Optional host-owned experiment provenance. These are deliberately
+    // separate from fixture resource refs and task fingerprints.
+    std::string verifier_contract_revision;
+    std::string fixture_group_id;
+    std::string ruleset_revision;
+    std::string action_contract_fingerprint;
     std::string evidence_ref;
     std::vector<std::string> transaction_ids;
 };

@@ -173,6 +173,10 @@ std::string common_flydelta_experiment_job_to_json(
             {"baseline_ref", job.seed.baseline_ref},
             {"candidate_ref", job.seed.candidate_ref},
             {"verifier_ref", job.seed.verifier_ref},
+            {"verifier_contract_revision", job.seed.verifier_contract_revision},
+            {"fixture_group_id", job.seed.fixture_group_id},
+            {"ruleset_revision", job.seed.ruleset_revision},
+            {"action_contract_fingerprint", job.seed.action_contract_fingerprint},
             {"evidence_ref", job.seed.evidence_ref},
             {"transaction_ids", job.seed.transaction_ids},
         }},
@@ -244,6 +248,10 @@ bool common_flydelta_experiment_job_from_json(
         job.seed.baseline_ref = seed.value("baseline_ref", "");
         job.seed.candidate_ref = seed.value("candidate_ref", "");
         job.seed.verifier_ref = seed.value("verifier_ref", "");
+        job.seed.verifier_contract_revision = seed.value("verifier_contract_revision", "");
+        job.seed.fixture_group_id = seed.value("fixture_group_id", "");
+        job.seed.ruleset_revision = seed.value("ruleset_revision", "");
+        job.seed.action_contract_fingerprint = seed.value("action_contract_fingerprint", "");
         job.seed.evidence_ref = seed.value("evidence_ref", "");
         job.seed.transaction_ids = seed.value("transaction_ids", std::vector<std::string>{});
         job.capture_candidate_ids = value.value("capture_candidate_ids", std::vector<std::string>{});

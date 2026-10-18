@@ -260,6 +260,9 @@ struct common_agent_teacher_forced_choice_result {
     size_t negative_token_count = 0;
     std::string error_message;
     bool flydelta_device_batch = false;
+    std::string teacher_scoring_representation = "unknown";
+    bool teacher_scoring_device = false;
+    size_t teacher_scoring_returned_bytes = 0;
 
     float total_delta() const {
         return positive_total_logprob - negative_total_logprob;
@@ -288,6 +291,13 @@ struct common_agent_teacher_forced_choice_batch_request {
 
 struct common_agent_teacher_forced_choice_batch_result {
     std::vector<common_agent_teacher_forced_choice_result> choices;
+    // Wall time is measured once per logical scoring batch, not once per
+    // choice. The representation/bytes summarize returned scores only.
+    double scoring_wall_ms = 0.0;
+    size_t physical_task_count = 0;
+    size_t returned_score_bytes = 0;
+    bool device_scoring = false;
+    std::string scoring_representation = "unknown";
     std::string error_message;
 };
 

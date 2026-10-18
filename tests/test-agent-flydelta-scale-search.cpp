@@ -5,6 +5,18 @@
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
+static common_flydelta_experiment_fixture make_fixture(const char * id) {
+    common_flydelta_experiment_fixture value;
+    value.id = id;
+    value.task_fingerprint = "task";
+    value.model_profile_fingerprint = "model";
+    value.tokenizer_fingerprint = "tokenizer";
+    value.template_fingerprint = "template";
+    value.execution_context_fingerprint = "context";
+    value.verifier_revision = "verifier";
+    return value;
+}
+
 int main() {
     std::string error;
     common_flydelta_scale_search_config config;
@@ -17,10 +29,7 @@ int main() {
     std::vector<common_flydelta_scale_trial> trials;
     size_t calls = 0;
     CHECK(common_flydelta_run_scale_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:scale-search", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, config,
+        make_fixture("fixture:scale-search"), config,
         [&](const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & result,
                 common_flydelta_scale_geometry & geometry, std::string &) {
@@ -67,10 +76,7 @@ int main() {
     calibrated_search.max_refinement_trials = 1;
     calls = 0;
     CHECK(common_flydelta_run_scale_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:calibrated-scale-search", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, calibrated_search,
+        make_fixture("fixture:calibrated-scale-search"), calibrated_search,
         [&](const common_flydelta_experiment_fixture &, float scale, bool apply_overlay,
                 common_flydelta_counterfactual_trial & result,
                 common_flydelta_scale_geometry & geometry, std::string &) {
@@ -108,10 +114,7 @@ int main() {
     config.max_refinement_trials = 0;
     calls = 0;
     CHECK(common_flydelta_run_scale_search(
-        common_flydelta_experiment_fixture{
-            1, "fixture:scale-stop", "task", "model", "tokenizer",
-            "template", "context", "verifier"
-        }, config,
+        make_fixture("fixture:scale-stop"), config,
         [&](const common_flydelta_experiment_fixture &, float, bool apply_overlay,
                 common_flydelta_counterfactual_trial & result,
                 common_flydelta_scale_geometry & geometry, std::string &) {

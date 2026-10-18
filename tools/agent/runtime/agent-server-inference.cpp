@@ -10,6 +10,7 @@
 #include "server-task.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <unordered_set>
 #include <cstdlib>
@@ -939,6 +940,26 @@ private:
             const common_agent_teacher_forced_choice_batch_request & request,
             common_agent_teacher_forced_choice_batch_result & result) override {
         result = {};
+        struct scoring_telemetry_guard {
+            common_agent_teacher_forced_choice_batch_result & result;
+            std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+            ~scoring_telemetry_guard() {
+                result.scoring_wall_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count();
+                result.returned_score_bytes = 0;
+                result.physical_task_count = result.choices.size() * 2;
+                bool all_device = !result.choices.empty();
+                std::string representation;
+                for (const auto & choice : result.choices) {
+                    result.returned_score_bytes += choice.teacher_scoring_returned_bytes;
+                    all_device = all_device && choice.teacher_scoring_device;
+                    if (representation.empty()) representation = choice.teacher_scoring_representation;
+                    else if (representation != choice.teacher_scoring_representation) representation = "mixed";
+                }
+                result.device_scoring = all_device;
+                result.scoring_representation = representation.empty() ? "unavailable" : representation;
+            }
+        } telemetry{result};
         if (request.choices.empty() || request.choices.size() > 256) {
             result.error_message = "server teacher-forced scoring batch has an invalid size";
             return false;
@@ -1112,6 +1133,15 @@ private:
             choice_result.negative_token_count = negative_result->token_count;
             choice_result.flydelta_device_batch = positive_result->flydelta_device_batch ||
                 negative_result->flydelta_device_batch;
+            choice_result.teacher_scoring_representation =
+                positive_result->teacher_scoring_representation ==
+                    negative_result->teacher_scoring_representation
+                ? positive_result->teacher_scoring_representation : "mixed";
+            choice_result.teacher_scoring_device = positive_result->teacher_scoring_device &&
+                negative_result->teacher_scoring_device;
+            choice_result.teacher_scoring_returned_bytes =
+                positive_result->teacher_scoring_returned_bytes +
+                negative_result->teacher_scoring_returned_bytes;
             result.choices.push_back(std::move(choice_result));
         }
         return true;

@@ -24,6 +24,10 @@ struct common_flydelta_low_rank_basis {
     std::vector<std::vector<float>> vectors;
 };
 
+// Stable identity shared by arm preparation, guidance and lifecycle records.
+std::string common_flydelta_coefficient_basis_identity(
+        const common_flydelta_low_rank_basis & basis);
+
 bool common_flydelta_low_rank_basis_validate(
         const common_flydelta_low_rank_basis & basis,
         size_t max_rank,
@@ -126,6 +130,7 @@ struct common_flydelta_coefficient_search_config {
     // Host-populated geometry used only to form comparable guidance features.
     int32_t guidance_layer_index = -1;
     size_t guidance_model_layer_count = 0;
+    std::string guidance_basis_identity;
 };
 
 bool common_flydelta_coefficient_search_config_validate(
@@ -161,6 +166,11 @@ struct common_flydelta_coefficient_trial {
     bool host_evaluated = false;
     bool verifier_known = false;
     bool overlay_applied = false;
+    // Forecast identity/features are frozen when the adviser ranks the
+    // proposal. Later scoring must not rewrite the predictor inputs.
+    std::string guidance_arm_id;
+    std::string guidance_basis_id;
+    int guidance_margin_sign = 0;
     size_t iteration = 0;
     size_t parent_trial_index = static_cast<size_t>(-1);
     std::string mutation_kind;

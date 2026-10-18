@@ -107,6 +107,7 @@ bool open_daemon_model_residency(
     loader_config.per_sequence_cvec_batch = native_batch;
     loader_config.per_sequence_factorized_cvec_batch =
         options.adaptation_flydelta_factorized_cvec_batch && native_batch;
+    loader_config.teacher_scoring_backend = options.adaptation_flydelta_teacher_scoring_backend;
     loader_config.agent_trace = options.agent_trace;
     loader_config.allow_flydelta_scalar_fallback = allow_scalar_fallback;
     loader_config.reserve_flydelta_workspace = true;

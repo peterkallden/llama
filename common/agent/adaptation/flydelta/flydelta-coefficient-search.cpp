@@ -1,6 +1,11 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 
+std::string common_flydelta_coefficient_basis_identity(
+        const common_flydelta_low_rank_basis & basis) {
+    return common_flydelta_coefficient_detail::guidance_basis_identity(basis);
+}
+
 void common_flydelta_coefficient_trial_set_observation(
         common_flydelta_coefficient_trial & target,
         const common_flydelta_counterfactual_trial & baseline,
@@ -106,25 +111,33 @@ bool common_flydelta_append_coefficient_search_lifecycle(
         observation.budget_remaining = index + 1 < trials.size();
         if (!fixture.scope_fingerprint.empty() &&
                 !fixture.baseline_deployment_fingerprint.empty() &&
-                !fixture.semantic_domain.empty() && fixture.model_n_layers > 1 &&
+                !fixture.semantic_domain.empty() && !fixture.guidance_fixture_group_id.empty() &&
+                !fixture.outcome_guidance_verifier_revision.empty() && fixture.model_n_layers > 1 &&
                 !trial.arm_id.empty()) {
-            observation.guidance_observation_id = fixture.id + ":" + trial.arm_id;
-            observation.guidance_fixture_group_id = fixture.task_fingerprint;
+            std::string logical_arm_id = trial.guidance_arm_id;
+            if (logical_arm_id.empty()) {
+                logical_arm_id = common_flydelta_coefficient_detail::guidance_candidate(
+                    trial.requested_coefficients.empty() ? trial.coefficients : trial.requested_coefficients,
+                    basis, config).arm_id;
+            }
+            observation.guidance_observation_id = fixture.task_fingerprint + ":" + logical_arm_id;
+            observation.guidance_fixture_group_id = fixture.guidance_fixture_group_id;
             observation.guidance_scope_fingerprint = fixture.scope_fingerprint;
             observation.guidance_model_profile_fingerprint = fixture.model_profile_fingerprint;
             observation.guidance_tokenizer_fingerprint = fixture.tokenizer_fingerprint;
             observation.guidance_template_fingerprint = fixture.template_fingerprint;
             observation.guidance_baseline_deployment_fingerprint =
                 fixture.baseline_deployment_fingerprint;
-            observation.guidance_verifier_revision = fixture.verifier_revision;
+            observation.guidance_verifier_revision = fixture.outcome_guidance_verifier_revision;
             observation.guidance_ruleset_revision = fixture.ruleset_revision;
             observation.guidance_action_contract_fingerprint = fixture.action_contract_fingerprint;
             observation.guidance_domain = fixture.semantic_domain;
             observation.guidance_strategy = common_flydelta_coefficient_search_strategy_name(
                 config.strategy);
             observation.guidance_estimator = "coefficient-margin-geometry-v1";
-            observation.guidance_basis_id = common_flydelta_coefficient_detail::guidance_candidate(
-                trial.coefficients, basis, config).basis_identity;
+            observation.guidance_basis_id = trial.guidance_basis_id.empty()
+                ? common_flydelta_coefficient_detail::guidance_basis_identity(basis)
+                : trial.guidance_basis_id;
             observation.guidance_rank = basis.vectors.size();
             observation.guidance_relative_layer = static_cast<double>(basis.layer_index) /
                 static_cast<double>(fixture.model_n_layers - 1);
@@ -134,12 +147,11 @@ bool common_flydelta_append_coefficient_search_lifecycle(
             size_t nonzero = 0;
             for (const float coefficient : trial.coefficients) if (std::abs(coefficient) > 1e-7f) ++nonzero;
             observation.guidance_mixed_coefficients = nonzero > 1;
-            const float margin_delta = trial.margin_comparison.available
-                ? trial.margin_comparison.normalized_delta() : 0.0f;
-            observation.guidance_margin_sign = margin_delta > 1e-7f ? 1 :
-                (margin_delta < -1e-7f ? -1 : 0);
+            observation.guidance_margin_sign = trial.guidance_margin_sign;
             observation.guidance_comparison_completed = trial.host_evaluated;
             observation.guidance_overlay_applied = trial.overlay_applied;
+            observation.guidance_outcome_known =
+                trial.outcome != common_flydelta_counterfactual_outcome::unknown;
         }
 
         common_flydelta_search_decision decision;

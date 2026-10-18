@@ -8,6 +8,9 @@
 #include <vector>
 
 enum class common_flydelta_outcome_guidance_mode { off, shadow, experimental };
+// Offline evaluation can compare expected-utility ordering with Thompson
+// sampling without adding another production runtime mode.
+enum class common_flydelta_outcome_guidance_policy { posterior_sampling, posterior_mean };
 
 const char * common_flydelta_outcome_guidance_mode_name(
         common_flydelta_outcome_guidance_mode mode);
@@ -58,6 +61,10 @@ struct common_flydelta_outcome_guidance_observation {
     int diagnostic_margin_sign = 0;
     bool comparison_completed = false;
     bool overlay_applied = false;
+    // Whether the comparison produced one of HELPED/NEUTRAL/HARMED. This is
+    // independent of whether each individual verifier call had a predicate:
+    // a completed comparison can be inconclusive even with known verifiers.
+    bool outcome_known = false;
     bool verifier_known = false;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
@@ -97,6 +104,7 @@ struct common_flydelta_outcome_guidance_prediction {
     double effective_unknown_observations = 0.0;
     size_t backoff_fixture_groups = 0;
     double backoff_prior_strength = 0.0;
+    double backoff_categorical_prior_strength = 0.0;
     size_t raw_observations = 0;
     size_t fixture_groups = 0;
 };
@@ -116,11 +124,19 @@ struct common_flydelta_outcome_guidance_replay_metrics {
 
 struct common_flydelta_outcome_guidance_decision {
     std::vector<size_t> original_order;
+    // Posterior-only rank, hypothetical mixed-policy order, and actual order
+    // remain distinct in both shadow and experimental modes.
     std::vector<size_t> shadow_order;
+    std::vector<size_t> mixed_policy_order;
     std::vector<size_t> selected_order;
     std::vector<std::string> selection_reasons;
+    std::vector<std::string> mixed_policy_reasons;
     std::vector<common_flydelta_outcome_guidance_prediction> predictions;
     std::string history_fingerprint;
+    size_t read_history_rows = 0;
+    size_t compatible_history_rows = 0;
+    size_t deduplicated_history_rows = 0;
+    size_t rejected_history_rows = 0;
     std::string fallback_reason;
 };
 
@@ -132,7 +148,9 @@ bool common_flydelta_outcome_guidance_build_decision(
         const size_t selection_limit,
         const uint64_t job_seed,
         common_flydelta_outcome_guidance_decision & decision,
-        std::string & error);
+        std::string & error,
+        common_flydelta_outcome_guidance_policy policy =
+            common_flydelta_outcome_guidance_policy::posterior_sampling);
 
 // Replays observations in their registered order. Holdout fixture groups are
 // never added to the training projection; non-holdout rows become available
@@ -150,6 +168,8 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         const std::string & job_id,
         common_flydelta_outcome_guidance_mode mode,
         uint64_t seed,
+        int phase_id,
+        size_t decision_sequence,
         const common_flydelta_outcome_guidance_context & context,
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const common_flydelta_outcome_guidance_decision & decision,

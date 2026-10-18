@@ -601,6 +601,8 @@ bool parse_agent_host_config_json(
                     read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
                     read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
                 }
+                read_optional(flydelta, "teacher_scoring_backend",
+                    config.adaptation_flydelta_teacher_scoring_backend);
                 read_optional(flydelta, "artifact_root", config.adaptation_flydelta_artifact_root);
                 read_optional(flydelta, "model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint);
                 read_optional(flydelta, "capture_layout_revision", config.adaptation_flydelta_capture_layout_revision);
@@ -1412,6 +1414,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
                         {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
                     }},
+                    {"teacher_scoring_backend", config.adaptation_flydelta_teacher_scoring_backend},
                     {"canary", {
                         {"mode", common_flydelta_canary_mode_name(config.adaptation_flydelta_canary_policy.mode)},
                         {"min_observations", config.adaptation_flydelta_canary_policy.min_observations},
@@ -1700,6 +1703,12 @@ bool validate_agent_host_config(
     if (!common_flydelta_outcome_guidance_config_validate(
             config.adaptation_flydelta_outcome_guidance, error)) {
         error = "runtime.adaptation.flydelta.outcome_guidance: " + error;
+        return false;
+    }
+    if (config.adaptation_flydelta_teacher_scoring_backend != "auto" &&
+            config.adaptation_flydelta_teacher_scoring_backend != "cpu" &&
+            config.adaptation_flydelta_teacher_scoring_backend != "backend") {
+        error = "runtime.adaptation.flydelta.teacher_scoring_backend must be auto, cpu, or backend";
         return false;
     }
     if (config.n_threads < 1) {
@@ -2224,6 +2233,8 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
     options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
     options.adaptation_flydelta_outcome_guidance = config.adaptation_flydelta_outcome_guidance;
+    options.adaptation_flydelta_teacher_scoring_backend =
+        config.adaptation_flydelta_teacher_scoring_backend;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;

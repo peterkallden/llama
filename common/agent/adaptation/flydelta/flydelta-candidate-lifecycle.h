@@ -111,6 +111,7 @@ struct common_flydelta_search_observation {
     int guidance_margin_sign = 0;
     bool guidance_comparison_completed = false;
     bool guidance_overlay_applied = false;
+    bool guidance_outcome_known = false;
 };
 
 bool common_flydelta_search_observation_validate(
