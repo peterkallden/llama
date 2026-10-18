@@ -927,6 +927,17 @@ private:
             result.negative_total_logprob = static_cast<float>(negative_result.total_logprob);
             result.positive_token_count = positive_result.token_count;
             result.negative_token_count = negative_result.token_count;
+            result.flydelta_device_batch = positive_result.flydelta_device_batch &&
+                negative_result.flydelta_device_batch;
+            result.teacher_scoring_representation =
+                positive_result.teacher_scoring_representation ==
+                    negative_result.teacher_scoring_representation
+                ? positive_result.teacher_scoring_representation : "mixed";
+            result.teacher_scoring_device = positive_result.teacher_scoring_device &&
+                negative_result.teacher_scoring_device;
+            result.teacher_scoring_returned_bytes =
+                positive_result.teacher_scoring_returned_bytes +
+                negative_result.teacher_scoring_returned_bytes;
             return true;
         } catch (const std::exception & err) {
             result = {};
@@ -1131,7 +1142,7 @@ private:
                 static_cast<float>(negative_result->total_logprob);
             choice_result.positive_token_count = positive_result->token_count;
             choice_result.negative_token_count = negative_result->token_count;
-            choice_result.flydelta_device_batch = positive_result->flydelta_device_batch ||
+            choice_result.flydelta_device_batch = positive_result->flydelta_device_batch &&
                 negative_result->flydelta_device_batch;
             choice_result.teacher_scoring_representation =
                 positive_result->teacher_scoring_representation ==

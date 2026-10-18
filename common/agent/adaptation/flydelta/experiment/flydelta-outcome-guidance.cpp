@@ -178,7 +178,8 @@ bool common_flydelta_outcome_guidance_build_decision(
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const size_t selection_limit, const uint64_t job_seed,
         common_flydelta_outcome_guidance_decision & d, std::string & error,
-        const common_flydelta_outcome_guidance_policy policy) {
+        const common_flydelta_outcome_guidance_policy policy,
+        const size_t policy_sequence_start) {
     d = {}; error.clear();
     if (!common_flydelta_outcome_guidance_config_validate(config, error) ||
             context.scope_fingerprint.empty() || context.model_profile_fingerprint.empty() ||
@@ -379,7 +380,7 @@ bool common_flydelta_outcome_guidance_build_decision(
     std::set<size_t> selected;
     size_t existing_cursor = 0;
     for (size_t slot=0; slot<selection_limit; ++slot) {
-        const size_t policy_slot = static_cast<size_t>((job_seed + slot) % 4);
+        const size_t policy_slot = (policy_sequence_start + slot) % 4;
         size_t choice = candidates.size();
         const char * reason = "existing_order";
         if (policy_slot < 2) {
@@ -449,6 +450,13 @@ bool common_flydelta_outcome_guidance_replay(
     uint64_t replay_seed = config.seed;
     std::map<std::string, std::string> replay_seen;
     std::set<std::string> replay_conflicts;
+    const auto replay_eligible = [](const auto & row) {
+        const bool outcome_known =
+            row.outcome != common_flydelta_counterfactual_outcome::unknown;
+        return row.comparison_completed && row.overlay_applied &&
+            !row.fixture_group_id.empty() && !row.stable_observation_id.empty() &&
+            row.outcome_known == outcome_known && (!outcome_known || row.verifier_known);
+    };
     const auto replay_signature = [](const auto & row) {
         return nlohmann::ordered_json{
             {"group", row.fixture_group_id},
@@ -465,11 +473,7 @@ bool common_flydelta_outcome_guidance_replay(
         }.dump();
     };
     for (const auto & row : chronological) {
-        if (!row.comparison_completed || !row.overlay_applied || row.fixture_group_id.empty() ||
-                row.stable_observation_id.empty() ||
-                row.outcome_known != (row.outcome != common_flydelta_counterfactual_outcome::unknown) ||
-                (row.outcome_known && !row.verifier_known) ||
-                (row.outcome != common_flydelta_counterfactual_outcome::unknown && !row.verifier_known)) continue;
+        if (!replay_eligible(row)) continue;
         const auto signature = replay_signature(row);
         const auto found = replay_seen.emplace(row.stable_observation_id, signature);
         if (!found.second && found.first->second != signature)
@@ -477,11 +481,8 @@ bool common_flydelta_outcome_guidance_replay(
     }
     replay_seen.clear();
     for (const auto & observed : chronological) {
-        const bool eligible = observed.comparison_completed && observed.overlay_applied &&
-            !observed.fixture_group_id.empty() && !observed.stable_observation_id.empty() &&
-            (observed.outcome == common_flydelta_counterfactual_outcome::unknown ||
-                observed.verifier_known);
-        if (!eligible || replay_conflicts.count(observed.stable_observation_id)) continue;
+        if (!replay_eligible(observed) ||
+                replay_conflicts.count(observed.stable_observation_id)) continue;
         if (!replay_seen.emplace(observed.stable_observation_id, replay_signature(observed)).second) continue;
         if (holdout.count(observed.fixture_group_id)) {
             common_flydelta_outcome_guidance_config scoring_config = config;
@@ -578,6 +579,10 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         const uint64_t seed,
         const int phase_id,
         const size_t decision_sequence,
+        const size_t selection_limit,
+        const size_t policy_sequence_start,
+        const size_t policy_cursor_before,
+        const size_t policy_slots_consumed,
         const common_flydelta_outcome_guidance_context & context,
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const common_flydelta_outcome_guidance_decision & decision,
@@ -586,6 +591,8 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
     error.clear();
     if (event_context.event_id.empty() || event_context.idempotency_key.empty() ||
             event_context.source_id.empty() || job_id.empty() ||
+            selection_limit > candidates.size() || policy_sequence_start >= 4 ||
+            policy_slots_consumed != std::min(selection_limit, candidates.size()) ||
             decision.original_order.size() != candidates.size() ||
             decision.selected_order.size() != candidates.size() ||
             decision.selection_reasons.size() != candidates.size() ||
@@ -610,8 +617,12 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         hash_sha256_hex(candidate_pool_canonical.data(), candidate_pool_canonical.size());
     json payload = {
         {"record_type", "outcome_guidance_decision"},
-        {"schema_version", 2}, {"job_id", job_id}, {"seed", seed},
+        {"schema_version", 3}, {"job_id", job_id}, {"seed", seed},
         {"phase_id", phase_id}, {"decision_sequence", decision_sequence},
+        {"selection_limit", selection_limit},
+        {"policy_sequence_start", policy_sequence_start % 4},
+        {"policy_cursor_before", policy_cursor_before},
+        {"policy_slots_consumed", policy_slots_consumed},
         {"mode", common_flydelta_outcome_guidance_mode_name(mode)},
         {"history_fingerprint", decision.history_fingerprint},
         {"candidate_pool_fingerprint", candidate_pool_fingerprint},

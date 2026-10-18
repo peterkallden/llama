@@ -150,6 +150,14 @@ int main() {
         std::sort(sorted_order.begin(), sorted_order.end());
         CHECK(sorted_order == experimental_a.original_order);
     }
+    common_flydelta_outcome_guidance_decision continued_policy;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, c, history, candidates, candidates.size(), 0, continued_policy, error,
+        common_flydelta_outcome_guidance_policy::posterior_sampling, 1));
+    CHECK(continued_policy.selection_reasons[0] == "existing_order");
+    CHECK(continued_policy.selection_reasons[1] == "posterior_sample");
+    CHECK(continued_policy.selection_reasons[2] == "uniform_exploration");
+    CHECK(continued_policy.selection_reasons[3] == "existing_order");
     common_flydelta_outcome_guidance_decision posterior_mean;
     CHECK(common_flydelta_outcome_guidance_build_decision(
         config, c, history, candidates, candidates.size(), 0, posterior_mean, error,
@@ -193,13 +201,15 @@ int main() {
     guidance_event.created_at = "2026-10-18T00:00:00Z";
     CHECK(common_flydelta_append_outcome_guidance_decision_lifecycle(
         guidance_store, guidance_event, "job-guidance", config.mode, config.seed, 0, 0,
-        c, candidates, experimental_a, error));
+        candidates.size(), 0, 0, candidates.size(), c, candidates, experimental_a, error));
     const auto guidance_records = guidance_store.list(error);
     CHECK(error.empty() && guidance_records.size() == 1);
     const auto guidance_payload = nlohmann::ordered_json::parse(
         guidance_records.front().payload_json);
     CHECK(guidance_payload["record_type"] == "outcome_guidance_decision");
     CHECK(guidance_payload["decision_sequence"] == 0);
+    CHECK(guidance_payload["policy_sequence_start"] == 0);
+    CHECK(guidance_payload["policy_slots_consumed"] == candidates.size());
     CHECK(guidance_payload["candidate_pool_fingerprint"].get<std::string>().rfind(
         "sha256:", 0) == 0);
     CHECK(guidance_payload["selection_reasons"].size() == candidates.size());
@@ -261,9 +271,13 @@ int main() {
         common_flydelta_counterfactual_outcome::helped));
     chronological.push_back(observation("holdout-b", "holdout-fixture-b",
         common_flydelta_counterfactual_outcome::unknown));
+    auto malformed_unknown = observation("holdout-malformed", "holdout-fixture-malformed",
+        common_flydelta_counterfactual_outcome::unknown);
+    malformed_unknown.outcome_known = true;
+    chronological.push_back(malformed_unknown);
     common_flydelta_outcome_guidance_replay_metrics replay;
     CHECK(common_flydelta_outcome_guidance_replay(config, chronological,
-        {"holdout-fixture-a", "holdout-fixture-b"}, replay, error));
+        {"holdout-fixture-a", "holdout-fixture-b", "holdout-fixture-malformed"}, replay, error));
     CHECK(replay.eligible_predictions == 2 && replay.known_outcomes == 1 &&
         replay.unknown_outcomes == 1);
     CHECK(replay.model_verifiability_brier >= 0 && replay.model_verifiability_brier <= 1);

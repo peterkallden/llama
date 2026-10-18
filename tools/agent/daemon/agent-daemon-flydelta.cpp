@@ -1494,7 +1494,12 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     std::string guidance_history_failure_reason;
     double guidance_projection_ms = 0.0;
     auto persisted_guidance_sequence_by_pool = std::make_shared<std::map<std::string, size_t>>();
+    auto persisted_guidance_policy_start_by_pool = std::make_shared<std::map<std::string, size_t>>();
+    auto persisted_guidance_policy_cursor_before_by_pool =
+        std::make_shared<std::map<std::string, size_t>>();
+    auto policy_cursor_committed_pools = std::make_shared<std::set<std::string>>();
     auto next_guidance_sequence_by_phase = std::make_shared<std::map<int, size_t>>();
+    auto next_guidance_policy_cursor_by_phase = std::make_shared<std::map<int, size_t>>();
     const auto guidance_config = provider->outcome_guidance_config;
     const bool guidance_runtime_eligible =
         plan.phase == common_flydelta_experiment_phase::deep_controls ||
@@ -1532,15 +1537,29 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                     const auto payload = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
                     if (!payload.is_object() || payload.value("record_type", "") !=
                             "outcome_guidance_decision" || payload.value("job_id", "") != job.id ||
-                            payload.value("schema_version", 0) != 2 ||
+                            (payload.value("schema_version", 0) != 2 &&
+                             payload.value("schema_version", 0) != 3) ||
                             !payload.contains("candidate_pool_fingerprint")) continue;
                     const int phase_id = payload.value("phase_id", -1);
                     const size_t sequence = payload.value("decision_sequence", size_t{0});
                     const std::string pool_fingerprint = payload.value(
                         "candidate_pool_fingerprint", std::string());
                     if (phase_id < 0 || pool_fingerprint.empty()) continue;
-                    const std::string key = std::to_string(phase_id) + ":" + pool_fingerprint;
+                    const size_t selection_limit = payload.value("selection_limit", size_t{0});
+                    const std::string key = std::to_string(phase_id) + ":" +
+                        pool_fingerprint + ":" + std::to_string(selection_limit);
                     (*persisted_guidance_sequence_by_pool)[key] = sequence;
+                    if (payload.value("schema_version", 0) >= 3) {
+                        const size_t policy_start = payload.value("policy_sequence_start", size_t{0}) % 4;
+                        const size_t cursor_before = payload.value("policy_cursor_before", size_t{0});
+                        const size_t policy_count = payload.value("policy_slots_consumed", size_t{0});
+                        (*persisted_guidance_policy_start_by_pool)[key] = policy_start;
+                        (*persisted_guidance_policy_cursor_before_by_pool)[key] = cursor_before;
+                        (*next_guidance_policy_cursor_by_phase)[phase_id] = std::max(
+                            (*next_guidance_policy_cursor_by_phase)[phase_id],
+                            cursor_before + policy_count);
+                        policy_cursor_committed_pools->insert(key);
+                    }
                     (*next_guidance_sequence_by_phase)[phase_id] = std::max(
                         (*next_guidance_sequence_by_phase)[phase_id], sequence + 1);
                 } catch (...) {
@@ -1736,7 +1755,10 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             ? common_flydelta_outcome_guidance_adviser{}
             : common_flydelta_outcome_guidance_adviser(
             [guidance_context, guidance_history, guidance_config,
-            persisted_guidance_sequence_by_pool, next_guidance_sequence_by_phase,
+            persisted_guidance_sequence_by_pool, persisted_guidance_policy_start_by_pool,
+            persisted_guidance_policy_cursor_before_by_pool,
+            policy_cursor_committed_pools,
+            next_guidance_sequence_by_phase, next_guidance_policy_cursor_by_phase,
             lifecycle_store = provider->lifecycle_store, scope = job.seed.scope,
             projection_ms = guidance_projection_ms,
             history_watermark = guidance_history_watermark,
@@ -1759,7 +1781,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             const std::string pool_bytes = pool_identity.dump();
             const std::string pool_fingerprint = "sha256:" +
                 hash_sha256_hex(pool_bytes.data(), pool_bytes.size());
-            const std::string sequence_key = std::to_string(phase_id) + ":" + pool_fingerprint;
+            const std::string sequence_key = std::to_string(phase_id) + ":" +
+                pool_fingerprint + ":" + std::to_string(limit);
             size_t wave_index = 0;
             const auto persisted = persisted_guidance_sequence_by_pool->find(sequence_key);
             if (persisted != persisted_guidance_sequence_by_pool->end()) {
@@ -1768,6 +1791,29 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 wave_index = (*next_guidance_sequence_by_phase)[phase_id]++;
                 (*persisted_guidance_sequence_by_pool)[sequence_key] = wave_index;
             }
+            uint64_t policy_origin = guidance_config.seed;
+            for (const unsigned char ch : job_id) {
+                policy_origin ^= ch;
+                policy_origin *= 1099511628211ULL;
+            }
+            policy_origin ^= static_cast<uint64_t>(phase_id);
+            size_t policy_cursor_before = (*next_guidance_policy_cursor_by_phase)[phase_id];
+            size_t policy_sequence_start = static_cast<size_t>(
+                (policy_origin + policy_cursor_before) % 4);
+            const auto persisted_policy_start =
+                persisted_guidance_policy_start_by_pool->find(sequence_key);
+            if (persisted_policy_start != persisted_guidance_policy_start_by_pool->end()) {
+                policy_sequence_start = persisted_policy_start->second;
+                const auto persisted_cursor =
+                    persisted_guidance_policy_cursor_before_by_pool->find(sequence_key);
+                if (persisted_cursor != persisted_guidance_policy_cursor_before_by_pool->end()) {
+                    policy_cursor_before = persisted_cursor->second;
+                }
+            } else {
+                (*persisted_guidance_policy_start_by_pool)[sequence_key] = policy_sequence_start;
+                (*persisted_guidance_policy_cursor_before_by_pool)[sequence_key] = policy_cursor_before;
+            }
+            const size_t policy_slots_consumed = std::min(limit, pool.size());
             uint64_t wave_seed = 1469598103934665603ULL;
             for (const unsigned char ch : job_id) { wave_seed ^= ch; wave_seed *= 1099511628211ULL; }
             wave_seed ^= static_cast<uint64_t>(phase_id);
@@ -1780,7 +1826,9 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             const auto prediction_started = std::chrono::steady_clock::now();
             if (history_load_failed || !common_flydelta_outcome_guidance_build_decision(
                     guidance_config, guidance_context, guidance_history, pool, limit,
-                    wave_seed, decision, adviser_error)) {
+                    wave_seed, decision, adviser_error,
+                    common_flydelta_outcome_guidance_policy::posterior_sampling,
+                    policy_sequence_start)) {
                 decision = {};
                 decision.fallback_reason = adviser_error;
                 for (size_t i = 0; i < pool.size(); ++i) {
@@ -1797,9 +1845,10 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 std::chrono::steady_clock::now() - prediction_started).count();
             if (lifecycle_store) {
                 common_flydelta_lifecycle_event_context event_context;
-                event_context.event_id = job_id + ":outcome-guidance:" +
+                event_context.event_id = job_id + ":outcome-guidance-v3:" +
                     std::to_string(phase_id) + ":" + std::to_string(wave_index) + ":" +
-                    decision.history_fingerprint + ":" + pool_fingerprint;
+                    decision.history_fingerprint + ":" + pool_fingerprint + ":limit:" +
+                    std::to_string(limit);
                 event_context.idempotency_key = event_context.event_id;
                 event_context.source_id = "daemon-flydelta-outcome-guidance";
                 event_context.scope = scope;
@@ -1813,16 +1862,29 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
                 event_context.created_at = timestamp.str();
                 std::string persist_error;
-                if (!common_flydelta_append_outcome_guidance_decision_lifecycle(
+                const bool decision_persisted = common_flydelta_append_outcome_guidance_decision_lifecycle(
                     *lifecycle_store, event_context, job_id, guidance_config.mode,
-                        wave_seed, phase_id, wave_index, guidance_context, pool,
-                        decision, persist_error)) {
-                    // The arms have already been chosen (and may already have
-                    // run). A telemetry persistence failure cannot rewrite
-                    // history to claim a different order was executed.
+                        wave_seed, phase_id, wave_index, limit, policy_sequence_start,
+                        policy_cursor_before, policy_slots_consumed, guidance_context, pool,
+                        decision, persist_error);
+                if (!decision_persisted) {
+                    // This callback runs before the arm wave. If the decision
+                    // cannot be made durable, do not execute an unrecorded
+                    // experimental order. Shadow mode already preserves this
+                    // order, but make the fallback explicit in both modes.
+                    decision.selected_order = decision.original_order;
+                    decision.selection_reasons.assign(
+                        decision.original_order.size(),
+                        "fallback_decision_persistence_failed");
                     decision.fallback_reason = "lifecycle_write_failed:" + persist_error;
+                } else if (decision.fallback_reason.empty() &&
+                        policy_cursor_committed_pools->insert(sequence_key).second) {
+                    (*next_guidance_policy_cursor_by_phase)[phase_id] += policy_slots_consumed;
                 }
             } else {
+                decision.selected_order = decision.original_order;
+                decision.selection_reasons.assign(
+                    decision.original_order.size(), "fallback_lifecycle_store_unavailable");
                 decision.fallback_reason = "lifecycle_store_unavailable";
             }
             nlohmann::ordered_json trace = {

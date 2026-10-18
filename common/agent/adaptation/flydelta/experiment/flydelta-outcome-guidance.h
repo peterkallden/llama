@@ -150,7 +150,8 @@ bool common_flydelta_outcome_guidance_build_decision(
         common_flydelta_outcome_guidance_decision & decision,
         std::string & error,
         common_flydelta_outcome_guidance_policy policy =
-            common_flydelta_outcome_guidance_policy::posterior_sampling);
+            common_flydelta_outcome_guidance_policy::posterior_sampling,
+        size_t policy_sequence_start = 0);
 
 // Replays observations in their registered order. Holdout fixture groups are
 // never added to the training projection; non-holdout rows become available
@@ -170,6 +171,10 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         uint64_t seed,
         int phase_id,
         size_t decision_sequence,
+        size_t selection_limit,
+        size_t policy_sequence_start,
+        size_t policy_cursor_before,
+        size_t policy_slots_consumed,
         const common_flydelta_outcome_guidance_context & context,
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
         const common_flydelta_outcome_guidance_decision & decision,

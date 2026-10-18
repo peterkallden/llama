@@ -2199,12 +2199,15 @@ outcomes and inference cost separately.
 Logical arm IDs remain stable across diagnostic and full-verification stages
 and identify the basis, layer and coefficient proposal. Dose retries and
 physical batch positions have separate execution identities. Guidance decisions
-persist phase/sequence and candidate-pool fingerprint, so retries reuse the
-same four-slot policy position. `shadow` separately logs posterior-only rank,
-hypothetical mixed-policy order and unchanged executed order. A lifecycle write
-failure after a search does not rewrite which arms actually ran. History
-aggregation is cached per category for the frozen job projection, rather than
-recomputed by scanning rows for each arm or wave.
+persist phase/sequence, selection limit, candidate-pool fingerprint and the
+four-slot cursor, so retries resume the same position and distinct waves
+continue the two-existing / one-guided / one-uniform schedule. If the decision
+cannot be durably recorded before execution, the current wave falls back to the
+original order. `shadow` separately logs posterior-only rank, hypothetical
+mixed-policy order and unchanged executed order. A later result-log write
+failure does not rewrite which arms actually ran. History aggregation is
+cached per category for the frozen job projection, rather than recomputed by
+scanning rows for each arm or wave.
 
 The model-free chronological replay API
 `common_flydelta_outcome_guidance_replay` reserves complete fixture groups for
