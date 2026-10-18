@@ -2145,6 +2145,59 @@ driver can force each control-plane strategy with
 and compare enabled/disabled with `LLAMA_AGENT_LOW_RANK_DISABLE_FACTORIZED=1`
 (`LLAMA_AGENT_LOW_RANK_FACTORIZED=0` remains a compatibility alias).
 
+### Historical outcome guidance for Deep and TFO-lite
+
+`runtime.adaptation.flydelta.outcome_guidance` adds a rebuildable projection of
+host-verified coefficient-search history. The default `mode: "shadow"` logs
+predictions, uncertainty intervals, candidate order and history fingerprint;
+the existing shortlist, proposal order, batch boundaries and model-call count
+remain unchanged. `mode: "experimental"` enables bounded arm ordering.
+`mode: "off"` skips history reads and predictions. The complete configuration
+example is in `docs/examples/agent-host-config-flydelta-full.json`.
+
+The configurable fields are `mode`, `seed`, `harm_penalty` (default 5),
+`min_backoff_groups` (default 8) and `max_prior_strength` (default 4, capped at
+4 pseudo-observations). History is frozen once for a search job and reused by
+its waves. Predictions require exact scope, model, tokenizer, template,
+baseline-deployment and verifier identity. V1 does not transfer observations
+across those boundaries. Each fixture group contributes at most one total
+weight per arm category. Diagnostic-only rows, failed executions, missing
+overlays and no-op arms do not update behavior probabilities. A completed
+comparison with verifier `UNKNOWN` updates only the probability that an
+outcome can be known. Legacy lifecycle rows without the required provenance
+are counted as ineligible.
+
+The small model uses a Beta prior for known versus unknown outcomes and a
+Dirichlet prior for `HELPED`, `NEUTRAL` and `HARMED` conditional on a known
+outcome. A coarser strategy/estimator or domain bucket contributes up to four
+pseudo-observations after eight distinct other fixture groups. Reported
+intervals are approximate diagnostics, not safety guarantees or verifier
+results. Guidance cannot grant learning credit, change Oracle truth, promote a
+candidate or activate an overlay.
+
+Deep uses experimental ordering when choosing among its existing shortlist
+slots for full generation. TFO-lite can reorder its already proposed
+population before the existing bounded waves; it still evaluates the same
+population, so a shorter discovery order does not imply fewer model calls or
+lower total runtime. Candidate IDs and baseline/result pairing remain stable.
+If history access, guidance or lifecycle logging fails, the existing order is
+used and the reason is logged. Compare `off`, `shadow` and `experimental` on
+the same fixtures, basis, dose limits and evaluation budget; report verified
+outcomes and inference cost separately.
+
+The model-free chronological replay API
+`common_flydelta_outcome_guidance_replay` reserves complete fixture groups for
+holdout, exposes only earlier non-holdout rows as training history, and reports
+mean Brier loss for verifier-known probability and (for known outcomes) the
+HELPED/NEUTRAL/HARMED distribution. It compares the posterior with a fixed
+Beta/Dirichlet prior and a simple fixture-weighted historical share. The
+verifiability expected calibration error is reported separately. Replay is a
+diagnostic over already recorded host outcomes; it cannot label untried arms.
+Reported posterior intervals are normal approximations to beta marginals, not
+calibrated guarantees. A deployment comparison still requires matched model
+runs and genuinely disjoint fixture groups with enough compatible history;
+otherwise that comparison is unavailable rather than a negative result.
+
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:
 

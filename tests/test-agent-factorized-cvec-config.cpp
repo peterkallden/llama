@@ -10,14 +10,17 @@ int main() {
     agent_host_config config;
 
     if (!parse_agent_host_config_json(json::object(), config, error) ||
-            config.adaptation_flydelta_disable_factorized_cvec_batch) {
+            config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            config.adaptation_flydelta_outcome_guidance.mode !=
+                common_flydelta_outcome_guidance_mode::shadow) {
         std::cerr << "factorized cvec must not be disabled by default: " << error << '\n';
         return 1;
     }
     const auto serialized = agent_host_config_to_json(config);
     if (!serialized["runtime"]["adaptation"]["flydelta"].contains("disable_factorized_cvec_batch") ||
             serialized["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] != false ||
-            serialized["runtime"]["adaptation"]["flydelta"].contains("factorized_cvec_batch")) {
+            serialized["runtime"]["adaptation"]["flydelta"].contains("factorized_cvec_batch") ||
+            serialized["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["mode"] != "shadow") {
         std::cerr << "factorized cvec opt-out default was not serialized canonically\n";
         return 1;
     }
@@ -45,6 +48,28 @@ int main() {
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_disable_factorized_cvec_batch) {
         std::cerr << "default compatible factorized cvec config rejected: " << error << '\n';
+        return 1;
+    }
+    compatible["runtime"]["adaptation"]["flydelta"]["outcome_guidance"] = {
+        {"mode", "experimental"}, {"seed", uint64_t{71}},
+        {"harm_penalty", 6.0}, {"min_backoff_groups", 9}, {"max_prior_strength", 3.0}
+    };
+    if (!parse_agent_host_config_json(compatible, config, error) ||
+            config.adaptation_flydelta_outcome_guidance.mode !=
+                common_flydelta_outcome_guidance_mode::experimental ||
+            config.adaptation_flydelta_outcome_guidance.seed != 71 ||
+            config.adaptation_flydelta_outcome_guidance.harm_penalty != 6.0 ||
+            config.adaptation_flydelta_outcome_guidance.min_backoff_groups != 9 ||
+            config.adaptation_flydelta_outcome_guidance.max_prior_strength != 3.0) {
+        std::cerr << "outcome guidance config fields were not parsed: " << error << '\n';
+        return 1;
+    }
+    daemon_options guidance_options;
+    apply_agent_host_config_to_daemon_options(config, guidance_options);
+    if (guidance_options.adaptation_flydelta_outcome_guidance.mode !=
+            common_flydelta_outcome_guidance_mode::experimental ||
+            guidance_options.adaptation_flydelta_outcome_guidance.seed != 71) {
+        std::cerr << "outcome guidance config did not reach daemon options\n";
         return 1;
     }
     daemon_options enabled_options;

@@ -6,6 +6,7 @@
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 #include "agent/context/context-management.h"
 
 #include "../host/agent-host-mcp-provider-config.h"
@@ -106,6 +107,7 @@ struct daemon_options {
     std::string adaptation_flydelta_capture_layout_revision = "flydelta-capture-v1";
     size_t adaptation_flydelta_max_capture_candidates = 64;
     common_flydelta_canary_policy adaptation_flydelta_canary_policy;
+    common_flydelta_outcome_guidance_config adaptation_flydelta_outcome_guidance;
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;
     size_t worker_count = 1;

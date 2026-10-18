@@ -353,6 +353,11 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_capture_candidates != options.adaptation_flydelta_capture_candidates ||
             candidate.adaptation_flydelta_lifecycle_backend != options.adaptation_flydelta_lifecycle_backend ||
             candidate.adaptation_flydelta_lifecycle_path != options.adaptation_flydelta_lifecycle_path ||
+            candidate.adaptation_flydelta_outcome_guidance.mode != options.adaptation_flydelta_outcome_guidance.mode ||
+            candidate.adaptation_flydelta_outcome_guidance.seed != options.adaptation_flydelta_outcome_guidance.seed ||
+            candidate.adaptation_flydelta_outcome_guidance.harm_penalty != options.adaptation_flydelta_outcome_guidance.harm_penalty ||
+            candidate.adaptation_flydelta_outcome_guidance.min_backoff_groups != options.adaptation_flydelta_outcome_guidance.min_backoff_groups ||
+            candidate.adaptation_flydelta_outcome_guidance.max_prior_strength != options.adaptation_flydelta_outcome_guidance.max_prior_strength ||
             candidate.adaptation_flydelta_model_profile_fingerprint != options.adaptation_flydelta_model_profile_fingerprint ||
             candidate.adaptation_flydelta_capture_layout_revision != options.adaptation_flydelta_capture_layout_revision ||
             candidate.adaptation_flydelta_max_capture_candidates != options.adaptation_flydelta_max_capture_candidates,

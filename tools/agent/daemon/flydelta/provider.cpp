@@ -93,6 +93,7 @@ std::shared_ptr<daemon_flydelta_resource_provider> daemon_flydelta_make_resource
     provider->n_threads = options.n_threads;
     provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
     provider->model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
+    provider->outcome_guidance_config = options.adaptation_flydelta_outcome_guidance;
     provider->oracle_registry = common_flydelta_make_default_oracle_registry();
     if (!register_configured_openapi_oracles(options, provider->oracle_registry, error)) {
         return nullptr;

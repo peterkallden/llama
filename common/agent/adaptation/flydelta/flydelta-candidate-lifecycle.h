@@ -88,6 +88,29 @@ struct common_flydelta_search_observation {
     bool sequence_margin_available = false;
     common_flydelta_margin_comparison sequence_margin;
     bool budget_remaining = false;
+    // Optional, versioned prediction context. Empty legacy fields make a
+    // record ineligible for history projection rather than guessed.
+    std::string guidance_observation_id;
+    std::string guidance_fixture_group_id;
+    std::string guidance_scope_fingerprint;
+    std::string guidance_model_profile_fingerprint;
+    std::string guidance_tokenizer_fingerprint;
+    std::string guidance_template_fingerprint;
+    std::string guidance_baseline_deployment_fingerprint;
+    std::string guidance_verifier_revision;
+    std::string guidance_ruleset_revision;
+    std::string guidance_action_contract_fingerprint;
+    std::string guidance_domain;
+    std::string guidance_strategy;
+    std::string guidance_estimator;
+    std::string guidance_basis_id;
+    size_t guidance_rank = 0;
+    double guidance_relative_layer = 0.0;
+    double guidance_relative_dose = 0.0;
+    bool guidance_mixed_coefficients = false;
+    int guidance_margin_sign = 0;
+    bool guidance_comparison_completed = false;
+    bool guidance_overlay_applied = false;
 };
 
 bool common_flydelta_search_observation_validate(

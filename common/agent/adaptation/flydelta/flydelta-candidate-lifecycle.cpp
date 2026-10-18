@@ -124,6 +124,11 @@ bool common_flydelta_search_observation_validate(
             !std::all_of(observation.coefficients.begin(), observation.coefficients.end(),
                 [](float value) { return std::isfinite(value); }) ||
             !std::isfinite(observation.search_fitness) ||
+            !std::isfinite(observation.guidance_relative_layer) ||
+            !std::isfinite(observation.guidance_relative_dose) ||
+            observation.guidance_relative_layer < 0.0 || observation.guidance_relative_layer > 1.0 ||
+            observation.guidance_relative_dose < 0.0 || observation.guidance_relative_dose > 1.0 ||
+            observation.guidance_margin_sign < -1 || observation.guidance_margin_sign > 1 ||
             (observation.sequence_margin_available &&
                 (!observation.sequence_margin.available ||
                  !common_flydelta_margin_comparison_validate(observation.sequence_margin, error)))) {
@@ -283,6 +288,47 @@ bool common_flydelta_append_search_lifecycle(
     };
     if (!observation.experimental_artifact_id.empty()) {
         payload["experimental_artifact_id"] = observation.experimental_artifact_id;
+    }
+    if (!observation.guidance_observation_id.empty()) {
+        if (!nonempty_bounded(observation.guidance_fixture_group_id) ||
+                !nonempty_bounded(observation.guidance_scope_fingerprint) ||
+                !nonempty_bounded(observation.guidance_model_profile_fingerprint) ||
+                !nonempty_bounded(observation.guidance_tokenizer_fingerprint) ||
+                !nonempty_bounded(observation.guidance_template_fingerprint) ||
+                !nonempty_bounded(observation.guidance_baseline_deployment_fingerprint) ||
+                !nonempty_bounded(observation.guidance_verifier_revision) ||
+                !nonempty_bounded(observation.guidance_domain) ||
+                !nonempty_bounded(observation.guidance_strategy) ||
+                !nonempty_bounded(observation.guidance_estimator) ||
+                !nonempty_bounded(observation.guidance_basis_id) ||
+                observation.guidance_rank == 0) {
+            error = "FlyDelta guidance lifecycle identity is incomplete";
+            return false;
+        }
+        payload["outcome_guidance"] = {
+            {"schema_version", 1},
+            {"observation_id", observation.guidance_observation_id},
+            {"fixture_group_id", observation.guidance_fixture_group_id},
+            {"scope_fingerprint", observation.guidance_scope_fingerprint},
+            {"model_profile_fingerprint", observation.guidance_model_profile_fingerprint},
+            {"tokenizer_fingerprint", observation.guidance_tokenizer_fingerprint},
+            {"template_fingerprint", observation.guidance_template_fingerprint},
+            {"baseline_deployment_fingerprint", observation.guidance_baseline_deployment_fingerprint},
+            {"verifier_revision", observation.guidance_verifier_revision},
+            {"ruleset_revision", observation.guidance_ruleset_revision},
+            {"action_contract_fingerprint", observation.guidance_action_contract_fingerprint},
+            {"domain", observation.guidance_domain},
+            {"strategy", observation.guidance_strategy},
+            {"estimator", observation.guidance_estimator},
+            {"basis_id", observation.guidance_basis_id},
+            {"rank", observation.guidance_rank},
+            {"relative_layer", observation.guidance_relative_layer},
+            {"relative_dose", observation.guidance_relative_dose},
+            {"mixed_coefficients", observation.guidance_mixed_coefficients},
+            {"diagnostic_margin_sign", observation.guidance_margin_sign},
+            {"comparison_completed", observation.guidance_comparison_completed},
+            {"overlay_applied", observation.guidance_overlay_applied},
+        };
     }
     if (observation.diagnostics_available) {
         payload["diagnostics"] = {

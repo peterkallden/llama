@@ -139,8 +139,15 @@ int main() {
     arm.request_host_verification = true;
     generated.stop_reason = common_agent_generation_stop_reason::eos;
 
-    common_flydelta_experiment_fixture fixture{1, "fixture:seams", "task", "model", "tokenizer",
-        "template", "execution", "verifier"};
+    common_flydelta_experiment_fixture fixture;
+    fixture.schema_version = 1;
+    fixture.id = "fixture:seams";
+    fixture.task_fingerprint = "task";
+    fixture.model_profile_fingerprint = "model";
+    fixture.tokenizer_fingerprint = "tokenizer";
+    fixture.template_fingerprint = "template";
+    fixture.execution_context_fingerprint = "execution";
+    fixture.verifier_revision = "verifier";
     common_flydelta_direction_candidate direction;
     direction.layer_index = 2;
     direction.values = {1, 0};

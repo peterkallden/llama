@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 
 #include <algorithm>
 #include <utility>
@@ -14,7 +15,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         const size_t full_generation_top_k,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     error.clear();
     if (full_generation_top_k == 0 || full_generation_top_k > 16 ||
             !diagnostic_runner || !diagnostic_batch_runner ||
@@ -27,7 +29,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
     common_flydelta_coefficient_selection diagnostic_selection;
     if (!common_flydelta_run_low_rank_coefficient_search_batched(
             fixture, basis, config, diagnostic_runner, diagnostic_batch_runner,
-            diagnostic_trials, diagnostic_selection, error)) return false;
+            diagnostic_trials, diagnostic_selection, error, adviser)) return false;
     trials = diagnostic_trials;
     selection = {};
 
@@ -44,6 +46,30 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
     });
     const size_t top_k = std::min(full_generation_top_k, ranking.size());
     if (top_k == 0) return true;
+
+    if (adviser) {
+        std::vector<common_flydelta_outcome_guidance_candidate> candidates;
+        candidates.reserve(ranking.size());
+        for (const size_t index : ranking) {
+            const auto & trial = diagnostic_trials[index];
+            candidates.push_back(common_flydelta_coefficient_detail::guidance_candidate(
+                trial.coefficients, basis, config, &trial.margin_comparison));
+        }
+        common_flydelta_outcome_guidance_decision guidance;
+        std::string guidance_error;
+        if (adviser(candidates, top_k, guidance, guidance_error) &&
+                guidance.selected_order.size() == ranking.size()) {
+            std::vector<size_t> reordered;
+            reordered.reserve(ranking.size());
+            std::vector<bool> used(ranking.size(), false);
+            for (const size_t local_index : guidance.selected_order) {
+                if (local_index >= ranking.size() || used[local_index]) { reordered.clear(); break; }
+                used[local_index] = true;
+                reordered.push_back(ranking[local_index]);
+            }
+            if (reordered.size() == ranking.size()) ranking = std::move(reordered);
+        }
+    }
 
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;

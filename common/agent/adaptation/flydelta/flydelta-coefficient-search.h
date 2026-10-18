@@ -7,6 +7,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-dose-controller.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -122,6 +123,9 @@ struct common_flydelta_coefficient_search_config {
     bool use_dose_controller = true;
     size_t max_dose_retries = 1;
     common_flydelta_dose_policy dose_policy;
+    // Host-populated geometry used only to form comparable guidance features.
+    int32_t guidance_layer_index = -1;
+    size_t guidance_model_layer_count = 0;
 };
 
 bool common_flydelta_coefficient_search_config_validate(
@@ -156,6 +160,7 @@ struct common_flydelta_coefficient_trial {
     bool executed = false;
     bool host_evaluated = false;
     bool verifier_known = false;
+    bool overlay_applied = false;
     size_t iteration = 0;
     size_t parent_trial_index = static_cast<size_t>(-1);
     std::string mutation_kind;
@@ -219,6 +224,12 @@ using common_flydelta_coefficient_search_batch_runner = std::function<bool(
         std::vector<bool> & geometry_available,
         std::string & error)>;
 
+using common_flydelta_outcome_guidance_adviser = std::function<bool(
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
+        size_t selection_limit,
+        common_flydelta_outcome_guidance_decision & decision,
+        std::string & error)>;
+
 // Runs the cheap bounded coefficient stencil. Decision margin is diagnostic
 // and may rank follow-up work, while only host-verified counterfactual
 // classification can select a coefficient trial.
@@ -242,7 +253,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         const common_flydelta_coefficient_search_batch_runner & batch_runner,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});
 
 // Executes the unchanged coefficient proposal/ranking algorithm in two
 // execution phases: all proposals use diagnostics first, then only the
@@ -260,7 +272,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         size_t full_generation_top_k,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});
 
 // Records all executed coefficient arms as experimental lifecycle entries.
 // The helper is deliberately reference-only: it never updates DeltaMemory,

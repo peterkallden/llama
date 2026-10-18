@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -106,7 +107,8 @@ bool common_flydelta_run_deep_search_batched(
         const common_flydelta_coefficient_search_runner & full_generation_runner,
         const common_flydelta_coefficient_search_batch_runner & full_generation_batch_runner,
         common_flydelta_deep_search_result & result,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     error.clear();
     result = {};
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
@@ -130,7 +132,7 @@ bool common_flydelta_run_deep_search_batched(
     if (!common_flydelta_run_low_rank_coefficient_search_batched(
             fixture, result.basis, config.coefficients, diagnostic_runner,
             diagnostic_batch_runner,
-            diagnostic_trials, diagnostic_selection, error)) return false;
+            diagnostic_trials, diagnostic_selection, error, adviser)) return false;
     result.coefficient_trials = diagnostic_trials;
 
     common_flydelta_counterfactual_trial baseline;
@@ -156,6 +158,29 @@ bool common_flydelta_run_deep_search_batched(
             diagnostic_trials[right].coefficients.size();
     });
     const size_t top_k = std::min(config.full_generation_top_k, ranking.size());
+    if (adviser && top_k > 0) {
+        std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
+        guidance_candidates.reserve(ranking.size());
+        for (const size_t index : ranking) {
+            const auto & trial = diagnostic_trials[index];
+            guidance_candidates.push_back(common_flydelta_coefficient_detail::guidance_candidate(
+                trial.coefficients, result.basis, config.coefficients,
+                &trial.margin_comparison));
+        }
+        common_flydelta_outcome_guidance_decision guidance;
+        std::string guidance_error;
+        if (adviser(guidance_candidates, top_k, guidance, guidance_error) &&
+                guidance.selected_order.size() == ranking.size()) {
+            std::vector<size_t> reordered;
+            std::vector<bool> used(ranking.size(), false);
+            for (const size_t local_index : guidance.selected_order) {
+                if (local_index >= ranking.size() || used[local_index]) { reordered.clear(); break; }
+                used[local_index] = true;
+                reordered.push_back(ranking[local_index]);
+            }
+            if (reordered.size() == ranking.size()) ranking = std::move(reordered);
+        }
+    }
     std::vector<std::vector<float>> top_coefficients;
     top_coefficients.reserve(top_k);
     for (size_t rank = 0; rank < top_k; ++rank) {

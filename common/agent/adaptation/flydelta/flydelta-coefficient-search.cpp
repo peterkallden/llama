@@ -16,6 +16,7 @@ void common_flydelta_coefficient_trial_set_observation(
     target.executed = candidate.executed;
     target.host_evaluated = baseline.host_evaluated && candidate.host_evaluated;
     target.verifier_known = baseline.verifier_known && candidate.verifier_known;
+    target.overlay_applied = candidate.overlay_applied;
 }
 
 bool common_flydelta_coefficient_trial_to_region(
@@ -103,6 +104,43 @@ bool common_flydelta_append_coefficient_search_lifecycle(
         observation.sequence_margin_available = trial.margin_comparison.available;
         observation.sequence_margin = trial.margin_comparison;
         observation.budget_remaining = index + 1 < trials.size();
+        if (!fixture.scope_fingerprint.empty() &&
+                !fixture.baseline_deployment_fingerprint.empty() &&
+                !fixture.semantic_domain.empty() && fixture.model_n_layers > 1 &&
+                !trial.arm_id.empty()) {
+            observation.guidance_observation_id = fixture.id + ":" + trial.arm_id;
+            observation.guidance_fixture_group_id = fixture.task_fingerprint;
+            observation.guidance_scope_fingerprint = fixture.scope_fingerprint;
+            observation.guidance_model_profile_fingerprint = fixture.model_profile_fingerprint;
+            observation.guidance_tokenizer_fingerprint = fixture.tokenizer_fingerprint;
+            observation.guidance_template_fingerprint = fixture.template_fingerprint;
+            observation.guidance_baseline_deployment_fingerprint =
+                fixture.baseline_deployment_fingerprint;
+            observation.guidance_verifier_revision = fixture.verifier_revision;
+            observation.guidance_ruleset_revision = fixture.ruleset_revision;
+            observation.guidance_action_contract_fingerprint = fixture.action_contract_fingerprint;
+            observation.guidance_domain = fixture.semantic_domain;
+            observation.guidance_strategy = common_flydelta_coefficient_search_strategy_name(
+                config.strategy);
+            observation.guidance_estimator = "coefficient-margin-geometry-v1";
+            observation.guidance_basis_id = common_flydelta_coefficient_detail::guidance_candidate(
+                trial.coefficients, basis, config).basis_identity;
+            observation.guidance_rank = basis.vectors.size();
+            observation.guidance_relative_layer = static_cast<double>(basis.layer_index) /
+                static_cast<double>(fixture.model_n_layers - 1);
+            observation.guidance_relative_dose = config.max_l2_norm > 0
+                ? std::min(1.0, static_cast<double>(common_flydelta_coefficient_detail::norm(
+                    trial.coefficients) / config.max_l2_norm)) : 0.0;
+            size_t nonzero = 0;
+            for (const float coefficient : trial.coefficients) if (std::abs(coefficient) > 1e-7f) ++nonzero;
+            observation.guidance_mixed_coefficients = nonzero > 1;
+            const float margin_delta = trial.margin_comparison.available
+                ? trial.margin_comparison.normalized_delta() : 0.0f;
+            observation.guidance_margin_sign = margin_delta > 1e-7f ? 1 :
+                (margin_delta < -1e-7f ? -1 : 0);
+            observation.guidance_comparison_completed = trial.host_evaluated;
+            observation.guidance_overlay_applied = trial.overlay_applied;
+        }
 
         common_flydelta_search_decision decision;
         if (!common_flydelta_decide_search_disposition(

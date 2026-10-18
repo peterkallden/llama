@@ -86,6 +86,13 @@
         "model_profile_fingerprint": "profile:agent-default",
         "capture_layout_revision": "layer-input:generation-boundary:v1",
         "max_capture_candidates": 128,
+        "outcome_guidance": {
+          "mode": "shadow",
+          "seed": 5065521830640243777,
+          "harm_penalty": 5.0,
+          "min_backoff_groups": 8,
+          "max_prior_strength": 4.0
+        },
         "canary": {
           "mode": "manual",
           "min_observations": 8,

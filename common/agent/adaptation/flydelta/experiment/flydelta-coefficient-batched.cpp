@@ -341,7 +341,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         const common_flydelta_coefficient_search_batch_runner & batch_runner,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     error.clear();
     trials.clear();
     selection = {};
@@ -355,7 +356,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
     if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
         return common_flydelta_coefficient_detail::run_tfo_lite_coefficient_search(
             fixture, basis, config, baseline_runner, batch_runner,
-            trials, selection, error);
+            trials, selection, error, adviser);
     }
     std::vector<std::vector<float>> proposals;
     if (!common_flydelta_propose_low_rank_coefficients(

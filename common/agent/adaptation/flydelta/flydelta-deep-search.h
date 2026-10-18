@@ -72,7 +72,8 @@ bool common_flydelta_run_deep_search_batched(
         const common_flydelta_coefficient_search_runner & full_generation_runner,
         const common_flydelta_coefficient_search_batch_runner & full_generation_batch_runner,
         common_flydelta_deep_search_result & result,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});
 
 // Records the diagnostic and full-generation coefficient trials through the
 // existing experimental lifecycle. This is reference-only: it never updates

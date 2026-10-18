@@ -14,7 +14,8 @@ bool run_tfo_lite_coefficient_search(
         const common_flydelta_coefficient_search_batch_runner & batch_runner,
         std::vector<common_flydelta_coefficient_trial> & trials,
         common_flydelta_coefficient_selection & selection,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     trials.clear();
     selection = {};
 
@@ -75,6 +76,41 @@ bool run_tfo_lite_coefficient_search(
             }
             pending_indices.push_back(population_index);
             pending_coefficients.push_back(coefficients);
+        }
+        const size_t remaining_budget = candidate_limit - evaluated;
+        if (pending_indices.size() > remaining_budget) {
+            pending_indices.resize(remaining_budget);
+            pending_coefficients.resize(remaining_budget);
+        }
+        if (adviser && !pending_coefficients.empty()) {
+            std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
+            guidance_candidates.reserve(pending_coefficients.size());
+            for (const auto & coefficients : pending_coefficients) {
+                guidance_candidates.push_back(guidance_candidate(coefficients, basis, config));
+            }
+            common_flydelta_outcome_guidance_decision guidance;
+            std::string guidance_error;
+            if (adviser(guidance_candidates, pending_coefficients.size(), guidance, guidance_error) &&
+                    guidance.selected_order.size() == pending_coefficients.size()) {
+                std::vector<size_t> ordered_indices;
+                std::vector<std::vector<float>> ordered_coefficients;
+                ordered_indices.reserve(pending_indices.size());
+                ordered_coefficients.reserve(pending_coefficients.size());
+                std::vector<bool> used(pending_indices.size(), false);
+                for (const size_t order_index : guidance.selected_order) {
+                    if (order_index >= pending_indices.size() || used[order_index]) {
+                        ordered_indices.clear();
+                        break;
+                    }
+                    used[order_index] = true;
+                    ordered_indices.push_back(pending_indices[order_index]);
+                    ordered_coefficients.push_back(pending_coefficients[order_index]);
+                }
+                if (ordered_indices.size() == pending_indices.size()) {
+                    pending_indices = std::move(ordered_indices);
+                    pending_coefficients = std::move(ordered_coefficients);
+                }
+            }
         }
         std::vector<coefficient_arm_result> pending_results;
         if (!run_coefficient_arms_batched(fixture, basis, config, batch_runner,

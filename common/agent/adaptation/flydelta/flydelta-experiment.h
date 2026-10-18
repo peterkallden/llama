@@ -32,6 +32,17 @@ struct common_flydelta_experiment_fixture {
     // plan/research/project context for another behavior.
     std::string execution_context_fingerprint;
     std::string verifier_revision;
+    // Optional host-owned provenance used by the experimental outcome
+    // guidance projection. Legacy fixtures remain valid but are not eligible
+    // for cross-job history reuse when these identities are absent.
+    std::string scope_fingerprint;
+    std::string baseline_deployment_fingerprint;
+    // Optional provenance for domains that execute a versioned ruleset or
+    // action contract. These fields are strict reuse boundaries when present.
+    std::string ruleset_revision;
+    std::string action_contract_fingerprint;
+    std::string semantic_domain;
+    size_t model_n_layers = 0;
 };
 
 bool common_flydelta_experiment_fixture_validate(

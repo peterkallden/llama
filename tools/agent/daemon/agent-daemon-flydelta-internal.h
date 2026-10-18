@@ -91,6 +91,7 @@ struct daemon_flydelta_resource_provider {
     int n_threads = 0;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
+    common_flydelta_outcome_guidance_config outcome_guidance_config;
     // Host-owned semantic dispatch for the existing verification seam. It is
     // built from the same configured provider contracts as runtime tools; it
     // is not a second evaluator store or an execution path.

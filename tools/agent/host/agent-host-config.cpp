@@ -585,6 +585,22 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
                 read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
                 read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
+                if (flydelta.contains("outcome_guidance")) {
+                    const auto & guidance = flydelta["outcome_guidance"];
+                    if (!guidance.is_object()) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance must be an object";
+                        return false;
+                    }
+                    std::string mode = common_flydelta_outcome_guidance_mode_name(
+                        config.adaptation_flydelta_outcome_guidance.mode);
+                    read_optional(guidance, "mode", mode);
+                    if (!common_flydelta_parse_outcome_guidance_mode(
+                            mode, config.adaptation_flydelta_outcome_guidance.mode, error)) return false;
+                    read_optional(guidance, "seed", config.adaptation_flydelta_outcome_guidance.seed);
+                    read_optional(guidance, "harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty);
+                    read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
+                    read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
+                }
                 read_optional(flydelta, "artifact_root", config.adaptation_flydelta_artifact_root);
                 read_optional(flydelta, "model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint);
                 read_optional(flydelta, "capture_layout_revision", config.adaptation_flydelta_capture_layout_revision);
@@ -1388,6 +1404,14 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint},
                     {"capture_layout_revision", config.adaptation_flydelta_capture_layout_revision},
                     {"max_capture_candidates", config.adaptation_flydelta_max_capture_candidates},
+                    {"outcome_guidance", {
+                        {"mode", common_flydelta_outcome_guidance_mode_name(
+                            config.adaptation_flydelta_outcome_guidance.mode)},
+                        {"seed", config.adaptation_flydelta_outcome_guidance.seed},
+                        {"harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty},
+                        {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
+                        {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
+                    }},
                     {"canary", {
                         {"mode", common_flydelta_canary_mode_name(config.adaptation_flydelta_canary_policy.mode)},
                         {"min_observations", config.adaptation_flydelta_canary_policy.min_observations},
@@ -1671,6 +1695,11 @@ bool validate_agent_host_config(
     if (!common_flydelta_canary_policy_validate(
             config.adaptation_flydelta_canary_policy, error)) {
         error = "runtime.adaptation.flydelta.canary: " + error;
+        return false;
+    }
+    if (!common_flydelta_outcome_guidance_config_validate(
+            config.adaptation_flydelta_outcome_guidance, error)) {
+        error = "runtime.adaptation.flydelta.outcome_guidance: " + error;
         return false;
     }
     if (config.n_threads < 1) {
@@ -2194,6 +2223,7 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_capture_layout_revision = config.adaptation_flydelta_capture_layout_revision;
     options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
     options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
+    options.adaptation_flydelta_outcome_guidance = config.adaptation_flydelta_outcome_guidance;
     options.max_tool_rounds = config.max_tool_rounds;
     options.queue_capacity = config.queue_capacity;
     options.worker_count = config.worker_count;
