@@ -92,6 +92,9 @@ int main() {
     const auto * calculator = catalog.find_definition("math.calculate");
     const auto * calculator_legacy = catalog.find_definition("calculator");
     assert(catalog.find_definition("plan.get") && catalog.find_definition("plan.propose"));
+    const auto * document_open = catalog.find_definition("document.open");
+    assert(document_open && document_open->max_result_bytes >= 16 * 1024 * 1024);
+    assert(nlohmann::json::parse(document_open->result_schema_json)["properties"].contains("rendered_markdown"));
     assert(!catalog.find_definition("plan_get") && !catalog.find_definition("plan_propose"));
     const auto * data_query = catalog.find_definition("data.query");
     const auto * data_join = catalog.find_definition("data.join");

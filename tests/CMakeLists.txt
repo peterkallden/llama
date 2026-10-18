@@ -506,6 +506,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-workflow-grounding.cpp
         test-agent-execution-envelope.cpp
         test-agent-daemon-scope.cpp
+        test-agent-web-presentation.cpp
         test-agent-mcp-app-bridge.cpp
     )
         # The Cozo plan-store test references the optional implementation,
@@ -577,7 +578,7 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-continuation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
-        if (TEST_NAME STREQUAL "test-agent-daemon-scope")
+        if (TEST_NAME STREQUAL "test-agent-daemon-scope" OR TEST_NAME STREQUAL "test-agent-web-presentation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-daemon-library)
         endif()
@@ -766,6 +767,21 @@ test-agent-flydelta-alpha-response-search.cpp
     target_compile_features(test-agent-event-queue PRIVATE cxx_std_17)
     add_test(NAME test-agent-event-queue COMMAND test-agent-event-queue)
     set_property(TEST test-agent-event-queue PROPERTY LABELS agent)
+
+    # Optional web tests use already installed dependencies; configuring C++
+    # never installs Node packages or builds a frontend as a side effect.
+    find_program(LLAMA_AGENT_WEB_TEST_NODE_EXECUTABLE NAMES node)
+    set(LLAMA_AGENT_WEB_TEST_DIR "${PROJECT_SOURCE_DIR}/examples/llama-agent.web")
+    if (LLAMA_AGENT_WEB_TEST_NODE_EXECUTABLE AND EXISTS "${LLAMA_AGENT_WEB_TEST_DIR}/node_modules/vitest/vitest.mjs")
+        add_test(NAME test-agent-web-workspace
+            COMMAND "${LLAMA_AGENT_WEB_TEST_NODE_EXECUTABLE}"
+                "${LLAMA_AGENT_WEB_TEST_DIR}/node_modules/vitest/vitest.mjs" run
+                src/components/report-view.test.ts src/components/app-invocation.test.ts
+                src/components/dataset-table.test.ts src/components/document-editor-access.test.ts
+                src/api/agent-api.test.ts src/session.test.ts)
+        set_tests_properties(test-agent-web-workspace PROPERTIES
+            WORKING_DIRECTORY "${LLAMA_AGENT_WEB_TEST_DIR}" LABELS "agent;web;model-free")
+    endif()
 
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)

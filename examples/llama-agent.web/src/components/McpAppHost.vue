@@ -95,6 +95,11 @@ function publishInvocation() {
   if (!signature || signature === lastInvocationSignature) return;
   lastInvocationSignature = signature;
   for (const notification of invocationNotifications(props.invocation)) {
+    if (notification.method === "ui/notifications/tool-result") {
+      const params = notification.params as Record<string, unknown>;
+      const structured = canonicalToolStructuredContent(params.structuredContent);
+      if (structured) params.structuredContent = structured;
+    }
     if (notification.method === "ui/notifications/tool-result" && uri.value === "ui://llama-agent/apps/document-editor") {
       const params = notification.params as Record<string, unknown>;
       if (!params.isError && params.structuredContent && typeof params.structuredContent === "object") {

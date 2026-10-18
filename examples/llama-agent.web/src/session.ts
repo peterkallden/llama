@@ -215,6 +215,24 @@ async function importDocument(sourceUri: string) {
   });
 }
 
+async function readResourceBlob(uri: string): Promise<Blob> {
+  const requestSession = sessionId.value;
+  const requestEpoch = sessionEpoch;
+  const blob = await api.value.downloadResource(uri, {
+    namespace_id: "web", project_id: "web-example", session_id: requestSession,
+  });
+  if (requestEpoch !== sessionEpoch || requestSession !== sessionId.value) throw new Error("The document session changed.");
+  return blob;
+}
+
+async function readJsonResource(uri: string): Promise<Record<string, unknown>> {
+  const blob = await readResourceBlob(uri);
+  if (blob.size > 16 * 1024 * 1024) throw new Error("The saved report context exceeds the browser's 16 MiB reading limit.");
+  const value: unknown = JSON.parse(await blob.text());
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The saved context is not a structured object.");
+  return value as Record<string, unknown>;
+}
+
 async function connect() {
   if (disposed) return;
   abortController.value?.abort();
@@ -317,6 +335,15 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   try {
     const result = await api.value.submitTurn(turn, turnRequestController.signal) as TurnResult;
     if (requestEpoch !== sessionEpoch || requestSessionId !== sessionId.value) return false;
+    // Recover command-owned events when SSE was disconnected or overflowed.
+    // A repeated streamed event must not create another report card or effect.
+    if (Array.isArray(result.events)) for (const value of result.events) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const event = value as AgentEvent;
+      if (event.sequence !== undefined && events.value.some((known) =>
+        known.sequence === event.sequence && known.request_id === event.request_id)) continue;
+      observe({ ...event, session_id: event.session_id ?? requestSessionId, turn_id: event.turn_id ?? turnId });
+    }
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant) assistant.pending = false;
@@ -637,7 +664,7 @@ function newSession() {
 }
 
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, resourceRefs, selectedResourceRefs, activeTurnId, recording, documentReviews, attachmentOrientations, pendingUserTurns, refreshStatus, connect, submit, submitReview, retryDocumentReview, retryPendingUserTurn, dismissPendingUserTurn, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, resourceRefs, selectedResourceRefs, activeTurnId, recording, documentReviews, attachmentOrientations, pendingUserTurns, refreshStatus, connect, submit, submitReview, retryDocumentReview, retryPendingUserTurn, dismissPendingUserTurn, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, readJsonResource, readResourceBlob, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }
 
 // Replacing this module during Vite development must release its long-lived

@@ -36,8 +36,22 @@ supported file types; uploading alone does not import or open a document. The
 editor opens in a shared workspace: the document stays in the main pane and the
 existing chat moves to a narrow side column. The editor iframe remains mounted
 while chat updates, so its selection and local draft survive the layout change.
-At widths below 1,000 px the document, chat and status panels stack vertically.
-Closing restores the prior workspace view and panel expansion states.
+At widths below 1,000 px the document and chat stack vertically.
+Closing restores the prior workspace view. Connection, status, metrics, app
+launchers and events remain in the independent toolbar floater; authentication
+expands when required and collapses when connected. The main workspace follows
+viewport width, with a compact chat column beside the editor or another app.
+
+Saved report revisions appear in chat as read-only structured cards. Their Edit
+action opens this same editor, and Download uses the host's `rendered_markdown`
+for that saved revision. Report blocks expose their saved support/review status
+and related source/observation references. Hover/focus previews are local;
+clicking a reference opens a scrollable inspection dialog. Dataset sources use
+Data Explorer, other sources offer original or scoped saved-file links, and
+tool results come from the frozen snapshot. Presentation does not rerun a tool
+or promote reference integrity to factual verification. Browser rendering is
+sanitized and does not fetch embedded media. Large reports initialize their
+Markdown presentations as blocks enter the viewport.
 `document.open` returns the saved immutable report or imported document revision and an editable
 Markdown projection. `document.save` compares `expected_revision` with the
 current host manifest, parses the full document, and publishes a new immutable

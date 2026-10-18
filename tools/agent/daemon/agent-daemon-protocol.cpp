@@ -1,4 +1,5 @@
 #include "agent-daemon-adapter.h"
+#include "agent-daemon-event-json.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "../cli/agent-cli-selection.h"
@@ -574,51 +575,9 @@ bool parse_agent_daemon_turn_request(
     return true;
 }
 
-json serialize_agent_daemon_event(
-        const common_agent_daemon_event & event) {
-    json event_json = {
-        {"type", event.type},
-    };
-    if (event.sequence != 0) {
-        event_json["sequence"] = event.sequence;
-    }
-    if (event.event_type != common_agent_daemon_event_type::unknown) {
-        event_json["event_type"] = common_agent_daemon_event_type_name(event.event_type);
-        event_json["event_category"] = common_agent_daemon_event_category_name(event.category);
-    }
-    if (!event.request_id.empty()) {
-        event_json["request_id"] = event.request_id;
-    }
-    if (!event.turn_id.empty()) {
-        event_json["turn_id"] = event.turn_id;
-    }
-    if (!event.namespace_id.empty()) {
-        event_json["namespace_id"] = event.namespace_id;
-    }
-    if (!event.project_id.empty()) {
-        event_json["project_id"] = event.project_id;
-    }
-    if (!event.session_id.empty()) {
-        event_json["session_id"] = event.session_id;
-    }
-    if (!event.operation_id.empty()) {
-        event_json["operation_id"] = event.operation_id;
-    }
-    if (!event.detail.empty()) {
-        event_json["detail"] = event.detail;
-    }
-    if (event.app_context_available) {
-        event_json["app_context_available"] = true;
-        if (!event.provider_id.empty()) event_json["provider_id"] = event.provider_id;
-        if (!event.server_tool_name.empty()) event_json["server_tool_name"] = event.server_tool_name;
-        const auto input = json::parse(event.tool_input_json, nullptr, false);
-        if (input.is_object()) event_json["tool_input"] = input;
-        const auto result = json::parse(event.tool_result_json, nullptr, false);
-        if (result.is_object()) event_json["tool_result"] = result;
-    }
-    return event_json;
+json serialize_agent_daemon_event(const common_agent_daemon_event & event) {
+    return common_agent_daemon_event_to_json(event);
 }
-
 json serialize_agent_daemon_session_status(
         const common_agent_runtime_session_descriptor & session) {
     json session_json = {

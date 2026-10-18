@@ -64,6 +64,13 @@ struct common_agent_jsonl_event_entry {
     std::string observation_id;
     std::string tool_name;
     std::string resource_uri;
+    std::string resource_name;
+    std::string resource_mime_type;
+    bool app_context_available = false;
+    std::string provider_id;
+    std::string server_tool_name;
+    std::string tool_input_json;
+    std::string tool_result_json;
 };
 
 struct common_agent_jsonl_turn_result {

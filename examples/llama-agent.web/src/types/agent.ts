@@ -11,6 +11,9 @@ export type AgentEvent = {
   session_id?: string;
   operation_id?: string;
   tool_name?: string;
+  resource_uri?: string;
+  resource_name?: string;
+  resource_mime_type?: string;
   app_context_available?: boolean;
   provider_id?: string;
   server_tool_name?: string;

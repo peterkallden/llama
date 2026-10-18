@@ -1,34 +1,42 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "./session";
-import type { AgentEvent, DaemonProviderStatus } from "./types/agent";
+import type { AgentEvent } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
 import WorkflowInspector from "./components/WorkflowInspector.vue";
 import McpAppHost from "./components/McpAppHost.vue";
-import { findAppForInvocationEvent, findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey } from "./components/app-invocation";
+import { findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey } from "./components/app-invocation";
 import { structuredToolResult } from "./components/structured-tool-result";
+import StatusFloater from "./components/StatusFloater.vue";
+import ReportCard from "./components/ReportCard.vue";
+import SourceInspector from "./components/SourceInspector.vue";
+import { reportReferences, type InspectionTarget } from "./components/report-view";
 
 const session = useAgentSession();
 const prompt = ref("");
 const expanded = ref<Set<number>>(new Set());
-const toolsExpanded = ref(false);
-const expandedTools = ref<Set<string>>(new Set());
-const sessionsExpanded = ref(false);
-const webClientExpanded = ref(true);
-const statusExpanded = ref(true);
-const eventsExpanded = ref(true);
+const eventsExpanded = ref(false);
 const eventsViewport = ref<HTMLElement | null>(null);
 const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
 const activeAppTool = ref("");
 const documentMode = ref(false);
 const chatSending = ref(false);
 const workspaceNavigating = ref(false);
-const documentStatus = ref<{ title: string; revision: number; dirty: boolean; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
+const documentStatus = ref<{ title: string; revision: number; dirty: boolean; uri?: string; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
 const editorHost = ref<InstanceType<typeof McpAppHost> | null>(null);
-const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string; web: boolean; status: boolean; events: boolean } | null>(null);
+const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string } | null>(null);
 const localDocumentEvent = ref<AgentEvent>();
 const openingAttachmentUri = ref("");
 const attachmentEditorError = ref("");
+const inspection = ref<InspectionTarget>();
+const workspaceActive = computed(() => activeView.value !== "chat");
+const reports = computed(() => reportReferences(session.events, session.sessionId));
+const orphanReports = computed(() => reports.value.filter((report) => !session.messages.some((message) => message.role === "assistant" && message.turnId === report.turnId)));
+const canEdit = computed(() => session.tools.some((tool) => tool.name === "document.save" && tool.app_write_authorized));
+const sessionEvents = computed(() => session.events.filter((event) => !event.session_id || event.session_id === session.sessionId));
+function reportsForTurn(turnId: string) { return reports.value.filter((report) => report.turnId === turnId); }
+function openReportRead(uri: string) { return session.callReadOnlyTool("document.open", { document_uri: uri }); }
+function handoff(text: string) { prompt.value = text; void navigateWorkspace("chat"); }
 const mcpApps = () => {
   const apps = new Map<string, (typeof session.tools)[number]>();
   for (const tool of session.tools) {
@@ -40,28 +48,25 @@ const mcpApps = () => {
   return [...apps.values()];
 };
 const activeMcpApp = () => mcpApps().find((tool) => mcpAppKey(tool) === activeAppTool.value);
-const activeAppInvocation = () => {
+let cachedInvocation: { id: string; input: Record<string, unknown>; result?: unknown } | undefined;
+const activeAppInvocation = computed(() => {
   const app = activeMcpApp();
   if (!app) return undefined;
-  const event = findLatestAppInvocation(session.events, session.tools, app, session.sessionId, localDocumentEvent.value);
+  const events = documentMode.value && localDocumentEvent.value
+    ? session.events.filter((event) => event.tool_input?.document_uri === documentStatus.value.uri ||
+        event.tool_input?.document_uri === localDocumentEvent.value?.tool_input?.document_uri)
+    : session.events;
+  const event = findLatestAppInvocation(events, session.tools, app, session.sessionId, localDocumentEvent.value);
   if (!event) return undefined;
-  return {
-    id: mcpAppInvocationKey(event),
+  const id = mcpAppInvocationKey(event);
+  if (cachedInvocation?.id === id) return cachedInvocation;
+  cachedInvocation = {
+    id,
     input: event.tool_input as Record<string, unknown>,
     ...(event.tool_result !== undefined ? { result: event.tool_result } : {}),
   };
-};
-
-watch(() => session.events[0], (event) => {
-  if (documentMode.value) return;
-  const targetApp = findAppForInvocationEvent(event, session.tools, session.sessionId);
-  if (targetApp) {
-    localDocumentEvent.value = undefined;
-    if (targetApp._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor") enterDocumentMode();
-    else activeView.value = "app";
-    activeAppTool.value = mcpAppKey(targetApp);
-  }
-}, { flush: "sync" });
+  return cachedInvocation;
+});
 
 watch(() => session.sessionId, () => {
   localDocumentEvent.value = undefined;
@@ -69,21 +74,13 @@ watch(() => session.sessionId, () => {
   activeView.value = "chat";
   activeAppTool.value = "";
   attachmentEditorError.value = "";
+  openingAttachmentUri.value = "";
+  inspection.value = undefined;
 });
 
-const connectionLabel = {
-  connecting: "connecting",
-  connected: "connected",
-  disconnected: "disconnected",
-  error: "connection failed",
-  "auth-error": "authentication failed",
-} as const;
-
-onMounted(() => { void session.connect(); void session.refreshStatus().catch(() => undefined); });
-
-watch(() => session.connectionState, (state) => {
-  webClientExpanded.value = state !== "connected";
-});
+onMounted(() => { void session.connect(); void session.refreshStatus().catch((cause) => {
+  session.error = cause instanceof Error ? cause.message : String(cause);
+}); });
 
 watch(() => session.events.length, () => {
   void nextTick(() => {
@@ -91,10 +88,12 @@ watch(() => session.events.length, () => {
   });
 });
 
+let sendGeneration = 0;
 async function send() {
   const draftAtSubmit = prompt.value;
   const value = draftAtSubmit.trim();
   if ((!value && !session.selectedResourceRefs.length) || chatSending.value) return;
+  const generation = ++sendGeneration;
   chatSending.value = true;
   const sendingSession = session.sessionId;
   const sendingResources = [...session.selectedResourceRefs];
@@ -102,23 +101,28 @@ async function send() {
     if (documentMode.value && !editorHost.value) throw new Error("The document editor is not ready. Your message is preserved.");
     const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
     if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
-    const sent = await session.submit(value || "Please process the attached audio.", [], false, context,
-      undefined, sendingResources, undefined);
-    if (sent && session.sessionId === sendingSession) {
+    const turnId = crypto.randomUUID();
+    const response = session.submit(value || "Please inspect the selected attachments.", [], false, context,
+      turnId, sendingResources, undefined);
+    // submit registers the message/queue synchronously before awaiting HTTP.
+    // Only the save/registration operation owns the composer, not model runtime.
+    if (session.messages.some((message) => message.id === `${turnId}-user`)) {
       if (prompt.value === draftAtSubmit) prompt.value = "";
       session.selectedResourceRefs = session.selectedResourceRefs.filter((uri) => !sendingResources.includes(uri));
     }
+    chatSending.value = false;
+    const sent = await response;
+    if (!sent && generation === sendGeneration && session.sessionId === sendingSession && !prompt.value) prompt.value = draftAtSubmit;
   } catch (cause) {
     if (session.sessionId === sendingSession) session.error = cause instanceof Error ? cause.message : String(cause);
-  } finally { chatSending.value = false; }
+  } finally { if (generation === sendGeneration) chatSending.value = false; }
 }
 
 function enterDocumentMode() {
   if (!savedWorkspaceState.value) savedWorkspaceState.value = {
-    view: activeView.value, app: activeAppTool.value, web: webClientExpanded.value, status: statusExpanded.value, events: eventsExpanded.value,
+    view: activeView.value, app: activeAppTool.value,
   };
   documentMode.value = true; activeView.value = "app";
-  webClientExpanded.value = false; statusExpanded.value = false; eventsExpanded.value = false;
 }
 
 function restoreDocumentMode() {
@@ -128,13 +132,13 @@ function restoreDocumentMode() {
   if (previous) {
     activeView.value = previous.view;
     activeAppTool.value = previous.app;
-    webClientExpanded.value = previous.web; statusExpanded.value = previous.status; eventsExpanded.value = previous.events;
   } else activeView.value = "chat";
   savedWorkspaceState.value = null;
 }
 
 async function navigateWorkspace(view: typeof activeView.value, appKey = "") {
-  if (workspaceNavigating.value) return;
+  if (workspaceNavigating.value || openingAttachmentUri.value) return;
+  if (view === activeView.value && (view !== "app" || appKey === activeAppTool.value)) return;
   workspaceNavigating.value = true;
   try {
     if (documentMode.value) {
@@ -146,12 +150,15 @@ async function navigateWorkspace(view: typeof activeView.value, appKey = "") {
       restoreDocumentMode();
     }
     activeView.value = view;
-    if (appKey) activeAppTool.value = appKey;
+    if (appKey) {
+      activeAppTool.value = appKey;
+      documentMode.value = activeMcpApp()?._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor";
+    }
   } finally { workspaceNavigating.value = false; }
 }
 
 async function startNewSession() {
-  if (workspaceNavigating.value) return;
+  if (workspaceNavigating.value || openingAttachmentUri.value) return;
   workspaceNavigating.value = true;
   try {
     if (documentMode.value) {
@@ -173,7 +180,7 @@ async function startNewSession() {
 function onDocumentClosed() { restoreDocumentMode(); }
 function onDocumentStatus(value: Record<string, unknown>) {
   documentStatus.value = {
-    title: String(value.title ?? "Document"), revision: Number(value.revision ?? 0),
+    title: String(value.title ?? "Document"), revision: Number(value.revision ?? 0), uri: String(value.document_uri ?? ""),
     dirty: Boolean(value.dirty), message: String(value.message ?? ""), error: Boolean(value.error),
   };
 }
@@ -205,21 +212,43 @@ async function openAttachmentInEditor(file: (typeof session.attachments)[number]
     if (!documentUri) throw new Error("Import completed without a document revision reference.");
     const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: documentUri }));
     if (session.sessionId !== importingSession) return;
-    const openTool = session.tools.find((tool) => tool.name === "document.open");
-    if (!openTool) throw new Error("The document editor app is unavailable.");
-    localDocumentEvent.value = {
-      session_id: session.sessionId, request_id: crypto.randomUUID(), turn_id: crypto.randomUUID(),
-      sequence: Date.now(), client_received_at: Date.now(), provider_id: openTool.provider_id ?? "", server_tool_name: openTool.server_tool_name ?? openTool.name,
-      app_context_available: true, tool_input: { document_uri: documentUri },
-      tool_result: { isError: false, structuredContent: opened },
-    };
-    enterDocumentMode();
-    activeAppTool.value = mcpAppKey(openTool);
+    showOpenedDocument(opened, documentUri);
   } catch (cause) {
     if (session.sessionId === importingSession) attachmentEditorError.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     if (openingAttachmentUri.value === sourceUri) openingAttachmentUri.value = "";
   }
+}
+
+function showOpenedDocument(opened: Record<string, unknown>, documentUri: string) {
+  const openTool = session.tools.find((tool) => tool.name === "document.open" && tool._meta?.ui?.resourceUri);
+  if (!openTool) throw new Error("The document editor app is unavailable.");
+  localDocumentEvent.value = {
+    session_id: session.sessionId, request_id: crypto.randomUUID(), turn_id: crypto.randomUUID(),
+    sequence: Date.now(), client_received_at: Date.now(), provider_id: openTool.provider_id ?? "",
+    server_tool_name: openTool.server_tool_name ?? openTool.name, app_context_available: true,
+    tool_input: { document_uri: documentUri }, tool_result: { isError: false, structuredContent: opened },
+  };
+  documentStatus.value = { title: String(opened.title || "Document"), revision: Number(opened.revision || 0), dirty: false, uri: documentUri };
+  enterDocumentMode();
+  activeAppTool.value = mcpAppKey(openTool);
+}
+
+async function editReport(uri: string) {
+  if (workspaceNavigating.value || openingAttachmentUri.value) return;
+  workspaceNavigating.value = true;
+  const sessionId = session.sessionId;
+  try {
+    if (documentMode.value) {
+      if (!editorHost.value) throw new Error("The editor is not ready to save and close.");
+      await editorHost.value.closeDocument();
+      if (session.sessionId !== sessionId) return;
+      restoreDocumentMode();
+    }
+    const opened = structuredToolResult(await openReportRead(uri));
+    if (session.sessionId === sessionId) showOpenedDocument(opened, uri);
+  } catch (cause) { if (session.sessionId === sessionId) session.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { workspaceNavigating.value = false; }
 }
 
 function attachFiles(event: Event) {
@@ -233,41 +262,6 @@ function toggle(index: number) {
   next.has(index) ? next.delete(index) : next.add(index);
   expanded.value = next;
 }
-
-function toggleTool(name: string) {
-  const next = new Set(expandedTools.value);
-  next.has(name) ? next.delete(name) : next.add(name);
-  expandedTools.value = next;
-}
-
-function statusTone(value: unknown) {
-  const normalized = String(value ?? "unknown").toLowerCase();
-  if (["ready", "available", "loaded", "healthy", "ok", "active", "true"].includes(normalized)) return "good";
-  if (["failed", "unavailable", "degraded", "error", "false"].includes(normalized)) return "bad";
-  return "warn";
-}
-
-function displayLabel(value: string) {
-  return value.replaceAll("_", " ");
-}
-
-const readiness = () => session.status.readiness ?? {};
-const readinessComponents = () => {
-  const current = readiness();
-  const stores = current.stores && typeof current.stores === "object" ? current.stores as Record<string, unknown> : {};
-  return ([
-    ["health", current.health],
-    ["model", current.model],
-    ["inference", current.inference],
-    ...Object.entries(stores).map(([name, value]) => [`store: ${name}`, value]),
-  ].filter(([, value]) => value !== undefined && value !== null)) as Array<[string, unknown]>;
-};
-
-const readinessWarnings = (): string[] => readiness().warnings ?? [];
-const readinessProviders = (): DaemonProviderStatus[] => readiness().providers ?? [];
-const readinessToolProfile = () => readiness().tool_profile ?? "";
-const metrics = (): Record<string, unknown> => session.status.metrics ?? {};
-const sessionKeys = () => Array.isArray(session.status.session_keys) ? session.status.session_keys : [];
 
 function eventText(event: Record<string, unknown>) {
   return String(event.detail ?? event.error ?? event.tool_name ?? "");
@@ -303,38 +297,44 @@ function isArtifactEvent(event: Record<string, unknown>) {
 
 <template>
   <main class="shell">
-    <header class="topbar">
-      <div><p class="eyebrow">EXAMPLE APPLICATION</p><h1>llama-agent</h1></div>
-      <div class="connection" :class="`connection-${session.connectionState}`">
-        <span class="dot" /> {{ connectionLabel[session.connectionState] }}
-        <button class="quiet" @click="session.connect">reconnect</button><button class="quiet" @click="startNewSession">new session</button>
-      </div>
-    </header>
-
-    <section class="notice">This is an example client for the daemon's HTTP/SSE adapter. Agent planning, tools, MCP and policy remain in the daemon.</section>
-
-    <nav class="workspace-nav" aria-label="Agent workspace">
-      <button :class="{ selected: activeView === 'chat' && !documentMode }" @click="navigateWorkspace('chat')">Chat</button>
-      <button :class="{ selected: activeView === 'data' }" @click="navigateWorkspace('data')">Data Explorer</button>
-      <button :class="{ selected: activeView === 'workflow' }" @click="navigateWorkspace('workflow')">Workflow Inspector</button>
-      <button v-for="tool in mcpApps()" :key="mcpAppKey(tool)" :class="{ selected: activeAppTool === mcpAppKey(tool) }" @click="navigateWorkspace('app', mcpAppKey(tool))">{{ tool.name }} app</button>
-    </nav>
-
-    <section class="grid" :class="{ 'document-layout': documentMode, 'chat-layout': activeView === 'chat' && !documentMode }">
-      <div v-show="activeView !== 'chat' || documentMode" class="workspace-main">
-        <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="(text) => { void navigateWorkspace('chat'); prompt = text; }" />
+    <header class="topbar"><div><p class="eyebrow">WORKSPACE</p><h1>llama-agent</h1></div><span class="session-caption">{{ !session.connected ? 'Disconnected' : session.busy ? 'Agent working' : 'Ready for your next question' }}</span></header>
+    <div class="workspace-toolbar">
+      <nav class="workspace-nav" aria-label="Workspace"><button type="button" :class="{ selected: activeView === 'chat' }" :disabled="workspaceNavigating" @click="navigateWorkspace('chat')">Chat</button><span v-if="workspaceActive" class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeMcpApp()?.name || 'Application' }}</span><button v-if="workspaceActive" type="button" class="quiet" :disabled="workspaceNavigating" :title="documentMode ? 'Save, review and close' : 'Close workspace'" @click="navigateWorkspace('chat')">×</button></nav>
+      <StatusFloater :active-view="activeView" :active-app="activeAppTool" @navigate="navigateWorkspace" @new-session="startNewSession"><template #events>
+        <section class="events-panel">
+          <button class="section-toggle" @click="eventsExpanded = !eventsExpanded"><h2>Events</h2><span>{{ eventsExpanded ? '−' : '+' }} · {{ sessionEvents.length }}</span></button>
+          <template v-if="eventsExpanded">
+          <div v-if="!sessionEvents.length" class="empty">Runtime events will appear here while the daemon is working.</div>
+          <div ref="eventsViewport" class="events-viewport">
+          <div v-for="(event, index) in sessionEvents" :key="`${event.sequence ?? index}-${index}`" class="event-row">
+            <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
+            <div class="event-main"><div class="event-line"><time class="event-time">{{ eventTime(event) }}</time><strong v-if="eventCategory(event) || eventTypeLabel(event)" class="event-kind"><span v-if="eventCategory(event)">{{ eventCategory(event) }}: </span><span v-if="eventTypeLabel(event)">{{ eventTypeLabel(event) }}:</span></strong><span class="event-detail">{{ eventText(event) }}</span><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div></div>
+            <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
+          </div>
+          </div>
+          </template>
+        </section>
+      </template></StatusFloater>
+    </div>
+    <section class="grid" :class="{ 'workspace-layout': workspaceActive, 'chat-layout': !workspaceActive }">
+      <div v-show="workspaceActive" class="workspace-main">
+        <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" />
         <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation()" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" />
+        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" />
       </div>
       <div class="primary">
-        <section v-show="activeView === 'chat' || documentMode" class="card chat chat-panel">
+        <section class="card chat chat-panel">
           <div class="card-title chat-heading"><h2>Chat</h2><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
-          <div v-for="message in session.messages" :key="message.id" class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
+          <div v-for="message in session.messages" :key="message.id" class="chat-entry">
+            <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
+            <template v-if="message.role === 'assistant'"><ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" @edit="editReport" @inspect="inspection = $event" /></template>
+          </div>
+          <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" @edit="editReport" @inspect="inspection = $event" />
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />
-            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="chatSending || (!prompt.trim() && !session.selectedResourceRefs.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>{{ chatSending ? 'Saving…' : session.busy ? 'Queue' : 'Send' }}</span></button></div></div>
+            <div class="composer-actions"><div class="attachments-spacer" /><div class="input-actions"><label class="file-button" title="Attach files" aria-label="Attach files"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg><input type="file" multiple @change="attachFiles" /></label><button type="button" class="mic-button" :class="{ recording: session.recording }" :disabled="session.busy && !session.recording" :title="session.recording ? 'Stop recording' : 'Record audio'" :aria-label="session.recording ? 'Stop recording' : 'Record audio'" @click="session.toggleRecording"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></button><span v-if="session.recording" class="recording-status"><span class="recording-dot" /> recording…</span><button class="primary-button" :disabled="chatSending || (!prompt.trim() && !session.selectedResourceRefs.length)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.5-7.5L3 11Z" /><path d="M10.5 13.5 21 3" /></svg><span>{{ chatSending ? 'Saving…' : session.busy ? 'Queue' : 'Send' }}</span></button></div></div>
           </form>
           <div v-if="session.attachments.length" class="attachments"><strong>Attachments — select for this message</strong><div v-for="(file, index) in session.attachments" :key="`${file.uri ?? file.name}-${index}`" class="attachment"><label><input v-model="session.selectedResourceRefs" type="checkbox" :value="file.uri" :disabled="!file.uri" />{{ file.name }}</label><button type="button" class="quiet" :aria-label="`Remove ${file.name}`" @click="session.removeAttachment(index)">Remove</button><button v-if="/\.(txt|md|markdown|docx)$/i.test(file.name)" type="button" class="attachment-editor-button" :disabled="!file.uri || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) || Boolean(openingAttachmentUri)" :title="!file.uri ? 'Upload is still in progress.' : !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) ? 'The daemon has not authorized document import for the editor app.' : 'Redigera dokument'" aria-label="Redigera dokument" @click="openAttachmentInEditor(file)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3M4 20l4.4-.9L19 8.5a2.1 2.1 0 0 0-3-3L5.4 16.1 4 20Z"/><path d="M3 22h18"/></svg></button><small v-if="file.uri && !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" class="muted">Document editor import is not authorized by the daemon profile.</small><small v-if="openingAttachmentUri === file.uri" class="muted">Importing the document and opening its saved revision…</small><small v-if="attachmentEditorError" class="error">{{ attachmentEditorError }}</small></div></div>
           <div v-if="session.busy" class="chat-cancel"><button class="cancel-button" @click="session.cancel">Cancel</button></div>
@@ -353,26 +353,11 @@ function isArtifactEvent(event: Record<string, unknown>) {
           </section>
         </section>
 
-        <section v-show="activeView === 'chat' || documentMode" class="card events-panel">
-          <button class="section-toggle" @click="eventsExpanded = !eventsExpanded"><h2>Events</h2><span>{{ eventsExpanded ? '−' : '+' }} · {{ session.events.length }}</span></button>
-          <template v-if="eventsExpanded">
-          <div v-if="!session.events.length" class="empty">Runtime events will appear here while the daemon is working.</div>
-          <div ref="eventsViewport" class="events-viewport">
-          <div v-for="(event, index) in session.events" :key="`${event.sequence ?? index}-${index}`" class="event-row">
-            <button class="expand" @click="toggle(index)">{{ expanded.has(index) ? "−" : "+" }}</button>
-            <div class="event-main"><div class="event-line"><time class="event-time">{{ eventTime(event) }}</time><strong v-if="eventCategory(event) || eventTypeLabel(event)" class="event-kind"><span v-if="eventCategory(event)">{{ eventCategory(event) }}: </span><span v-if="eventTypeLabel(event)">{{ eventTypeLabel(event) }}:</span></strong><span class="event-detail">{{ eventText(event) }}</span><span v-if="event.tool_name" class="tag">{{ event.tool_name }}</span><button v-if="isArtifactEvent(event)" class="download-button" @click="session.downloadArtifact(event)">Download</button></div></div>
-            <pre v-if="expanded.has(index)">{{ JSON.stringify(event, null, 2) }}</pre>
-          </div>
-          </div>
-          </template>
-        </section>
+
       </div>
 
-      <aside class="side">
-        <section class="card web-client-panel"><button class="section-toggle" :disabled="session.connectionState !== 'connected'" @click="webClientExpanded = !webClientExpanded"><h2>Web client</h2><span v-if="session.connectionState === 'connected'">{{ webClientExpanded ? "−" : "+" }}</span></button><div v-if="webClientExpanded"><p class="muted">HTTP commands go to the daemon. SSE is used only for the server event stream.</p><label class="field token-field" :class="{ 'token-missing': !session.token.trim(), 'token-unconnected': session.token.trim() && !session.connected }">Bearer token<input v-model="session.token" type="password" autocomplete="off" placeholder="enter token" :aria-invalid="!session.token.trim() || undefined" /><small v-if="!session.token.trim()">No token entered. An authenticated daemon may reject requests.</small><small v-else-if="session.connectionState === 'auth-error'">The token was rejected. Check it and reconnect.</small><small v-else-if="!session.connected">Token entered, but the event connection is not established yet. Try reconnect.</small><small v-else>Token accepted and event connection is active.</small></label><p v-if="session.connectionError" class="connection-error">{{ session.connectionError }}</p></div></section>
-        <section class="card status-card"><button class="section-toggle status-heading" @click="statusExpanded = !statusExpanded"><h2>Status and capabilities</h2><span>{{ statusExpanded ? "−" : "+" }}</span></button><div v-if="statusExpanded"><div class="card-title status-refresh"><span></span><button class="quiet" @click="session.refreshStatus">refresh</button></div><dl class="status-summary"><template v-for="key in ['state', 'live', 'ready', 'worker_running', 'accepting_commands']" :key="key"><template v-if="session.status[key] !== undefined"><dt>{{ displayLabel(key) }}</dt><dd>{{ String(session.status[key]) }}</dd></template></template></dl><div class="readiness"><h3>Readiness</h3><div class="readiness-list"><div v-for="([name, value]) in readinessComponents()" :key="name" class="readiness-row"><span>{{ name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(value)}`" />{{ value }}</span></div></div><div v-if="readinessToolProfile()" class="readiness-meta"><span class="meta-label">Tool profile</span><span>{{ readinessToolProfile() }}</span></div><div v-if="readinessProviders().length" class="readiness-meta provider-list"><span class="meta-label">Providers</span><span v-for="provider in readinessProviders()" :key="String(provider.id ?? provider.name ?? 'provider')" class="provider-item"><span>{{ provider.id ?? provider.name }}</span><span class="status-value"><span class="status-badge" :class="`status-${statusTone(provider.status)}`" />{{ provider.status }}</span></span></div><div v-if="readinessWarnings().length" class="readiness-warnings"><span class="meta-label">Warnings</span><p v-for="warning in readinessWarnings()" :key="warning">{{ warning }}</p></div></div><div v-if="Object.keys(metrics()).length" class="metrics"><h3>Metrics</h3><div v-for="(value, key) in metrics()" :key="key" class="metric-row"><span>{{ displayLabel(key) }}</span><strong>{{ value }}</strong></div></div><div v-if="session.capabilities.length" class="capabilities"><strong>Capabilities</strong><span v-for="capability in session.capabilities" :key="capability" class="tag">{{ capability }}</span></div><div class="session-keys"><button class="section-toggle" @click="sessionsExpanded = !sessionsExpanded"><strong>Session keys</strong><span>{{ sessionsExpanded ? "−" : "+" }}</span></button><div v-if="sessionsExpanded" class="session-key-list"><div v-if="!sessionKeys().length" class="muted">No active sessions.</div><pre v-for="(item, index) in sessionKeys()" :key="index">{{ JSON.stringify(item, null, 2) }}</pre></div></div></div></section>
-        <section class="card tool-panel"><button class="tool-panel-toggle" @click="toolsExpanded = !toolsExpanded"><span><strong>MCP tools</strong><small>{{ session.tools.length }} active</small></span><span class="collapse-icon">{{ toolsExpanded ? "−" : "+" }}</span></button><p class="muted">Host-approved tools exposed to the agent.</p><div v-if="toolsExpanded" class="tool-list"><div v-if="!session.tools.length" class="empty">No tool snapshot is available.</div><div v-for="tool in session.tools" :key="tool.name" class="tool-entry"><button class="tool-name" @click="toggleTool(tool.name)"><span class="tool-dot" :class="`tool-dot-${tool.state || 'active'}`" /><span>{{ tool.name }}</span><span class="tool-chevron">{{ expandedTools.has(tool.name) ? "−" : "+" }}</span></button><div v-if="expandedTools.has(tool.name)" class="tool-details"><p>{{ tool.description || "No description provided." }}</p><span v-if="tool.source" class="tool-source">source: {{ tool.source }}</span></div></div></div></section>
-      </aside>
+
     </section>
+    <SourceInspector v-if="inspection" :key="JSON.stringify([session.sessionId, inspection.id])" :target="inspection" :tools="session.tools" :call-tool="session.callReadOnlyTool" :read-resource="session.readResourceBlob" @close="inspection = undefined" />
   </main>
 </template>

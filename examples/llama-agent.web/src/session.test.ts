@@ -25,6 +25,28 @@ vi.mock("./api/agent-api", () => ({ AgentApi: class {
 
 afterEach(() => { transport.upload = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const { reportReferences } = await import("./components/report-view");
+  const session = useAgentSession();
+  const pending = session.submit("Create a report");
+  transport.replies[0]({ ok: true, response: "The report is ready.", events: [{
+    type: "resource.created", sequence: 23, request_id: "report-request",
+    resource_uri: "agent-resource://report", resource_name: "Report.json",
+    resource_mime_type: "application/vnd.llama-agent.report+json",
+  }] });
+  expect(await pending).toBe(true);
+  expect(reportReferences(session.events, session.sessionId)).toEqual([{
+    uri: "agent-resource://report", name: "Report.json", turnId: String(transport.calls[0].turn_id),
+  }]);
+});
+
 it("automatically orients each uploaded attachment as its own read-only host task", async () => {
   transport.calls.length = 0;
   transport.replies.length = 0;

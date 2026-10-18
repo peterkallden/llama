@@ -930,6 +930,9 @@ int main() {
     assert(result.ok);
     auto opened_document=nlohmann::json::parse(result.output);
     assert(opened_document.value("revision",uint64_t(0))==1&&opened_document.contains("markdown"));
+    assert(opened_document.contains("rendered_markdown"));
+    assert(!opened_document["rendered_markdown"].get<std::string>().empty());
+    assert(opened_document["document"]["id"] == report_export["report_id"]);
     auto edited_markdown=opened_document.value("markdown",std::string{});
     edited_markdown+="\n## User edits\n\nUser-edited report text.\n";
     const auto save_args=nlohmann::json{{"document_uri",document_uri},{"expected_revision",1},
@@ -988,6 +991,7 @@ int main() {
     const auto large_saved_uri=nlohmann::json::parse(result.output)["document_uri"].get<std::string>();
     result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",large_saved_uri}}.dump()});assert(result.ok);
     const auto large_opened=nlohmann::json::parse(result.output);
+    assert(large_opened["rendered_markdown"].get<std::string>().size() > 65536);
     assert(large_opened["document"]["sections"].back()["blocks"][0]["author"]=="model");
     assert(large_opened["document"]["sections"].back()["blocks"][0]["review_state"]=="unreviewed");
     const auto & target_section=large_opened["document"]["sections"].back();

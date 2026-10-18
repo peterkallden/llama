@@ -89,6 +89,8 @@ struct common_agent_event {
     std::string observation_id;
     std::string tool_name;
     std::string resource_uri;
+    std::string resource_name;
+    std::string resource_mime_type;
 };
 
 using common_agent_event_sink = std::function<void(const common_agent_event &)>;

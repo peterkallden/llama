@@ -199,20 +199,27 @@ void emit_plan_and_resource_events_from_turn(
 
     const auto emit_once = [&](
             common_agent_daemon_event_type type,
-            const std::string & detail) {
+            const std::string & detail,
+            const common_agent_event * resource_event = nullptr) {
         const std::string key =
             std::string(common_agent_daemon_event_type_name(type)) + "|" + detail;
         if (!emitted_keys.insert(key).second) {
             return;
         }
         auto context = command_context;
-        service.emit_internal_event(make_common_agent_daemon_event(
+        auto projected = make_common_agent_daemon_event(
             type,
             context.request_id,
             context.turn_id,
             detail,
             0,
-            std::move(context)));
+            std::move(context));
+        if (resource_event) {
+            projected.resource_uri = resource_event->resource_uri;
+            projected.resource_name = resource_event->resource_name;
+            projected.resource_mime_type = resource_event->resource_mime_type;
+        }
+        service.emit_internal_event(std::move(projected));
     };
 
     for (const auto & event : turn_result.events) {
@@ -245,12 +252,12 @@ void emit_plan_and_resource_events_from_turn(
             case common_agent_event_type::resource_created:
                 emit_once(
                     common_agent_daemon_event_type::resource_created,
-                    !event.resource_uri.empty() ? event.resource_uri : event.detail);
+                    !event.resource_uri.empty() ? event.resource_uri : event.detail, &event);
                 break;
             case common_agent_event_type::resource_attached:
                 emit_once(
                     common_agent_daemon_event_type::resource_attached,
-                    !event.resource_uri.empty() ? event.resource_uri : event.detail);
+                    !event.resource_uri.empty() ? event.resource_uri : event.detail, &event);
                 break;
             default:
                 break;
@@ -2010,9 +2017,14 @@ bool common_agent_daemon_service::execute_outcome(
                 command_events.emit(common_agent_daemon_event_type::tool_output, outcome.tool_result.safe_summary);
             }
             for (const auto & resource_ref : outcome.tool_result.resource_refs) {
-                command_events.emit(
+                auto resource_event = make_common_agent_daemon_event(
                     common_agent_daemon_event_type::tool_artifact_created,
-                    resource_ref.uri.empty() ? resource_ref.name : resource_ref.uri);
+                    command.request_id, {}, resource_ref.uri,
+                    0, make_command_event_context(command));
+                resource_event.resource_uri = resource_ref.uri;
+                resource_event.resource_name = resource_ref.name;
+                resource_event.resource_mime_type = resource_ref.mime_type;
+                emit_internal_event(std::move(resource_event));
             }
             command_events.emit(
                 outcome.ok ? common_agent_daemon_event_type::tool_completed : common_agent_daemon_event_type::tool_failed,

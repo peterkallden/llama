@@ -1,4 +1,5 @@
 #include "agent-daemon-jsonl-protocol.h"
+#include "agent-daemon-event-json.h"
 
 #include "../../../common/agent/protocol/agent-jsonl.h"
 #include "../../../common/agent/dataset-contracts.h"
@@ -90,6 +91,13 @@ bool parse_event_entry_field(
     entry.observation_id = value.value("observation_id", std::string());
     entry.tool_name = value.value("tool_name", std::string());
     entry.resource_uri = value.value("resource_uri", std::string());
+    entry.resource_name = value.value("resource_name", std::string());
+    entry.resource_mime_type = value.value("resource_mime_type", std::string());
+    entry.app_context_available = value.value("app_context_available", false);
+    entry.provider_id = value.value("provider_id", std::string());
+    entry.server_tool_name = value.value("server_tool_name", std::string());
+    if (value.contains("tool_input") && value["tool_input"].is_object()) entry.tool_input_json = value["tool_input"].dump();
+    if (value.contains("tool_result") && value["tool_result"].is_object()) entry.tool_result_json = value["tool_result"].dump();
     return !entry.type.empty();
 }
 
@@ -147,20 +155,7 @@ nlohmann::ordered_json make_agent_daemon_jsonl_event_message(
         {"cursor", { {"after_sequence", delivery.cursor.after_sequence} }},
     };
     if (delivery.kind == common_agent_event_stream_delivery_kind::event) {
-        nlohmann::ordered_json event = {
-            {"type", delivery.event.type},
-            {"event_type", common_agent_daemon_event_type_name(delivery.event.event_type)},
-            {"event_category", common_agent_daemon_event_category_name(delivery.event.category)},
-            {"sequence", delivery.event.sequence},
-        };
-        if (!delivery.event.request_id.empty()) event["request_id"] = delivery.event.request_id;
-        if (!delivery.event.turn_id.empty()) event["turn_id"] = delivery.event.turn_id;
-        if (!delivery.event.namespace_id.empty()) event["namespace_id"] = delivery.event.namespace_id;
-        if (!delivery.event.project_id.empty()) event["project_id"] = delivery.event.project_id;
-        if (!delivery.event.session_id.empty()) event["session_id"] = delivery.event.session_id;
-        if (!delivery.event.operation_id.empty()) event["operation_id"] = delivery.event.operation_id;
-        if (!delivery.event.detail.empty()) event["detail"] = delivery.event.detail;
-        message["event"] = std::move(event);
+        message["event"] = common_agent_daemon_event_to_json(delivery.event);
     } else if (delivery.kind == common_agent_event_stream_delivery_kind::overflow) {
         message["overflow"] = {
             {"from_sequence", delivery.overflow_from_sequence},

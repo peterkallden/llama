@@ -3989,6 +3989,13 @@ met. This is a content-read gate, not a claim that every model interpretation
 is factually correct.
 
 Editor reviews bind to the requested immutable revision and selected block IDs.
+The web reading view opens saved reports through the existing read-only
+`document.open` contract, including host-rendered Markdown for downloads. Resource
+events retain URI, name and media type through one shared daemon HTTP/JSONL/SSE
+projection. Their metadata selects report cards without interpreting model prose.
+Source inspection joins the document's block references with its frozen snapshot;
+saved tool observations are displayed without another execution. UI references
+preserve provenance and do not create additional factual support or learning credit.
 The host creates a Markdown projection containing only those blocks and their
 immediate neighbors, then exposes it as a normal scoped resource. Large
 projections use the existing text chunk path; the full editor document is not

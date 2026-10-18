@@ -460,10 +460,12 @@ bool common_try_register_document_tool_adapter(
             const auto uri=arguments["document_uri"].get<std::string>();common_agent_artifact_document document;std::string error;
             if(!read_document(bindings,uri,document,error))return common_adapter_not_found_failure("tool.document.open.unavailable",error,"The report document is not available in this scope.");
             std::string markdown;if(!common_agent_artifact_render_editable_markdown(document,markdown,error))return common_adapter_execution_failure("tool.document.open.render_failed",error,"The report could not be opened for editing.");
+            std::string rendered_markdown;
+            if(!common_agent_artifact_render_markdown(document,rendered_markdown,error))return common_adapter_execution_failure("tool.document.open.render_failed",error,"The document could not be rendered for reading.");
             std::string serialized;if(!common_agent_artifact_document_to_json(document,serialized,error))return common_adapter_execution_failure("tool.document.open.serialize_failed",error,"The report metadata could not be opened.");
             const auto document_json=json::parse(serialized,nullptr,false);if(!document_json.is_object())return common_adapter_execution_failure("tool.document.open.serialize_failed","serialized report document is not valid JSON","The report metadata could not be opened.");
             json result={{"document_uri",uri},{"id",document.id},{"kind",document.kind==common_agent_artifact_document_kind::document?"document":"report"},{"revision",document.revision},{"title",document.title},
-                {"markdown",markdown},{"document",document_json},
+                {"markdown",markdown},{"rendered_markdown",rendered_markdown},{"document",document_json},
                 {"bibliography",json::array()}};
             for(const auto & source:document.source_bibliography)result["bibliography"].push_back({{"source_id",source.source_id},{"title",source.title},{"original_uri",source.original_uri},{"resolved_uri",source.resolved_uri},{"file_name",source.file_name},{"resource_uri",source.resource_uri},{"retrieved_at",source.retrieved_at}});
             return common_adapter_success_json(result);

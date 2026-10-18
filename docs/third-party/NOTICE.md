@@ -1,8 +1,12 @@
-# Third-party notices for the document editor
+# Third-party notices for the document editor and report viewer
 
-The embedded document-editor app bundles the following pinned runtime
+The embedded document-editor app and read-only report viewer use the following pinned runtime
 dependencies. These notices apply to the distributed web bundle; the project
 code remains MIT-licensed under the repository's `LICENSE`.
+The regular web bundle reuses TOAST UI's viewer and the already locked DOMPurify
+version. Its generated `third-party-notices.txt` includes these notices and the
+license texts from the installed locked packages; Vue's MIT license is included
+there as well. DOMPurify uses the Apache-2.0 option of its dual license.
 
 | Package | Version | License | Attribution |
 | --- | --- | --- | --- |

@@ -114,6 +114,17 @@ json common_agent_jsonl_make_event_message(const common_agent_jsonl_event_entry 
     if (!event.observation_id.empty()) payload["observation_id"] = event.observation_id;
     if (!event.tool_name.empty()) payload["tool_name"] = event.tool_name;
     if (!event.resource_uri.empty()) payload["resource_uri"] = event.resource_uri;
+    if (!event.resource_name.empty()) payload["resource_name"] = event.resource_name;
+    if (!event.resource_mime_type.empty()) payload["resource_mime_type"] = event.resource_mime_type;
+    if (event.app_context_available) {
+        payload["app_context_available"] = true;
+        if (!event.provider_id.empty()) payload["provider_id"] = event.provider_id;
+        if (!event.server_tool_name.empty()) payload["server_tool_name"] = event.server_tool_name;
+        const auto input = json::parse(event.tool_input_json, nullptr, false);
+        const auto result = json::parse(event.tool_result_json, nullptr, false);
+        if (input.is_object()) payload["tool_input"] = input;
+        if (result.is_object()) payload["tool_result"] = result;
+    }
     return {
         {"message_type", "event"},
         {"event", std::move(payload)},

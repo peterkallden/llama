@@ -145,7 +145,8 @@ envelope. Truncated samples are labelled explicitly. Source changes discard old
 results and pending replies cannot replace a newer source's view. These operations
 do not start a model turn.
 
-Tools that advertise an MCP App UI can be opened in the app tabs. The browser
+Tools that advertise an MCP App UI can be opened from the right-hand status
+floater. Applications use the main workspace with chat alongside it. The browser
 host fetches the UI resource through `POST /api/v1/mcp-apps/resource` and brokers
 app requests through `/api/v1/mcp-apps/call`. The host negotiates
 `io.modelcontextprotocol/ui` with the HTML app MIME type and follows the
@@ -160,8 +161,8 @@ host-controlled `read_only_tools` list. The list is empty by default; remote
 for app discovery without being exposed to model tool selection. Links and
 arbitrary network access are not brokered. OpenAPI operations remain visible to
 model selection by default. App invocation context is isolated by provider and
-UI resource and uses the newest matching invocation; automatic navigation
-reacts only to a newly received matching invocation. HTTPS CSP wildcards are
+UI resource and uses the newest matching invocation. Tool events update saved
+invocation context without changing the user's selected workspace. HTTPS CSP wildcards are
 normalized before they reach the sandbox; stale RPC responses are dropped
 after app reload or switching.
 
@@ -171,10 +172,9 @@ Apps populate their input and display results from invocation notifications,
 including tool errors. Result notification parameters carry the standard MCP
 result directly (`content`, `structuredContent`, `isError`). Initialization must
 complete before the host accepts app tool requests.
-Each completed invocation gets its own app instance using the host event
-identity, so repeated calls with identical arguments and output are still
-delivered. Event-driven navigation is processed synchronously before a later
-turn event in the same SSE burst can replace the newest tool event.
+Invocation identity is preserved when repeated calls have identical arguments
+and output. The selected app stays mounted while chat updates; a document
+editor accepts subsequent invocation context only for its bound document.
 
 The bounded web host supports initialization, scoped `tools/list` and
 `tools/call`, reads of the app's own declared UI resource, ping, and a displayed
@@ -194,9 +194,33 @@ provider-owned and are fetched through that provider.
 Use the pen icon on a supported TXT, Markdown, or DOCX attachment to import and
 open it in the document editor. The editor stays in the main pane while the
 same chat, including its unsent text and attachments, moves to the right. At
-screen widths below 1,000 px the panes stack. The Web client, Status and
-capabilities, and Events panels collapse while editing and return to their
-previous states on close.
+screen widths below 1,000 px the panes stack. Page width follows the viewport;
+the editor receives the remaining width after the compact chat column. Web
+client, status, metrics, tools, application launchers and events live in an
+expandable floater aligned with the workspace toolbar. Authentication expands
+when required and collapses after a successful connection. Anonymous local
+connections do not display a missing-token warning.
+
+Published report/document resources appear as read-only cards with their
+assistant turn. Discovery uses host-owned resource URI, name and media type
+in events, not filenames or links parsed from model text. Completed HTTP turn
+responses recover events missed by SSE. Reading uses `document.open`, which
+also returns host-rendered Markdown for downloading the same immutable revision.
+Its result limit is 32 MiB to accommodate Markdown and structured content;
+underlying document/import and transport limits still apply.
+
+Hovering or focusing a report block shows a saved-provenance preview. Source
+and tool buttons open a scrollable modal. Dataset references reuse Data
+Explorer, including bounded samples and sorting. Tool observations come from
+the report's frozen snapshot and are never rerun for presentation. Ordinary
+sources offer their original web URL and, when authorized, a bounded text
+preview or saved file in a separate tab. Sources without a saved relationship
+are not inferred from prose. Linked references and host support/review status
+remain distinct from factual verification.
+
+Reading uses the existing pinned TOAST UI viewer and DOMPurify. Active HTML,
+embedded images and runtime media loading are disabled in report cards. The
+web build includes `third-party-notices.txt`; the floater links to these notices.
 
 Before a chat message is sent from this layout, the editor saves its current
 draft and attaches the resulting immutable document revision as typed context.
@@ -223,3 +247,23 @@ their Markdown comparison available through the normal resource/chunk path.
 Diff previews are not accumulated in the browser or embedded in model prompts.
 Selecting the complete document sends an empty block-ID list, which means all
 blocks; partial selections are limited to 128 blocks.
+
+## Verification handoff for the workspace redesign
+
+This implementation checkpoint includes tests but has not been built, run or
+browser-verified. Verification is deliberately deferred to the next model.
+
+- CTests: `test-agent-web-presentation` follows resource and MCP invocation
+  metadata through daemon JSONL and SSE; `test-tool-adapters` checks the saved
+  revision and rendered Markdown; `test-tool-catalog` checks the larger reading
+  result contract. Existing `test-agent-mcp-app-bridge` covers app authorization.
+- When Node and installed web dependencies are available at configuration time,
+  `test-agent-web-workspace` registers the relevant Vitest suites with CTest.
+  C++ configuration does not install dependencies or build the frontend.
+- Browser checks: authenticate or connect anonymously; expand/collapse the
+  floater; open Data Explorer and another MCP App; generate a report; inspect
+  a linked dataset and saved tool observation; open an original source in a
+  separate tab; download the report; edit and send a queued message; close and
+  review. Repeat below 1,000 px, with keyboard navigation, during an active
+  response, and after a reconnect. Check that drafts, selection, source scope
+  and the editor iframe survive these transitions.

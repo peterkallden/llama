@@ -3,32 +3,25 @@ import { computed, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 import { AgentApiError } from "../api/agent-api";
 import { structuredToolResult } from "./structured-tool-result";
-import { datasetTable, sortedDatasetRows, tableCell } from "./dataset-table";
+import ResultTable from "./ResultTable.vue";
 
 const props = defineProps<{
   tools: DaemonToolStatus[];
   callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  initialSource?: string;
+  initialKind?: "dataset" | "resource" | "path";
+  hideHandoff?: boolean;
 }>();
 const emit = defineEmits<{ handoff: [prompt: string] }>();
 const dataset = ref("");
 const source = ref<"dataset" | "resource" | "path">("dataset");
 const rows = ref(8);
 const result = ref<Record<string, unknown> | null>(null);
-const sortColumn = ref("");
-const descending = ref(false);
-const raw = ref(false);
-const table = computed(() => datasetTable(result.value ?? {}));
-const sortedRows = computed(() => sortedDatasetRows(table.value.rows, sortColumn.value, descending.value));
 const busy = ref(false);
 const error = ref("");
 const available = computed(() => new Set(props.tools.filter((tool) => tool.read_only).map((tool) => tool.name)));
 let requestGeneration = 0;
 watch([dataset, source], () => { requestGeneration++; result.value = null; error.value = ""; busy.value = false; }, { flush: "sync" });
-
-function sort(column: string) {
-  descending.value = sortColumn.value === column ? !descending.value : false;
-  sortColumn.value = column;
-}
 
 async function inspect(name: "dataset.inspect" | "dataset.schema" | "dataset.sample") {
   if (!dataset.value.trim()) { error.value = "Enter a source first."; return; }
@@ -37,7 +30,6 @@ async function inspect(name: "dataset.inspect" | "dataset.schema" | "dataset.sam
   const requestedDataset = dataset.value.trim();
   const requestedSource = source.value;
   busy.value = true; error.value = ""; result.value = null;
-  sortColumn.value = ""; descending.value = false;
   try {
     const count = Number.isFinite(rows.value) ? Math.max(1, Math.min(100, Math.trunc(rows.value))) : 8;
     const current = await props.callTool(name, name === "dataset.sample"
@@ -55,6 +47,12 @@ async function inspect(name: "dataset.inspect" | "dataset.schema" | "dataset.sam
     }
   } finally { if (generation === requestGeneration) busy.value = false; }
 }
+watch(() => [props.initialSource, props.initialKind], () => {
+  if (!props.initialSource) return;
+  source.value = props.initialKind ?? "dataset";
+  dataset.value = props.initialSource;
+  void inspect("dataset.sample");
+}, { immediate: true });
 </script>
 
 <template>
@@ -71,15 +69,9 @@ async function inspect(name: "dataset.inspect" | "dataset.schema" | "dataset.sam
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <template v-if="result !== null">
-      <p class="muted">{{ table.rows.length }} displayed rows. Click a column heading to sort the displayed rows.</p>
       <p v-if="result.scan_truncated || result.result_truncated" class="muted">This is a bounded sample; more rows exist outside this view.</p>
-      <button type="button" class="explorer-toggle" :aria-pressed="raw" @click="raw = !raw">{{ raw ? 'Show table' : 'Show raw JSON' }}</button>
-      <pre v-if="raw" class="explorer-result">{{ JSON.stringify(result, null, 2) }}</pre>
-      <div v-else class="explorer-result table-scroll"><table class="dataset-table">
-        <thead><tr><th v-for="column in table.columns" :key="column" scope="col" :aria-sort="sortColumn === column ? (descending ? 'descending' : 'ascending') : 'none'"><button type="button" @click="sort(column)">{{ column }}{{ sortColumn === column ? (descending ? ' ↓' : ' ↑') : '' }}</button></th></tr></thead>
-        <tbody><tr v-for="(row, index) in sortedRows" :key="index"><td v-for="column in table.columns" :key="column">{{ tableCell(row[column]) }}</td></tr></tbody>
-      </table><p v-if="!table.rows.length" class="muted">No rows returned.</p></div>
+      <ResultTable :result="result" />
     </template>
-    <button v-if="result !== null" class="handoff-button" @click="emit('handoff', `Analyze this dataset result for ${dataset}. The host returned this schema/sample: ${JSON.stringify(result)}`)">Continue with agent</button>
+    <button v-if="result !== null && !hideHandoff" class="handoff-button" @click="emit('handoff', `Analyze the ${source} source ${dataset}. Read its schema and relevant rows through the dataset tools.`)">Continue with agent</button>
   </section>
 </template>

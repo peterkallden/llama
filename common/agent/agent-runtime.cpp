@@ -134,7 +134,9 @@ static void append_event(
         std::string step_id = {},
         std::string observation_id = {},
         std::string tool_name = {},
-        std::string resource_uri = {}) {
+        std::string resource_uri = {},
+        std::string resource_name = {},
+        std::string resource_mime_type = {}) {
     common_agent_event event{
         type,
         std::move(detail),
@@ -144,6 +146,8 @@ static void append_event(
         std::move(observation_id),
         std::move(tool_name),
         std::move(resource_uri),
+        std::move(resource_name),
+        std::move(resource_mime_type),
     };
     result.events.push_back(event);
     if (request.event_sink) {
@@ -192,7 +196,7 @@ static void append_observation_and_resource_events(
                 step_id,
                 observation_id,
                 tool_name,
-                resource_ref.uri);
+                resource_ref.uri, resource_ref.name, resource_ref.mime_type);
         }
         append_event(
             result,
@@ -204,7 +208,7 @@ static void append_observation_and_resource_events(
             step_id,
             observation_id,
             tool_name,
-            resource_ref.uri);
+            resource_ref.uri, resource_ref.name, resource_ref.mime_type);
     }
 }
 

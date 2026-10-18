@@ -19,3 +19,17 @@ declare module "@toast-ui/editor" {
     destroy(): void;
   }
 }
+
+declare module "@toast-ui/editor/viewer" {
+  export default class Viewer {
+    constructor(options: { el: HTMLElement; initialValue: string; theme: "dark"; usageStatistics: boolean;
+      linkAttributes: Record<string, string>; customHTMLSanitizer: (html: string) => string });
+    setMarkdown(text: string): void;
+    destroy(): void;
+  }
+}
+
+declare module "dompurify" {
+  const DOMPurify: { sanitize(html: string, options: { FORBID_TAGS: string[]; FORBID_ATTR: string[]; ALLOWED_URI_REGEXP: RegExp }): string };
+  export default DOMPurify;
+}
