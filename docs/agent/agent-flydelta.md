@@ -2241,6 +2241,23 @@ failure does not rewrite which arms actually ran. History aggregation is
 cached per category for the frozen job projection, rather than recomputed by
 scanning rows for each arm or wave.
 
+Daemon logs contain `[flydelta] outcome_guidance` JSON events with
+`event: "flydelta_outcome_guidance"` and trace `schema_version: 2`. These are
+emitted at `stage: "decision_before_execution"`, including fallback decisions.
+They include job/phase/decision identity, seed, history fingerprint and watermark,
+candidate-pool fingerprint and candidate arm IDs with basis/rank/layer/dose
+categories. `original_arm_ids` and `posterior_ranked_arm_ids` describe the full
+pool; `hypothetical_selected_arm_ids` and `selected_arm_ids` contain only the
+selection-limit prefix of the mixed policy and final runtime decision,
+respectively. `execution_order_changed` compares the final selected prefix with
+the original prefix, including its order. Policy position, selection reasons,
+posterior probabilities, intervals, effective counts and fallback reasons remain
+available in the same event. Correlate selected arm IDs with later execution and
+verification records: a decision alone does not confirm that an arm ran or
+earned learning credit. In `shadow`, selected IDs retain the original order.
+No decision event is expected in `off` or when execution never reaches the
+Deep/TFO adviser; a trace without these events cannot establish guidance impact.
+
 The model-free chronological replay API
 `common_flydelta_outcome_guidance_replay` reserves complete fixture groups for
 holdout, exposes only earlier non-holdout rows as training history, and reports

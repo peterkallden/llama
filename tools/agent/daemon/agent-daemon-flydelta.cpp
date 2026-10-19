@@ -1889,27 +1889,60 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             }
             nlohmann::ordered_json trace = {
                 {"event", "flydelta_outcome_guidance"},
+                {"schema_version", 2},
+                {"stage", "decision_before_execution"},
                 {"job_id", job_id},
+                {"phase_id", phase_id},
+                {"seed", wave_seed},
                 {"mode", common_flydelta_outcome_guidance_mode_name(guidance_config.mode)},
                 {"history_fingerprint", decision.history_fingerprint},
                 {"decision_sequence", wave_index},
                 {"candidate_pool_fingerprint", pool_fingerprint},
                 {"projection_ms", projection_ms},
                 {"prediction_and_ordering_ms", prediction_ms},
-            {"read_history_rows", read_history_rows},
-            {"history_watermark", history_watermark},
+                {"read_history_rows", read_history_rows},
+                {"history_watermark", history_watermark},
                 {"compatible_history_rows", decision.compatible_history_rows},
                 {"deduplicated_history_rows", decision.deduplicated_history_rows},
                 {"rejected_history_rows", decision.rejected_history_rows + ineligible_rows},
                 {"ineligible_history_rows", ineligible_rows},
                 {"candidate_count", pool.size()},
+                {"selection_limit", limit},
+                {"policy_sequence_start", policy_sequence_start},
+                {"policy_cursor_before", policy_cursor_before},
+                {"policy_slots_consumed", policy_slots_consumed},
+                {"original_order", decision.original_order},
                 {"selected_order", decision.selected_order},
                 {"mixed_policy_order", decision.mixed_policy_order},
+                {"mixed_policy_reasons", decision.mixed_policy_reasons},
                 {"selection_reasons", decision.selection_reasons},
                 {"shadow_order", decision.shadow_order},
                 {"fallback_reason", decision.fallback_reason},
+                {"candidate_pool", nlohmann::ordered_json::array()},
                 {"predictions", nlohmann::ordered_json::array()},
             };
+            for (const auto & candidate : pool) trace["candidate_pool"].push_back({
+                {"arm_id", candidate.arm_id},
+                {"basis_identity", candidate.basis_identity},
+                {"rank", candidate.rank},
+                {"relative_layer", candidate.relative_layer},
+                {"relative_dose", candidate.relative_dose},
+                {"mixed_coefficients", candidate.mixed_coefficients},
+                {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
+            });
+            const auto arm_ids = [&pool](const std::vector<size_t> & order, size_t count) {
+                auto ids = nlohmann::ordered_json::array();
+                for (size_t i = 0; i < std::min(count, order.size()); ++i) {
+                    ids.push_back(pool.at(order[i]).arm_id);
+                }
+                return ids;
+            };
+            trace["original_arm_ids"] = arm_ids(decision.original_order, pool.size());
+            trace["posterior_ranked_arm_ids"] = arm_ids(decision.shadow_order, pool.size());
+            trace["hypothetical_selected_arm_ids"] = arm_ids(decision.mixed_policy_order, limit);
+            trace["selected_arm_ids"] = arm_ids(decision.selected_order, limit);
+            trace["execution_order_changed"] =
+                trace["selected_arm_ids"] != arm_ids(decision.original_order, limit);
             for (const auto & prediction : decision.predictions) trace["predictions"].push_back({
                 {"arm_id", prediction.arm_id}, {"level", prediction.level},
                 {"p_known", prediction.p_known},
