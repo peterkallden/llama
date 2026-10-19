@@ -752,9 +752,11 @@ finite bound, exact-string `allowed_values` (up to 64 values), and
 or lists, and missing columns are errors; blank or non-numeric cells violate a
 numeric range. An incomplete scan is never reported as successful validation.
 
-MCP `tools/list` publishes each tool's canonical result schema as
-`outputSchema`. It describes `structuredContent` directly; MCP's outer
-`content`/`isError` transport envelope is not duplicated inside the schema.
+MCP `tools/list` publishes `outputSchema` for the actual `structuredContent`.
+For native tool views, the shared helper derives it from the catalog's canonical
+result schema and the existing `{ok, result, ...}` success payload. Directly
+registered MCP handlers supply the schema of their own structured content.
+MCP's outer `content`/`isError` transport envelope is outside that schema.
 Remote MCP `outputSchema` is retained as the provider's result schema for
 result binding and planning. Native tools likewise carry the catalog's
 canonical result schema into the resolved model-tool/provider view; the compact
@@ -4599,8 +4601,10 @@ available through the `analysis`, `research` and dynamic `all-configured`
 profiles only when the daemon lifecycle journal is bound. Candidate features
 come from that journal; session-bound observation handles and scope fingerprints
 avoid exposing raw lifecycle/session IDs. Callers cannot provide training
-observations or raw features. MCP `tools/list` publishes its result schema and
-successful calls provide matching structured content. The tool is not a source
+observations or raw features. MCP `tools/list` derives the success-payload schema
+from its canonical result schema; successful calls provide matching structured
+content with `{ok, result, ...}`. Internal dataflow still uses the canonical
+result contract. The tool is not a source
 of truth or learning credit. It uses the same FlyDelta guidance settings and
 does not read history when that mode is `off`. See
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).

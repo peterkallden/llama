@@ -8,8 +8,9 @@
 #include <string>
 #include <tuple>
 #include <stdexcept>
+#include <cstdio>
 
-#define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
 
 class memory_store final : public common_semi_oracle_store {
 public:
@@ -300,7 +301,7 @@ int main() {
         nlohmann::ordered_json::parse(off_result.proof_json)["solution"]);
     // Same fixture group cannot teach itself; other sessions cannot use it.
     auto own_fixture = history_query;
-    own_fixture.state_json = R"({"lhs":"2(x+3)","rhs":"10"})";
+    own_fixture.state_json = R"json({"lhs":"2(x+3)","rhs":"10"})json";
     own_fixture.action_dsl = "lhs: 2(x+3)\n";
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, own_fixture, experimental_result, error));

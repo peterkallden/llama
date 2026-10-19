@@ -5,6 +5,7 @@
 #include "agent/tooling/catalog/model-projection.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/contracts/tool-result-schema.h"
 
 #include <cpp-httplib/httplib.h>
 
@@ -29,8 +30,10 @@ static bool validate_catalog_result_sample(
     if (definition == nullptr || definition->result_schema_json.empty()) return false;
     std::string normalized;
     std::string error;
-    return common_schema_normalize_and_validate_object(
+    const bool valid = common_schema_normalize_and_validate_object(
         sample_json, definition->result_schema_json, normalized, error);
+    if (!valid) std::fprintf(stderr, "%s result fixture failed schema: %s\n", tool_name.c_str(), error.c_str());
+    return valid;
 }
 
 int main() {
@@ -48,7 +51,7 @@ int main() {
         validate_catalog_result_sample(catalog, "dataset.select",
             R"({"dataset":"dataset://sales","name":"sales"})") &&
         validate_catalog_result_sample(catalog, "dataset.inspect",
-            R"({"dataset":"dataset://sales","name":"sales","rows":2,"columns":[{"name":"region"}]})") &&
+            R"({"dataset":"dataset://sales","name":"sales","rows":2,"columns":1})") &&
         validate_catalog_result_sample(catalog, "dataset.validate",
             R"({"valid":false,"violations":[{"type":"not_null","column":"region","row":2}],"rows_checked":2})") &&
         validate_catalog_result_sample(catalog, "repository.search",
@@ -158,11 +161,15 @@ int main() {
     }
 
     common_agent_daemon_runtime daemon_runtime;
-    daemon_runtime.tool_executor = [](
+    daemon_runtime.tool_executor = [native_view = catalog_view.get()](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) {
         const auto arguments = json::parse(payload.arguments_json, nullptr, false);
+        if (payload.tool_name == "math.calculate") {
+            result = native_view->call({"http-native-calculator", payload.tool_name, payload.arguments_json}, callback_error);
+            return result.ok;
+        }
         if (payload.tool_name == "echo" && arguments.is_object() &&
                 arguments.value("text", "") == "throw") {
             throw std::runtime_error("dispatcher smoke exception");
@@ -312,6 +319,8 @@ int main() {
 
     const auto listed = client.Post("/mcp", headers,
         R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})", "application/json");
+    const auto native_called = client.Post("/mcp", headers,
+        R"({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"math.calculate","arguments":{"expression":"6*7"}}})", "application/json");
     agent_mcp_server_tool_registry replacement_registry;
     if (!replacement_registry.register_tool({
             "echo",
@@ -475,6 +484,7 @@ int main() {
         ? json::parse(unsupported_initialize->body, nullptr, false) : json();
     const auto reloaded_listed_json = reloaded_listed ? json::parse(reloaded_listed->body, nullptr, false) : json();
     const auto called_json = called ? json::parse(called->body, nullptr, false) : json();
+    const auto native_called_json = native_called ? json::parse(native_called->body, nullptr, false) : json();
     const auto throw_called_json = throw_called ? json::parse(throw_called->body, nullptr, false) : json();
     const auto after_throw_called_json = after_throw_called ? json::parse(after_throw_called->body, nullptr, false) : json();
     const auto false_callback_json = false_callback_called ? json::parse(false_callback_called->body, nullptr, false) : json();
@@ -497,6 +507,7 @@ int main() {
     const bool catalog_tools_exposed = std::all_of(
         catalog_tools.begin(), catalog_tools.end(), has_listed_tool);
     bool catalog_output_schema_matches = false;
+    bool native_payload_matches_schema = false;
     if (listed_json.is_object() && listed_json.contains("result") &&
             listed_json["result"].contains("tools")) {
         for (const auto & tool : listed_json["result"]["tools"]) {
@@ -504,12 +515,23 @@ int main() {
             const auto * definition = catalog.find_definition("math.calculate");
             catalog_output_schema_matches = definition != nullptr &&
                 tool.value("outputSchema", json::object()) ==
-                json::parse(definition->result_schema_json, nullptr, false);
+                common_tool_success_payload_schema(definition->result_schema_json);
+            std::string normalized, validation_error;
+            if (native_called_json.is_object() && native_called_json.contains("result") &&
+                    native_called_json["result"].contains("structuredContent")) {
+                native_payload_matches_schema = common_schema_normalize_and_validate_object(
+                    native_called_json["result"]["structuredContent"].dump(),
+                    tool.value("outputSchema", json::object()).dump(), normalized, validation_error);
+            }
             break;
         }
     }
     const bool ok = listed && listed->status == 200 && listed_json["result"]["tools"].size() == 2 &&
-        catalog_tools_exposed && catalog_output_schema_matches &&
+        catalog_tools_exposed && catalog_output_schema_matches && native_payload_matches_schema &&
+        native_called && native_called->status == 200 &&
+        native_called_json["result"]["isError"] == false &&
+        native_called_json["result"]["structuredContent"]["ok"] == true &&
+        native_called_json["result"]["structuredContent"]["result"]["value"] == 42 &&
         missing_protocol && missing_protocol->status == 400 &&
         invalid_cursor && invalid_cursor->status == 400 &&
         initialize_json["result"]["protocolVersion"] == "2025-11-25" &&
@@ -582,6 +604,7 @@ int main() {
         if (task_get) std::fprintf(stderr, "task_get=%s\n", task_get->body.c_str());
         if (task_result) std::fprintf(stderr, "task_result=%s\n", task_result->body.c_str());
         if (throw_called) std::fprintf(stderr, "throw_called=%s\n", throw_called->body.c_str());
+        if (native_called) std::fprintf(stderr, "native_called=%s\n", native_called->body.c_str());
         return 1;
     }
     if (!stream_ok) {

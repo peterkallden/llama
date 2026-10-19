@@ -2,6 +2,7 @@
 
 #include "agent/dataset-contracts.h"
 #include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/contracts/tool-result-schema.h"
 
 #include <nlohmann/json.hpp>
 
@@ -28,9 +29,9 @@ const agent_mcp_server_tool * find_tool(
 
 agent_mcp_json agent_mcp_canonical_output_schema(const std::string & result_schema_json) {
     // MCP outputSchema validates structuredContent itself. The transport
-    // envelope (content/isError/structuredContent) is outside that object,
-    // and native tool output is the canonical result object, not a second
-    // synthetic {ok,result,...} wrapper.
+    // envelope (content/isError/structuredContent) is outside that object.
+    // Native registration below derives the common success payload schema;
+    // directly registered handlers supply their own structuredContent schema.
     auto schema = result_schema_json.empty()
         ? agent_mcp_json::object()
         : agent_mcp_json::parse(result_schema_json, nullptr, false);
@@ -378,7 +379,10 @@ bool agent_mcp_register_native_tool_view(
                     return false;
                 },
             };
-        server_tool.output_schema_json = tool.output_schema;
+        if (!tool.output_schema.empty()) {
+            const auto schema = common_tool_success_payload_schema(tool.output_schema);
+            if (schema.is_object()) server_tool.output_schema_json = schema.dump();
+        }
         if (!tool.mcp_ui_metadata.empty()) {
             const auto ui = agent_mcp_json::parse(tool.mcp_ui_metadata, nullptr, false);
             if (ui.is_object()) server_tool.ui_metadata = ui;

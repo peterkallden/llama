@@ -29,43 +29,28 @@ public:
             const agent_tool_context &,
             std::vector<mcp_agent_tool_definition> & tools,
             std::string & error) override {
+        // Match the protocol parser's default model visibility and use named
+        // fields so additions to the host contract cannot shift policy flags.
+        const auto definition = [](const std::string & name, const std::string & description,
+                const std::string & schema, bool read_only) {
+            mcp_agent_tool_definition value;
+            value.provider_id = "github";
+            value.name = name;
+            value.description = description;
+            value.input_schema_json = schema;
+            value.read_only = read_only;
+            value.requires_confirmation = !read_only;
+            value.uses_network = true;
+            value.ui_visibility = {"model"};
+            return value;
+        };
         tools = {
-            {
-                "github",
-                "create_issue",
-                "Create a GitHub issue.",
-                R"({"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string","minLength":1}}})",
-                std::string(),
-                false,
-                true,
-                true,
-                false,
-                false,
-            },
-            {
-                "github",
-                "search_issues",
-                "Search GitHub issues.",
-                R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1}}})",
-                std::string(),
-                true,
-                false,
-                true,
-                false,
-                false,
-            },
-            {
-                "github",
-                "get_issue",
-                "Get one issue by its host-provided issue reference.",
-                R"({"type":"object","additionalProperties":false,"required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"}}})",
-                std::string(),
-                true,
-                false,
-                true,
-                false,
-                false,
-            },
+            definition("create_issue", "Create a GitHub issue.",
+                R"({"type":"object","additionalProperties":false,"required":["title"],"properties":{"title":{"type":"string","minLength":1}}})", false),
+            definition("search_issues", "Search GitHub issues.",
+                R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1}}})", true),
+            definition("get_issue", "Get one issue by its host-provided issue reference.",
+                R"({"type":"object","additionalProperties":false,"required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"}}})", true),
         };
         tools[1].result_schema_json = R"({"type":"object","required":["issue_id"],"properties":{"issue_id":{"type":"string","x-agent-type":"issue_ref"},"items":{"type":"array"}}})";
         listed_tools = tools;

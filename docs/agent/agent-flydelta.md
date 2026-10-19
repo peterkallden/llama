@@ -2425,8 +2425,10 @@ lifecycle observation IDs and the namespace/project/session string are not
 returned. The model cannot submit feature values or add observations. Results
 include a scope fingerprint, lifecycle watermark and history fingerprint, and
 unresolved references are returned explicitly. The ordinary MCP `tools/list`
-path advertises the canonical result schema as `outputSchema`; successful
-`tools/call` responses return the matching `structuredContent` object. The
+path derives `outputSchema` from the canonical result schema and the native
+success payload. Successful `tools/call` responses return that payload as
+`structuredContent`: predictions live under `result` alongside `ok`, an
+optional `summary` and resource/dataset references. The
 daemon status/capability projection uses the same lifecycle-backed native
 tool view. Runtime guidance settings are shared with the predictor; with
 `runtime.adaptation.flydelta.outcome_guidance.mode="off"`, it returns a clear

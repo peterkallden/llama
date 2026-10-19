@@ -8,7 +8,7 @@
 #include <chrono>
 #include <cstdio>
 
-#define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
 
 int main() {
     const auto nonce=std::chrono::steady_clock::now().time_since_epoch().count();

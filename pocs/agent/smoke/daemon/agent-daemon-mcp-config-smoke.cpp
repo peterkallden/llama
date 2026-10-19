@@ -2,8 +2,12 @@
 #include "tools/agent/daemon/agent-daemon-service.h"
 #include "tools/agent/host/agent-host-config.h"
 #include "tools/agent/mcp/agent-mcp-auth.h"
+#include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
+#include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -792,6 +796,71 @@ int main(int argc, char ** argv) {
     if (!runtime.host) {
         std::fprintf(stderr, "daemon MCP environment did not create a session manager\n");
         return 1;
+    }
+    {
+        // Exercise the actual daemon callback, not a test-supplied tool handler:
+        // host options -> native provider -> service -> evaluation store.
+        if (!runtime.semi_oracle_store) return __LINE__;
+        auto oracle_options = options;
+        oracle_options.mcp_providers.clear();
+        oracle_options.tool_profile = "semi-oracle";
+        oracle_options.adaptation_semi_oracle_outcome_guidance = {"experimental", 42, 17};
+        common_agent_runtime_session_host_turn_request request;
+        request.session_id = "guidance-native";
+        request.namespace_id = "guidance-native";
+        request.project_id = "guidance-project";
+        request.turn_id = "guidance-turn";
+        common_semi_oracle_tool_service service(*runtime.semi_oracle_store,
+            request.namespace_id, request.session_id,
+            oracle_options.adaptation_semi_oracle_outcome_guidance, request.project_id);
+        common_semi_oracle_ruleset active;
+        if (!service.define_ruleset("name: Guided algebra\ndescription: native integration\ndomain: linear_algebra\nvariable: x\n",
+                common_semi_oracle_rule_authority::declared, active, error) ||
+                !service.initialize_active_state(R"({"lhs":"3x+6","rhs":"x+12"})", false, error)) return __LINE__;
+        common_agent_runtime_tooling oracle_tooling;
+        if (!resolve_agent_daemon_tooling(oracle_options, nullptr, request,
+                *runtime.memory_store, *runtime.plan_store, runtime.resource_store.get(),
+                oracle_tooling, error, runtime.data_store.get(), std::nullopt,
+                runtime.semi_oracle_store.get()) || !oracle_tooling.tool_view) return __LINE__;
+        const auto search = oracle_tooling.tool_view->call({"native-guidance", "oracle.goal.search", "{}"}, error);
+        if (!search.ok) { std::fprintf(stderr, "native guidance search failed: %s\n", error.c_str()); return __LINE__; }
+        const auto payload = json::parse(search.content_json);
+        if (!payload.value("ok", false) || !payload.contains("result")) return __LINE__;
+        const auto & result = payload["result"];
+        if (result["verdict"] != "SATISFIED" || result["guidance"]["mode"] != "experimental" ||
+                result["guidance"]["seed"] != 42 || result["guidance"].contains("decisions")) return __LINE__;
+        const auto tool = std::find_if(oracle_tooling.tools.begin(), oracle_tooling.tools.end(),
+            [](const common_chat_tool & value) { return value.name == "oracle.goal.search"; });
+        std::string normalized;
+        if (tool == oracle_tooling.tools.end() || tool->output_schema.empty() ||
+                !common_schema_normalize_and_validate_object(result.dump(),
+                    tool->output_schema, normalized, error)) return __LINE__;
+        agent_mcp_server_tool_registry registry;
+        if (!agent_mcp_register_native_tool_view(oracle_tooling.tools,
+                [&](const std::string & name) { return oracle_tooling.tool_view->is_read_only(name); },
+                [&](const std::string & name) { return oracle_tooling.tool_view->is_policy_gated(name); },
+                registry, error)) return __LINE__;
+        bool checked_mcp_payload = false;
+        for (const auto & definition : registry.list_tools()) if (definition.name == "oracle.goal.search") {
+            if (!common_schema_normalize_and_validate_object(search.content_json,
+                    definition.output_schema_json, normalized, error)) {
+                std::fprintf(stderr, "actual daemon result failed MCP outputSchema: %s\n", error.c_str());
+                return 1;
+            }
+            checked_mcp_payload = true;
+        }
+        if (!checked_mcp_payload) return __LINE__;
+        oracle_options.adaptation_semi_oracle_outcome_guidance.mode = "off";
+        common_agent_runtime_tooling off_tooling;
+        if (!resolve_agent_daemon_tooling(oracle_options, nullptr, request,
+                *runtime.memory_store, *runtime.plan_store, runtime.resource_store.get(),
+                off_tooling, error, runtime.data_store.get(), std::nullopt,
+                runtime.semi_oracle_store.get()) || !off_tooling.tool_view) return __LINE__;
+        const auto off = off_tooling.tool_view->call({"native-guidance-off", "oracle.goal.search", "{}"}, error);
+        if (!off.ok) return __LINE__;
+        const auto off_result = json::parse(off.content_json)["result"];
+        if (!off_result["guidance"].empty() || off_result["proof"]["solution"] != result["proof"]["solution"])
+            return __LINE__;
     }
 
     common_agent_runtime_tooling tooling;

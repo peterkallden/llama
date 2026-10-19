@@ -247,6 +247,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
 set(AGENT_TOOLING_SOURCES
     tooling/catalog/model-projection.cpp
     tooling/contracts/schema-contract.cpp
+    tooling/contracts/tool-result-schema.h
     tooling/adapters/tool-adapters.cpp
     tooling/adapters/families/memory-adapters.cpp
     tooling/adapters/families/oracle-adapters.cpp

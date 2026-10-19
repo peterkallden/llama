@@ -139,8 +139,10 @@ History read failure, adviser exceptions or an invalid permutation retain
 the normal search order and report a fallback. Completed evaluation storage
 continues through the existing tool service.
 
-MCP `oracle.goal.search` publishes a compact `guidance` summary through its
-canonical output schema. Full diagnostics are saved with the evaluation and
+MCP `oracle.goal.search` publishes a compact `guidance` summary in its
+canonical result. The MCP `outputSchema` describes the common native success
+payload (`ok`, `result`, optional summary/references), so this summary is at
+`structuredContent.result.guidance`. Full diagnostics are saved with the evaluation and
 logged as `[semi-oracle] outcome_guidance` when `agent_trace` is enabled:
 history fingerprint and source evaluation references, accepted/rejected records,
 duplicate/conflict counts, group counts, predictions and approximate marginal intervals,
@@ -150,11 +152,29 @@ The standalone `outcome.predict` tool continues to inspect FlyDelta history;
 it does not reinterpret search outcomes as HELPED/NEUTRAL/HARMED. Placement
 minimax still computes exact adversarial values without this A* ordering adapter.
 
-Implementation verification is pending: source regression cases cover
-shadow/off parity, experimental solution preservation, scope and fixture
-isolation, group weighting, malformed/conflicting retries, budget stops,
-inferred rules, fallback, invalid/throwing advisers and Cozo history after reopen.
-No build, CTest or model smoke was run as part of this integration sweep.
+On 2026-10-19 the existing Vulkan/Cozo build and daemon executable built
+successfully, and all 14 focused model-free CTests passed. They cover shadow/off
+parity, experimental solution preservation, scope/fixture isolation, group
+weighting, malformed/conflicting retries, budget stops, inferred rules,
+fallback, invalid/throwing advisers and Cozo history after reopen. The daemon
+configuration smoke also invokes the real native provider and checks the actual
+result against both the canonical contract and the MCP success-payload schema.
+The HTTP inbound smoke performs a native calculator call through the dispatcher
+and validates its structured content against the live `tools/list` schema.
+The outbound provider smoke verifies schema retention and execution of a bound
+result in the next call. Both MCP smokes are now registered as CTests.
+
+Reproduce the focused model-free selection after building those targets:
+
+```sh
+ctest --test-dir build-agent-vulkan-cozo --output-on-failure \
+  -R 'semi-oracle|flydelta-outcome-guidance|learning-lifecycle|^test-tool-catalog$|tool-provider-ctest|daemon-mcp-config-ctest|mcp-(stdio-client|stdio-server|http-client|http-inbound-dispatcher)-ctest'
+```
+
+Local verification logs are `/home/prbm/semioracle-guidance-ctest-final-20261019.log`
+and `/home/prbm/semioracle-guidance-schema-build-20261019.log`. These checks used
+no model inference. A model smoke and evidence that guidance reduces search
+cost on held-out equations remain separate verification work.
 
 ## Authority and FlyDelta
 

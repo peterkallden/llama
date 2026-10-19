@@ -1723,6 +1723,15 @@ if (BUILD_TESTING)
     set_property(TEST llama-agent-mcp-http-client-ctest PROPERTY LABELS agent)
     set_tests_properties(llama-agent-mcp-http-client-ctest PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
+    add_test(NAME llama-agent-mcp-tool-provider-ctest
+        COMMAND $<TARGET_FILE:llama-agent-mcp-tool-provider-smoke>)
+    set_tests_properties(llama-agent-mcp-tool-provider-ctest PROPERTIES LABELS agent TIMEOUT 120)
+
+    add_test(NAME llama-agent-mcp-http-inbound-dispatcher-ctest
+        COMMAND $<TARGET_FILE:llama-agent-mcp-http-inbound-dispatcher-smoke>)
+    set_tests_properties(llama-agent-mcp-http-inbound-dispatcher-ctest PROPERTIES
+        LABELS agent TIMEOUT 120 RUN_SERIAL TRUE)
+
     add_test(NAME llama-agent-daemon-protocol-ctest
         COMMAND $<TARGET_FILE:llama-agent-daemon-protocol-smoke>)
     set_property(TEST llama-agent-daemon-protocol-ctest PROPERTY LABELS agent)

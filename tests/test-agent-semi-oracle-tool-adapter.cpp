@@ -4,8 +4,9 @@
 #include "agent/tooling/contracts/schema-contract.h"
 
 #include <nlohmann/json.hpp>
+#include <cstdio>
 
-#define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
 
 int main() {
     std::string error;
