@@ -1444,7 +1444,9 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
                 : targets(targets), n_outputs(n_outputs) {}
 
             void set_input(const llama_ubatch * ubatch) override {
-                GGML_ASSERT(ids != nullptr && ggml_backend_buffer_is_host(ids->buffer));
+                if (ids == nullptr || ids->buffer == nullptr || !ggml_backend_buffer_is_host(ids->buffer)) {
+                    throw std::runtime_error("teacher-forced target input has no host buffer");
+                }
                 auto * out = static_cast<int32_t *>(ids->data);
                 int64_t row = 0;
                 for (uint32_t i = 0; i < ubatch->n_tokens; ++i) {
@@ -1472,6 +1474,7 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
             const std::map<llama_seq_id, llama_token> * targets;
             int64_t n_outputs;
             ggml_tensor * ids = nullptr;
+            ggml_backend_buffer_ptr ids_buffer;
         };
 
         const int64_t n_vocab = t_logits->ne[0];
@@ -1481,6 +1484,15 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
         input->ids = ggml_new_tensor_1d(ctx_compute.get(), GGML_TYPE_I32, n_outputs);
         ggml_set_input(input->ids);
         ggml_set_name(input->ids, "teacher_score_targets");
+        // This small dynamic input is a leaf used only by the appended scoring
+        // graph. Explicitly back it with host memory: some scheduler/backend
+        // placements do not assign a buffer to this leaf before set_inputs().
+        input->ids_buffer.reset(ggml_backend_buft_alloc_buffer(
+            ggml_backend_cpu_buffer_type(), ggml_nbytes(input->ids)));
+        if (!input->ids_buffer || ggml_backend_tensor_alloc(input->ids_buffer.get(), input->ids,
+                ggml_backend_buffer_get_base(input->ids_buffer.get())) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("failed to allocate teacher-forced target input buffer");
+        }
         ggml_tensor * target_ids = input->ids;
         add_input(std::move(input));
 
