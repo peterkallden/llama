@@ -265,6 +265,9 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"baseline_verifier_known", arm.baseline_verifier_known},
         {"baseline_passed", arm.baseline_passed},
         {"host_outcome", common_flydelta_counterfactual_outcome_name(arm.host_outcome)},
+        {"outcome_source", "flydelta_intervention_counterfactual"},
+        {"comparison_available", arm.has_baseline && arm.baseline_executed &&
+            arm.baseline_verifier_known && arm.host_evaluated && arm.verifier_known},
         {"observed_decision", arm.observed_decision_summary},
         {"expected_decision", arm.expected_decision_summary},
         {"verifier_reason", arm.verifier_reason},

@@ -253,6 +253,10 @@ void trace_model_exchange(const std::string & phase, const std::string & id,
         messages.push_back({{"role", message.role}, {"content", message.content}});
     }
     const ordered_json exchange = {{"phase", phase}, {"id", id},
+        {"output_source", phase == "repair" ? "host_repair_echo"
+            : phase == "baseline" ? "original_model_generation"
+            : phase.rfind("replay_forced_", 0) == 0 ? "synthetic_replay_capture"
+            : "flydelta_arm_execution"},
         {"messages", messages}, {"n_predict", request.options.n_predict},
         {"budget", {{"phase", phase}, {"token_limit", request.options.n_predict},
             {"decoded_tokens", result.decoded_tokens},
@@ -417,9 +421,11 @@ common_agent_generation_request make_request(const options & value, const std::s
     request.options.n_threads = value.n_threads;
     request.options.generation_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
     request.messages = {{"system",
-        "Choose the best tool for the request. Return one compact DSL action:\n"
-        "open! TOOL_NAME\nfield: value\n"
-        "Use one field per line. Omit unset or host-resolved fields.\n" +
+        "Choose the best tool for the request. Return exactly one compact DSL action.\n"
+        "Put open! followed by the selected tool name on the first line.\n"
+        "On subsequent lines, use only argument names declared by that tool, "
+        "followed by a colon and the argument value, one argument per line.\n"
+        "Follow the concrete tool examples below. Omit unset or host-resolved arguments.\n" +
         contract}, {"user", user}};
     request.flydelta_capture = capture;
     request.flydelta_activation = std::move(activation);
@@ -657,6 +663,7 @@ int main(int argc, char ** argv) {
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
         std::cout << "flydelta_host_verdict " << ordered_json({{"id", id}, {"phase", "baseline"},
+            {"outcome_source", "original_model_generation"},
             {"selected_tool", failed_verdict.selected_tool}, {"diagnostic", failed_verdict.diagnostic},
             {"passed", failed_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         std::string decision_failed_tool = failed_verdict.selected_tool;
@@ -748,6 +755,7 @@ int main(int argc, char ** argv) {
             repaired_verdict = verify_model_call(repaired_result, expected,
                 canonical_repair["arguments"], verification_mode, &canonical_execution, host);
             std::cout << "flydelta_host_verdict " << ordered_json({{"id", id}, {"phase", "repair"},
+                {"outcome_source", "host_repair"},
                 {"selected_tool", repaired_verdict.selected_tool}, {"diagnostic", repaired_verdict.diagnostic},
                 {"passed", repaired_verdict.value == host_verdict::kind::passed}}).dump() << std::endl;
         } else {
@@ -1087,6 +1095,7 @@ int main(int argc, char ** argv) {
                 }));
             std::cout << "flydelta_learning_credit group=" << entry.first
                       << " source=" << (replay_mode ? "synthetic_replay" : "host_verified_repair")
+                      << " outcome_source=" << (replay_mode ? "synthetic_replay" : "host_repair")
                       << " sample_outcome=" << common_flydelta_counterfactual_outcome_name(outcome)
                       << " samples=" << count
                       << " eligible=" << eligible_count
@@ -1111,6 +1120,8 @@ int main(int argc, char ** argv) {
                 {"group", entry.first}, {"sample_id", sample.delta.id},
                 {"fixture_id", sample.credit.fixture_id},
                 {"source", replay_mode ? "synthetic_replay" : "host_verified_repair"},
+                {"outcome_source", replay_mode ? "synthetic_replay" : "host_repair"},
+                {"intervention_verified", false},
                 {"outcome", common_flydelta_counterfactual_outcome_name(sample.credit.outcome)},
                 {"quality_delta", sample.credit.quality_delta},
                 {"eligible_for_learning", eligible}, {"denial_reason", denial_reason},
@@ -2096,6 +2107,9 @@ int main(int argc, char ** argv) {
                     return normalized_delta(*delta_it, direction.values, direction_error);
                 };
 
+                std::optional<host_verdict> trace_baseline_verdict;
+                std::string trace_baseline_arm_id;
+                std::string trace_baseline_output;
                 const auto prepare_arm = [&](const common_flydelta_arm_request & arm_request,
                         common_agent_generation_request & generation_request,
                         std::string & arm_error) {
@@ -2152,6 +2166,72 @@ int main(int argc, char ** argv) {
                         const common_agent_generation_result & generated_result,
                         common_flydelta_arm_result & arm_result,
                         std::string & arm_error) {
+                    if (std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                        // Diagnostic arms use n_predict=0. Observe their actual free
+                        // response in a separate bounded replay of the same prompt
+                        // and overlay, without admitting it into search or credit.
+                        common_agent_generation_request trace_request;
+                        common_agent_generation_result trace_result = generated_result;
+                        std::string trace_error;
+                        const auto trace_start = std::chrono::steady_clock::now();
+                        bool trace_ok = prepare_arm(arm_request, trace_request, trace_error);
+                        bool additional_model_call = false;
+                        if (trace_ok && !arm_request.request_generation) {
+                            trace_request.flydelta_capture.reset();
+                            additional_model_call = true;
+                            trace_ok = inference->generate(trace_request, trace_result);
+                        } else if (trace_ok) {
+                            common_agent_server_context_host_apply_flydelta_arm_execution_contract(
+                                arm_request, trace_request);
+                        }
+                        const bool generation_ok = trace_ok && common_agent_generation_succeeded(trace_result);
+                        const bool overlay_ok = !arm_request.apply_overlay || trace_result.flydelta_runtime.applied;
+                        const bool verified = generation_ok && overlay_ok;
+                        host_verdict trace_verdict;
+                        trace_verdict.value = host_verdict::kind::unresolved_alternative;
+                        if (verified) {
+                            trace_verdict = verify_model_call(trace_result, bootstrap_case.expected_tool,
+                                bootstrap_case.canonical_arguments, bootstrap_case.verification_mode,
+                                &bootstrap_case.canonical_execution, host);
+                        }
+                        if (!arm_request.apply_overlay) {
+                            trace_baseline_arm_id = arm_request.arm_id;
+                            trace_baseline_output = trace_result.content;
+                            trace_baseline_verdict = verified ? std::optional<host_verdict>(trace_verdict)
+                                : std::nullopt;
+                        }
+                        trace_model_exchange(arm_request.apply_overlay ? "flydelta_trace_candidate"
+                            : "flydelta_trace_baseline", arm_request.arm_id, trace_request, trace_result);
+                        const ordered_json event = {
+                            {"job_id", arm_request.job_id}, {"arm_id", arm_request.arm_id},
+                            {"fixture_id", bootstrap_case.id}, {"question", bootstrap_case.question},
+                            {"layer_indices", arm_request.layer_indices},
+                            {"coefficients", arm_request.coefficients}, {"alpha", arm_request.alpha},
+                            {"trace_only", true}, {"outcome_source", "trace_only_arm_verification"},
+                            {"additional_model_calls", additional_model_call ? 1 : 0},
+                            {"elapsed_ms", std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - trace_start).count()},
+                            {"baseline_arm_id", trace_baseline_arm_id},
+                            {"before_output", trace_baseline_output}, {"output", trace_result.content},
+                            {"expected_call", {{"name", bootstrap_case.expected_tool},
+                                {"arguments", bootstrap_case.canonical_arguments}}},
+                            {"baseline_verifier_known", trace_baseline_verdict.has_value() &&
+                                trace_baseline_verdict->value != host_verdict::kind::unresolved_alternative},
+                            {"baseline_passed", trace_baseline_verdict.has_value() &&
+                                trace_baseline_verdict->value == host_verdict::kind::passed},
+                            {"verifier_known", verified &&
+                                trace_verdict.value != host_verdict::kind::unresolved_alternative},
+                            {"passed", verified && trace_verdict.value == host_verdict::kind::passed},
+                            {"overlay_requested", arm_request.apply_overlay},
+                            {"overlay_applied", trace_result.flydelta_runtime.applied},
+                            {"verifier_reason", trace_verdict.diagnostic},
+                            {"error", !trace_error.empty() ? trace_error
+                                : !generation_ok ? (trace_result.error_message.empty()
+                                    ? "trace generation failed" : trace_result.error_message)
+                                : !overlay_ok ? "trace overlay application was not confirmed" : ""},
+                        };
+                        std::fprintf(stderr, "flydelta_arm_response %s\n", event.dump().c_str());
+                    }
                     if (!common_agent_generation_succeeded(generated_result)) {
                         arm_error = generated_result.error_message.empty()
                             ? "dataset model host generation failed" : generated_result.error_message;

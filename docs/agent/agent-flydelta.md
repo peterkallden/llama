@@ -1070,6 +1070,38 @@ The wrapper also accepts `LLAMA_AGENT_MODEL` and
 `LLAMA_AGENT_DATASET_QUESTION_SUITE`; explicit arguments take precedence.
 Relative model and suite paths are resolved from the repository root.
 
+#### Repair credit and actual arm responses in trace
+
+The repair smoke distinguishes the origin of an outcome with `outcome_source`.
+`host_repair` means that an observed failure was corrected with a host-provided
+canonical tool call. A `helped` learning sample from this repair is not evidence
+that a FlyDelta overlay improved free generation. Search-arm records use
+`flydelta_intervention_counterfactual` and expose `comparison_available` to show
+whether a completed, known baseline/candidate comparison exists. Outcome enums
+and learning admission rules are unchanged.
+
+With `LLAMA_AGENT_RESIDENT_TRACE` set, the dataset repair smoke additionally
+observes free generation for the search pipeline's baseline and region arms.
+An arm whose normal execution uses `n_predict=0` receives a separate replay of
+the same original question and overlay, bounded by the smoke's `--n-predict`.
+The corrected call is not supplied in this replay's user message. Each
+`flydelta_arm_response` event records the stable arm and baseline IDs, question,
+before/after text, expected call, layer, coefficients, dose, confirmed overlay
+application, verifier status and errors. The corresponding
+`flydelta_model_exchange` contains the complete messages, output and stop reason.
+
+These observations carry `trace_only=true` and
+`outcome_source=trace_only_arm_verification`. They do not feed search selection,
+learning credit or promotion. Trace therefore adds model calls and runtime;
+`additional_model_calls` and `elapsed_ms` report that overhead separately from
+the search's normal inference accounting. Without trace, diagnostic arms remain
+generation-free. Full Deep generation already emits its actual model exchange;
+its diagnostic exchanges alone do not prove a generated improvement.
+
+The smoke prompt names only declared tool arguments and points to concrete tool
+examples; it no longer presents the literal placeholder `field: value`, which
+the model could copy as an undeclared argument.
+
 Validate the incremental cases independently with:
 
 ```text
