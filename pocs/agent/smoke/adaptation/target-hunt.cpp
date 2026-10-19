@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <numeric>
@@ -36,6 +37,13 @@ public:
     bool list_search_history(const std::string &,uint64_t,size_t limit,std::vector<common_semi_oracle_search_history_record> & rows,std::string & e)const override{
         if(fail_reads){e="injected history read failure";return false;}
         e.clear();rows=history;if(rows.size()>limit)rows.resize(limit);return true;}
+    bool get_search_history_revision(const std::string &,uint64_t,uint64_t & watermark,
+            bool & supported,std::string & e)const override {
+        e.clear();supported=!fail_reads;watermark=0;if(!supported)return true;
+        std::string snapshot;
+        for(const auto & row:history)snapshot+=row.evaluation_id+"\n"+row.guidance_json+"\n";
+        watermark=static_cast<uint64_t>(std::hash<std::string>{}(snapshot));return true;
+    }
     std::vector<std::string> list_host_rulesets(std::string & e)const override{return base.list_host_rulesets(e);}
 };
 struct fixture {std::vector<std::string> grid;int sr=0,sc=0,tr=0,tc=0;};
@@ -235,23 +243,63 @@ int main(int argc,char ** argv){try{
         {"strict_sibling_pairs",branch_pairs},{"baseline_correct_pairs",branch_baseline_correct},
         {"posterior_mean_correct_pairs",branch_guided_correct},{"heldout_by_fixture",branch_heldout}};
     if(trace)trace<<json{{"phase","verified_branch_quality"},{"training",branch_training},{"report",branch_report}}.dump()<<'\n';
-    for(size_t i=0;i<64;++i){require(training.define_problem(dsl(fixtures[i]),state,error),error);
-        std::vector<std::string> order={"north","south","east","west"};std::shuffle(order.begin(),order.end(),rng);
-        common_semi_oracle_result r;require(training.search_active_goal(r,error,{256,256},order),error);check_result(fixtures[i],r);
-        if(trace)trace<<json{{"phase","train"},{"fixture",i},{"budget",256},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
+    for(size_t budget:{16,64,256})for(size_t i=0;i<64;++i){
+        require(training.define_problem(dsl(fixtures[i]),state,error),error);
+        std::vector<std::string> order={"north","south","east","west"};
+        auto training_rng=rng;training_rng.discard(uint64_t(i*7+budget));
+        std::shuffle(order.begin(),order.end(),training_rng);
+        common_semi_oracle_result r;require(training.search_active_goal(r,error,{budget,256},order),error);
+        check_result(fixtures[i],r);
+        if(trace)trace<<json{{"phase","train"},{"fixture",i},{"budget",budget},
+            {"verdict",common_semi_oracle_verdict_name(r.verdict)},
             {"expansions",r.expansions},{"guidance",trace_guidance(r.search_guidance_json)}}.dump()<<'\n';}
     frozen_store frozen(*store);require(store->list_search_history(rule.id,rule.revision,1024,frozen.history,error),error);
     frozen.history.erase(std::remove_if(frozen.history.begin(),frozen.history.end(),[](const auto & record){
         const auto context=json::parse(record.guidance_json).at("context");
         const auto budget=context.at("max_expansions").template get<size_t>();
-        return context.at("max_depth")!=256||budget!=256;
+        return context.at("max_depth")!=256||
+            (budget!=16&&budget!=64&&budget!=256);
     }),frozen.history.end());
-    require(frozen.history.size()==64,"training snapshot must contain one completed search for each of 64 maps");
+    require(frozen.history.size()==192,
+        "training snapshot must contain one completed search per fixture and expansion budget");
     // Keep every prediction input and source ID, while avoiding repeated parsing
     // of verbose diagnostics. The original evaluations remain in the production store/trace.
     for(auto & record:frozen.history){auto data=json::parse(record.guidance_json);
         record.guidance_json=json{{"schema_version",data["schema_version"]},{"context",data["context"]},
-            {"fixture_group",data["fixture_group"]},{"observations",data["observations"]}}.dump();}
+            {"fixture_group",data["fixture_group"]},{"observations",data["observations"]},
+            {"branch_quality",data.value("branch_quality",json::object())}}.dump();}
+    std::vector<common_outcome_guidance_projection_observation> persisted_branch_rows;
+    for (const auto & record : frozen.history) {
+        const auto payload = json::parse(record.guidance_json);
+        if (!payload.contains("branch_quality")) continue;
+        const auto & branch = payload["branch_quality"];
+        if (!branch.is_object() || branch.value("family",std::string{}) !=
+                "target_hunt_branch_quality_v1" || !branch.contains("observations") ||
+                !branch["observations"].is_array()) continue;
+        const auto group = branch.value("fixture_group",std::string{});
+        if (group.empty()) continue;
+        for (const auto & observation : branch["observations"]) {
+            if (!observation.is_object() || !observation.contains("outcome") ||
+                    !observation["outcome"].is_string()) continue;
+            const auto outcome = observation["outcome"].get<std::string>();
+            const size_t label = outcome == "optimal" ? 0 : outcome == "detour" ? 1 :
+                outcome == "unreachable" ? 2 : 3;
+            if (label > 2) continue;
+            std::vector<double> weights(3,0.0); weights[label]=1.0;
+            for (const auto * key : {"fine_category","coarse_category"})
+                if (observation.contains(key) && observation[key].is_string())
+                    persisted_branch_rows.push_back({group,observation[key].get<std::string>(),weights});
+        }
+    }
+    common_outcome_guidance_projection persisted_branch_projection;
+    require(common_outcome_guidance_build_projection(persisted_branch_rows,
+        "target-hunt-persisted-branch-projection-v1",branch_source,0,
+        persisted_branch_projection,error),error);
+    json persisted_branch_report={{"source","production_evaluation_records"},
+        {"family","target_hunt_branch_quality_v1"},{"feature_version","target_hunt_features_v3"},
+        {"training_fixture_groups",persisted_branch_projection.fixture_categories.size()},
+        {"training_observation_rows",persisted_branch_projection.accepted_rows},
+        {"projection_fingerprint",persisted_branch_projection.fingerprint}};
     if(trace){
         json rows=json::array();
         for(const auto & record:frozen.history) {
@@ -267,7 +315,21 @@ int main(int argc,char ** argv){try{
     auto evaluate=[&](const std::string & host,const common_semi_oracle_ruleset & r){
         require(common_semi_oracle_evaluate_with_history(frozen,{"shadow",0,1024},host,"target-session",r,probe,checked,error,"target-project"),error);
         return json::parse(checked.search_guidance_json)["diagnostics"];};
-    require(evaluate("target-smoke",rule)["fixture_groups"]>0,"matching training history was not used");
+    const auto branch_probe = evaluate("target-smoke",rule);
+    require(branch_probe["fixture_groups"]>0,"matching training history was not used");
+    require(branch_probe["branch_quality_labels_used"]==true,
+        "persisted BFS branch labels did not reach the production adviser");
+    size_t branch_predictions = 0;
+    for (const auto & decision : branch_probe["decisions"])
+        for (const auto & prediction : decision["predictions"])
+            if (prediction.value("prediction_family",std::string{}) ==
+                    "target_hunt_branch_quality_v1") ++branch_predictions;
+    require(branch_predictions>0,"persisted branch family produced no candidate predictions");
+    persisted_branch_report["heldout_probe_fixture_group"] = common_semi_oracle_target_group(state);
+    persisted_branch_report["branch_labels_used"] = true;
+    persisted_branch_report["candidate_predictions"] = branch_predictions;
+    if(trace)trace<<json{{"phase","persisted_branch_quality_evaluation"},
+        {"report",persisted_branch_report},{"decisions",branch_probe["decisions"]}}.dump()<<'\n';
     frozen.fail_reads=true;
     require(evaluate("target-smoke",rule)["fallback_reason"]=="search_history_unavailable","history error did not fall back");
     frozen.fail_reads=false;
@@ -367,6 +429,7 @@ int main(int argc,char ** argv){try{
     require(changed_paths>0,"guidance changed orders but never changed an executed path or expansion count");
     std::cout<<json{{"train_maps",64},{"heldout_maps",32},{"history_source","compact_frozen_projection"},{"frozen_records",frozen.history.size()},
         {"changed_orders",changed},{"changed_searches",changed_paths},{"comparisons",summaries},
-        {"focal_comparisons",focal_comparisons},{"verified_branch_quality",branch_report}}.dump(2)<<'\n';
+        {"focal_comparisons",focal_comparisons},{"verified_branch_quality",branch_report},
+        {"persisted_branch_quality",persisted_branch_report}}.dump(2)<<'\n';
     return 0;
 }catch(const std::exception & e){std::cerr<<"Target Hunt smoke failed: "<<e.what()<<'\n';return 1;}}

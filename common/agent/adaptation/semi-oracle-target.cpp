@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdlib>
 #include <map>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 
@@ -80,6 +81,28 @@ bool move(const board & b, const std::string & action, std::string & next) {
     const int i = action_index(action);
     if (i < 0 || !b.free(b.row+dr[i], b.col+dc[i])) return false;
     auto data = b.data; data["position"] = {b.row+dr[i], b.col+dc[i]}; next = data.dump(); return true;
+}
+std::vector<int> distances_to_target(const board & b) {
+    const int rows = static_cast<int>(b.grid.size());
+    const int cols = static_cast<int>(b.grid.front().size());
+    std::vector<int> distance(static_cast<size_t>(rows * cols), -1);
+    const int target = b.tr * cols + b.tc;
+    std::queue<int> pending;
+    pending.push(target);
+    distance[static_cast<size_t>(target)] = 0;
+    while (!pending.empty()) {
+        const int here = pending.front(); pending.pop();
+        const int row = here / cols, col = here % cols;
+        for (size_t i = 0; i < names.size(); ++i) {
+            const int nr = row + dr[i], nc = col + dc[i];
+            if (!b.free(nr, nc)) continue;
+            const int next = nr * cols + nc;
+            if (distance[static_cast<size_t>(next)] >= 0) continue;
+            distance[static_cast<size_t>(next)] = distance[static_cast<size_t>(here)] + 1;
+            pending.push(next);
+        }
+    }
+    return distance;
 }
 }
 
@@ -261,6 +284,35 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
             observations.push_back({{"action",o.action},{"outcome",o.outcome},{"state_before",o.state_before},{"state_after",o.state_after}});
         }
         out.search_guidance_json=json{{"observations",observations},{"callback_fallbacks",result.guidance_fallbacks},{"callback_error",result.guidance_error}}.dump();
+        const auto distances = distances_to_target(b);
+        json branch_observations = json::array();
+        const int cols = static_cast<int>(b.grid.front().size());
+        for (const auto & observation : result.observations) {
+            board before, after;
+            std::string parse_error;
+            if (!parse(observation.state_before, before, parse_error) ||
+                    !parse(observation.state_after, after, parse_error)) continue;
+            const int from = before.row * cols + before.col;
+            const int to = after.row * cols + after.col;
+            const int from_distance = distances[static_cast<size_t>(from)];
+            const int to_distance = distances[static_cast<size_t>(to)];
+            const bool unreachable = from_distance < 0 || to_distance < 0;
+            const int regret = unreachable ? -1 : 1 + to_distance - from_distance;
+            const std::string label = unreachable ? "unreachable" : regret == 0 ? "optimal" : "detour";
+            branch_observations.push_back({{"state_before", observation.state_before},
+                {"action", observation.action},
+                {"fine_category", common_semi_oracle_target_category(observation.state_before, observation.action)},
+                {"coarse_category", common_semi_oracle_target_coarse_category(observation.state_before, observation.action)},
+                {"outcome", label}, {"regret", unreachable ? json(nullptr) : json(regret)}});
+        }
+        out.search_branch_quality_json = json{{"schema_version", 1},
+            {"family", "target_hunt_branch_quality_v1"},
+            {"ruleset_id", r.id}, {"ruleset_revision", r.revision},
+            {"ruleset_fingerprint", r.semantic_fingerprint},
+            {"fixture_group", common_semi_oracle_target_group(q.state_json)},
+            {"feature_version", "target_hunt_features_v3"},
+            {"truth_pass_version", "reverse_bfs_regret_v1"},
+            {"observations", std::move(branch_observations)}}.dump();
     }
     return true;
 }

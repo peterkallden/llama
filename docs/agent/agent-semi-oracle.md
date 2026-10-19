@@ -144,10 +144,12 @@ the same map/start/target share a fixture group. Proven-path observations are
 positive; other branches remain unknown unless an actual leaf was proved.
 A corridor allowing return is not a proven dead end. Algebra V1 remains readable.
 
-The model-free smoke trains on 64 maps (one completed 256-expansion search per
-map), freezes history, and evaluates 32 held-out maps. It compares ordinary
-ordering, seeded random tie-breaking, shadow, and experimental exact A* at
-budgets 16/64/256 and eight seeds. It separately compares Focal bounds
+The model-free smoke trains on 64 maps with one actual search at each expansion
+budget 16/64/256, freezes the resulting 192 evaluation records, and evaluates
+32 held-out maps. Fixture-group weighting prevents the three budget records
+from counting as three independent maps. It compares ordinary ordering, seeded
+random tie-breaking, shadow, and experimental exact A* at budgets 16/64/256
+and eight seeds. It separately compares Focal bounds
 1.0/1.05/1.1 with deterministic no-history, posterior-mean, and Thompson
 ordering; only the stochastic Thompson policy repeats eight seeds. Independent
 BFS validates every returned path and its declared cost guarantee; shadow must
@@ -178,11 +180,11 @@ The CTest also writes `pocs/agent/target-hunt-trace.jsonl` under its build tree.
 
 ### Implementation status after the seam review
 
-The latest source corrections have not been compiled or tested. They replace
-local sibling ranks with absolute posterior scores in the frontier, including
-singleton successors. Scores use the state before the action and are retained
-with the generated node. Algebra also uses these scores within an exact
-minimum-`f` frontier. `shadow` retains the ordinary executed order.
+The current source replaces local sibling ranks with absolute posterior scores
+in the frontier, including singleton successors. Scores use the state before
+the action and are retained with the generated node. Algebra also uses these
+scores within an exact minimum-`f` frontier. `shadow` retains the ordinary
+executed order.
 
 Target Hunt features are now `target_hunt_features_v3`, with suffix family
 `target_hunt_search_suffix_v3`, history payload version 4 and evaluator
@@ -202,77 +204,105 @@ in projection format version 2. Invalid projection construction falls back to
 deterministic search with a diagnostic reason. The fixture count reports the
 union of eligible contributing groups, rather than the largest category count.
 
-The full implementation plan still requires the following work:
+Target Hunt search evaluations now persist a separate, versioned
+`target_hunt_branch_quality_v1` record beside the censored suffix observations.
+Its reverse-BFS labels (`optimal`, `detour`, `unreachable`) are calculated by
+the host after search and are not proof fields or model features. They are
+scope-, RuleSet-, fixture-, feature-version- and truth-pass-bound. The adviser
+validates the stored categories against current host feature functions, then
+uses this family when it has eligible training groups; otherwise it falls back
+to the older censored suffix family. Diagnostics identify which family was
+used. The model-free smoke now also evaluates a projection reconstructed from
+these production-persisted records, in addition to its independent full-map
+BFS comparison.
+
+Search-history projection caching is owned by each SemiOracle store instance,
+not a process-global cache. It is bounded to 16 entries and 16 MiB. Stores with
+a monotonic history watermark can look up before reading history; Cozo derives
+that watermark from the immutable evaluation IDs in the scoped relation. Stores
+without watermark support still read and fingerprint rows before reuse, while
+preserving the current call's duplicate/conflict counters. Target state/action
+feature pairs are cached during an evaluation so scoring, trace generation and
+label validation do not repeatedly parse the same state/action pair.
+
+The following parts of the broader implementation plan remain:
 
 - Extract the common immutable projection/decision interface through FlyDelta's
   frozen job history and MCP inspection, including reuse across Whirlpool,
   Deep and TFO and their resume paths. They currently share posterior math;
   FlyDelta retains its own per-decision history projection.
-- Add atomic search-history revision/snapshot support in the production stores,
-  and move cache ownership to the runtime/store binding with workspace-budget
-  accounting. The process-local 16-entry LRU currently reads and parses rows
-  before lookup, copies cached projections and has no byte budget. Its row
-  fingerprint fallback is safe but does not avoid those costs.
-- Persist versioned BFS branch-quality observations through the existing
-  evaluation store and expose the separate family to the search adviser.
-  Currently the truth pass and branch-quality ranking are smoke-local; the
-  production/search-matrix adviser consumes censored suffix history. The two
-  experiments therefore do not yet demonstrate branch-label-guided search.
 - Complete the independent map families (64 training and 32 held-out maps per
   family), exact posterior-mean comparison, per-map calibration/confidence
   reporting, explicit frontier-selection traces and cold/warm/trace-disabled
-  cost measurements. Cache board/state/action features within a search instead
-  of repeatedly parsing grids and scanning target rectangles. The present smoke
-  has one mixed 64/32 set of corridor and random-obstacle maps.
-- Complete daemon/provider/MCP, store-reopen and interrupted-resume verification
-  for these new seams, then rebuild and run the revised regression/smoke suite.
+  cost measurements. The current smoke keeps the existing mixed 64/32 map set;
+  it is not yet split into two independently trained/held-out map families.
+- Add direct daemon/provider/MCP contract coverage and an interruption/resume
+  test for the new branch-label data. The Cozo test currently verifies
+  persistence, reopen, a second-fixture prediction, and idempotent evaluation
+  append; it does not simulate a process interruption during projection build.
+- FlyDelta still needs an immutable job-level projection shared across
+  Whirlpool, Deep, TFO, MCP inspection and resume. The SemiOracle store cache
+  improvements do not provide that cross-consumer FlyDelta projection.
 
-The measurements below are retained results from commit `574e6ea29`, before
-the score and feature corrections above. They are not verification or
-performance measurements of the current source.
+The focused SemiOracle, Cozo, teaching, tool-adapter and FlyDelta guidance
+CTests passed after the store/projection changes. The updated Target Hunt CTest
+then passed on 2026-10-19 in 567.43 seconds on the existing Vulkan/Cozo build
+tree. The smoke used 64 training and 32 held-out maps, three budget-specific
+searches per training map (192 frozen records), eight seeds, and budgets
+16/64/256. No model or GPU inference was involved.
 
-On that 2026-10-19 Vulkan/Cozo build, all 32 held-out maps were run at each
-budget across eight seeds. Exact A* results were:
+The current exact-search comparison was:
 
 | Budget | Policy | Solved / 256 | Expansions total | Summed per-search wall ms |
 | ---: | --- | ---: | ---: | ---: |
-| 16 | ordinary | 160 | 2,384 | 388 |
-| 16 | random tie | 156 | 2,417 | 403 |
-| 16 | shadow | 160 | 2,384 | 5,313 |
-| 16 | posterior order | 160 | 2,440 | 5,106 |
-| 64 | ordinary | 240 | 4,088 | 670 |
-| 64 | random tie | 240 | 4,117 | 646 |
-| 64 | shadow | 240 | 4,088 | 6,782 |
-| 64 | posterior order | 240 | 4,312 | 7,277 |
-| 256 | ordinary | 240 | 4,632 | 548 |
-| 256 | random tie | 240 | 4,673 | 547 |
-| 256 | shadow | 240 | 4,632 | 33,345 |
-| 256 | posterior order | 240 | 4,596 | 32,803 |
+| 16 | ordinary | 160 | 2,384 | 615 |
+| 16 | random tie | 156 | 2,417 | 581 |
+| 16 | shadow | 160 | 2,384 | 24,777 |
+| 16 | posterior sampling | 148 | 2,444 | 24,605 |
+| 64 | ordinary | 240 | 4,088 | 917 |
+| 64 | random tie | 240 | 4,117 | 844 |
+| 64 | shadow | 240 | 4,088 | 33,887 |
+| 64 | posterior sampling | 240 | 4,312 | 35,327 |
+| 256 | ordinary | 240 | 4,632 | 675 |
+| 256 | random tie | 240 | 4,673 | 685 |
+| 256 | shadow | 240 | 4,632 | 27,499 |
+| 256 | posterior sampling | 240 | 4,856 | 28,368 |
 
-`shadow` preserved every ordinary proof and expansion count. Historical exact
-ordering changed 3,058 successor orders and changed the returned path or
-expansion count in 234 of 768 experimental searches; it did not increase the
-solved count here. Its measured CPU overhead is material, so this smoke does
-not support enabling it for performance. The elapsed values are summed across
-256 sequential searches, not a single parallel wall-clock measurement.
+`shadow` preserved the baseline's result and expansion count. Guidance changed
+7,631 candidate orders and changed a returned path or expansion count in 318
+experimental searches. That proves the signal reaches the search, but not that
+it helps: at budget 16 the experimental policy solved 12 fewer of 256 runs;
+at 64 and 256 it solved no additional runs and expanded more nodes. CPU time
+was also much higher than the unguided reference. Do not enable it for
+performance on this evidence.
 
-For Focal A*, each stochastic cell repeats eight seeds and deterministic cells
-run once. At bounds 1.0 and 1.05 the solved counts matched exact A*; at 1.1,
-the no-history baseline solved 20/32, 29/32 and 30/32 at budgets 16/64/256,
-while posterior mean and Thompson each solved 20/32, 30/32 and 30/32 per
-repeat. Every returned path passed the independent BFS cost check and the
-configured bound; these results show no material hit-rate gain from Focal
-ordering on this map set.
+Focal A* returned paths that passed independent BFS cost/bound checks. At bound
+1.0, ordinary Focal solved 20/32, 30/32, 30/32 at budgets 16/64/256; posterior
+mean solved 19/32, 30/32, 30/32, and eight-seed Thompson totals were 148/256,
+240/256, 240/256. Results at 1.05 and 1.1 did not show a meaningful success
+gain over their deterministic counterparts. This map set therefore does not
+demonstrate a practical benefit from Focal guidance.
 
-The separate BFS branch-label experiment ranked 1,394 optimal successors first
-under original order and 2,155 under posterior mean, with correct strict sibling
-ordering increasing from 1,721/3,518 to 3,063/3,518 pairs. Aggregated by held-out
-map, 31 improved, one tied and none regressed for both metrics. These are
-correlated decisions within 32 maps, not thousands of independent examples;
-they demonstrate a promising feature/label signal, not production search
-benefit. The full trace is at
-`build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl`; the CTest output
-is in `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`.
+The independent BFS branch-quality comparison did improve its diagnostic
+ranking: optimal successors ranked first increased from 1,394 to 2,169; correct
+strict sibling order increased from 1,721/3,518 to 3,087/3,518. Separately,
+the smoke reconstructed 7,390 branch observations from 64 fixture groups in
+actual persisted search-evaluation records, rebuilt their projection, and
+confirmed that its six held-out candidate predictions used
+`target_hunt_branch_quality_v1`. These correlated decisions are grouped within
+32 maps; they are not thousands of independent samples and do not establish
+better search outcomes. The full trace is at
+`build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl`; the current CTest
+output is in `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`.
+
+The additional full-sweep items still outstanding are the independent
+recurring-map families, grouped uncertainty/calibration reporting, explicit
+per-frontier selection summaries and cold/warm/trace-disabled cost comparison.
+There is also no direct daemon/provider/MCP or interruption/resume test for the
+new persisted branch labels yet. The projection cache currently has a fixed
+16 MiB cap rather than consuming the configured workspace budget. FlyDelta
+still needs one frozen job-level projection shared across Whirlpool, Deep, TFO,
+MCP inspection and resume; the work here improves SemiOracle store reuse only.
 
 ## Historical ordering for algebra search
 

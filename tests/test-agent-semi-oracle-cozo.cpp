@@ -7,6 +7,7 @@
 #include <string>
 #include <chrono>
 #include <cstdio>
+#include <nlohmann/json.hpp>
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
 
@@ -137,6 +138,15 @@ int main() {
     CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.scope==common_semi_oracle_scope::host&&loaded.semantic_fingerprint==r.semantic_fingerprint);
     common_semi_oracle_result verdict;verdict.ruleset_id=r.id;verdict.ruleset_revision=1;verdict.verdict=common_semi_oracle_verdict::satisfied;verdict.proof_json="{}";
     CHECK(store.append_evaluation("eval-1",verdict,error));
+    CHECK(store.append_evaluation("eval-1",verdict,error));
+    auto conflicting_verdict=verdict;conflicting_verdict.reason="conflict";
+    CHECK(!store.append_evaluation("eval-1",conflicting_verdict,error));
+    uint64_t history_watermark=0;bool watermark_supported=false;
+    if (!store.get_search_history_revision(r.id,r.revision,history_watermark,
+            watermark_supported,error)) {
+        std::fprintf(stderr,"history watermark error: %s\n",error.c_str()); return 1;
+    }
+    CHECK(watermark_supported&&history_watermark==2);
     common_semi_oracle_result goal_result;
     CHECK(algebra_service.search_active_algebra_goal(goal_result, error));
     CHECK(!goal_result.search_guidance_json.empty());
@@ -179,9 +189,27 @@ int main() {
     store.close();CHECK(store.open(db,error));
     CHECK(store.get_session_state("session-maze",maze_rules.id,maze_rules.revision,persisted_state,found,error)&&found&&persisted_state==after);
     CHECK(store.list_search_history(maze_rules.id,maze_rules.revision,128,search_history,error)&&search_history.size()==1);
+    CHECK(store.get_search_history_revision(maze_rules.id,maze_rules.revision,
+        history_watermark,watermark_supported,error)&&watermark_supported&&history_watermark==2);
     std::string maze_evaluation;
     CHECK(store.get_evaluation_payload(search_history.front().evaluation_id,maze_evaluation,found,error)&&found);
     CHECK(maze_evaluation.find("target_hunt_astar_v3")!=std::string::npos);
+    const auto maze_payload=nlohmann::json::parse(maze_evaluation);
+    const auto guidance_payload=nlohmann::json::parse(maze_payload.at("search_guidance_json").get<std::string>());
+    CHECK(guidance_payload.contains("branch_quality"));
+    CHECK(guidance_payload.at("branch_quality").at("family")=="target_hunt_branch_quality_v1");
+    CHECK(guidance_payload.at("branch_quality").at("scope_fingerprint").is_string());
+    CHECK(!guidance_payload.at("branch_quality").at("observations").empty());
+    CHECK(maze.define_problem("grid: ...../..#../.....\nstart: 0,0\ntarget: 2,4",maze_state,error));
+    CHECK(maze.search_active_goal(goal_result,error));
+    const auto second_trace=nlohmann::json::parse(goal_result.search_guidance_json);
+    CHECK(second_trace.at("diagnostics").at("branch_quality_labels_used")==true);
+    bool saw_branch_prediction=false;
+    for (const auto & decision : second_trace.at("diagnostics").at("decisions"))
+        for (const auto & prediction : decision.at("predictions"))
+            saw_branch_prediction = saw_branch_prediction ||
+                prediction.value("prediction_family",std::string{})=="target_hunt_branch_quality_v1";
+    CHECK(saw_branch_prediction);
     CHECK(store.get_revision(maze_rules.id,maze_rules.revision,loaded,found,error)&&found&&loaded.domain==common_semi_oracle_domain::target_hunt);
     common_semi_oracle_tool_service resumed_maze(store,"host","session-maze");
     CHECK(resumed_maze.search_active_goal(goal_result,error));

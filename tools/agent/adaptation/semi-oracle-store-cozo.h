@@ -22,6 +22,8 @@ public:
     bool get_evaluation_payload(const std::string &, std::string &, bool &, std::string &) const override;
     bool list_search_history(const std::string &, uint64_t, size_t,
             std::vector<common_semi_oracle_search_history_record> &, std::string &) const override;
+    bool get_search_history_revision(const std::string &, uint64_t, uint64_t &,
+            bool &, std::string &) const override;
     bool put_interaction(const common_semi_oracle_interaction &, std::string &) override;
     bool get_interaction(const std::string &, common_semi_oracle_interaction &, bool &, std::string &) const override;
     std::vector<std::string> list_host_rulesets(std::string &) const override;

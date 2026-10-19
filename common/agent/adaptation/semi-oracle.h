@@ -96,6 +96,9 @@ struct common_semi_oracle_result {
     std::string guidance_ref;
     // Host-owned search diagnostics, separate from proof and training credit.
     std::string search_guidance_json;
+    // Versioned, host-verified Target Hunt branch labels. These are distinct
+    // from censored search-suffix observations and never enter the proof.
+    std::string search_branch_quality_json;
     common_semi_oracle_search_policy applied_search_policy;
 };
 

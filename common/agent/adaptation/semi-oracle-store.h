@@ -2,9 +2,27 @@
 
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-teaching.h"
+#include "agent/prediction/outcome-guidance.h"
 
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
+#include <atomic>
+
+struct common_semi_oracle_history_projection_cache_entry {
+    std::string key;
+    common_outcome_guidance_projection suffix_projection;
+    common_outcome_guidance_projection branch_projection;
+    size_t bytes = 0;
+    size_t read_rows = 0;
+    size_t rejected_rows = 0;
+    size_t duplicate_rows = 0;
+    size_t conflicting_rows = 0;
+    std::vector<std::string> evaluation_refs;
+};
 
 struct common_semi_oracle_search_history_record {
     std::string evaluation_id;
@@ -13,7 +31,40 @@ struct common_semi_oracle_search_history_record {
 
 class common_semi_oracle_store {
 public:
+    common_semi_oracle_store() {
+        static std::atomic<uint64_t> next_identity{1};
+        cache_identity_ = next_identity.fetch_add(1, std::memory_order_relaxed);
+    }
     virtual ~common_semi_oracle_store() = default;
+    common_semi_oracle_store(const common_semi_oracle_store &) = delete;
+    common_semi_oracle_store & operator=(const common_semi_oracle_store &) = delete;
+    uint64_t cache_identity() const { return cache_identity_; }
+    bool get_history_projection_cache(const std::string & key,
+            std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> & entry) const {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        const auto found = projection_cache_index_.find(key);
+        if (found == projection_cache_index_.end()) { entry.reset(); return false; }
+        entry = *found->second;
+        projection_cache_lru_.splice(projection_cache_lru_.begin(), projection_cache_lru_, found->second);
+        return true;
+    }
+    void put_history_projection_cache(common_semi_oracle_history_projection_cache_entry entry) {
+        constexpr size_t entry_limit = 16;
+        constexpr size_t byte_limit = 16 * 1024 * 1024;
+        if (entry.bytes > byte_limit || entry.key.empty()) return;
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        if (projection_cache_index_.count(entry.key)) return;
+        auto value = std::make_shared<const common_semi_oracle_history_projection_cache_entry>(
+            std::move(entry));
+        projection_cache_lru_.push_front(value);
+        projection_cache_index_[value->key] = projection_cache_lru_.begin();
+        projection_cache_bytes_ += value->bytes;
+        while (projection_cache_lru_.size() > entry_limit || projection_cache_bytes_ > byte_limit) {
+            projection_cache_bytes_ -= projection_cache_lru_.back()->bytes;
+            projection_cache_index_.erase(projection_cache_lru_.back()->key);
+            projection_cache_lru_.pop_back();
+        }
+    }
     virtual bool put_revision(const common_semi_oracle_ruleset & ruleset, std::string & error) = 0;
     virtual bool get_revision(const std::string & id, uint64_t revision,
             common_semi_oracle_ruleset & ruleset, bool & found, std::string & error) const = 0;
@@ -74,6 +125,16 @@ public:
         records.clear(); error = "semi-oracle search history is unsupported by this store";
         return false;
     }
+    // Monotonic identity for the append-only evaluation snapshot. Stores that
+    // cannot provide one leave supported=false; callers must then read and
+    // fingerprint rows before reusing a cached projection.
+    virtual bool get_search_history_revision(const std::string & ruleset_id,
+            uint64_t revision, uint64_t & watermark, bool & supported,
+            std::string & error) const {
+        (void) ruleset_id; (void) revision;
+        watermark = 0; supported = false; error.clear();
+        return true;
+    }
     virtual bool put_interaction(const common_semi_oracle_interaction & interaction,
             std::string & error) {
         (void) interaction;
@@ -89,4 +150,11 @@ public:
         return false;
     }
     virtual std::vector<std::string> list_host_rulesets(std::string & error) const = 0;
+
+private:
+    uint64_t cache_identity_ = 0;
+    mutable std::mutex cache_mutex_;
+    mutable std::list<std::shared_ptr<const common_semi_oracle_history_projection_cache_entry>> projection_cache_lru_;
+    mutable std::map<std::string, decltype(projection_cache_lru_)::iterator> projection_cache_index_;
+    mutable size_t projection_cache_bytes_ = 0;
 };

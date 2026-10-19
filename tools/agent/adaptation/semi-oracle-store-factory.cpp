@@ -6,10 +6,25 @@
 
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <tuple>
 
 namespace {
+std::string evaluation_payload(const common_semi_oracle_result & result) {
+    using json = nlohmann::ordered_json;
+    return json{{"ruleset_id",result.ruleset_id},{"ruleset_revision",result.ruleset_revision},
+        {"verdict",common_semi_oracle_verdict_name(result.verdict)},
+        {"level",common_semi_oracle_level_name(result.level)},
+        {"evaluator_ref",result.evaluator_ref},{"evaluator_revision",result.evaluator_revision},
+        {"expansions",result.expansions},{"depth_reached",result.depth_reached},
+        {"proof_json",result.proof_json},{"counterexample_json",result.counterexample_json},
+        {"reason",result.reason},{"guidance_ref",result.guidance_ref},
+        {"search_guidance_json",result.search_guidance_json},
+        {"search_branch_quality_json",result.search_branch_quality_json},
+        {"algorithm",result.applied_search_policy.algorithm==common_semi_oracle_search_algorithm::focal
+            ?"focal":"exact"},{"suboptimality_bound",result.applied_search_policy.suboptimality_bound}}.dump();
+}
 class in_memory_semi_oracle_store final : public common_semi_oracle_store {
 public:
     bool put_revision(const common_semi_oracle_ruleset & value, std::string & error) override {
@@ -63,7 +78,15 @@ public:
     bool append_evaluation(const std::string & id, const common_semi_oracle_result & result,
             std::string & error) override {
         std::lock_guard<std::mutex> lock(mutex_); error.clear();
-        evaluations_[id] = result; return true;
+        if (id.empty() || result.ruleset_id.empty()) { error="semi-oracle evaluation requires ids"; return false; }
+        const auto existing = evaluations_.find(id);
+        if (existing != evaluations_.end()) {
+            if (evaluation_payload(existing->second) == evaluation_payload(result)) return true;
+            error = "SemiOracle evaluation identities are immutable"; return false;
+        }
+        evaluations_.emplace(id, result);
+        ++search_history_revisions_[{result.ruleset_id, result.ruleset_revision}];
+        return true;
     }
     bool get_evaluation_payload(const std::string & id, std::string & payload,
             bool & found, std::string & error) const override {
@@ -83,6 +106,14 @@ public:
                 if (records.size() == limit) break;
             }
         }
+        return true;
+    }
+    bool get_search_history_revision(const std::string & id, uint64_t revision,
+            uint64_t & watermark, bool & supported, std::string & error) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error.clear(); supported = true; watermark = 0;
+        const auto it = search_history_revisions_.find({id, revision});
+        if (it != search_history_revisions_.end()) watermark = it->second;
         return true;
     }
     bool put_interaction(const common_semi_oracle_interaction & value,
@@ -114,6 +145,7 @@ private:
     std::map<std::string, std::pair<std::string, uint64_t>> bindings_;
     std::map<std::tuple<std::string, std::string, uint64_t>, std::string> states_;
     std::map<std::string, common_semi_oracle_result> evaluations_;
+    std::map<std::pair<std::string, uint64_t>, uint64_t> search_history_revisions_;
     std::map<std::string, common_semi_oracle_interaction> interactions_;
     std::set<std::string> host_rulesets_;
 };

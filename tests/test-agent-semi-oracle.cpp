@@ -54,6 +54,21 @@ public:
                 rows.push_back({"evaluation-" + std::to_string(i), evaluations[i].search_guidance_json});
         return true;
     }
+    bool get_search_history_revision(const std::string & id, uint64_t revision,
+            uint64_t & watermark, bool & supported, std::string & error) const override {
+        error.clear(); supported = !fail_history;
+        if (fail_history) { watermark = 0; return true; }
+        std::string snapshot;
+        if (override_history) {
+            for (const auto & row : history_rows) snapshot += row.evaluation_id + "\n" + row.guidance_json + "\n";
+        } else {
+            for (const auto & evaluation : evaluations)
+                if (evaluation.ruleset_id == id && evaluation.ruleset_revision == revision)
+                    snapshot += evaluation.search_guidance_json + "\n";
+        }
+        watermark = std::hash<std::string>{}(snapshot);
+        return true;
+    }
     mutable size_t history_reads = 0;
     bool fail_history = false;
     bool override_history = false;
@@ -297,8 +312,10 @@ int main() {
         managed_algebra, history_query, shadow_result, error));
     const auto first_projection_trace = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
     CHECK(first_projection_trace["diagnostics"].contains("projection_cache_hit"));
+    const auto reads_before_projection_hit = store.history_reads;
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, history_query, shadow_result, error));
+    CHECK(store.history_reads == reads_before_projection_hit);
     CHECK(nlohmann::ordered_json::parse(shadow_result.search_guidance_json)["diagnostics"]["projection_cache_hit"] == true);
     const auto shadow_history = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
     CHECK(shadow_history["diagnostics"]["fixture_groups"] == 1);
