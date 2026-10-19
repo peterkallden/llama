@@ -290,6 +290,11 @@ bool common_flydelta_append_search_lifecycle(
         payload["experimental_artifact_id"] = observation.experimental_artifact_id;
     }
     if (!observation.guidance_observation_id.empty()) {
+        const bool layer_only_guidance = observation.guidance_strategy == "whirlpool" &&
+            observation.guidance_estimator == "layer-region-prior-v2";
+        const bool basis_identity_valid = observation.guidance_basis_id.empty()
+            ? layer_only_guidance
+            : observation.guidance_basis_id.size() <= 512;
         if (!nonempty_bounded(observation.guidance_fixture_group_id) ||
                 !nonempty_bounded(observation.guidance_scope_fingerprint) ||
                 !nonempty_bounded(observation.guidance_model_profile_fingerprint) ||
@@ -300,7 +305,7 @@ bool common_flydelta_append_search_lifecycle(
                 !nonempty_bounded(observation.guidance_domain) ||
                 !nonempty_bounded(observation.guidance_strategy) ||
                 !nonempty_bounded(observation.guidance_estimator) ||
-                !nonempty_bounded(observation.guidance_basis_id) ||
+                !basis_identity_valid ||
                 observation.guidance_rank == 0) {
             error = "FlyDelta guidance lifecycle identity is incomplete";
             return false;

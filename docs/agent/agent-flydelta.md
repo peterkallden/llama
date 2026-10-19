@@ -2226,7 +2226,10 @@ eight independent fixture groups in that region); no model/verifier/scope
 boundary is crossed. WHERE projection revision `layer-region-prior-v2` uses
 the same model-relative layer position and scale category for proposals and
 completed outcomes. Its categories omit raw basis coordinates and post-run
-margin signs; coefficient search retains those fields in its own categories.
+margin signs; the persisted WHERE category therefore has an empty basis ID,
+which lifecycle validation permits only for `whirlpool` with
+`layer-region-prior-v2`. Coefficient search retains its basis identity and
+margin sign in its own categories.
 Old WHERE records remain available as coarse regional history, rather than
 being interpreted as exact V2 categories.
 Whirlpool first honors current-job layer diagnostics. If those are absent, an
