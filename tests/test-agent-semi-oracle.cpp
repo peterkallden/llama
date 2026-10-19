@@ -265,6 +265,13 @@ int main() {
     CHECK(searched_algebra.verdict==common_semi_oracle_verdict::satisfied&&
         searched_algebra.evaluator_revision=="linear_astar_v1"&&
         searched_algebra.proof_json.find("bounded_astar_v1")!=std::string::npos);
+    auto focal_algebra_config=common_semi_oracle_outcome_guidance_config{};
+    focal_algebra_config.search_algorithm="focal";focal_algebra_config.suboptimality_bound=1.1;
+    common_semi_oracle_tool_service focal_algebra_service(store,"host-test","session-algebra",
+        focal_algebra_config,"project-test");
+    CHECK(focal_algebra_service.search_active_goal(searched_algebra,error));
+    CHECK(searched_algebra.applied_search_policy.algorithm==common_semi_oracle_search_algorithm::exact&&
+        searched_algebra.applied_search_policy.suboptimality_bound==1.0);
     const auto first_guidance = nlohmann::ordered_json::parse(searched_algebra.search_guidance_json);
     CHECK(first_guidance["diagnostics"]["mode"] == "shadow");
     CHECK(first_guidance["diagnostics"]["fixture_groups"] == 0);
@@ -278,9 +285,21 @@ int main() {
     history_query.state_json = R"({"lhs":"3x+6","rhs":"x+12"})";
     history_query.action_dsl = "lhs: 3x+6\n";
     common_semi_oracle_outcome_guidance_config guidance_config;
+    CHECK(common_semi_oracle_outcome_guidance_config_validate(guidance_config,error));
+    auto focal_config=guidance_config;focal_config.search_algorithm="focal";focal_config.suboptimality_bound=1.1;
+    CHECK(common_semi_oracle_outcome_guidance_config_validate(focal_config,error));
+    auto invalid_policy=guidance_config;invalid_policy.suboptimality_bound=1.1;
+    CHECK(!common_semi_oracle_outcome_guidance_config_validate(invalid_policy,error));
+    invalid_policy=guidance_config;invalid_policy.sampling_policy="sample-anything";
+    CHECK(!common_semi_oracle_outcome_guidance_config_validate(invalid_policy,error));
     common_semi_oracle_result shadow_result, off_result, experimental_result;
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, history_query, shadow_result, error));
+    const auto first_projection_trace = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
+    CHECK(first_projection_trace["diagnostics"].contains("projection_cache_hit"));
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, shadow_result, error));
+    CHECK(nlohmann::ordered_json::parse(shadow_result.search_guidance_json)["diagnostics"]["projection_cache_hit"] == true);
     const auto shadow_history = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
     CHECK(shadow_history["diagnostics"]["fixture_groups"] == 1);
     CHECK(!shadow_history["diagnostics"]["decisions"].empty());
@@ -305,7 +324,9 @@ int main() {
     own_fixture.action_dsl = "lhs: 2(x+3)\n";
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, own_fixture, experimental_result, error));
-    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fixture_groups"] == 0);
+    const auto own_fixture_trace = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
+    CHECK(own_fixture_trace["diagnostics"]["fixture_groups"] == 0);
+    CHECK(own_fixture_trace["diagnostics"]["projection_cache_hit"] == true);
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "another-session",
         managed_algebra, history_query, experimental_result, error));
     CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fixture_groups"] == 0);
@@ -342,7 +363,7 @@ int main() {
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, history_query, experimental_result, error));
     const auto deduplicated = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
-    CHECK(deduplicated["diagnostics"]["fixture_groups"] == 1);
+    CHECK(deduplicated["diagnostics"]["fixture_groups"] == 0);
     CHECK(deduplicated["diagnostics"]["duplicate_records"] == 1);
     auto conflict = nlohmann::ordered_json::parse(searched_algebra.search_guidance_json);
     conflict["observations"]["simplify lhs"] = {0.0, 1.0, 0.0};
@@ -409,5 +430,36 @@ int main() {
             std::vector<size_t> &, std::string &) -> bool { throw std::runtime_error("test adviser"); };
     CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, advised_order));
     CHECK(advised_order.found && advised_order.guidance_fallbacks == 1);
+
+    // Focal A* may choose a more expensive goal only inside its host-selected
+    // f-bound; the result must distinguish the bound proof from optimality.
+    common_semi_oracle_search_problem focal_problem;
+    focal_problem.initial_state = "root";
+    focal_problem.heuristic_admissible = true;
+    focal_problem.is_goal = [](const std::string & state, bool & goal, std::string &) {
+        goal = state == "goal"; return true;
+    };
+    focal_problem.expand = [](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & transitions, std::string &) {
+        transitions.clear();
+        if (state == "root") transitions = {{"optimal", "short", 1}, {"goal", "long", 3}};
+        else if (state == "optimal") transitions = {{"goal", "finish", 1}};
+        return true;
+    };
+    focal_problem.heuristic = [](const std::string & state) { return state == "optimal" ? size_t{1} : size_t{0}; };
+    focal_problem.historical_score = [](const std::string & state, const std::string &) {
+        return state == "goal" ? 0.0 : 1.0;
+    };
+    common_semi_oracle_search_policy exact_policy;
+    common_semi_oracle_search_result exact_search, focal_search;
+    CHECK(common_semi_oracle_search_run(focal_problem, {16, 8}, exact_policy, false, exact_search));
+    CHECK(exact_search.found && exact_search.total_cost == 2 && exact_search.optimality_proven);
+    common_semi_oracle_search_policy focal_policy;
+    focal_policy.algorithm = common_semi_oracle_search_algorithm::focal;
+    focal_policy.suboptimality_bound = 1.5;
+    CHECK(common_semi_oracle_search_run(focal_problem, {16, 8}, focal_policy, true, focal_search));
+    CHECK(focal_search.found && focal_search.total_cost == 3 &&
+        !focal_search.optimality_proven && focal_search.suboptimality_bound_proven &&
+        focal_search.suboptimality_bound == 1.5);
     return 0;
 }

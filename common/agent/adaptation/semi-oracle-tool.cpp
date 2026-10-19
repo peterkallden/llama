@@ -109,8 +109,15 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     query.ruleset_id=ruleset.id;query.ruleset_revision=ruleset.revision;
     query.level=level;query.goal=goal;query.state_json=state_json;
     query.action_dsl=action_dsl;query.budget=budget;query.guidance=guidance;
+    query.search_policy.algorithm = guidance_.search_algorithm == "focal" &&
+            ruleset.domain == common_semi_oracle_domain::target_hunt
+        ? common_semi_oracle_search_algorithm::focal : common_semi_oracle_search_algorithm::exact;
+    query.search_policy.suboptimality_bound = query.search_policy.algorithm ==
+            common_semi_oracle_search_algorithm::focal ? guidance_.suboptimality_bound : 1.0;
+    query.use_historical_order = guidance_.mode == "experimental";
     if(!common_semi_oracle_evaluate_with_history(store_, guidance_, host_namespace_,
             session_id_, ruleset, query, result, error, project_id_))return false;
+    result.applied_search_policy = query.search_policy;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
     if (!result.search_guidance_json.empty()) {
         auto metadata = json::parse(result.search_guidance_json, nullptr, false);

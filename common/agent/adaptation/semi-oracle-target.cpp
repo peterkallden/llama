@@ -123,10 +123,62 @@ bool common_semi_oracle_target_problem(const common_semi_oracle_ruleset & r, con
     data["problem_fingerprint"] = digest(data.dump()); state = data.dump(); return true;
 }
 std::string common_semi_oracle_target_category(const std::string & state, const std::string & action) {
-    board b; std::string error, next; if (!parse(state,b,error) || !move(b,action,next)) return {};
-    const int i = action_index(action), nr = b.row+dr[i], nc = b.col+dc[i]; int exits = 0;
-    for (int j=0;j<4;++j) if (b.free(nr+dr[j],nc+dc[j]) && !(nr+dr[j]==b.row && nc+dc[j]==b.col)) ++exits;
-    return std::string(std::abs(nr-b.tr)+std::abs(nc-b.tc) < std::abs(b.row-b.tr)+std::abs(b.col-b.tc) ? "toward:" : "away:") + std::to_string(exits);
+    board b; std::string error, next;
+    if (!parse(state,b,error) || !move(b,action,next)) return {};
+    const int ai = action_index(action), nr = b.row+dr[ai], nc = b.col+dc[ai];
+    auto transform=[](int x,int y,int rotation,bool reflect){
+        if(reflect)x=-x;
+        for(int i=0;i<rotation;++i){const int previous=x;x=-y;y=previous;}
+        return std::pair<int,int>{x,y};
+    };
+    std::string canonical;
+    for(int rotation=0;rotation<4;++rotation)for(bool reflect:{false,true}){
+        std::string mask;
+        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
+            const auto p=transform(x,y,rotation,reflect);
+            mask+=b.free(nr+p.second,nc+p.first)?'1':'0';
+        }
+        const int gx=(b.tc-nc)>0?1:(b.tc-nc)<0?-1:0;
+        const int gy=(b.tr-nr)>0?1:(b.tr-nr)<0?-1:0;
+        const auto goal=transform(gx,gy,rotation,reflect);
+        const auto move_vector=transform(dc[ai],dr[ai],rotation,reflect);
+        // Whether the most direct continuation is blocked is intentionally a
+        // local/topological feature, not an exact-distance or path oracle.
+        const bool can_continue=(gx!=0&&b.free(nr,nc+gx))||(gy!=0&&b.free(nr+gy,nc));
+        const int continuation_blocked=(gx!=0||gy!=0)&&!can_continue;
+        int box_cells=0,box_walls=0;
+        for(int rr=std::min(nr,b.tr);rr<=std::max(nr,b.tr);++rr)
+            for(int cc=std::min(nc,b.tc);cc<=std::max(nc,b.tc);++cc){
+                ++box_cells;if(!b.free(rr,cc))++box_walls;
+            }
+        const int box_density_bucket=box_cells>0?std::min(3,(4*box_walls)/box_cells):0;
+        const std::string candidate=mask+":"+std::to_string(goal.first)+","+std::to_string(goal.second)+":"+
+            std::to_string(move_vector.first)+","+std::to_string(move_vector.second)+":"+
+            std::to_string(continuation_blocked)+":"+std::to_string(box_density_bucket);
+        if(canonical.empty()||candidate<canonical)canonical=candidate;
+    }
+    return "target_hunt_features_v2:fine:"+digest(canonical);
+}
+std::string common_semi_oracle_target_coarse_category(const std::string & state, const std::string & action) {
+    board b; std::string error, next;
+    if(!parse(state,b,error)||!move(b,action,next))return {};
+    const int ai=action_index(action),nr=b.row+dr[ai],nc=b.col+dc[ai];
+    int exits=0;
+    for(int j=0;j<4;++j)if(b.free(nr+dr[j],nc+dc[j])&&!(nr+dr[j]==b.row&&nc+dc[j]==b.col))++exits;
+    const int before=std::abs(b.row-b.tr)+std::abs(b.col-b.tc);
+    const int after=std::abs(nr-b.tr)+std::abs(nc-b.tc);
+    const int progress=after<before?1:after==before?0:-1;
+    const int shape=exits<=1?1:exits==2?2:3;
+    int box_cells=0,box_walls=0;
+    for(int r=std::min(nr,b.tr);r<=std::max(nr,b.tr);++r)
+        for(int c=std::min(nc,b.tc);c<=std::max(nc,b.tc);++c){++box_cells;if(!b.free(r,c))++box_walls;}
+    const int density=box_cells>0?std::min(3,(4*box_walls)/box_cells):0;
+    const int gx=(b.tc-nc)>0?1:(b.tc-nc)<0?-1:0;
+    const int gy=(b.tr-nr)>0?1:(b.tr-nr)<0?-1:0;
+    const bool can_continue=(gx!=0&&b.free(nr,nc+gx))||(gy!=0&&b.free(nr+gy,nc));
+    const int blocked=(gx!=0||gy!=0)&&!can_continue;
+    return "target_hunt_features_v2:coarse:"+std::to_string(progress)+":"+
+        std::to_string(shape)+":"+std::to_string(blocked)+":"+std::to_string(density);
 }
 std::string common_semi_oracle_target_group(const std::string & state) {
     board b; std::string error; if (!parse(state,b,error)) return {};
@@ -151,7 +203,7 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
         const common_semi_oracle_query & q, common_semi_oracle_result & out, std::string & error) {
     if (!common_semi_oracle_target_state(r,q.state_json,error)) return false;
     board b; if (!parse(q.state_json,b,error)) return false;
-    out.evaluator_revision = "target_hunt_astar_v1";
+    out.evaluator_revision = "target_hunt_astar_v2";
     if (q.level == common_semi_oracle_level::local) {
         std::map<std::string,std::string> f;
         if (!fields(q.action_dsl,"open! target_hunt.move",f,error)) return false;
@@ -179,15 +231,23 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
         for(const auto & action:order){std::string next;if(move(x,action,next))transitions.push_back({next,action,1});}return true;};
     problem.heuristic=[](const std::string & s){board x;std::string e;parse(s,x,e);return size_t(std::abs(x.row-x.tr)+std::abs(x.col-x.tc));};
     problem.heuristic_admissible=true;problem.transition_adviser=q.transition_adviser;problem.record_history=q.record_search_history;
-    common_semi_oracle_search_result result;if(!common_semi_oracle_search_astar(problem,q.budget,result)){error=result.error;return false;}
+    common_semi_oracle_search_result result;
+    if(!common_semi_oracle_search_run(problem,q.budget,q.search_policy,q.use_historical_order,result)){error=result.error;return false;}
+    out.applied_search_policy = q.search_policy;
     out.expansions=result.expansions;out.depth_reached=result.depth_reached;
     json path=json::array();std::string previous=q.state_json;
     for(size_t i=0;i<result.path.size();++i){const auto & step=result.path[i];
         if(i){board x;std::string next;if(!parse(previous,x,error)||!move(x,step.action,next)||next!=step.state){error="Target Hunt path verification failed";return false;}}
         path.push_back({{"state",{{"position",json::parse(step.state)["position"]}}},{"action",step.action},{"cost",step.cost}});previous=step.state;}
     out.verdict=result.found?common_semi_oracle_verdict::satisfied:result.exhausted?common_semi_oracle_verdict::violated:common_semi_oracle_verdict::unknown;
-    out.reason=result.found?"verified shortest path":result.exhausted?"reachable state space exhausted without target":"search budget exhausted: "+result.stop_reason;
-    if(result.found)out.proof_json=json{{"initial_state",b.data},{"path",path},{"total_cost",result.total_cost},{"optimality_proven",result.optimality_proven},
+    out.reason=result.found
+        ? (result.algorithm==common_semi_oracle_search_algorithm::focal && result.suboptimality_bound>1.0
+            ? "verified path within host-selected Focal A* cost bound"
+            : "verified shortest path")
+        : result.exhausted?"reachable state space exhausted without target":"search budget exhausted: "+result.stop_reason;
+    if(result.found)out.proof_json=json{{"algorithm",result.algorithm==common_semi_oracle_search_algorithm::focal?"focal_astar_v1":"exact_astar_v1"},
+        {"suboptimality_bound",result.suboptimality_bound},{"suboptimality_bound_proven",result.suboptimality_bound_proven},
+        {"initial_state",b.data},{"path",path},{"total_cost",result.total_cost},{"optimality_proven",result.optimality_proven},
         {"ruleset_fingerprint",r.semantic_fingerprint},{"action_contract_fingerprint",r.action_contract_fingerprint}}.dump();
     if(result.exhausted)out.counterexample_json=json{{"exhausted",true}}.dump();
     if(q.record_search_history){

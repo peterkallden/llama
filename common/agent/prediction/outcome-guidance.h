@@ -1,8 +1,41 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <map>
 #include <random>
+#include <string>
 #include <vector>
+
+struct common_outcome_guidance_projection_observation {
+    std::string fixture_group;
+    std::string category;
+    std::vector<double> outcome_weights;
+};
+
+// Immutable-by-convention, domain-neutral grouped projection. Each fixture
+// contributes at most one normalized unit of weight per category; consumers
+// may exclude the query fixture without rebuilding or mutating the snapshot.
+struct common_outcome_guidance_projection {
+    std::string builder_revision;
+    std::string source_fingerprint;
+    std::string fingerprint;
+    uint64_t source_watermark = 0;
+    size_t accepted_rows = 0;
+    std::map<std::string, std::map<std::string, std::vector<double>>> fixture_categories;
+
+    void aggregate_excluding(const std::string & fixture_group,
+            std::map<std::string, std::vector<double>> & category_weights,
+            std::map<std::string, size_t> & fixture_counts) const;
+};
+
+bool common_outcome_guidance_build_projection(
+        const std::vector<common_outcome_guidance_projection_observation> & observations,
+        const std::string & builder_revision,
+        const std::string & source_fingerprint,
+        uint64_t source_watermark,
+        common_outcome_guidance_projection & projection,
+        std::string & error);
 
 // Domain-neutral conjugate categorical outcome prediction. Callers own the
 // meaning and provenance of categories and the construction of weighted counts.

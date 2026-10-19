@@ -4611,17 +4611,26 @@ does not read history when that mode is `off`. See
 
 SemiOracle algebra and Target Hunt search use that same posterior math with independent
 `runtime.adaptation.semi_oracle.outcome_guidance` settings: `mode` defaults to
-`shadow` (`off` and `experimental` are also supported), `seed` defaults to `0`,
-and `max_history_evaluations` defaults to `128` (range `1..1024`). These settings
-are copied into the daemon's native tool service and require restart when
-changed. They operate even when FlyDelta is disabled. `shadow` keeps the normal
-A* order; `experimental` can change insertion-order ties among legal successors.
-The immutable history view is read once per goal search from existing
-SemiOracle evaluations. The current fixture group and incompatible scopes,
-rule/verifier revisions or budgets are excluded. History failure retains the
-normal order. MCP `oracle.goal.search` returns compact guidance diagnostics,
-and `agent_trace` logs the stored predictions and proposed/executed orders.
-See [SemiOracle historical ordering](agent-semi-oracle.md#historical-ordering-for-algebra-search)
+`shadow` (`off` and `experimental` are also supported), `sampling_policy` is
+`posterior_sampling` or `posterior_mean`, `seed` defaults to `0`, and
+`max_history_evaluations` defaults to `128` (range `1..1024`). The separate
+host-owned `runtime.adaptation.semi_oracle.search` policy defaults to exact A*
+and bound `1.0`; Focal A* is available only when explicitly configured for
+Target Hunt with a finite bound through `2.0`. These settings are copied into
+the daemon's native tool service and require restart when changed. They operate
+even when FlyDelta is disabled. `shadow` records hypothetical orders without
+changing execution; `experimental` can order eligible equal-`f` frontier nodes
+in exact A*, or nodes inside Focal's `f <= w*f_min` set. The process keeps a
+bounded projection LRU keyed by the returned history rows and full context;
+stores without revision watermarks invalidate by row fingerprint. The current
+fixture group and incompatible scopes, rule/verifier revisions or budgets are
+excluded. History failure retains deterministic ordering. MCP
+`oracle.goal.search` reports applied algorithm, bound and separate optimality /
+bound-proof flags. Target Hunt suffix outcomes are censored search evidence;
+its local features are versioned and symmetry-normalized. The model-free smoke
+uses an independent BFS regret pass (`optimal`, `detour`, `unreachable`) for
+branch ranking, never as a search feature. See
+[SemiOracle search policy and historical guidance](agent-semi-oracle.md#historical-ordering-for-algebra-search)
 and [configuration example](../../examples/agent-host-config-adaptation.json).
 
 The `semi-oracle` tool profile also includes `oracle.problem.define`. With an

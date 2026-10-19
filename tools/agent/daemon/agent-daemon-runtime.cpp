@@ -986,14 +986,22 @@ bool resolve_agent_daemon_tooling(
                 guidance_summary.erase("decisions");
                 guidance_summary.erase("history_diagnostic");
                 guidance_summary.erase("history_evaluation_refs");
+                const auto proof = json::parse(result.proof_json.empty() ? "null" : result.proof_json,
+                    nullptr, false);
+                const std::string algorithm = result.applied_search_policy.algorithm ==
+                    common_semi_oracle_search_algorithm::focal ? "focal_astar_v1" : "exact_astar_v1";
                 return common_tool_execution_result::success(json{
                     {"verdict", common_semi_oracle_verdict_name(result.verdict)},
                     {"ruleset_id", result.ruleset_id}, {"revision", result.ruleset_revision},
                     {"evaluator", result.evaluator_ref}, {"evaluator_revision", result.evaluator_revision},
                     {"level", common_semi_oracle_level_name(result.level)},
                     {"expansions", result.expansions}, {"depth_reached", result.depth_reached},
-                    {"proof", json::parse(result.proof_json.empty() ? "null" : result.proof_json, nullptr, false)},
+                    {"proof", proof},
                     {"counterexample", json::parse(result.counterexample_json.empty() ? "null" : result.counterexample_json, nullptr, false)},
+                    {"search_policy", {{"algorithm", algorithm},
+                        {"suboptimality_bound", result.applied_search_policy.suboptimality_bound},
+                        {"optimality_proven", proof.is_object() && proof.value("optimality_proven", false)},
+                        {"suboptimality_bound_proven", proof.is_object() && proof.value("suboptimality_bound_proven", false)}}},
                     {"guidance", guidance_summary},
                     {"reason", result.reason}}.dump());
             }

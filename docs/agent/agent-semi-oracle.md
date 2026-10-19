@@ -27,8 +27,10 @@ solver or a general-purpose algebra tool.
   supplies the active session binding, state, search level, budget and any
   guidance. The model only proposes the action/rewrite.
 - `oracle.goal.search` is an argument-free host operation for declared algebra
-  and Target Hunt sessions. It searches for `x = rational` or a shortest grid
-  path, using host-owned state, goal, budget and guidance. It preserves position
+  and Target Hunt sessions. It searches for `x = rational` or a legal grid
+  path, using host-owned state, goal, budget and guidance. Exact A* is the
+  default and proves a shortest path for the admissible Target Hunt heuristic;
+  opt-in Focal A* reports its quality bound separately. It preserves position
   and equation state. `oracle.problem.define` admits Target Hunt maps explicitly.
 
 The daemon binds the regular tool adapter to a host-owned
@@ -142,10 +144,17 @@ the same map/start/target share a fixture group. Proven-path observations are
 positive; other branches remain unknown unless an actual leaf was proved.
 A corridor allowing return is not a proven dead end. Algebra V1 remains readable.
 
-The model-free smoke trains on 64 maps and freezes history before evaluating
-32 held-out maps. It compares off/shadow/experimental across eight seeds and
-expansion budgets 16/64/256, depth 256. Independent BFS validates results;
-shadow must reproduce off. JSONL contains decisions, proofs, fingerprints and
+The model-free smoke trains on 64 maps (one completed 256-expansion search per
+map), freezes history, and evaluates 32 held-out maps. It compares ordinary
+ordering, seeded random tie-breaking, shadow, and experimental exact A* at
+budgets 16/64/256 and eight seeds. It separately compares Focal bounds
+1.0/1.05/1.1 with deterministic no-history, posterior-mean, and Thompson
+ordering; only the stochastic Thompson policy repeats eight seeds. Independent
+BFS validates every returned path and its declared cost guarantee; shadow must
+reproduce the ordinary exact-search proof and expansion count. A separate BFS
+truth pass labels branches optimal/detour/unreachable and reports held-out
+sibling ranking without exposing BFS distance/regret to search features. JSONL
+contains the frozen source, decisions, proofs, fingerprints and
 projection/adviser/search timing. Reproduce with:
 
 ```sh
@@ -160,37 +169,66 @@ snapshot. Its projection timings describe this compact in-memory view, not
 database loading. Search timing includes domain validation and proof building.
 
 The smoke checks whether ordering reaches execution. Performance and budget
-success rates are measured results, not acceptance assumptions. Manhattan A*
-still selects by f, then h, before insertion-order guidance. No GPU/model is required.
+success rates are measured results, not acceptance assumptions. Exact A* keeps
+minimum-f priority; history only orders equal-f frontier entries. Focal A*
+orders only entries inside its host-selected `f <= w*f_min` set. No GPU/model
+is required.
 
 The CTest also writes `pocs/agent/target-hunt-trace.jsonl` under its build tree.
 
-On the 2026-10-19 Vulkan/Cozo build, the model-free CPU smoke changed 7,689
-successor-order decisions and changed the returned path or expansion count in
-233 of the 768 experimental searches. Shadow matched off for every proof and
-expansion count. The outcome and mean cost results were:
+On the 2026-10-19 Vulkan/Cozo build, all 32 held-out maps were run at each
+budget across eight seeds. Exact A* results were:
 
-| Expansion budget | Off found / 256 | Shadow found / 256 | Experimental found / 256 | Mean expansions off → experimental | Mean elapsed ms off → experimental |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 16 | 160 | 160 | 159 | 298 → 302 | 36 → 455 |
-| 64 | 240 | 240 | 240 | 511 → 515 | 63 → 625 |
-| 256 | 240 | 240 | 240 | 579 → 583 | 68 → 668 |
+| Budget | Policy | Solved / 256 | Expansions total | Summed per-search wall ms |
+| ---: | --- | ---: | ---: | ---: |
+| 16 | ordinary | 160 | 2,384 | 388 |
+| 16 | random tie | 156 | 2,417 | 403 |
+| 16 | shadow | 160 | 2,384 | 5,313 |
+| 16 | posterior order | 160 | 2,440 | 5,106 |
+| 64 | ordinary | 240 | 4,088 | 670 |
+| 64 | random tie | 240 | 4,117 | 646 |
+| 64 | shadow | 240 | 4,088 | 6,782 |
+| 64 | posterior order | 240 | 4,312 | 7,277 |
+| 256 | ordinary | 240 | 4,632 | 548 |
+| 256 | random tie | 240 | 4,673 | 547 |
+| 256 | shadow | 240 | 4,632 | 33,345 |
+| 256 | posterior order | 240 | 4,596 | 32,803 |
 
-Each budget row covers the same 32 held-out maps across eight seeds; these are
-repeated policy runs, not 256 independent maps. Experimental guidance therefore
-proved that historical ordering can affect execution, but this fixture set did
-not show a success-rate or expansion-cost benefit. Its measured time includes
-the compact in-memory history projection and adviser; it is not a database or
-GPU benchmark. The trace is at
-`build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl` and the CTest log is
-`/home/prbm/target-hunt-ctest-final-20261019.log`.
+`shadow` preserved every ordinary proof and expansion count. Historical exact
+ordering changed 3,058 successor orders and changed the returned path or
+expansion count in 234 of 768 experimental searches; it did not increase the
+solved count here. Its measured CPU overhead is material, so this smoke does
+not support enabling it for performance. The elapsed values are summed across
+256 sequential searches, not a single parallel wall-clock measurement.
+
+For Focal A*, each stochastic cell repeats eight seeds and deterministic cells
+run once. At bounds 1.0 and 1.05 the solved counts matched exact A*; at 1.1,
+the no-history baseline solved 20/32, 29/32 and 30/32 at budgets 16/64/256,
+while posterior mean and Thompson each solved 20/32, 30/32 and 30/32 per
+repeat. Every returned path passed the independent BFS cost check and the
+configured bound; these results show no material hit-rate gain from Focal
+ordering on this map set.
+
+The separate BFS branch-label experiment ranked 1,394 optimal successors first
+under original order and 2,155 under posterior mean, with correct strict sibling
+ordering increasing from 1,721/3,518 to 3,063/3,518 pairs. Aggregated by held-out
+map, 31 improved, one tied and none regressed for both metrics. These are
+correlated decisions within 32 maps, not thousands of independent examples;
+they demonstrate a promising feature/label signal, not production search
+benefit. The full trace is at
+`build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl`; the CTest output
+is in `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`.
 
 ## Historical ordering for algebra search
 
 `oracle.goal.search` also consumes the shared posterior math in
 `common/agent/prediction/outcome-guidance.*` through the SemiOracle-specific
 `semi-oracle-outcome-guidance.*` adapter. The tool remains argument-free;
-the daemon supplies the policy and reads the existing evaluation store.
+the daemon supplies the policy and reads the existing evaluation store. A
+bounded process-local LRU reuses immutable grouped projections by their full
+source/context fingerprint (maximum 16 entries); current-fixture exclusion is
+applied after lookup. Stores without a revision watermark use the fingerprint
+of the rows returned by the store, so changed history invalidates the cache.
 Configure it independently of FlyDelta:
 
 ```json
@@ -198,10 +236,15 @@ Configure it independently of FlyDelta:
   "runtime": {
     "adaptation": {
       "semi_oracle": {
+        "search": {
+          "algorithm": "exact",
+          "suboptimality_bound": 1.0
+        },
         "outcome_guidance": {
           "mode": "shadow",
           "seed": 0,
-          "max_history_evaluations": 128
+          "max_history_evaluations": 128,
+          "sampling_policy": "posterior_sampling"
         }
       }
     }
@@ -211,15 +254,27 @@ Configure it independently of FlyDelta:
 
 `off` skips history reads and automatic history capture. The default `shadow`
 records posterior predictions and hypothetical orders while preserving the
-existing successor order. `experimental` samples the posterior to order
-host-generated legal rewrites. A* still sorts its frontier by cost plus
-heuristic, then heuristic: advice affects insertion-order ties, never edge
-costs, validity, goal checks or admissibility. A cold start without matching
-action history preserves the original order. Changing these configuration
-values requires daemon restart. `seed` is a non-negative integer;
+existing successor order. `experimental` applies host-generated legal
+successor/frontier guidance. `sampling_policy` accepts `posterior_sampling` or
+`posterior_mean`; candidates sharing a category share one Thompson draw per
+decision, seeded from decision and category identity rather than candidate
+iteration order. Exact A* preserves minimum `f=g+h`; history only orders nodes
+within the same `f` frontier. A cold start without matching action history
+preserves the original order. Changing these configuration values requires
+daemon restart. `seed` is a non-negative integer;
 `max_history_evaluations` is bounded to 1..1024.
 
-The V1 search family has its own vocabulary: a discovered, verified goal
+Search policy is separately host-controlled under
+`runtime.adaptation.semi_oracle.search`: `algorithm` is `exact` (default) or
+`focal`; `suboptimality_bound` is finite in `1.0..2.0`, and exact requires
+`1.0`. Focal A* considers only nodes with `f <= bound * f_min`, then uses
+deterministic or historical ordering within that set. The model cannot set the
+bound. A successful proof reports `suboptimality_bound_proven`; it must not be
+read as `optimality_proven` when the bound exceeds one. Algebra remains exact
+regardless of the configured Target Hunt policy. The result's `search_policy`
+reports the applied algorithm, bound, and proof flags even for `UNKNOWN`.
+
+The algebra suffix family has its own vocabulary: a discovered, verified goal
 suffix; a proven leaf with no successors; or an unresolved suffix. A discovered
 path labels its incoming actions as goal-reaching. A node is a dead end only
 after it has been expanded with no outgoing transitions. Unexpanded siblings,
@@ -227,6 +282,13 @@ depth-limited nodes and budget stops remain unknown. Unknown mass updates only
 the Beta model for classification within the search budget, not the two
 Dirichlet categories. These are coarse statistics by rewrite primitive under
 the observed search policy and budget, not a learned state-value function.
+Target Hunt uses a distinct `target_hunt_search_suffix_v2` family and
+versioned, symmetry-normalized local features. It backs off from fine local
+wall/goal/action patterns to Manhattan progress and successor degree unless at
+least eight independent fixture groups support the fine category. This suffix
+family remains censored search history; it is distinct from the model-free
+smoke's BFS-derived branch labels (`optimal`, `detour`, `unreachable`). BFS
+regret is a truth label, never a guidance feature.
 
 Each initial equation defines a fixture group, and each group contributes at
 most one unit of weight per action category across repeated searches. The

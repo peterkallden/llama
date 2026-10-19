@@ -13,7 +13,10 @@ int main() {
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
             config.adaptation_flydelta_outcome_guidance.mode !=
                 common_flydelta_outcome_guidance_mode::shadow ||
-            config.adaptation_flydelta_teacher_scoring_backend != "auto") {
+            config.adaptation_flydelta_teacher_scoring_backend != "auto" ||
+            config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "exact" ||
+            config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.0 ||
+            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_sampling") {
         std::cerr << "factorized cvec must not be disabled by default: " << error << '\n';
         return 1;
     }
@@ -48,9 +51,16 @@ int main() {
         }}}}}},
         {"limits", {{"worker_count", 2}}},
     };
+    compatible["runtime"]["adaptation"]["semi_oracle"] = {
+        {"search", {{"algorithm", "focal"}, {"suboptimality_bound", 1.1}}},
+        {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"}}}
+    };
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
-            config.adaptation_flydelta_teacher_scoring_backend != "backend") {
+            config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
+            config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean") {
         std::cerr << "default compatible factorized cvec config rejected: " << error << '\n';
         return 1;
     }
@@ -88,7 +98,10 @@ int main() {
     agent_host_config roundtrip_config;
     if (!parse_agent_host_config_json(roundtrip, roundtrip_config, error) ||
             roundtrip_config.adaptation_flydelta_disable_factorized_cvec_batch ||
-            roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend") {
+            roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean") {
         std::cerr << "factorized cvec config did not round-trip: " << error << '\n';
         return 1;
     }

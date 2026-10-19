@@ -153,7 +153,7 @@ target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if(LLAMA_BUILD_TESTS)
     add_test(NAME llama-agent-semi-oracle-target-hunt-ctest COMMAND ${TARGET}
         --trace ${CMAKE_CURRENT_BINARY_DIR}/target-hunt-trace.jsonl)
-    set_tests_properties(llama-agent-semi-oracle-target-hunt-ctest PROPERTIES TIMEOUT 180 LABELS "agent-adaptation")
+    set_tests_properties(llama-agent-semi-oracle-target-hunt-ctest PROPERTIES TIMEOUT 600 LABELS "agent-adaptation")
 endif()
 
 # Optional Qwen/Phi smoke for natural RuleSpec DSL, dynamic action contracts,

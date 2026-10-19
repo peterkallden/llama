@@ -559,6 +559,18 @@ bool parse_agent_host_config_json(
             if (adaptation.contains("semi_oracle")) {
                 const auto & oracle = adaptation["semi_oracle"];
                 if (!oracle.is_object()) { error = "runtime.adaptation.semi_oracle must be an object"; return false; }
+                if (oracle.contains("search")) {
+                    const auto & search = oracle["search"];
+                    if (!search.is_object()) { error = "runtime.adaptation.semi_oracle.search must be an object"; return false; }
+                    if (search.contains("algorithm") && !search["algorithm"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.search.algorithm must be a string"; return false;
+                    }
+                    if (search.contains("suboptimality_bound") && !search["suboptimality_bound"].is_number()) {
+                        error = "runtime.adaptation.semi_oracle.search.suboptimality_bound must be numeric"; return false;
+                    }
+                    read_optional(search, "algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm);
+                    read_optional(search, "suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound);
+                }
                 if (oracle.contains("outcome_guidance")) {
                     const auto & guidance = oracle["outcome_guidance"];
                     if (!guidance.is_object()) {
@@ -566,6 +578,9 @@ bool parse_agent_host_config_json(
                     }
                     if (guidance.contains("mode") && !guidance["mode"].is_string()) {
                         error = "runtime.adaptation.semi_oracle.outcome_guidance.mode must be a string"; return false;
+                    }
+                    if (guidance.contains("sampling_policy") && !guidance["sampling_policy"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.sampling_policy must be a string"; return false;
                     }
                     for (const auto * key : {"seed", "max_history_evaluations"}) {
                         if (guidance.contains(key) && !guidance[key].is_number_unsigned() &&
@@ -575,6 +590,7 @@ bool parse_agent_host_config_json(
                         }
                     }
                     read_optional(guidance, "mode", config.adaptation_semi_oracle_outcome_guidance.mode);
+                    read_optional(guidance, "sampling_policy", config.adaptation_semi_oracle_outcome_guidance.sampling_policy);
                     read_optional(guidance, "seed", config.adaptation_semi_oracle_outcome_guidance.seed);
                     if (guidance.contains("max_history_evaluations") &&
                             (guidance["max_history_evaluations"].get<uint64_t>() == 0 ||
@@ -1422,10 +1438,14 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"max_evidence", config.adaptation_max_evidence},
                 {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
-                {"semi_oracle", {{"outcome_guidance", {
+                {"semi_oracle", {{"search", {
+                    {"algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm},
+                    {"suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound},
+                }}, {"outcome_guidance", {
                     {"mode", config.adaptation_semi_oracle_outcome_guidance.mode},
                     {"seed", config.adaptation_semi_oracle_outcome_guidance.seed},
                     {"max_history_evaluations", config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations},
+                    {"sampling_policy", config.adaptation_semi_oracle_outcome_guidance.sampling_policy},
                 }}}},
                 {"flydelta", {
                     {"enabled", config.adaptation_flydelta_enabled},

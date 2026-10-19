@@ -23,6 +23,9 @@ struct common_semi_oracle_search_problem {
             std::vector<common_semi_oracle_search_transition> &,
             std::string &)> expand;
     std::function<size_t(const std::string &)> heuristic;
+    // Stable host score for a generated state. Lower scores are preferred
+    // only within the same admissible f frontier (or the configured FOCAL set).
+    std::function<double(const std::string &, const std::string &)> historical_score;
     // Guidance is an ordering hint only. It is never consulted by the goal
     // predicate, transition validator, or heuristic.
     std::function<size_t(const common_semi_oracle_search_transition &)> guidance_rank;
@@ -41,6 +44,9 @@ struct common_semi_oracle_search_result {
     bool found = false;
     bool exhausted = false;
     bool optimality_proven = false;
+    bool suboptimality_bound_proven = false;
+    common_semi_oracle_search_algorithm algorithm = common_semi_oracle_search_algorithm::exact;
+    double suboptimality_bound = 1.0;
     size_t total_cost = 0;
     size_t expansions = 0;
     size_t depth_reached = 0;
@@ -63,4 +69,11 @@ struct common_semi_oracle_search_result {
 bool common_semi_oracle_search_astar(
         const common_semi_oracle_search_problem & problem,
         const common_semi_oracle_budget & budget,
+        common_semi_oracle_search_result & result);
+
+bool common_semi_oracle_search_run(
+        const common_semi_oracle_search_problem & problem,
+        const common_semi_oracle_budget & budget,
+        const common_semi_oracle_search_policy & policy,
+        bool use_historical_order,
         common_semi_oracle_search_result & result);

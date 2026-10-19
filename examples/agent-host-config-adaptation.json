@@ -7,10 +7,15 @@
       "capture": true,
       "collection_allowed": true,
       "semi_oracle": {
+        "search": {
+          "algorithm": "exact",
+          "suboptimality_bound": 1.0
+        },
         "outcome_guidance": {
           "mode": "shadow",
           "seed": 0,
-          "max_history_evaluations": 128
+          "max_history_evaluations": 128,
+          "sampling_policy": "posterior_sampling"
         }
       },
       "flydelta": {

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
@@ -57,6 +58,30 @@ int main() {
         shared_posterior.category_probabilities[2] - 1.0) < 1e-12);
     CHECK(!common_outcome_guidance_make_posterior(
         -1.0, 0.0, .5, {1.0}, {1.0}, 0.0, 0.0, shared_posterior));
+    common_outcome_guidance_projection projection;
+    const std::vector<common_outcome_guidance_projection_observation> projection_rows={
+        {"fixture-a","shared-category",{1.0,0.0}},
+        {"fixture-a","shared-category",{0.0,1.0}},
+        {"fixture-b","shared-category",{1.0,0.0}},
+        {"fixture-b","other-category",{0.0,1.0}},
+    };
+    CHECK(common_outcome_guidance_build_projection(projection_rows,"test-builder-v1","source-fingerprint",7,projection,error));
+    CHECK(projection.accepted_rows==4&&projection.source_watermark==7&&!projection.fingerprint.empty());
+    auto reordered_projection_rows=projection_rows;
+    std::reverse(reordered_projection_rows.begin(),reordered_projection_rows.end());
+    common_outcome_guidance_projection reordered_projection;
+    CHECK(common_outcome_guidance_build_projection(reordered_projection_rows,"test-builder-v1",
+        "source-fingerprint",7,reordered_projection,error));
+    CHECK(reordered_projection.fingerprint==projection.fingerprint);
+    std::map<std::string,std::vector<double>> projected_weights;std::map<std::string,size_t> projected_groups;
+    projection.aggregate_excluding("fixture-a",projected_weights,projected_groups);
+    CHECK(projected_groups["shared-category"]==1&&projected_weights["shared-category"].size()==2);
+    CHECK(std::abs(projected_weights["shared-category"][0]-1.0)<1e-12&&
+        std::abs(projected_weights["shared-category"][1])<1e-12);
+    const std::vector<common_outcome_guidance_projection_observation> invalid_projection_rows={
+        {"fixture-a","bad",{1.0}}, {"fixture-a","bad",{1.0,0.0}}};
+    CHECK(!common_outcome_guidance_build_projection(invalid_projection_rows,
+        "test-builder-v1","bad-source",0,projection,error));
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
     CHECK(catalog.bootstrap("analysis", bootstrap, error));

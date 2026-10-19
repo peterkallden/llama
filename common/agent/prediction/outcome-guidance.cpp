@@ -1,7 +1,10 @@
 #include "agent/prediction/outcome-guidance.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <utility>
 
@@ -17,6 +20,70 @@ std::pair<double, double> interval(double a, double b) {
 }
 
 } // namespace
+
+void common_outcome_guidance_projection::aggregate_excluding(const std::string & excluded,
+        std::map<std::string,std::vector<double>> & category_weights,
+        std::map<std::string,size_t> & fixture_counts) const {
+    category_weights.clear(); fixture_counts.clear();
+    for(const auto & fixture:fixture_categories) {
+        if(!excluded.empty()&&fixture.first==excluded)continue;
+        for(const auto & item:fixture.second) {
+            auto & target=category_weights[item.first];
+            if(target.empty())target.assign(item.second.size(),0.0);
+            double total=0.0;for(double value:item.second)total+=value;
+            if(total<=0.0)continue;
+            ++fixture_counts[item.first];
+            for(size_t i=0;i<target.size();++i)target[i]+=item.second[i]/total;
+        }
+    }
+}
+
+bool common_outcome_guidance_build_projection(
+        const std::vector<common_outcome_guidance_projection_observation> & observations,
+        const std::string & builder_revision,const std::string & source_fingerprint,
+        const uint64_t source_watermark,common_outcome_guidance_projection & projection,
+        std::string & error) {
+    using json=nlohmann::ordered_json;
+    projection={};error.clear();
+    if(builder_revision.empty()||source_fingerprint.empty()){
+        error="outcome projection requires builder and source fingerprints";return false;
+    }
+    std::map<std::string,std::map<std::string,std::vector<double>>> grouped;
+    json canonical=json::array();
+    for(const auto & row:observations){
+        if(row.fixture_group.empty()||row.category.empty()||row.outcome_weights.empty()){
+            error="outcome projection row has an empty identity or category vector";return false;
+        }
+        auto & target=grouped[row.fixture_group][row.category];
+        if(!target.empty()&&target.size()!=row.outcome_weights.size()){
+            error="outcome projection category dimension changed";return false;
+        }
+        if(target.empty())target.assign(row.outcome_weights.size(),0.0);
+        json weights=json::array();
+        for(size_t i=0;i<row.outcome_weights.size();++i){
+            const double value=row.outcome_weights[i];
+            if(!std::isfinite(value)||value<0.0){error="outcome projection weights must be finite and non-negative";return false;}
+            target[i]+=value;weights.push_back(value);
+        }
+        canonical.push_back({{"fixture_group",row.fixture_group},{"category",row.category},{"weights",weights}});
+    }
+    for(auto & fixture:grouped)for(auto & category:fixture.second){
+        double total=0.0;for(double value:category.second)total+=value;
+        if(total>0.0)for(auto & value:category.second)value/=total;
+    }
+    projection.builder_revision=builder_revision;
+    projection.source_fingerprint=source_fingerprint;
+    projection.source_watermark=source_watermark;
+    projection.accepted_rows=observations.size();
+    projection.fixture_categories=std::move(grouped);
+    std::sort(canonical.begin(),canonical.end(),[](const auto & lhs,const auto & rhs){
+        return lhs.dump()<rhs.dump();
+    });
+    const auto fingerprint_input=json{{"builder_revision",builder_revision},{"source_fingerprint",source_fingerprint},
+        {"source_watermark",source_watermark},{"observations",canonical}}.dump();
+    projection.fingerprint="sha256:"+hash_sha256_hex(fingerprint_input.data(),fingerprint_input.size());
+    return true;
+}
 
 bool common_outcome_guidance_make_posterior(
         const double known_weight,

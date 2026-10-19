@@ -47,6 +47,12 @@ struct common_semi_oracle_budget {
     size_t max_depth = 8;
 };
 
+enum class common_semi_oracle_search_algorithm { exact, focal };
+struct common_semi_oracle_search_policy {
+    common_semi_oracle_search_algorithm algorithm = common_semi_oracle_search_algorithm::exact;
+    double suboptimality_bound = 1.0;
+};
+
 // Receives only host-generated legal successor actions. Returns a permutation
 // of their indices; it cannot introduce a state, action, cost or heuristic.
 using common_semi_oracle_transition_adviser = std::function<bool(
@@ -65,6 +71,8 @@ struct common_semi_oracle_query {
     std::vector<std::string> guidance;
     common_semi_oracle_transition_adviser transition_adviser;
     bool record_search_history = false;
+    bool use_historical_order = false;
+    common_semi_oracle_search_policy search_policy;
 };
 
 struct common_semi_oracle_result {
@@ -82,6 +90,7 @@ struct common_semi_oracle_result {
     std::string guidance_ref;
     // Host-owned search diagnostics, separate from proof and training credit.
     std::string search_guidance_json;
+    common_semi_oracle_search_policy applied_search_policy;
 };
 
 enum class common_semi_oracle_placement_value { loss = -1, draw = 0, win = 1, unknown = 2 };

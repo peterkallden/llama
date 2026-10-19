@@ -8,6 +8,9 @@
 #include <cmath>
 #include <chrono>
 #include <map>
+#include <list>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <random>
 #include <set>
@@ -23,14 +26,24 @@ std::string fingerprint(const std::string & text) {
 const std::set<std::string> actions = {"simplify lhs", "simplify rhs",
     "move variable terms to the left", "move constants to the right",
     "divide both sides by the non-zero coefficient"};
+struct projection_cache_entry { std::string key; common_outcome_guidance_projection value; };
+std::mutex projection_cache_mutex;
+std::list<projection_cache_entry> projection_cache_lru;
+std::map<std::string,std::list<projection_cache_entry>::iterator> projection_cache_index;
+constexpr size_t projection_cache_capacity=16;
 }
 
 bool common_semi_oracle_outcome_guidance_config_validate(
         const common_semi_oracle_outcome_guidance_config & config, std::string & error) {
     error.clear();
     if ((config.mode != "off" && config.mode != "shadow" && config.mode != "experimental") ||
-            config.max_history_evaluations == 0 || config.max_history_evaluations > 1024) {
-        error = "SemiOracle guidance requires mode off/shadow/experimental and max_history_evaluations 1..1024";
+            config.max_history_evaluations == 0 || config.max_history_evaluations > 1024 ||
+            (config.search_algorithm != "exact" && config.search_algorithm != "focal") ||
+            (config.sampling_policy != "posterior_sampling" && config.sampling_policy != "posterior_mean") ||
+            !std::isfinite(config.suboptimality_bound) || config.suboptimality_bound < 1.0 ||
+            config.suboptimality_bound > 2.0 ||
+            (config.search_algorithm == "exact" && config.suboptimality_bound != 1.0)) {
+        error = "SemiOracle requires valid guidance mode/history limit, exact or focal search with bound 1..2, and posterior_sampling or posterior_mean";
         return false;
     }
     return true;
@@ -46,9 +59,8 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     const bool target=ruleset.domain==common_semi_oracle_domain::target_hunt;
     auto allowed=[&](const std::string & key){
         if(!target)return actions.count(key)!=0;
-        for(const auto * prefix:{"toward:","away:"})for(int i=0;i<4;++i)
-            if(key==std::string(prefix)+std::to_string(i))return true;
-        return false;
+        return key.rfind("target_hunt_features_v2:fine:",0)==0 ||
+            key.rfind("target_hunt_features_v2:coarse:",0)==0;
     };
     auto category=[&](const std::string & state,const std::string & action){
         return target?common_semi_oracle_target_category(state,action):action;
@@ -62,12 +74,12 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         return common_semi_oracle_evaluate(ruleset, query, result, error);
 
     // Scope, rule revision, proof contract and budget all partition this family.
-    const json context = {{"family", target?"target_hunt_search_suffix_v1":"algebra_search_suffix_v1"},
+    const json context = {{"family", target?"target_hunt_search_suffix_v2":"algebra_search_suffix_v1"},
         {"scope", fingerprint(json::array({host, project, session}).dump())},
         {"ruleset_id", ruleset.id}, {"revision", ruleset.revision},
         {"rule_fingerprint", ruleset.semantic_fingerprint},
         {"action_contract", ruleset.action_contract_fingerprint},
-        {"evaluator_revision", target?"target_hunt_astar_v1":"linear_astar_v1"}, {"goal", query.goal},
+        {"evaluator_revision", target?"target_hunt_astar_v2":"linear_astar_v1"}, {"goal", query.goal},
         {"host_action_order", query.level == common_semi_oracle_level::guided
             ? query.guidance : std::vector<std::string>{}},
         {"max_expansions", query.budget.max_expansions}, {"max_depth", query.budget.max_depth}};
@@ -101,11 +113,15 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         try {
             const auto row = json::parse(record.second);
             if (!row.at("schema_version").is_number_integer() ||
-                    row.at("schema_version") != (target?2:1) || row.at("context") != context ||
+                    row.at("schema_version") != (target?3:1) || row.at("context") != context ||
                     !row.at("fixture_group").is_string() ||
                     !row.at("observations").is_object()) { ++rejected; continue; }
             const auto group = row.at("fixture_group").get<std::string>();
-            if (group.empty() || group == fixture) { ++rejected; continue; }
+            // Keep the complete compatible history in the immutable cached
+            // projection. The query fixture is excluded only while aggregating
+            // that projection below, so the same snapshot can serve other
+            // queries without rebuilding a fixture-specific cache entry.
+            if (group.empty()) { ++rejected; continue; }
             std::map<std::string, counts> parsed;
             for (auto it = row.at("observations").begin(); it != row.at("observations").end(); ++it) {
                 if (!allowed(it.key()) || !it.value().is_array() || it.value().size() != 3)
@@ -125,13 +141,47 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
                 {"fixture_group", group}, {"observations", row.at("observations")}});
         } catch (...) { ++rejected; }
     }
-    std::map<std::string, counts> weights;
-    for (const auto & group : grouped) for (const auto & item : group.second) {
-        const double total = item.second[0] + item.second[1] + item.second[2];
-        if (total > 0.0) for (size_t i = 0; i < 3; ++i) weights[item.first][i] += item.second[i] / total;
+    std::vector<common_outcome_guidance_projection_observation> projection_rows;
+    for(const auto & group:grouped)for(const auto & item:group.second)
+        projection_rows.push_back({group.first,item.first,{item.second[0],item.second[1],item.second[2]}});
+    const std::string source_fingerprint=fingerprint(json{{"context",context},{"records",accepted}}.dump());
+    common_outcome_guidance_projection projection;
+    bool projection_hit=false;
+    {
+        std::lock_guard<std::mutex> lock(projection_cache_mutex);
+        const auto cached=projection_cache_index.find(source_fingerprint);
+        if(cached!=projection_cache_index.end()) {
+            projection=cached->second->value;
+            projection_cache_lru.splice(projection_cache_lru.begin(),projection_cache_lru,cached->second);
+            projection_hit=true;
+        }
     }
-    const std::string history_fingerprint = fingerprint(json{{"builder", "semi-oracle-history-v1"},
-        {"context", context}, {"records", accepted}}.dump());
+    if(!projection_hit) {
+        if(!common_outcome_guidance_build_projection(projection_rows,"semi-oracle-outcome-projection-v2",
+                source_fingerprint,0,projection,error))return false;
+        std::lock_guard<std::mutex> lock(projection_cache_mutex);
+        const auto concurrent=projection_cache_index.find(source_fingerprint);
+        if(concurrent!=projection_cache_index.end()) {
+            projection=concurrent->second->value;
+            projection_cache_lru.splice(projection_cache_lru.begin(),projection_cache_lru,concurrent->second);
+        } else {
+            projection_cache_lru.push_front({source_fingerprint,projection});
+            projection_cache_index[source_fingerprint]=projection_cache_lru.begin();
+        }
+        while(projection_cache_lru.size()>projection_cache_capacity){
+            projection_cache_index.erase(projection_cache_lru.back().key);
+            projection_cache_lru.pop_back();
+        }
+    }
+    std::map<std::string,std::vector<double>> projected_weights;
+    std::map<std::string,size_t> group_counts;
+    projection.aggregate_excluding(fixture,projected_weights,group_counts);
+    size_t eligible_fixture_groups=0;
+    for(const auto & item:group_counts)eligible_fixture_groups=std::max(eligible_fixture_groups,item.second);
+    std::map<std::string,counts> weights;
+    for(const auto & item:projected_weights)if(item.second.size()==3)
+        weights[item.first]={item.second[0],item.second[1],item.second[2]};
+    const std::string history_fingerprint=projection.fingerprint;
     json decisions = json::array();
     size_t omitted_decisions = 0;
     double adviser_ms=0.0;
@@ -152,19 +202,35 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             const auto sampling_input=target
                 ?json::array({config.seed,fixture,json::parse(current).at("position"),weights,ruleset.semantic_fingerprint})
                 :json::array({config.seed,current,history_fingerprint});
-            const auto seed_hex = fingerprint(sampling_input.dump()).substr(7, 16);
-            std::mt19937_64 rng(std::stoull(seed_hex, nullptr, 16));
+            const auto seed_base = sampling_input.dump();
+            std::map<std::string, double> sampled_by_category;
             for (const auto & action : candidates) {
-                const auto key=category(current,action);
+                const auto fine_key=category(current,action);
+                const auto coarse_key=target?common_semi_oracle_target_coarse_category(current,action):fine_key;
+                const auto key=target&&group_counts[fine_key]<8?coarse_key:fine_key;
                 const auto found = weights.find(key);
                 const counts w = found == weights.end() ? counts{} : found->second;
                 matching_history = matching_history || w[0] + w[1] + w[2] > 0.0;
+                auto sample = sampled_by_category.find(key);
+                if (sample == sampled_by_category.end()) {
+                    common_outcome_guidance_posterior p;
+                    if (!common_outcome_guidance_make_posterior(w[0] + w[1], w[2], 0.5,
+                            {w[0], w[1]}, {0.5, 0.5}, 0.0, 0.0, p)) {
+                        advice_error = "invalid search posterior"; return false;
+                    }
+                    const auto seed_hex = fingerprint(json::array({seed_base,key}).dump()).substr(7, 16);
+                    std::mt19937_64 category_rng(std::stoull(seed_hex, nullptr, 16));
+                    const double score=config.sampling_policy=="posterior_mean"
+                        ? p.p_known*p.category_probabilities[0]
+                        : common_outcome_guidance_sample_expected_utility(p, {1.0, 0.0}, category_rng);
+                    sample = sampled_by_category.emplace(key,score).first;
+                }
+                utilities.push_back(sample->second);
                 common_outcome_guidance_posterior p;
                 if (!common_outcome_guidance_make_posterior(w[0] + w[1], w[2], 0.5,
                         {w[0], w[1]}, {0.5, 0.5}, 0.0, 0.0, p)) {
                     advice_error = "invalid search posterior"; return false;
                 }
-                utilities.push_back(common_outcome_guidance_sample_expected_utility(p, {1.0, 0.0}, rng));
                 predictions.push_back({{"action", action}, {"category", key}, {"p_known", p.p_known},
                     {"p_known_interval", {p.p_known_low, p.p_known_high}},
                     {"p_goal_given_known", p.category_probabilities[0]},
@@ -193,18 +259,26 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     if (!trace.is_object()) return true;
     std::map<std::string, counts> observed;
     for (const auto & observation : trace.at("observations")) {
-        const auto action = category(observation.value("state_before",std::string{}),observation.at("action").get<std::string>());
-        if (!allowed(action)) continue;
+        const auto before=observation.value("state_before",std::string{});
+        const auto action_text=observation.at("action").get<std::string>();
+        const auto action = category(before,action_text);
         const auto outcome = observation.at("outcome").get<std::string>();
-        ++observed[action][outcome == "goal_reached" ? 0 : outcome == "dead_end" ? 1 : 2];
+        const size_t outcome_index=outcome == "goal_reached" ? 0 : outcome == "dead_end" ? 1 : 2;
+        if(allowed(action))++observed[action][outcome_index];
+        if(target) {
+            const auto coarse=common_semi_oracle_target_coarse_category(before,action_text);
+            if(allowed(coarse))++observed[coarse][outcome_index];
+        }
     }
     json observations = json::object();
     for (const auto & item : observed) observations[item.first] = item.second;
     json history_refs = json::array();
     for (const auto & item : accepted) history_refs.push_back(item["evaluation_id"]);
-    result.search_guidance_json = json{{"schema_version", target?2:1}, {"context", context},
+    result.search_guidance_json = json{{"schema_version", target?3:1}, {"context", context},
         {"fixture_group", fixture}, {"observations", observations},
         {"diagnostics", {{"mode", config.mode}, {"seed", config.seed},
+            {"sampling_policy",config.sampling_policy},{"search_algorithm",config.search_algorithm},
+            {"suboptimality_bound",config.suboptimality_bound},
             {"family",context["family"]},{"evaluator_revision",context["evaluator_revision"]},
             {"ruleset_id", ruleset.id}, {"ruleset_revision", ruleset.revision},
             {"fixture_group", fixture}, {"scope_fingerprint", context["scope"]},
@@ -212,8 +286,9 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             {"accepted_records", accepted.size()}, {"rejected_records", rejected},
             {"duplicate_records", duplicates}, {"conflicting_records", conflicts.size()},
             {"history_evaluation_refs", history_refs},
-            {"fixture_groups", grouped.size()}, {"fallback_reason", fallback},
+            {"fixture_groups", eligible_fixture_groups}, {"fallback_reason", fallback},
             {"projection_ms",std::chrono::duration<double,std::milli>(search_started-started).count()},
+            {"projection_cache_hit",projection_hit},{"projection_builder_revision",projection.builder_revision},
             {"search_with_adviser_ms",search_ms},
             {"adviser_ms",adviser_ms},{"search_ms",std::max(0.0,search_ms-adviser_ms)},
             {"history_diagnostic", history_error},
@@ -229,10 +304,13 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         for(const auto & observation:trace.at("observations")) {
             const auto before=json::parse(observation.at("state_before").get<std::string>());
             const auto after=json::parse(observation.at("state_after").get<std::string>());
+            const auto before_text=observation.at("state_before").get<std::string>();
+            const auto action=observation.at("action").get<std::string>();
             persisted["search_observations"].push_back({{"action",observation["action"]},
                 {"outcome",observation["outcome"]},{"position_before",before["position"]},
                 {"position_after",after["position"]},
-                {"category",category(observation.at("state_before").get<std::string>(),observation.at("action").get<std::string>())}});
+                {"category",category(before_text,action)},
+                {"coarse_category",common_semi_oracle_target_coarse_category(before_text,action)}});
         }
         result.search_guidance_json=persisted.dump();
     }

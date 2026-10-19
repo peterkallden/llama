@@ -18,7 +18,7 @@ int main() {
     CHECK(goal_definition != nullptr);
     std::string normalized;
     CHECK(common_schema_normalize_and_validate_object(
-        R"({"verdict":"UNKNOWN","ruleset_id":"test-rule","revision":1,"evaluator":"semi-oracle://evaluator/linear_algebra","evaluator_revision":"linear_astar_v1","level":"bounded","proof":null,"counterexample":null,"reason":"budget exhausted","guidance":{"mode":"shadow","decision_count":2}})",
+        R"({"verdict":"UNKNOWN","ruleset_id":"test-rule","revision":1,"evaluator":"semi-oracle://evaluator/linear_algebra","evaluator_revision":"linear_astar_v1","level":"bounded","proof":null,"counterexample":null,"search_policy":{"algorithm":"exact_astar_v1","suboptimality_bound":1.0,"optimality_proven":false,"suboptimality_bound_proven":false},"reason":"budget exhausted","guidance":{"mode":"shadow","decision_count":2}})",
         goal_definition->result_schema_json, normalized, error));
     common_native_tool_bindings bindings;
     bindings.semi_oracle=[](const std::string & name,const std::string & input) {
@@ -26,7 +26,7 @@ int main() {
         if(!args.is_object())return common_tool_execution_result::failure("invalid",common_tool_failure_class::validation,false,"bad args");
         if(name=="oracle.ruleset.define"&&args.contains("ruleset_dsl"))return common_tool_execution_result::success("{\"active\":true}");
         if(name=="oracle.action.verify"&&args.contains("action_dsl"))return common_tool_execution_result::success("{\"verdict\":\"SATISFIED\"}");
-        if(name=="oracle.goal.search"&&args.empty())return common_tool_execution_result::success("{\"verdict\":\"SATISFIED\",\"algorithm\":\"bounded_astar_v1\"}");
+        if(name=="oracle.goal.search"&&args.empty())return common_tool_execution_result::success("{\"verdict\":\"SATISFIED\",\"algorithm\":\"exact_astar_v1\"}");
         return common_tool_execution_result::failure("invalid",common_tool_failure_class::validation,false,"bad operation");
     };
     common_tool_registry registry;common_tool_adapter_result adapters;
@@ -39,7 +39,7 @@ int main() {
     const auto verify=registry.execute({"oracle.action.verify","{\"action_dsl\":\"open! game.place_mark\\nplayer: X\\nrow: 0\\ncolumn: 0\"}"});
     CHECK(verify.ok&&verify.output.find("SATISFIED")!=std::string::npos);
     const auto search=registry.execute({"oracle.goal.search","{}"});
-    CHECK(search.ok&&search.output.find("bounded_astar_v1")!=std::string::npos);
+    CHECK(search.ok&&search.output.find("exact_astar_v1")!=std::string::npos);
     CHECK(!registry.execute({"oracle.action.verify","{}"}).ok);
     return 0;
 }

@@ -10,3 +10,4 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset &,
 // These projections use only declared geometry, never a solved distance map.
 std::string common_semi_oracle_target_group(const std::string & state);
 std::string common_semi_oracle_target_category(const std::string & state, const std::string & action);
+std::string common_semi_oracle_target_coarse_category(const std::string & state, const std::string & action);

@@ -1,5 +1,6 @@
 #include "agent/adaptation/semi-oracle-target.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/prediction/outcome-guidance.h"
 #include "tools/agent/adaptation/semi-oracle-store-factory.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -48,18 +49,34 @@ int bfs(const fixture & f){const int h=int(f.grid.size()),w=int(f.grid[0].size()
             if(nr<0||nc<0||nr>=h||nc>=w||f.grid[nr][nc]=='#'||dist[nr*w+nc]>=0)continue;
             dist[nr*w+nc]=dist[p]+1;q.push(nr*w+nc);}}
     return -1;}
+std::vector<int> distances_to_target(const fixture & f){const int h=int(f.grid.size()),w=int(f.grid[0].size());std::vector<int> dist(h*w,-1);
+    std::queue<int> q;const int target=f.tr*w+f.tc;q.push(target);dist[target]=0;
+    while(!q.empty()){const int p=q.front();q.pop();const int r=p/w,c=p%w;
+        for(const auto delta:std::vector<std::pair<int,int>>{{-1,0},{1,0},{0,-1},{0,1}}){const int nr=r+delta.first,nc=c+delta.second;
+            if(nr<0||nc<0||nr>=h||nc>=w||f.grid[nr][nc]=='#'||dist[nr*w+nc]>=0)continue;
+            dist[nr*w+nc]=dist[p]+1;q.push(nr*w+nc);}}
+    return dist;}
 fixture generate(size_t id,std::mt19937_64 & rng){int n=id%2?13:9;fixture f;f.grid.assign(n,std::string(n,'.'));
     if(id%4<2){for(int r=1;r<n-1;r+=2){int gap=int(rng()%n);for(int c=0;c<n;++c)if(c!=gap)f.grid[r][c]='#';}}
     else for(auto & row:f.grid)for(auto & c:row)if(rng()%4==0)c='#';
     f.sr=int(rng()%n);f.sc=int(rng()%n);f.tr=int(rng()%n);f.tc=int(rng()%n);f.grid[f.sr][f.sc]='.';f.grid[f.tr][f.tc]='.';return f;}
-void check_result(const fixture & f,const common_semi_oracle_result & r){int distance=bfs(f);
-    if(r.verdict==common_semi_oracle_verdict::satisfied){auto proof=json::parse(r.proof_json);require(distance>=0&&proof["total_cost"]==distance,"A* path differs from independent BFS");
+void check_result(const fixture & f,const common_semi_oracle_result & r,double allowed_bound=1.0){int distance=bfs(f);
+    if(r.verdict==common_semi_oracle_verdict::satisfied){auto proof=json::parse(r.proof_json);require(distance>=0&&
+            proof["total_cost"].get<double>()<=allowed_bound*distance+1e-9,"search path exceeds independent BFS cost bound");
         const auto & path=proof["path"];require(!path.empty(),"empty proven path");
         int pr=f.sr,pc=f.sc;for(size_t i=0;i<path.size();++i){const auto & p=path[i]["state"]["position"];int nr=p[0],nc=p[1];
             require(nr>=0&&nc>=0&&nr<int(f.grid.size())&&nc<int(f.grid[0].size())&&f.grid[nr][nc]=='.',"illegal proof coordinate");
             require(i?std::abs(nr-pr)+std::abs(nc-pc)==1:nr==pr&&nc==pc,"non-adjacent proof path");pr=nr;pc=nc;}
         require(pr==f.tr&&pc==f.tc,"proof does not end at target");}
     if(r.verdict==common_semi_oracle_verdict::violated)require(distance<0,"false unreachable verdict");}
+json trace_guidance(const std::string & text){
+    auto value=json::parse(text.empty()?"{}":text,nullptr,false);
+    if(value.is_object()&&value.contains("diagnostics")&&value["diagnostics"].is_object()){
+        value["diagnostics"].erase("history_evaluation_refs");
+        value["diagnostics"].erase("history_diagnostic");
+    }
+    return value;
+}
 }
 
 int main(int argc,char ** argv){try{
@@ -73,6 +90,10 @@ int main(int argc,char ** argv){try{
     std::string reflected,rectangle,rotated;
     require(common_semi_oracle_target_problem(rule,"grid: .../.#./...\nstart: 0,2\ntarget: 2,0",reflected,error),error);
     require(common_semi_oracle_target_group(original)==common_semi_oracle_target_group(reflected),"reflection leaked between fixture groups");
+    require(common_semi_oracle_target_category(original,"east")==
+        common_semi_oracle_target_category(reflected,"west"),"fine Target Hunt features are not reflection invariant");
+    require(common_semi_oracle_target_coarse_category(original,"east")==
+        common_semi_oracle_target_coarse_category(reflected,"west"),"coarse Target Hunt features are not reflection invariant");
     require(common_semi_oracle_target_problem(rule,"grid: ..#/...\nstart: 0,0\ntarget: 1,2",rectangle,error),error);
     require(common_semi_oracle_target_problem(rule,"grid: ../../.#\nstart: 0,1\ntarget: 2,0",rotated,error),error);
     require(common_semi_oracle_target_group(rectangle)==common_semi_oracle_target_group(rotated),"rectangular rotation leaked between fixture groups");
@@ -103,24 +124,125 @@ int main(int argc,char ** argv){try{
     require(training.define_problem("grid: .../...\nstart: 0,0\ntarget: 0,2",state,error),error);
     require(training.search_active_goal(south_first,error,{2048,1024},{"south","east","north","west"}),error);
     require(json::parse(south_first.proof_json)["path"][1]["state"]["position"]==json::array({0,1}),"ordering overrode f/h priority");
+    common_semi_oracle_tool_service focal_service(*store,"target-smoke","target-session",
+        {"off",0,1024,"focal",1.1},"target-project");
+    require(focal_service.search_active_goal(south_first,error,{2048,1024}),error);
+    const auto focal_proof=json::parse(south_first.proof_json);
+    require(south_first.verdict==common_semi_oracle_verdict::satisfied&&
+        focal_proof["algorithm"]=="focal_astar_v1"&&
+        focal_proof["suboptimality_bound_proven"]==true&&
+        focal_proof["optimality_proven"]==false&&
+        focal_proof["total_cost"].get<double>()<=1.1*bfs({{"...","..."},0,0,0,2}),
+        "Focal A* did not return a path with an explicit host-bound proof");
     std::mt19937_64 rng(20261019);std::set<std::string> groups;std::vector<fixture> fixtures;
     for(size_t attempt=0;fixtures.size()<96&&attempt<10000;++attempt){auto f=generate(attempt,rng);
         if(f.sr==f.tr&&f.sc==f.tc)continue;
         require(training.define_problem(dsl(f),state,error),error);
         if(groups.insert(common_semi_oracle_target_group(state)).second)fixtures.push_back(std::move(f));}
     require(fixtures.size()==96,"insufficient independent maps");
+    // Independent BFS truth pass: branch regret is a label, never a feature.
+    std::vector<common_outcome_guidance_projection_observation> branch_rows;
+    const std::array<std::string,4> branch_actions{{"north","south","east","west"}};
+    const int branch_dr[]={-1,1,0,0},branch_dc[]={0,0,1,-1};
+    json branch_training=json::array();
+    for(size_t fi=0;fi<64;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
+        const auto distance=distances_to_target(f);json map_labels=json::array();
+        json group_state={{"grid",f.grid},{"start",{f.sr,f.sc}},{"target",{f.tr,f.tc}},{"position",{f.sr,f.sc}}};
+        const std::string fixture_group=common_semi_oracle_target_group(group_state.dump());
+        for(int r=0;r<h;++r)for(int c=0;c<w;++c){const int here=r*w+c;if(f.grid[r][c]=='#')continue;
+            json state_json={{"grid",f.grid},{"start",{f.sr,f.sc}},{"target",{f.tr,f.tc}},{"position",{r,c}}};
+            std::vector<std::pair<std::string,int>> siblings;
+            for(size_t ai=0;ai<branch_actions.size();++ai){const int nr=r+branch_dr[ai],nc=c+branch_dc[ai];
+                if(nr<0||nc<0||nr>=h||nc>=w||f.grid[nr][nc]=='#')continue;
+                const int next=distance[nr*w+nc];const int label=distance[here]<0||next<0?2:(1+next-distance[here]==0?0:1);
+                const auto fine=common_semi_oracle_target_category(state_json.dump(),branch_actions[ai]);
+                const auto coarse=common_semi_oracle_target_coarse_category(state_json.dump(),branch_actions[ai]);
+                std::vector<double> one_hot(3,0.0);one_hot[label]=1.0;
+                branch_rows.push_back({fixture_group,fine,one_hot});branch_rows.push_back({fixture_group,coarse,one_hot});
+                siblings.push_back({branch_actions[ai],label});
+                map_labels.push_back({{"position",{r,c}},{"action",branch_actions[ai]},
+                    {"regret",next<0?json(nullptr):json(1+next-distance[here])},
+                    {"truth",label==0?"optimal":label==1?"detour":"unreachable"},
+                    {"feature",fine},{"coarse_feature",coarse}});
+            }
+        }
+        branch_training.push_back({{"fixture",fi},{"fixture_group",fixture_group},{"labels",map_labels}});
+    }
+    common_outcome_guidance_projection branch_projection;
+    const std::string branch_source="target-hunt-bfs-training-v1:64-independent-fixture-groups";
+    require(common_outcome_guidance_build_projection(branch_rows,"target-hunt-branch-projection-v1",
+        branch_source,0,branch_projection,error),error);
+    std::map<std::string,std::vector<double>> branch_weights;std::map<std::string,size_t> branch_groups;
+    branch_projection.aggregate_excluding("",branch_weights,branch_groups);
+    size_t branch_baseline_top1=0,branch_guided_top1=0,branch_pairs=0,branch_baseline_correct=0,branch_guided_correct=0;
+    json branch_heldout=json::array();
+    for(size_t fi=64;fi<96;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
+        const auto distance=distances_to_target(f);size_t map_baseline=0,map_guided=0,map_pairs=0,map_base_correct=0,map_guide_correct=0;
+        for(int r=0;r<h;++r)for(int c=0;c<w;++c){const int here=r*w+c;if(f.grid[r][c]=='#')continue;
+            json state_json={{"grid",f.grid},{"start",{f.sr,f.sc}},{"target",{f.tr,f.tc}},{"position",{r,c}}};
+            struct branch_candidate{std::string action;int truth;size_t original;double p_opt=1.0/3.0,p_unreachable=1.0/3.0;};
+            std::vector<branch_candidate> candidates;
+            for(size_t ai=0;ai<branch_actions.size();++ai){const int nr=r+branch_dr[ai],nc=c+branch_dc[ai];
+                if(nr<0||nc<0||nr>=h||nc>=w||f.grid[nr][nc]=='#')continue;
+                const int next=distance[nr*w+nc];const int truth=distance[here]<0||next<0?2:(1+next-distance[here]==0?0:1);
+                const auto fine=common_semi_oracle_target_category(state_json.dump(),branch_actions[ai]);
+                const auto coarse=common_semi_oracle_target_coarse_category(state_json.dump(),branch_actions[ai]);
+                const auto & selected=branch_groups[fine]>=8?fine:coarse;
+                const auto found=branch_weights.find(selected);
+                if(found!=branch_weights.end()&&found->second.size()==3){const auto & counts=found->second;
+                    common_outcome_guidance_posterior posterior;
+                    require(common_outcome_guidance_make_posterior(counts[0]+counts[1]+counts[2],0.0,0.5,
+                        counts,{1.0/3,1.0/3,1.0/3},0.0,3.0,posterior),"invalid branch posterior");
+                    candidates.push_back({branch_actions[ai],truth,ai,posterior.category_probabilities[0],posterior.category_probabilities[2]});
+                }else candidates.push_back({branch_actions[ai],truth,ai});
+            }
+            if(candidates.empty())continue;
+            auto guided_candidates=candidates;
+            std::stable_sort(guided_candidates.begin(),guided_candidates.end(),[](const auto & a,const auto & b){
+                if(a.p_opt!=b.p_opt)return a.p_opt>b.p_opt;
+                if(a.p_unreachable!=b.p_unreachable)return a.p_unreachable<b.p_unreachable;
+                return a.original<b.original;});
+            const auto quality=[](int label){return label==0?2:label==1?1:0;};
+            if(candidates.front().truth==0){++branch_baseline_top1;++map_baseline;}
+            if(guided_candidates.front().truth==0){++branch_guided_top1;++map_guided;}
+            for(size_t i=0;i<candidates.size();++i)for(size_t j=i+1;j<candidates.size();++j){
+                if(quality(candidates[i].truth)==quality(candidates[j].truth))continue;
+                ++branch_pairs;++map_pairs;
+                if(quality(candidates[i].truth)>quality(candidates[j].truth)){
+                    if(candidates[i].original<candidates[j].original){++branch_baseline_correct;++map_base_correct;}
+                    const auto a=std::find_if(guided_candidates.begin(),guided_candidates.end(),[&](const auto & x){return x.action==candidates[i].action;});
+                    const auto b=std::find_if(guided_candidates.begin(),guided_candidates.end(),[&](const auto & x){return x.action==candidates[j].action;});
+                    if(a<b){++branch_guided_correct;++map_guide_correct;}
+                }else{
+                    if(candidates[j].original<candidates[i].original){++branch_baseline_correct;++map_base_correct;}
+                    const auto a=std::find_if(guided_candidates.begin(),guided_candidates.end(),[&](const auto & x){return x.action==candidates[j].action;});
+                    const auto b=std::find_if(guided_candidates.begin(),guided_candidates.end(),[&](const auto & x){return x.action==candidates[i].action;});
+                    if(a<b){++branch_guided_correct;++map_guide_correct;}
+                }
+            }
+        }
+        branch_heldout.push_back({{"fixture",fi},{"baseline_optimal_top1",map_baseline},
+            {"guided_optimal_top1",map_guided},{"strict_sibling_pairs",map_pairs},
+            {"baseline_correct_pairs",map_base_correct},{"guided_correct_pairs",map_guide_correct}});
+    }
+    const json branch_report={{"truth_source","independent_reverse_bfs"},{"feature_version","target_hunt_features_v2"},
+        {"training_fixture_groups",64},{"heldout_fixture_groups",32},{"projection_fingerprint",branch_projection.fingerprint},
+        {"baseline_optimal_top1",branch_baseline_top1},{"posterior_mean_optimal_top1",branch_guided_top1},
+        {"strict_sibling_pairs",branch_pairs},{"baseline_correct_pairs",branch_baseline_correct},
+        {"posterior_mean_correct_pairs",branch_guided_correct},{"heldout_by_fixture",branch_heldout}};
+    if(trace)trace<<json{{"phase","verified_branch_quality"},{"training",branch_training},{"report",branch_report}}.dump()<<'\n';
     for(size_t i=0;i<64;++i){require(training.define_problem(dsl(fixtures[i]),state,error),error);
         std::vector<std::string> order={"north","south","east","west"};std::shuffle(order.begin(),order.end(),rng);
-        for(size_t budget:{16,64,256}){common_semi_oracle_result r;require(training.search_active_goal(r,error,{budget,256},order),error);check_result(fixtures[i],r);
-            if(trace)trace<<json{{"phase","train"},{"fixture",i},{"budget",budget},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
-                {"expansions",r.expansions},{"guidance",json::parse(r.search_guidance_json)}}.dump()<<'\n';}}
+        common_semi_oracle_result r;require(training.search_active_goal(r,error,{256,256},order),error);check_result(fixtures[i],r);
+        if(trace)trace<<json{{"phase","train"},{"fixture",i},{"budget",256},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
+            {"expansions",r.expansions},{"guidance",trace_guidance(r.search_guidance_json)}}.dump()<<'\n';}
     frozen_store frozen(*store);require(store->list_search_history(rule.id,rule.revision,1024,frozen.history,error),error);
     frozen.history.erase(std::remove_if(frozen.history.begin(),frozen.history.end(),[](const auto & record){
         const auto context=json::parse(record.guidance_json).at("context");
         const auto budget=context.at("max_expansions").template get<size_t>();
-        return context.at("max_depth")!=256||(budget!=16&&budget!=64&&budget!=256);
+        return context.at("max_depth")!=256||budget!=256;
     }),frozen.history.end());
-    require(frozen.history.size()==192,"training snapshot must contain exactly three searches for each of 64 maps");
+    require(frozen.history.size()==64,"training snapshot must contain one completed search for each of 64 maps");
     // Keep every prediction input and source ID, while avoiding repeated parsing
     // of verbose diagnostics. The original evaluations remain in the production store/trace.
     for(auto & record:frozen.history){auto data=json::parse(record.guidance_json);
@@ -157,16 +279,23 @@ int main(int argc,char ** argv){try{
     json summaries=json::array();size_t changed=0,changed_paths=0;
     for(size_t budget:{16,64,256})for(uint64_t seed=0;seed<8;++seed){
         json row={{"budget",budget},{"seed",seed}};
-        for(const auto * mode:{"off","shadow","experimental"}){size_t hits=0,unknown=0,expansions=0;double elapsed=0,projection_ms=0,adviser_ms=0,search_ms=0;
-            common_semi_oracle_tool_service service(frozen,"target-smoke","target-session",{mode,seed,1024},"target-project");
+        for(const auto * mode:{"off","random_tie","shadow","experimental"}){size_t hits=0,unknown=0,expansions=0;double elapsed=0,projection_ms=0,adviser_ms=0,search_ms=0;
+            const std::string guidance_mode=std::string(mode)=="random_tie"?"off":mode;
+            common_semi_oracle_tool_service service(frozen,"target-smoke","target-session",{guidance_mode,seed,1024},"target-project");
             for(size_t i=64;i<96;++i){require(service.define_problem(dsl(fixtures[i]),state,error),error);
                 // Stable problem identity across variants: canonical instance bytes, not a fresh host nonce.
                 auto stable=json::parse(state);stable["problem_id"]="heldout-"+std::to_string(i);state=stable.dump();
                 require(service.initialize_active_state(state,true,error),error);
-                auto start=std::chrono::steady_clock::now();common_semi_oracle_result r;require(service.search_active_goal(r,error,{budget,256}),error);
+                std::vector<std::string> tie_order;
+                if(std::string(mode)=="random_tie"){
+                    tie_order={"north","south","east","west"};
+                    std::mt19937_64 tie_rng(seed^(uint64_t(i)<<16)^uint64_t(budget));std::shuffle(tie_order.begin(),tie_order.end(),tie_rng);
+                }
+                auto start=std::chrono::steady_clock::now();common_semi_oracle_result r;
+                require(service.search_active_goal(r,error,{budget,256},tie_order),error);
                 elapsed+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();check_result(fixtures[i],r);
                 hits+=r.verdict==common_semi_oracle_verdict::satisfied;unknown+=r.verdict==common_semi_oracle_verdict::unknown;expansions+=r.expansions;
-                auto guidance=json::parse(r.search_guidance_json.empty()?"{}":r.search_guidance_json);
+                auto guidance=trace_guidance(r.search_guidance_json);
                 if(guidance.contains("diagnostics")){
                     const auto & diagnostics=guidance["diagnostics"];
                     projection_ms+=diagnostics.value("projection_ms",0.0);adviser_ms+=diagnostics.value("adviser_ms",0.0);search_ms+=diagnostics.value("search_ms",0.0);
@@ -193,9 +322,47 @@ int main(int argc,char ** argv){try{
                 {"search_evaluation_ms",std::string(mode)=="off"?json(nullptr):json(search_ms)}};
         }summaries.push_back(row);
     }
+    json focal_comparisons=json::array();
+    for(double bound:{1.0,1.05,1.1})for(const auto & variant:
+            std::vector<std::pair<std::string,std::string>>{{"off","posterior_sampling"},
+                {"experimental","posterior_mean"},{"experimental","posterior_sampling"}}){
+        json variant_result={{"algorithm","focal"},{"bound",bound},{"mode",variant.first},
+            {"sampling_policy",variant.second},{"seeds",8}};
+        const uint64_t seed_count=variant.first=="experimental"&&variant.second=="posterior_sampling"?8:1;
+        variant_result["sampling_repetitions"]=seed_count;
+        for(size_t budget:{16,64,256}){size_t hits=0,unknown=0,expansions=0;double cost_sum=0.0;size_t cost_count=0;
+            for(uint64_t seed=0;seed<seed_count;++seed){
+                common_semi_oracle_outcome_guidance_config focal_config;
+                focal_config.mode=variant.first;focal_config.seed=seed;focal_config.max_history_evaluations=1024;
+                focal_config.search_algorithm="focal";focal_config.suboptimality_bound=bound;
+                focal_config.sampling_policy=variant.second;
+                // Keep every variant on the exact same frozen training source;
+                // writes from one focal run must not leak into later runs.
+                common_semi_oracle_tool_service focal_variant(frozen,"target-smoke","target-session",focal_config,"target-project");
+                for(size_t i=64;i<96;++i){require(focal_variant.define_problem(dsl(fixtures[i]),state,error),error);
+                    auto stable=json::parse(state);stable["problem_id"]="focal-"+std::to_string(i);state=stable.dump();
+                    require(focal_variant.initialize_active_state(state,true,error),error);
+                    common_semi_oracle_result r;require(focal_variant.search_active_goal(r,error,{budget,256}),error);
+                    check_result(fixtures[i],r,bound);hits+=r.verdict==common_semi_oracle_verdict::satisfied;
+                    unknown+=r.verdict==common_semi_oracle_verdict::unknown;expansions+=r.expansions;
+                    const auto proof=json::parse(r.proof_json.empty()?"null":r.proof_json);
+                    if(proof.is_object()&&proof.contains("total_cost")){cost_sum+=proof["total_cost"].get<double>();++cost_count;}
+                    if(trace)trace<<json{{"phase","focal_comparison"},{"fixture",i},{"fixture_group",common_semi_oracle_target_group(state)},
+                        {"mode",variant.first},{"sampling_policy",variant.second},{"seed",seed},{"budget",budget},
+                        {"bound",bound},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
+                        {"expansions",r.expansions},{"bfs_distance",bfs(fixtures[i])},
+                        {"proof",proof},{"guidance",trace_guidance(r.search_guidance_json)}}.dump()<<'\n';
+                }
+            }
+            variant_result["budget_"+std::to_string(budget)]={{"solved",hits},{"unknown",unknown},
+                {"expansions_total",expansions},{"mean_solved_cost",cost_count?cost_sum/cost_count:0.0}};
+        }
+        focal_comparisons.push_back(variant_result);
+    }
     require(changed>0,"historical adviser never changed any successor order");
     require(changed_paths>0,"guidance changed orders but never changed an executed path or expansion count");
     std::cout<<json{{"train_maps",64},{"heldout_maps",32},{"history_source","compact_frozen_projection"},{"frozen_records",frozen.history.size()},
-        {"changed_orders",changed},{"changed_searches",changed_paths},{"comparisons",summaries}}.dump(2)<<'\n';
+        {"changed_orders",changed},{"changed_searches",changed_paths},{"comparisons",summaries},
+        {"focal_comparisons",focal_comparisons},{"verified_branch_quality",branch_report}}.dump(2)<<'\n';
     return 0;
 }catch(const std::exception & e){std::cerr<<"Target Hunt smoke failed: "<<e.what()<<'\n';return 1;}}
