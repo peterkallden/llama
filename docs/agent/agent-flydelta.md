@@ -2403,6 +2403,33 @@ utility instead of sampling. Runtime configuration deliberately exposes no
 third production selection policy; `experimental` continues to use posterior
 sampling, while `shadow` keeps the actual arm order unchanged.
 
+#### Shared prediction core and MCP inspection
+
+The Beta/Dirichlet posterior calculations and approximate marginal intervals
+are shared through `common/agent/prediction/outcome-guidance.*`; FlyDelta still
+owns outcome categories, compatibility partitions, fixture weighting, and
+the search-specific backoff projection. This keeps the reusable math separate
+without making the generic layer an authority over FlyDelta evidence.
+
+The read-only `outcome.predict` MCP tool is available in `analysis`, `research`
+and `all-configured` when the daemon has its FlyDelta lifecycle journal bound.
+With no arguments it returns up to eight recent host-issued
+`observation_ref` values and their retrospective predictions. Pass those opaque
+values in `candidate_refs` to query specific rows, or set `max_candidates` to
+bound the default listing. The host reads only the current namespace/project/
+session journal and resolves all arm features from stored lifecycle records;
+the model cannot submit feature values or add observations. Results include
+the lifecycle watermark and history fingerprint, and unresolved references
+are returned explicitly.
+
+These are chronological leave-one-fixture-group-out estimates for already
+observed arms: only earlier compatible outcomes are used, and the candidate's
+own fixture group is excluded. They are not predictions for arbitrary new
+arms and do not create verifier evidence, learning credit, lifecycle changes,
+or promotion. A response with `status="insufficient_history"` is not a negative
+outcome. SemiOracle does not yet have an outcome-history adapter; its bounded
+search verifier and successor-ordering seam remain independent.
+
 #### Verification status after the 2026-10-19 corrections
 
 The current implementation includes Whirlpool guidance (`b9f523b04`), corrected

@@ -4593,6 +4593,14 @@ control Whirlpool's objective and host verification determines outcomes and
 learning credit. Guidance adds no stop rule or guaranteed probe saving. See
 [the configuration, trace schemas and verification status](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite).
 
+The read-only MCP tool `outcome.predict` exposes retrospective predictions for
+host-issued FlyDelta observation references in the current session. It is
+available through the `analysis`, `research` and dynamic `all-configured`
+profiles only when the daemon lifecycle journal is bound. Candidate features
+come from that journal; callers cannot provide training observations or raw
+features. The tool is not a source of truth or learning credit. See
+[shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
+
 `runtime.adaptation.flydelta.teacher_scoring_backend` defaults to `auto`,
 which uses compact target-log-probability graph scoring on the scheduler's
 chosen backend. `cpu` selects the full-logit reference; `backend` requires

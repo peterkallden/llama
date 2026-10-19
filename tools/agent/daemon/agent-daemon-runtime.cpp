@@ -646,6 +646,205 @@ make_daemon_semi_oracle_relation_provider(
     };
 }
 
+common_tool_execution_result daemon_outcome_predict(
+        common_learning_lifecycle_store & store,
+        const std::string & namespace_id,
+        const std::string & project_id,
+        const std::string & session_id,
+        const std::string & input) {
+    using json = nlohmann::ordered_json;
+    const auto args = json::parse(input, nullptr, false);
+    if (!args.is_object()) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
+        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
+    if (args.contains("max_candidates") && !args["max_candidates"].is_number_unsigned() &&
+            !args["max_candidates"].is_number_integer()) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "max_candidates must be an integer.", "max_candidates is not an integer");
+    const size_t limit = args.value("max_candidates", size_t{8});
+    if (limit == 0 || limit > 16) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
+    std::vector<common_learning_lifecycle_record> records;
+    uint64_t watermark = 0;
+    std::string error;
+    if (!store.list_scope_with_watermark(namespace_id, project_id, session_id,
+            records, watermark, error)) return common_tool_execution_result::failure(
+        "tool.outcome.history_unavailable", common_tool_failure_class::execution, true,
+        "Historical outcome guidance is temporarily unavailable.", std::move(error));
+
+    struct row_entry {
+        common_flydelta_outcome_guidance_observation observation;
+        std::string scope;
+        uint64_t registration_order = 0;
+    };
+    std::vector<row_entry> rows;
+    for (const auto & record : records) {
+        if (record.kind != common_learning_lifecycle_kind::flydelta_result ||
+                record.registration_order == 0) continue;
+        try {
+            const auto payload = json::parse(record.payload_json, nullptr, false);
+            if (!payload.is_object() || payload.value("record_type", std::string{}) != "candidate_search_decision" ||
+                    !payload.contains("outcome_guidance") || !payload["outcome_guidance"].is_object()) continue;
+            const auto & g = payload["outcome_guidance"];
+            if (g.value("schema_version", 0) != 1) continue;
+            row_entry entry;
+            entry.registration_order = record.registration_order;
+            auto & o = entry.observation;
+            o.stable_observation_id = g.value("observation_id", std::string{});
+            o.fixture_group_id = g.value("fixture_group_id", std::string{});
+            o.context.scope_fingerprint = g.value("scope_fingerprint", std::string{});
+            o.context.model_profile_fingerprint = g.value("model_profile_fingerprint", std::string{});
+            o.context.tokenizer_fingerprint = g.value("tokenizer_fingerprint", std::string{});
+            o.context.template_fingerprint = g.value("template_fingerprint", std::string{});
+            o.context.baseline_deployment_fingerprint = g.value("baseline_deployment_fingerprint", std::string{});
+            o.context.verifier_revision = g.value("verifier_revision", std::string{});
+            o.context.ruleset_revision = g.value("ruleset_revision", std::string{});
+            o.context.action_contract_fingerprint = g.value("action_contract_fingerprint", std::string{});
+            o.context.semantic_domain = g.value("domain", std::string{});
+            o.context.strategy = g.value("strategy", std::string{});
+            o.context.estimator = g.value("estimator", std::string{});
+            o.basis_identity = g.value("basis_id", std::string{});
+            o.rank = g.value("rank", size_t{0});
+            o.relative_layer = g.value("relative_layer", 0.0);
+            o.relative_dose = g.value("relative_dose", 0.0);
+            o.mixed_coefficients = g.value("mixed_coefficients", false);
+            o.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
+            o.comparison_completed = g.value("comparison_completed", false);
+            o.overlay_applied = g.value("overlay_applied", false);
+            const auto outcome = payload.value("outcome", std::string("unknown"));
+            o.outcome = outcome == "helped" ? common_flydelta_counterfactual_outcome::helped :
+                outcome == "neutral" ? common_flydelta_counterfactual_outcome::neutral :
+                outcome == "harmed" ? common_flydelta_counterfactual_outcome::harmed :
+                common_flydelta_counterfactual_outcome::unknown;
+            o.outcome_known = g.value("outcome_known",
+                o.outcome != common_flydelta_counterfactual_outcome::unknown);
+            o.verifier_known = payload.value("verifier_known", false);
+            entry.scope = record.namespace_id + "/" + record.project_id + "/" + record.session_id;
+            if (!o.stable_observation_id.empty() && !o.fixture_group_id.empty()) rows.push_back(std::move(entry));
+        } catch (...) {
+            // Invalid legacy records are ignored; they are not model-visible evidence.
+        }
+    }
+
+    std::vector<std::string> requested;
+    if (args.contains("candidate_refs")) {
+        const auto & refs = args["candidate_refs"];
+        if (!refs.is_array() || refs.size() > 16) return common_tool_execution_result::failure(
+            "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+            "candidate_refs must contain at most 16 observation references.", "invalid candidate_refs array");
+        for (const auto & ref : refs) {
+            if (!ref.is_string() || ref.get<std::string>().empty()) return common_tool_execution_result::failure(
+                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "candidate_refs contains an invalid observation reference.", "reference must be a non-empty string");
+            requested.push_back(ref.get<std::string>());
+        }
+    } else {
+        std::set<std::string> seen;
+        for (auto it = rows.rbegin(); it != rows.rend() && requested.size() < limit; ++it)
+            if (seen.insert(it->observation.stable_observation_id).second)
+                requested.push_back(it->observation.stable_observation_id);
+    }
+
+    json predictions = json::array();
+    std::set<std::string> handled;
+    json unresolved_refs = json::array();
+    size_t effective_groups = 0;
+    std::string fingerprints;
+    const std::string expected_scope = namespace_id + "/" + project_id + "/" + session_id;
+    const auto same_observation = [](const auto & a, const auto & b) {
+        return a.stable_observation_id == b.stable_observation_id &&
+            a.fixture_group_id == b.fixture_group_id && a.basis_identity == b.basis_identity &&
+            a.context.scope_fingerprint == b.context.scope_fingerprint &&
+            a.context.model_profile_fingerprint == b.context.model_profile_fingerprint &&
+            a.context.tokenizer_fingerprint == b.context.tokenizer_fingerprint &&
+            a.context.template_fingerprint == b.context.template_fingerprint &&
+            a.context.baseline_deployment_fingerprint == b.context.baseline_deployment_fingerprint &&
+            a.context.verifier_revision == b.context.verifier_revision &&
+            a.context.ruleset_revision == b.context.ruleset_revision &&
+            a.context.action_contract_fingerprint == b.context.action_contract_fingerprint &&
+            a.context.semantic_domain == b.context.semantic_domain && a.context.strategy == b.context.strategy &&
+            a.context.estimator == b.context.estimator && a.rank == b.rank &&
+            a.relative_layer == b.relative_layer && a.relative_dose == b.relative_dose &&
+            a.mixed_coefficients == b.mixed_coefficients &&
+            a.diagnostic_margin_sign == b.diagnostic_margin_sign &&
+            a.comparison_completed == b.comparison_completed && a.overlay_applied == b.overlay_applied &&
+            a.outcome_known == b.outcome_known && a.verifier_known == b.verifier_known && a.outcome == b.outcome;
+    };
+    for (const auto & ref : requested) {
+        if (!handled.insert(ref).second) continue;
+        const row_entry * target = nullptr;
+        bool conflict = false;
+        for (const auto & row : rows) if (row.observation.stable_observation_id == ref && row.scope == expected_scope) {
+            if (target && !same_observation(target->observation, row.observation)) {
+                conflict = true;
+                break;
+            }
+            target = &row;
+        }
+        if (!target || conflict) {
+            unresolved_refs.push_back(ref);
+            continue;
+        }
+        std::vector<common_flydelta_outcome_guidance_observation> history;
+        for (const auto & row : rows) {
+            const auto & a = row.observation.context;
+            const auto & b = target->observation.context;
+            if (row.scope == target->scope && row.registration_order < target->registration_order &&
+                    row.observation.fixture_group_id != target->observation.fixture_group_id &&
+                    a.scope_fingerprint == b.scope_fingerprint && a.model_profile_fingerprint == b.model_profile_fingerprint &&
+                    a.tokenizer_fingerprint == b.tokenizer_fingerprint && a.template_fingerprint == b.template_fingerprint &&
+                    a.baseline_deployment_fingerprint == b.baseline_deployment_fingerprint && a.verifier_revision == b.verifier_revision &&
+                    a.ruleset_revision == b.ruleset_revision && a.action_contract_fingerprint == b.action_contract_fingerprint)
+                history.push_back(row.observation);
+        }
+        common_flydelta_outcome_guidance_config config;
+        config.mode = common_flydelta_outcome_guidance_mode::shadow;
+        common_flydelta_outcome_guidance_candidate candidate;
+        candidate.arm_id = ref;
+        candidate.rank = target->observation.rank;
+        candidate.relative_layer = target->observation.relative_layer;
+        candidate.relative_dose = target->observation.relative_dose;
+        candidate.mixed_coefficients = target->observation.mixed_coefficients;
+        candidate.diagnostic_margin_sign = target->observation.diagnostic_margin_sign;
+        candidate.basis_identity = target->observation.basis_identity;
+        common_flydelta_outcome_guidance_decision decision;
+        std::string predict_error;
+        if (!common_flydelta_outcome_guidance_build_decision(config,
+                target->observation.context, history, {candidate}, 1, 0, decision, predict_error) ||
+                decision.predictions.size() != 1) {
+            unresolved_refs.push_back(ref);
+            continue;
+        }
+        const auto & p = decision.predictions.front();
+        effective_groups += p.fixture_groups;
+        fingerprints += ref + decision.history_fingerprint;
+        predictions.push_back({
+            {"observation_ref", ref}, {"p_known", p.p_known},
+            {"p_known_interval", {p.p_known_low, p.p_known_high}},
+            {"p_helped_given_known", p.p_helped_given_known},
+            {"p_neutral_given_known", p.p_neutral_given_known},
+            {"p_harmed_given_known", p.p_harmed_given_known},
+            {"expected_utility", p.expected_utility}, {"evidence_groups", p.fixture_groups},
+            {"backoff_level", p.level}, {"history_fingerprint", decision.history_fingerprint},
+            {"prediction_kind", "chronological_leave_fixture_group_out"},
+            {"domain", target->observation.context.semantic_domain},
+            {"strategy", target->observation.context.strategy},
+            {"estimator", target->observation.context.estimator},
+            {"observed_outcome", target->observation.outcome_known ?
+                (target->observation.outcome == common_flydelta_counterfactual_outcome::helped ? "helped" :
+                 target->observation.outcome == common_flydelta_counterfactual_outcome::neutral ? "neutral" : "harmed") : "unknown"},
+        });
+    }
+    const std::string fingerprint = hash_sha256_hex(fingerprints.data(), fingerprints.size());
+    return common_tool_execution_result::success(json{
+        {"status", effective_groups ? "available" : "insufficient_history"},
+        {"scope", expected_scope}, {"history_watermark", watermark},
+        {"history_fingerprint", "sha256:" + fingerprint}, {"predictions", std::move(predictions)},
+        {"unresolved_refs", std::move(unresolved_refs)},
+    }.dump());
+}
+
 } // namespace
 
 bool resolve_agent_daemon_tooling(
@@ -659,7 +858,8 @@ bool resolve_agent_daemon_tooling(
         std::string & error,
         common_agent_data_store * data_store,
         std::optional<bool> allow_policy_gated_writes,
-        common_semi_oracle_store * semi_oracle_store) {
+        common_semi_oracle_store * semi_oracle_store,
+        common_learning_lifecycle_store * learning_lifecycle_store) {
     tooling = {};
     common_memory_query query = make_daemon_memory_query(request);
     auto tool_request = make_daemon_tool_request(
@@ -905,6 +1105,16 @@ bool resolve_agent_daemon_tooling(
         };
     } else {
         tool_request.semi_oracle_tool_call = {};
+    }
+    if (learning_lifecycle_store != nullptr && !request.session_id.empty()) {
+        tool_request.outcome_predict_tool_call = [learning_lifecycle_store,
+                namespace_id = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
+                project_id = request.project_id, session_id = request.session_id](const std::string & input) {
+            return daemon_outcome_predict(*learning_lifecycle_store,
+                namespace_id, project_id, session_id, input);
+        };
+    } else {
+        tool_request.outcome_predict_tool_call = {};
     }
         std::string * current_plan_id = runtime != nullptr
         ? const_cast<std::string *>(&runtime->current_plan_id())
@@ -1180,7 +1390,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         {},
         {},
         [config_store, &memory_store, &plan_store, &resource_store, data_store,
-            semi_oracle_store = runtime.semi_oracle_store.get()](
+            semi_oracle_store = runtime.semi_oracle_store.get(),
+            lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
@@ -1197,7 +1408,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 error,
                 data_store,
                 std::nullopt,
-                semi_oracle_store);
+                semi_oracle_store,
+                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr);
         },
         runtime.model_residency,
         make_daemon_flydelta_deployment_resolver(options, config_store, runtime),
@@ -1480,7 +1692,8 @@ bool initialize_agent_daemon_environment(
     agent_resource_store * resource_store = runtime.resource_store.get();
     common_agent_data_store * data_store = runtime.data_store.get();
     runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store,
-            resource_store, data_store, semi_oracle_store = runtime.semi_oracle_store.get()](
+            resource_store, data_store, semi_oracle_store = runtime.semi_oracle_store.get(),
+            lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {
@@ -1513,7 +1726,8 @@ bool initialize_agent_daemon_environment(
                 callback_error,
                 data_store,
                 payload.allow_policy_gated_writes,
-                semi_oracle_store)) {
+                semi_oracle_store,
+                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr)) {
             return false;
         }
         if (tooling.tool_view == nullptr) {

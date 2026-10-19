@@ -186,7 +186,9 @@ remote MCP providers, status/readiness, and Docker usage.
   Whirlpool, Deep and TFO-lite. Implemented runtime paths and model-free
   contracts do not by themselves establish learned behavioral benefit or
   fewer probes. Configuration, trace fields and current verification limits
-  are documented in [FlyDelta sideband learning](agent-flydelta.md).
+  are documented in [FlyDelta sideband learning](agent-flydelta.md). The
+  read-only `outcome.predict` MCP tool can inspect retrospective predictions
+  for host-issued FlyDelta observations; it cannot submit or verify outcomes.
   New development sessions
   should begin with the [FlyDelta session bootstrap](agent-flydelta-session-bootstrap.md),
   which also defines the end-of-sweep documentation gate.

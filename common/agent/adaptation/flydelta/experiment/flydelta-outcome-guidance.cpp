@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
+#include "agent/prediction/outcome-guidance.h"
 
 #include <algorithm>
 #include <array>
@@ -136,20 +137,6 @@ std::string history_hash(const std::vector<const common_flydelta_outcome_guidanc
     }
     const std::string material = canonical.dump();
     return "sha256:" + hash_sha256_hex(material.data(), material.size());
-}
-
-double sample_beta(double a, double b, std::mt19937_64 & rng) {
-    std::gamma_distribution<double> ga(std::max(1e-6, a), 1.0), gb(std::max(1e-6, b), 1.0);
-    const double x = ga(rng), y = gb(rng);
-    return x + y > 0 ? x / (x + y) : 0.5;
-}
-
-std::pair<double, double> beta_interval(double a, double b) {
-    const double total = a + b;
-    const double mean = a / total;
-    const double variance = a * b / (total * total * (total + 1.0));
-    const double radius = 1.96 * std::sqrt(std::max(0.0, variance));
-    return {std::max(0.0, mean-radius), std::min(1.0, mean+radius)};
 }
 
 } // namespace
@@ -370,26 +357,25 @@ bool common_flydelta_outcome_guidance_build_decision(
         const double helped_mean = outcome_total > 0 ? category_base.helped / outcome_total : 1.0/3.0;
         const double neutral_mean = outcome_total > 0 ? category_base.neutral / outcome_total : 1.0/3.0;
         const double harmed_mean = outcome_total > 0 ? category_base.harmed / outcome_total : 1.0/3.0;
-        const double pka = 1.0 + leaf.known + prior * known_mean;
-        const double pkb = 1.0 + leaf.unknown + prior * (1.0-known_mean);
-        const double pha = 1.0 + leaf.helped + category_prior * helped_mean;
-        const double pna = 1.0 + leaf.neutral + category_prior * neutral_mean;
-        const double pda = 1.0 + leaf.harmed + category_prior * harmed_mean;
+        common_outcome_guidance_posterior posterior;
+        if (!common_outcome_guidance_make_posterior(
+                leaf.known, leaf.unknown, known_mean,
+                {leaf.helped, leaf.neutral, leaf.harmed},
+                {helped_mean, neutral_mean, harmed_mean}, prior, category_prior, posterior)) {
+            error = "FlyDelta outcome posterior inputs are invalid";
+            return false;
+        }
         common_flydelta_outcome_guidance_prediction p;
         p.arm_id = candidates[i].arm_id;
         p.level = leaf_groups ? "arm_category" : (prior > 0 ? "backoff" : "global_prior");
-        p.p_known = pka/(pka+pkb);
-        p.p_helped_given_known = pha/(pha+pna+pda);
-        p.p_neutral_given_known = pna/(pha+pna+pda);
-        p.p_harmed_given_known = pda/(pha+pna+pda);
-        const auto known_interval = beta_interval(pka, pkb);
-        const auto helped_interval = beta_interval(pha, pna + pda);
-        const auto neutral_interval = beta_interval(pna, pha + pda);
-        const auto harm_interval = beta_interval(pda, pha+pna);
-        p.p_known_low = known_interval.first; p.p_known_high = known_interval.second;
-        p.p_helped_low = helped_interval.first; p.p_helped_high = helped_interval.second;
-        p.p_neutral_low = neutral_interval.first; p.p_neutral_high = neutral_interval.second;
-        p.p_harmed_low = harm_interval.first; p.p_harmed_high = harm_interval.second;
+        p.p_known = posterior.p_known;
+        p.p_helped_given_known = posterior.category_probabilities[0];
+        p.p_neutral_given_known = posterior.category_probabilities[1];
+        p.p_harmed_given_known = posterior.category_probabilities[2];
+        p.p_known_low = posterior.p_known_low; p.p_known_high = posterior.p_known_high;
+        p.p_helped_low = posterior.category_lows[0]; p.p_helped_high = posterior.category_highs[0];
+        p.p_neutral_low = posterior.category_lows[1]; p.p_neutral_high = posterior.category_highs[1];
+        p.p_harmed_low = posterior.category_lows[2]; p.p_harmed_high = posterior.category_highs[2];
         p.expected_utility = p.p_known*(p.p_helped_given_known-config.harm_penalty*p.p_harmed_given_known);
         p.known_weight = leaf.known; p.helped_weight = leaf.helped;
         p.neutral_weight = leaf.neutral; p.harmed_weight = leaf.harmed;
@@ -402,10 +388,8 @@ bool common_flydelta_outcome_guidance_build_decision(
         p.fixture_groups = leaf_groups;
         d.predictions.push_back(p);
         by_mean.push_back({i, p.expected_utility});
-        const double sk = sample_beta(pka, pkb, rng);
-        std::gamma_distribution<double> g1(pha,1.0),g2(pna,1.0),g3(pda,1.0);
-        const double x=g1(rng),y=g2(rng),z=g3(rng),sum=x+y+z;
-        const double utility = sum > 0 ? sk*(x/sum-config.harm_penalty*z/sum) : 0.0;
+        const double utility = common_outcome_guidance_sample_expected_utility(
+            posterior, {1.0, 0.0, -config.harm_penalty}, rng);
         sampled.push_back({i,utility});
     }
     std::stable_sort(sampled.begin(),sampled.end(),[](const auto & a,const auto & b){return a.utility>b.utility;});

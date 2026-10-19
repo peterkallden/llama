@@ -1,4 +1,9 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
+#include "agent/prediction/outcome-guidance.h"
+#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/registry/tool-registry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +46,59 @@ static common_flydelta_outcome_guidance_observation observation(
 
 int main() {
     std::string error;
+    common_outcome_guidance_posterior shared_posterior;
+    CHECK(common_outcome_guidance_make_posterior(
+        3.0, 1.0, .75, {2.0, 1.0, 0.0}, {2.0/3.0, 1.0/3.0, 0.0},
+        2.0, 1.0, shared_posterior));
+    CHECK(shared_posterior.p_known > .5 && shared_posterior.p_known < 1.0);
+    CHECK(shared_posterior.category_probabilities.size() == 3);
+    CHECK(std::abs(shared_posterior.category_probabilities[0] +
+        shared_posterior.category_probabilities[1] +
+        shared_posterior.category_probabilities[2] - 1.0) < 1e-12);
+    CHECK(!common_outcome_guidance_make_posterior(
+        -1.0, 0.0, .5, {1.0}, {1.0}, 0.0, 0.0, shared_posterior));
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    CHECK(catalog.bootstrap("analysis", bootstrap, error));
+    const auto * predict_definition = catalog.find_definition("outcome.predict");
+    CHECK(predict_definition != nullptr && predict_definition->risk_class == common_tool_risk_class::local_read);
+    const auto result_schema = nlohmann::json::parse(predict_definition->result_schema_json, nullptr, false);
+    CHECK(result_schema.is_object() && result_schema.contains("properties") &&
+        result_schema["properties"].contains("predictions") &&
+        result_schema["properties"].contains("unresolved_refs"));
+    const std::string sample_result = nlohmann::ordered_json{
+        {"status", "available"}, {"scope", "local/project/session"},
+        {"history_watermark", 12}, {"history_fingerprint", "sha256:history"},
+        {"unresolved_refs", nlohmann::ordered_json::array()},
+        {"predictions", nlohmann::ordered_json::array({nlohmann::ordered_json{
+            {"observation_ref", "obs-1"},
+            {"prediction_kind", "chronological_leave_fixture_group_out"},
+            {"p_known", 0.8}, {"p_known_interval", {0.5, 1.0}},
+            {"p_helped_given_known", 0.7}, {"p_neutral_given_known", 0.2},
+            {"p_harmed_given_known", 0.1}, {"expected_utility", 0.2},
+            {"evidence_groups", 8}, {"backoff_level", "backoff"},
+            {"history_fingerprint", "sha256:prior"}, {"domain", "dataset"},
+            {"strategy", "deep"}, {"estimator", "coefficient-search"},
+            {"observed_outcome", "helped"},
+        }})},
+    }.dump();
+    std::string normalized_result;
+    CHECK(common_schema_normalize_and_validate_object(
+        sample_result, predict_definition->result_schema_json, normalized_result, error));
+    common_native_tool_bindings bindings;
+    bool prediction_called = false;
+    bindings.outcome_predict = [&prediction_called](const std::string & input) {
+        prediction_called = input == R"({"candidate_refs":["obs-1"]})";
+        return common_tool_execution_result::success(
+            R"({"status":"insufficient_history","scope":"local/p/s","history_watermark":1,"history_fingerprint":"sha256:test","predictions":[]})");
+    };
+    common_tool_registry registry;
+    common_tool_adapter_result adapter_result;
+    CHECK(common_register_native_tool_adapters(catalog, "analysis", bindings,
+        registry, adapter_result, error));
+    CHECK(registry.contains("outcome.predict") && registry.is_read_only("outcome.predict"));
+    CHECK(registry.execute({"outcome.predict", R"({"candidate_refs":["obs-1"]})"}).ok);
+    CHECK(prediction_called);
     common_flydelta_outcome_guidance_config config;
     CHECK(config.mode == common_flydelta_outcome_guidance_mode::shadow);
     CHECK(common_flydelta_outcome_guidance_config_validate(config, error));
