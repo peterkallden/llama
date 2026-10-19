@@ -150,6 +150,7 @@ int main() {
         [&guidance_requests, &first_guided_layer](const auto & request,
                 auto & decision, std::string &) {
             ++guidance_requests;
+            decision.shadow_mode = false;
             decision.original_order.resize(request.candidates.size());
             decision.shadow_order.resize(request.candidates.size());
             decision.mixed_policy_order.resize(request.candidates.size());
@@ -166,6 +167,7 @@ int main() {
                 decision.shadow_mode = false;
                 decision.predictions.push_back({});
                 decision.predictions.back().level = "backoff";
+                decision.predictions.back().arm_id = request.candidates[5].arm_id;
                 std::rotate(decision.selected_order.begin(),
                     decision.selected_order.begin() + 5, decision.selected_order.end());
                 decision.mixed_policy_order = decision.selected_order;
@@ -205,6 +207,33 @@ int main() {
         trials, selection, trace, error, guided_adviser));
     CHECK(trace.initial_centre_source == "current_diagnostic");
     CHECK(trace.rounds.front().centre_before == 5);
+
+    // Truncation precedes visited-layer filtering on the legacy path. A
+    // shadow/fallback adviser must not refill the resulting shorter batch.
+    auto legacy_config = batch_config;
+    legacy_config.probes_per_round = 2;
+    legacy_config.max_rounds = 2;
+    legacy_config.max_trials = 8;
+    CHECK(common_flydelta_run_whirlpool_search_batched(
+        fixture(), legacy_config, batch_baseline_runner, batch_runner,
+        trials, selection, trace, error));
+    std::vector<uint32_t> legacy_layers;
+    for (const auto & trial : trials) legacy_layers.push_back(trial.candidate.anchor_layer_index);
+    CHECK(legacy_layers == std::vector<uint32_t>({5, 3, 4}));
+    for (const bool fallback : {false, true}) {
+        CHECK(common_flydelta_run_whirlpool_search_batched(
+            fixture(), legacy_config, batch_baseline_runner, batch_runner,
+            trials, selection, trace, error,
+            [&](const auto & request, auto & decision, auto & adviser_error) {
+                if (!guided_adviser(request, decision, adviser_error)) return false;
+                decision.shadow_mode = !fallback;
+                if (fallback) decision.fallback_reason = "scripted_storage_failure";
+                return true;
+            }));
+        std::vector<uint32_t> actual_layers;
+        for (const auto & trial : trials) actual_layers.push_back(trial.candidate.anchor_layer_index);
+        CHECK(actual_layers == legacy_layers);
+    }
 
     common_flydelta_whirlpool_search_config invalid = config;
     invalid.probes_per_round = 1;

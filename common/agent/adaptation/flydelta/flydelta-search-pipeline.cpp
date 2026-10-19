@@ -531,17 +531,15 @@ bool common_flydelta_append_search_pipeline_lifecycle(
                 observation.guidance_action_contract_fingerprint = fixture.action_contract_fingerprint;
                 observation.guidance_domain = fixture.semantic_domain;
                 observation.guidance_strategy = "whirlpool";
-                observation.guidance_estimator = "layer-region-prior-v1";
-                observation.guidance_basis_id = direction.direction.extraction_id;
-                observation.guidance_rank = 1;
-                observation.guidance_relative_layer = static_cast<double>(
-                    region.candidate.anchor_layer_index) /
-                    static_cast<double>(fixture.model_n_layers - 1);
-                observation.guidance_relative_dose = std::max(0.0, std::min(1.0,
-                    static_cast<double>(region.executed_total_scale)));
-                observation.guidance_margin_sign = region.margin_comparison.available
-                    ? (region.margin_comparison.normalized_delta() < 0.0f ? -1 :
-                        (region.margin_comparison.normalized_delta() > 0.0f ? 1 : 0)) : 0;
+                observation.guidance_estimator = "layer-region-prior-v2";
+                const auto category = common_flydelta_outcome_guidance_layer_candidate(
+                    region.candidate.anchor_layer_index, fixture.model_n_layers,
+                    region.executed_total_scale);
+                observation.guidance_basis_id = category.basis_identity;
+                observation.guidance_rank = category.rank;
+                observation.guidance_relative_layer = category.relative_layer;
+                observation.guidance_relative_dose = category.relative_dose;
+                observation.guidance_margin_sign = category.diagnostic_margin_sign;
                 observation.guidance_comparison_completed = true;
                 observation.guidance_overlay_applied = true;
                 observation.guidance_outcome_known =

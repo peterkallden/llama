@@ -28,6 +28,19 @@ context_key hard_key(const common_flydelta_outcome_guidance_context & c) {
 int layer_bucket(double v) { return v < 0.25 ? 0 : (v < 0.5 ? 1 : (v < 0.75 ? 2 : 3)); }
 int dose_bucket(double v) { return v < 0.25 ? 0 : (v < 0.5 ? 1 : (v < 0.75 ? 2 : 3)); }
 
+nlohmann::ordered_json canonical_candidate_pool(
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates) {
+    auto pool = nlohmann::ordered_json::array();
+    for (const auto & candidate : candidates) pool.push_back({
+        {"arm_id", candidate.arm_id}, {"basis_identity", candidate.basis_identity},
+        {"rank", candidate.rank}, {"relative_layer", candidate.relative_layer},
+        {"relative_dose", candidate.relative_dose},
+        {"mixed_coefficients", candidate.mixed_coefficients},
+        {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
+    });
+    return pool;
+}
+
 bucket_key key_for(const common_flydelta_outcome_guidance_context & c,
         const common_flydelta_outcome_guidance_candidate & a) {
     return {c.semantic_domain, c.strategy, c.estimator, a.rank,
@@ -95,7 +108,7 @@ std::string history_hash(const std::vector<const common_flydelta_outcome_guidanc
         return a->stable_observation_id < b->stable_observation_id;
     });
     nlohmann::ordered_json canonical = {
-        {"builder_revision", "flydelta-outcome-projection-v2"},
+        {"builder_revision", "flydelta-outcome-projection-v3"},
         {"observations", nlohmann::ordered_json::array()},
     };
     for (const auto * o : sorted) {
@@ -140,6 +153,24 @@ std::pair<double, double> beta_interval(double a, double b) {
 }
 
 } // namespace
+
+common_flydelta_outcome_guidance_candidate common_flydelta_outcome_guidance_layer_candidate(
+        uint32_t layer, uint32_t model_n_layers, double scale) {
+    common_flydelta_outcome_guidance_candidate candidate;
+    candidate.arm_id = "layer:" + std::to_string(layer);
+    candidate.rank = 1;
+    candidate.relative_layer = model_n_layers > 1
+        ? static_cast<double>(layer) / static_cast<double>(model_n_layers - 1) : 0.0;
+    candidate.relative_dose = std::max(0.0, std::min(1.0, scale));
+    // WHERE categories carry no raw coefficient coordinates or post-run margin.
+    return candidate;
+}
+
+std::string common_flydelta_outcome_guidance_pool_fingerprint(
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates) {
+    const std::string bytes = canonical_candidate_pool(candidates).dump();
+    return "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+}
 
 const char * common_flydelta_outcome_guidance_mode_name(common_flydelta_outcome_guidance_mode mode) {
     switch (mode) {
@@ -293,10 +324,12 @@ bool common_flydelta_outcome_guidance_build_decision(
         cached.leaf = aggregate(rows, [&](const auto & o) { return key_for(o) == key; });
         cached.strategy_backoff = aggregate(rows, [&](const auto & o) {
             return o.context.semantic_domain == domain &&
-                o.context.strategy == strategy_name && o.context.estimator == estimator_name;
+                o.context.strategy == strategy_name && o.context.estimator == estimator_name &&
+                (strategy_name != "whirlpool" || layer_bucket(o.relative_layer) == layer);
         }, cached.leaf_groups);
         cached.domain_backoff = aggregate(rows, [&](const auto & o) {
-            return o.context.semantic_domain == domain;
+            return o.context.semantic_domain == domain &&
+                (strategy_name != "whirlpool" || layer_bucket(o.relative_layer) == layer);
         }, cached.leaf_groups);
         (void) basis_identity;
     }
@@ -308,10 +341,14 @@ bool common_flydelta_outcome_guidance_build_decision(
             auto & cached = cached_it->second;
             cached.strategy_backoff = aggregate(rows, [&](const auto & o) {
                 return o.context.semantic_domain == context.semantic_domain &&
-                    o.context.strategy == context.strategy && o.context.estimator == context.estimator;
+                    o.context.strategy == context.strategy && o.context.estimator == context.estimator &&
+                    (context.strategy != "whirlpool" || layer_bucket(o.relative_layer) ==
+                        layer_bucket(candidates[i].relative_layer));
             });
             cached.domain_backoff = aggregate(rows, [&](const auto & o) {
-                return o.context.semantic_domain == context.semantic_domain;
+                return o.context.semantic_domain == context.semantic_domain &&
+                    (context.strategy != "whirlpool" || layer_bucket(o.relative_layer) ==
+                        layer_bucket(candidates[i].relative_layer));
             });
         }
         const auto & cached = cached_it->second;
@@ -604,17 +641,9 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         error = "FlyDelta outcome guidance lifecycle decision is incomplete";
         return false;
     }
-    json candidate_pool = json::array();
-    for (const auto & candidate : candidates) candidate_pool.push_back({
-        {"arm_id", candidate.arm_id}, {"basis_identity", candidate.basis_identity},
-        {"rank", candidate.rank}, {"relative_layer", candidate.relative_layer},
-        {"relative_dose", candidate.relative_dose},
-        {"mixed_coefficients", candidate.mixed_coefficients},
-        {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
-    });
-    const std::string candidate_pool_canonical = candidate_pool.dump();
-    const std::string candidate_pool_fingerprint = "sha256:" +
-        hash_sha256_hex(candidate_pool_canonical.data(), candidate_pool_canonical.size());
+    const auto candidate_pool = canonical_candidate_pool(candidates);
+    const std::string candidate_pool_fingerprint =
+        common_flydelta_outcome_guidance_pool_fingerprint(candidates);
     json payload = {
         {"record_type", "outcome_guidance_decision"},
         {"schema_version", 4}, {"job_id", job_id}, {"seed", seed},

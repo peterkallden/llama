@@ -104,7 +104,7 @@ int main() {
     // from Deep/TFO strategies; the exact deployment/verifier partition stays.
     auto whirlpool_context = c;
     whirlpool_context.strategy = "whirlpool";
-    whirlpool_context.estimator = "layer-region-prior-v1";
+    whirlpool_context.estimator = "layer-region-prior-v2";
     common_flydelta_outcome_guidance_candidate layer_candidate;
     layer_candidate.arm_id = "layer:12";
     layer_candidate.rank = 1;
@@ -117,6 +117,38 @@ int main() {
     CHECK(cross_stage.predictions.front().level == "backoff");
     CHECK(cross_stage.predictions.front().backoff_fixture_groups >= 8);
     CHECK(cross_stage.predictions.front().p_helped_given_known > .60);
+
+    // Transfer keeps WHERE: equal-sized early/harmed and late/helped histories
+    // must produce different priors for the two proposed layer regions.
+    std::vector<common_flydelta_outcome_guidance_observation> regional_history;
+    for (int i = 0; i < 8; ++i) {
+        auto early = observation("early-" + std::to_string(i), "early-group-" + std::to_string(i),
+            common_flydelta_counterfactual_outcome::harmed);
+        early.relative_layer = .125;
+        auto late = observation("late-" + std::to_string(i), "late-group-" + std::to_string(i),
+            common_flydelta_counterfactual_outcome::helped);
+        late.relative_layer = .875;
+        regional_history.push_back(early);
+        regional_history.push_back(late);
+    }
+    const std::vector<common_flydelta_outcome_guidance_candidate> regional_candidates = {
+        common_flydelta_outcome_guidance_layer_candidate(2, 17, .2),
+        common_flydelta_outcome_guidance_layer_candidate(14, 17, .2),
+    };
+    common_flydelta_outcome_guidance_decision regional;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, whirlpool_context,
+        regional_history, regional_candidates, 2, 56, regional, error));
+    CHECK(regional.predictions[1].p_helped_given_known > regional.predictions[0].p_helped_given_known);
+    auto direct_layer = regional_history.back();
+    direct_layer.context = whirlpool_context;
+    direct_layer.rank = regional_candidates.back().rank;
+    direct_layer.basis_identity = regional_candidates.back().basis_identity;
+    direct_layer.relative_layer = regional_candidates.back().relative_layer;
+    direct_layer.relative_dose = regional_candidates.back().relative_dose;
+    direct_layer.diagnostic_margin_sign = regional_candidates.back().diagnostic_margin_sign;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, whirlpool_context,
+        {direct_layer}, {regional_candidates.back()}, 1, 56, regional, error));
+    CHECK(regional.predictions.front().level == "arm_category");
 
     common_flydelta_outcome_guidance_decision direct;
     common_flydelta_outcome_guidance_candidate direct_candidate;
@@ -238,6 +270,8 @@ int main() {
     CHECK(guidance_payload["policy_slots_consumed"] == candidates.size());
     CHECK(guidance_payload["candidate_pool_fingerprint"].get<std::string>().rfind(
         "sha256:", 0) == 0);
+    CHECK(guidance_payload["candidate_pool_fingerprint"] ==
+        common_flydelta_outcome_guidance_pool_fingerprint(candidates));
     CHECK(guidance_payload["selection_reasons"].size() == candidates.size());
     CHECK(guidance_payload["predictions"][0].contains("p_harmed_interval_95_approx"));
 

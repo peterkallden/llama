@@ -376,6 +376,14 @@ int main() {
         CHECK(payload["outcome_guidance"]["comparison_completed"] == true);
         CHECK(payload["outcome_guidance"]["overlay_applied"] == true);
         CHECK(payload["outcome_guidance"]["outcome_known"] == true);
+        const auto expected_category = common_flydelta_outcome_guidance_layer_candidate(
+            verified_trial.candidate.anchor_layer_index, guidance_fixture.model_n_layers,
+            verified_trial.executed_total_scale);
+        CHECK(payload["outcome_guidance"]["estimator"] == "layer-region-prior-v2");
+        CHECK(payload["outcome_guidance"]["basis_id"] == expected_category.basis_identity);
+        CHECK(payload["outcome_guidance"]["relative_layer"] == expected_category.relative_layer);
+        CHECK(payload["outcome_guidance"]["relative_dose"] == expected_category.relative_dose);
+        CHECK(payload["outcome_guidance"]["diagnostic_margin_sign"] == 0);
     }
     CHECK(found_verified_guidance);
     auto region_records = region_lifecycle.list(error);

@@ -2221,8 +2221,14 @@ order are counted as ineligible.
 Whirlpool, Deep and TFO use the same job-frozen snapshot and exact hard
 compatibility partition. The snapshot is created before the first Whirlpool
 decision and reused by later Deep/TFO decisions and resumes. TFO/Deep outcomes
-may inform Whirlpool only through the coarser same-domain backoff (at least
-eight independent fixture groups); no model/verifier/scope boundary is crossed.
+may inform Whirlpool through same-domain, same-layer-region backoff (at least
+eight independent fixture groups in that region); no model/verifier/scope
+boundary is crossed. WHERE projection revision `layer-region-prior-v2` uses
+the same model-relative layer position and scale category for proposals and
+completed outcomes. Its categories omit raw basis coordinates and post-run
+margin signs; coefficient search retains those fields in its own categories.
+Old WHERE records remain available as coarse regional history, rather than
+being interpreted as exact V2 categories.
 Whirlpool first honors current-job layer diagnostics. If those are absent, an
 experimental run may use a posterior-ranked initial centre when compatible
 history exists; otherwise the existing seed-layer/model midpoint remains the
@@ -2233,6 +2239,18 @@ still controls recentering and shrinkage; historical scores are not added to
 that objective. Each decision persists its four-slot policy cursor; stable
 stage/phase/round/decision IDs and the frozen history snapshot let a retry
 reproduce the same cursor position and candidate ordering.
+The policy origin stays fixed within the job/stage while the sampling seed
+may vary between decisions. Whirlpool reloads saved cursor positions by the
+same canonical candidate-pool fingerprint used for lifecycle writes; Deep/TFO
+use that shared fingerprint as well. History readers preserve duplicate rows
+until the common projection can distinguish identical retries from conflicting
+observations and exclude conflicting identities completely.
+
+`off`, `shadow` and failure fallback retain legacy probe truncation before
+visited layers are removed. They do not refill shorter batches. Only an
+experimental successful decision selects from the larger unvisited proposal
+pool. Search traces report the actual applied centre and executed probe layers
+separately from the posterior and hypothetical order.
 
 Only matched full-generation Whirlpool frontier comparisons with a completed
 baseline/candidate execution can enter the outcome projection. Diagnostic

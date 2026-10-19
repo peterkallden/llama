@@ -166,6 +166,12 @@ using common_flydelta_outcome_guidance_adviser = std::function<bool(
         common_flydelta_outcome_guidance_decision & decision,
         std::string & error)>;
 
+// Shared by proposal projection, outcome projection and durable decisions.
+common_flydelta_outcome_guidance_candidate common_flydelta_outcome_guidance_layer_candidate(
+        uint32_t layer, uint32_t model_n_layers, double scale);
+std::string common_flydelta_outcome_guidance_pool_fingerprint(
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates);
+
 bool common_flydelta_outcome_guidance_build_decision(
         const common_flydelta_outcome_guidance_config & config,
         const common_flydelta_outcome_guidance_context & context,
