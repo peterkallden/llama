@@ -4563,8 +4563,9 @@ When the host has established a verified failed/repaired relation, it may
 hand the reference-only seed to the dedicated FlyDelta experiment queue.
 That queue is separate from the corpus/QLoRA worker queue: it stores only the
 typed experiment envelope and never changes the active turn, model profile or
-sideband. Basis building, counterfactual evaluation, DeltaMemory updates and
-promotion remain explicit offline host operations.
+sideband. Basis building and counterfactual search run in the configured
+experiment worker lane. DeltaMemory updates and promotion remain governed by
+their existing host verification and lifecycle gates.
 
 FlyDelta experiment arms use the daemon's existing resource-backed prepare,
 resident execution and finalize bindings. Full-generation arms inherit the
@@ -4580,6 +4581,25 @@ the actual dose and host-verification flags. Selected coefficient mixtures
 are retained through the existing composed-direction resource seam. See
 [production arm verification and state transfer](agent-flydelta.md#production-arm-verification-and-state-transfer)
 for diagnostics, compatibility and the production-binding smoke options.
+
+The same host configuration carries
+`runtime.adaptation.flydelta.outcome_guidance` through daemon/provider scoping.
+Its default `mode="shadow"` records historical predictions while preserving
+the search order. `off` avoids history reads and guidance logs;
+`experimental` can influence Whirlpool WHERE priors/probes, Deep's bounded
+full-generation frontier and TFO-lite's pending arm order. The job freezes
+eligible scope/model/verifier-compatible history; current observations still
+control Whirlpool's objective and host verification determines outcomes and
+learning credit. Guidance adds no stop rule or guaranteed probe saving. See
+[the configuration, trace schemas and verification status](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite).
+
+`runtime.adaptation.flydelta.teacher_scoring_backend` defaults to `auto`,
+which uses compact target-log-probability graph scoring on the scheduler's
+chosen backend. `cpu` selects the full-logit reference; `backend` requires
+non-CPU scoring. Model-layer placement and B×C overlay residency do not
+establish scoring placement. Historical aggregation/sampling remains on CPU;
+[scoring telemetry](agent-flydelta.md#teacher-forced-scoring-backend) identifies
+the computation actually used.
 
 In the current slice, the daemon and the real MCP stdio server can both carry a list of enabled stdio MCP subprocess providers from that host-config path into the provider/view seam. The daemon also supports outbound Streamable HTTP providers and inbound Streamable HTTP hosting. Outbound stdio and HTTP tool calls consume the host-owned cancellation/deadline state; broader streaming hardening remains follow-up work.
 

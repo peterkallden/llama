@@ -1,6 +1,13 @@
-# FlyDelta sideband learning — design hypothesis
+# FlyDelta sideband learning — experimental runtime and evidence
 
 ## Status and purpose
+
+FlyDelta has implemented capture, search, overlay and lifecycle paths; its
+behavioral benefit remains experimental and must be established per model and
+task. The [historical guidance section](#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite)
+describes current Whirlpool/Deep/TFO integration, configuration and trace
+contracts. The [2026-10-19 verification record](#verification-status-after-the-2026-10-19-corrections)
+states which checks passed and which model comparisons remain outstanding.
 
 Resident model traces record resolved visible GPU descriptions. For a
 hardware-specific smoke, set `LLAMA_AGENT_EXPECTED_GPU` to a description
@@ -2187,10 +2194,21 @@ remain unchanged. `mode: "experimental"` enables bounded arm ordering.
 `mode: "off"` skips history reads and predictions. The complete configuration
 example is in `docs/examples/agent-host-config-flydelta-full.json`.
 
-The configurable fields are `mode`, `seed`, `harm_penalty` (default 5),
-`min_backoff_groups` (default 8) and `max_prior_strength` (default 4, capped at
-4 pseudo-observations). History is frozen once for a search job and reused by
-its waves. Predictions require exact scope, model, tokenizer, template,
+The configurable fields and their defaults are:
+
+| Field | Default | Contract |
+| --- | --- | --- |
+| `mode` | `"shadow"` | `off`, `shadow`, or `experimental` |
+| `seed` | `5065521830640243777` | Unsigned 64-bit seed; combined with job/decision identity |
+| `harm_penalty` | `5.0` | Finite, non-negative penalty in sampled/expected utility |
+| `min_backoff_groups` | `8` | Positive group count required for a coarser prior |
+| `max_prior_strength` | `4.0` | Finite value in `[0, 4]`; zero disables coarser pseudo-observations |
+
+The eight-group default applies to **backoff**, not to direct arm-category
+evidence. A category with fewer observations can still have a posterior, with
+correspondingly little evidence. When FlyDelta is disabled no adviser runs.
+History is frozen for an eligible search job and reused by its waves.
+Predictions require exact scope, model, tokenizer, template,
 baseline-deployment and verifier identity. V1 does not transfer observations
 across those boundaries. Each fixture group contributes at most one total
 weight per arm category. Diagnostic-only rows, failed executions, missing
@@ -2199,10 +2217,14 @@ comparison with verifier `UNKNOWN` updates only the probability that an
 outcome can be known. Legacy lifecycle rows without the required provenance
 are counted as ineligible.
 
-The small model uses a Beta prior for known versus unknown outcomes and a
-Dirichlet prior for `HELPED`, `NEUTRAL` and `HARMED` conditional on a known
-outcome. A coarser strategy/estimator or domain bucket contributes up to four
-pseudo-observations after eight distinct other fixture groups. Reported
+The small model uses `Beta(1,1)` for known versus unknown outcomes and
+`Dirichlet(1,1,1)` for `HELPED`, `NEUTRAL` and `HARMED` conditional on a known
+outcome. Verifiability and categorical backoff weights are computed separately;
+an UNKNOWN-only group adds no categorical certainty. A coarser
+strategy/estimator or domain bucket contributes up to four pseudo-observations
+after eight distinct other fixture groups, excluding the current category's
+fixture groups. Only the nearest eligible level contributes, so parent levels
+are not summed. Reported
 intervals are approximate diagnostics, not safety guarantees or verifier
 results. Guidance cannot grant learning credit, change Oracle truth, promote a
 candidate or activate an overlay.
@@ -2232,6 +2254,11 @@ which lifecycle validation permits only for `whirlpool` with
 margin sign in its own categories.
 Old WHERE records remain available as coarse regional history, rather than
 being interpreted as exact V2 categories.
+Layer-region buckets use `layer / (model_n_layers - 1)` with boundaries at
+0.25, 0.5 and 0.75. WHERE dose buckets currently use `total_scale` clamped to
+`[0,1]` with the same boundaries; this is not a measured fraction of a norm
+budget. These are coarse historical categories, not claims that every layer
+in a region behaves identically.
 Whirlpool first honors current-job layer diagnostics. If those are absent, an
 experimental run may use a posterior-ranked initial centre when compatible
 history exists; otherwise the existing seed-layer/model midpoint remains the
@@ -2255,6 +2282,26 @@ experimental successful decision selects from the larger unvisited proposal
 pool. Search traces report the actual applied centre and executed probe layers
 separately from the posterior and hypothetical order.
 
+At cold start all unsupported categories have the same prior means:
+`p_known=0.5` and each conditional outcome probability is `1/3`. Independent
+Thompson draws can still give those arms different sampled ranks. That is
+exploration, not a learned layer preference. The initial centre changes only
+when the selected prediction has direct or backoff history and there is no
+current-job layer diagnostic; round-probe ordering in `experimental` can still
+change with prior-only predictions.
+
+| Search decision | What experimental guidance can change | Probe/call budget |
+| --- | --- | --- |
+| Whirlpool initial centre | Choose a historical layer prior when current diagnostics are absent | No model probe is made by the adviser itself |
+| Whirlpool round | Order/select unvisited layers from the legal local proposal pool | Existing round/trial limits apply; a different centre or filling an otherwise short legacy batch can change the actual count |
+| Deep full-generation frontier | Choose which diagnostic arms occupy the existing top-K slots | The diagnostic pool and top-K limit are unchanged |
+| TFO-lite population | Order the pending population before physical waves | Remaining candidate budget is applied before guidance; the retained population is still evaluated |
+
+There is no new stop-on-HELPED rule. Guidance therefore does not guarantee
+fewer probes. Ordering all arms in one physical batch may have no timing
+benefit; evaluating fewer arms, finding a better region and discovering a
+HELPED arm earlier are separate measurements.
+
 Only matched full-generation Whirlpool frontier comparisons with a completed
 baseline/candidate execution can enter the outcome projection. Diagnostic
 captures, teacher margins, geometry, and unverified probes remain diagnostics.
@@ -2264,8 +2311,10 @@ for full generation. TFO-lite can reorder its already proposed population
 before the existing bounded waves; it still evaluates the same population, so
 a shorter discovery order does not imply fewer model calls or lower total
 runtime. Candidate IDs and baseline/result pairing remain stable.
-If history access, guidance or lifecycle logging fails, the existing order is
-used and the reason is logged. Compare `off`, `shadow` and `experimental` on
+If history access, guidance or decision persistence fails, the existing order
+is used and the reason is logged. A later outcome-log failure preserves the
+completed search and reports the persistence error separately. Compare
+`off`, `shadow` and `experimental` on
 the same fixtures, basis, dose limits and evaluation budget; report verified
 outcomes and inference cost separately.
 
@@ -2279,33 +2328,61 @@ cannot be durably recorded before execution, the current wave falls back to the
 original order. `shadow` separately logs posterior-only rank, hypothetical
 mixed-policy order and unchanged executed order. A later result-log write
 failure does not rewrite which arms actually ran. History aggregation is
-cached per category for the frozen job projection, rather than recomputed by
-scanning rows for each arm or wave.
+cached per category within each decision, so identical candidate categories
+reuse their aggregation. The frozen raw history is reused between decisions;
+the current implementation rebuilds the category cache on each decision call.
+It does not yet retain preaggregated posteriors across every wave of a job.
 
 Daemon logs contain `[flydelta] outcome_guidance` JSON events with
-`event: "flydelta_outcome_guidance"`. Coefficient-stage decision events use
-trace schema 2; typed Whirlpool-stage events use schema 3 and carry `stage`,
-`round` and a stable `decision_id`. Both are emitted before execution,
-including fallback decisions. Guidance events report history rows read,
-compatible, deduplicated and rejected, plus projection and ordering time.
-They include job/phase/decision identity, seed, history fingerprint and watermark,
-candidate-pool fingerprint and candidate arm IDs with basis/rank/layer/dose
-categories. `original_arm_ids` and `posterior_ranked_arm_ids` describe the full
-pool; `hypothetical_selected_arm_ids` and `selected_arm_ids` contain only the
-selection-limit prefix of the mixed policy and final runtime decision,
-respectively. `execution_order_changed` compares the final selected prefix with
-the original prefix, including its order. Policy position, selection reasons,
-posterior probabilities, intervals, effective counts and fallback reasons remain
-available in the same event. Correlate selected arm IDs with later execution and
-verification records: a decision alone does not confirm that an arm ran or
-earned learning credit. In `shadow`, selected IDs retain the original order.
-No decision event is expected in `off`; a trace without these events cannot
-establish guidance impact. Whirlpool's serialized search trace also records
-the initial-centre source and, per decision, candidate layer order, posterior
-order, hypothetical mixed-policy selection, actual selected layers, history
-fingerprint and fallback reason. This is decision provenance; correlate it
-with executed region arms and full-verifier outcomes before interpreting it as
-a behavioral result.
+`event: "flydelta_outcome_guidance"`. These describe a decision before model
+execution. The two event schemas currently expose different fields:
+
+| Information | Coefficient decisions, schema 2 | Whirlpool decisions, schema 3 |
+| --- | --- | --- |
+| Decision point | `stage="decision_before_execution"`, `search_stage`, `search_round`, `decision_id` | `stage="whirlpool_initial_centre"` or `"whirlpool_probe"`, `round`, `decision_id` |
+| Original / sampled posterior order | `original_arm_ids`, `posterior_ranked_arm_ids` and corresponding index arrays | `original_order`, `posterior_order`, as indexes into `candidate_pool` |
+| Hypothetical / runtime decision | `hypothetical_selected_arm_ids`, `selected_arm_ids`, `execution_order_changed` | `hypothetical_order`, `selected_order`, as index arrays; apply `selection_limit` |
+| Prediction detail | Conditional probability means, approximate intervals, effective counts, backoff strength | `p_known`, conditional means named `p_helped`/`p_neutral`/`p_harmed`, expected utility, fixture/backoff group counts |
+| Decision accounting | Pool fingerprint, cursor, per-arm selection reasons | Policy start, history snapshot identity; no explicit per-arm selection-reason or pool-fingerprint field in this event |
+| History preparation time | `projection_ms` | `history_projection_ms` |
+
+Both schemas include job/phase identity, seed, history fingerprint/watermark,
+candidate IDs and categories, row counts, timings and fallback reason. Schema
+3 does not currently emit the intervals/effective weights available in schema
+2; do not infer that they were logged merely because prediction means exist.
+The posterior ordering is sampled ordering, not sorting the probability means.
+Its guided slot maximizes sampled
+`p_known * (p_helped_given_known - harm_penalty * p_harmed_given_known)`.
+
+For coefficient events, the arm-ID selection arrays contain only the
+`selection_limit` prefix. Index arrays can also contain the remaining pool
+in its existing order. In `shadow`, the runtime selection retains the original
+order. No event is expected in `off`; missing events can also mean that the
+stage was never reached or required provenance/store bindings were unavailable.
+A trace without decisions cannot establish guidance impact.
+
+Whirlpool applies additional checks after receiving an adviser decision. Its
+serialized search trace is the record of the applied centre and layers:
+`initial_centre_source` identifies `current_diagnostic`, `seed_layer`,
+`model_midpoint` or `bayesian_posterior`;
+`initial_centre_guidance_selected_layers` contains the applied centre, and
+each round records `guidance_original_layers`, `guidance_posterior_layers`,
+`guidance_hypothetical_layers`, `guidance_selected_layers` and `probed_layers`.
+For example, an adviser can propose another centre while the algorithm keeps
+a current diagnostic. Compare the applied trace, not just the earlier event.
+Correlate selected arm IDs with actual execution, overlay confirmation and
+full-verifier outcomes before interpreting a decision as behavioral evidence.
+
+To compare guidance impact, use matched `off`/`shadow`/`experimental` jobs with
+the same starting task, fixture, basis, dose limits and frozen historical
+input. Seeds are combined with job/decision identity, so record both rather
+than assuming that equal config seeds alone imply equal sampled orders.
+Report the initial centre, ordered proposal pool, posterior and mixed-policy
+selection, actual executed layers, full-generation finalists, dose retries,
+physical batches, model calls and time to first verified HELPED. Include total
+cost even when no arm reaches HELPED. Whirlpool's `model_evaluations` counts
+its logical baseline, probe and dose-retry runner evaluations; it is not the
+total number of prefill/scoring/generation tasks or device launches.
 
 The model-free chronological replay API
 `common_flydelta_outcome_guidance_replay` reserves complete fixture groups for
@@ -2326,6 +2403,37 @@ utility instead of sampling. Runtime configuration deliberately exposes no
 third production selection policy; `experimental` continues to use posterior
 sampling, while `shadow` keeps the actual arm order unchanged.
 
+#### Verification status after the 2026-10-19 corrections
+
+The current implementation includes Whirlpool guidance (`b9f523b04`), corrected
+regional projection/replay/resume behavior (`ba1cd8012`) and validation of
+layer-only WHERE lifecycle records (`1f61b4bd9`). The six focused model-free
+CTests passed on 2026-10-19 in the existing Vulkan/Cozo build:
+`test-agent-flydelta-whirlpool-search`, `test-agent-flydelta-whirlpool-ab`,
+`test-agent-flydelta-search-pipeline`,
+`test-agent-flydelta-coefficient-search`, `test-agent-flydelta-deep-search`,
+and `test-agent-flydelta-outcome-guidance`. Their contracts cover regional
+priors, preserved shadow behavior, decision ordering and pipeline/lifecycle
+integration. The Whirlpool A/B test uses controlled runners, not a model.
+The local CTest record is `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`;
+CTest replaces that file on later runs, so retain a copy with any benchmark.
+
+The subsequent Qwen2.5-1.5B admin smoke used a fixed calibration sweep at
+layers `1, 2, 7, 14, 21, 26`, each with positive and negative unit direction
+(12 variants). All returned baseline and candidate text `MAYBE`. It exited
+with `model-backed FlyDelta probe found no candidate-only verifier token`
+before candidate seeding/evaluation. That loop calls the resident probe
+directly; it does not invoke the Bayesian/Whirlpool adviser. It supplies no
+guidance decision, layer-preference comparison or probe-saving measurement.
+
+Consequently, the matched model comparison of `off` versus `experimental`
+remains **unavailable** for these changes. No claim of fewer probes, faster
+search, preferred model layers or improved HELPED rate follows from that
+admin run. A repair-smoke `host_repair` success or a trace-only generated arm
+response also cannot establish a Bayesian ordering benefit; use the
+[outcome-source and actual-response trace](#repair-credit-and-actual-arm-responses-in-trace)
+to identify which operation produced each result.
+
 ### Teacher-forced scoring backend
 
 `runtime.adaptation.flydelta.teacher_scoring_backend` controls teacher-forced
@@ -2343,6 +2451,24 @@ generation still receives logits when required. Positive/negative targets,
 sequence pairing and margin definition are unchanged. The JSON example sets
 `teacher_scoring_backend` to `auto`; choose `cpu` for the reference path or
 `backend` when requiring accelerator-only scoring verification.
+
+`auto` accepts CPU placement of the score graph by the scheduler. It does not
+promise an automatic retry through
+`cpu_logits` after a graph/allocation/execution failure. Invalid scores and
+strict-backend placement failures are returned as errors; use the explicit
+`cpu` setting for a full-logit reference run. Compare actual placement and
+margin deviation (target tolerance `1e-4` on matched fixtures), not the
+configuration string alone.
+
+History parsing, group aggregation, Beta/Dirichlet updates, Thompson sampling
+and arm ordering run on CPU. The resident backend runs model inference,
+eligible B×C overlay composition and graph teacher-scoring according to actual
+backend placement. Offloading the small historical model has no demonstrated
+benefit. For a hardware comparison, record GPU/CPU model-layer placement,
+resident sequence count, physical batch sizes, prefill, scoring, generation,
+overlay composition/binding and host time. Repeated prompt evaluation remains
+a separate cost: shared prefill/branching at the intervention layer is not
+implemented by resident B×C tables or graph scoring.
 
 A backend integration is intentionally small and can be kept behind its
 existing model-host abstraction. The usual flow is:

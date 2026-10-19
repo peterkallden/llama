@@ -864,6 +864,14 @@ candidate was seeded, evaluated or staged. This is a model-backed
 differential/learning evidence gap, not a wiring failure and not evidence that
 Vulkan or resident model loading failed.
 
+The admin probe sweep also does not run outcome guidance or Whirlpool. It
+cannot measure Bayesian layer preferences, changed probe order or reduced
+model-call count. The 2026-10-19 Qwen rerun again exhausted the fixed twelve
+layer/sign variants with identical `MAYBE` output and stopped before seeding.
+Use the [guidance verification status](agent-flydelta.md#verification-status-after-the-2026-10-19-corrections)
+to distinguish the passing model-free contracts from the still outstanding
+matched model comparison.
+
 This startup path resolves the resident profile and registers the existing
 daemon FlyDelta model binding. If semantic host callbacks are not available,
 the lane remains configured-but-idle; configuration alone must not invent a
@@ -897,6 +905,48 @@ model and configuration. Neither smoke proves learned model quality unless a
 separate natural-task, host-verified counterfactual supplies that evidence. A
 smoke's exit code without its trace is insufficient evidence for production
 wiring.
+
+### Historical search guidance and scoring configuration
+
+The full [FlyDelta JSON example](../examples/agent-host-config-flydelta-full.json)
+includes the current daemon settings. Within `runtime.adaptation.flydelta`:
+
+```json
+{
+  "outcome_guidance": {
+    "mode": "shadow",
+    "seed": 5065521830640243777,
+    "harm_penalty": 5.0,
+    "min_backoff_groups": 8,
+    "max_prior_strength": 4.0
+  },
+  "teacher_scoring_backend": "auto"
+}
+```
+
+`shadow` is the default: it predicts and records hypothetical choices while
+preserving execution order. `off` skips guidance work. `experimental` may
+change Whirlpool's initial centre/probe selection, Deep's full-generation
+shortlist and TFO-lite's pending execution order within existing budgets.
+Missing compatible history yields prior-only predictions; a random sampled
+ranking is not a learned preference. No automatic reduction in probe count
+follows from enabling guidance.
+
+Daemon decision events use `[flydelta] outcome_guidance`. Whirlpool schema 3
+uses index orders into `candidate_pool`; coefficient schema 2 also provides
+arm-ID selection arrays and more detailed uncertainty fields. Check the
+serialized Whirlpool trace for the centre/layers actually applied, then
+correlate arm execution and verification. See
+[historical outcome guidance](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite)
+for field names, parameter limits and matched-comparison requirements.
+
+Scoring accepts `auto`, `cpu` or `backend`. `auto` uses graph scoring with
+scheduler-selected placement; `cpu` is the full-logit reference; `backend`
+requires non-CPU score computation. Device-resident model layers or overlays
+alone do not prove device scoring. Inspect `device_graph_target_logprob`,
+`cpu_graph_target_logprob` or `cpu_logits` in the actual result. Historical
+projection and arm ordering remain CPU work. See
+[teacher-forced scoring](agent-flydelta.md#teacher-forced-scoring-backend).
 
 ## JSONL commands
 

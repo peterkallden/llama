@@ -179,12 +179,15 @@ remote MCP providers, status/readiness, and Docker usage.
   session-scoped placement games and exact one-variable linear algebra, with
   explicit provenance and a bridge into the existing FlyDelta teaching
   relation: [Semi-oracle RuleSets](agent-semi-oracle.md).
-- **FlyDelta sideband learning (design hypothesis)** — a separate,
-  host-certified sparse associative steering overlay for a frozen model. Its
-  model-free evidence, basis and activation-gate contracts are implemented,
-  but it is not active model adaptation; its seams, bounds and staged
-  evaluation are documented in
-  [FlyDelta sideband learning](agent-flydelta.md). New development sessions
+- **FlyDelta sideband learning (experimental)** — resident-model capture,
+  bounded counterfactual search and steering overlays for a frozen model,
+  with host verification and lifecycle gates. Historical outcome guidance
+  defaults to observational `shadow` mode; experimental guidance can influence
+  Whirlpool, Deep and TFO-lite. Implemented runtime paths and model-free
+  contracts do not by themselves establish learned behavioral benefit or
+  fewer probes. Configuration, trace fields and current verification limits
+  are documented in [FlyDelta sideband learning](agent-flydelta.md).
+  New development sessions
   should begin with the [FlyDelta session bootstrap](agent-flydelta-session-bootstrap.md),
   which also defines the end-of-sweep documentation gate.
 - **Model residency and multi-model scheduling (in progress)** — named
