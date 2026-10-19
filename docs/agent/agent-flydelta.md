@@ -2417,10 +2417,20 @@ With no arguments it returns up to eight recent host-issued
 `observation_ref` values and their retrospective predictions. Pass those opaque
 values in `candidate_refs` to query specific rows, or set `max_candidates` to
 bound the default listing. The host reads only the current namespace/project/
-session journal and resolves all arm features from stored lifecycle records;
-the model cannot submit feature values or add observations. Results include
-the lifecycle watermark and history fingerprint, and unresolved references
-are returned explicitly.
+session journal and resolves all arm features from stored lifecycle records.
+It includes both observed outcomes and host-rejected `HARMED` candidates;
+rejection is a search disposition, not a reason to erase negative evidence.
+Returned observation handles are stable hashes scoped to that session; raw
+lifecycle observation IDs and the namespace/project/session string are not
+returned. The model cannot submit feature values or add observations. Results
+include a scope fingerprint, lifecycle watermark and history fingerprint, and
+unresolved references are returned explicitly. The ordinary MCP `tools/list`
+path advertises the canonical result schema as `outputSchema`; successful
+`tools/call` responses return the matching `structuredContent` object. The
+daemon status/capability projection uses the same lifecycle-backed native
+tool view. Runtime guidance settings are shared with the predictor; with
+`runtime.adaptation.flydelta.outcome_guidance.mode="off"`, it returns a clear
+disabled error without reading lifecycle history.
 
 These are chronological leave-one-fixture-group-out estimates for already
 observed arms: only earlier compatible outcomes are used, and the candidate's

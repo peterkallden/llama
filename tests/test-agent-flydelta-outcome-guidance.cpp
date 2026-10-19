@@ -62,12 +62,16 @@ int main() {
     CHECK(catalog.bootstrap("analysis", bootstrap, error));
     const auto * predict_definition = catalog.find_definition("outcome.predict");
     CHECK(predict_definition != nullptr && predict_definition->risk_class == common_tool_risk_class::local_read);
+    const auto all_configured = catalog.load_profile("all-configured", error);
+    CHECK(error.empty() && std::any_of(all_configured.begin(), all_configured.end(),
+        [](const auto & definition) { return definition.name == "outcome.predict"; }));
     const auto result_schema = nlohmann::json::parse(predict_definition->result_schema_json, nullptr, false);
     CHECK(result_schema.is_object() && result_schema.contains("properties") &&
         result_schema["properties"].contains("predictions") &&
-        result_schema["properties"].contains("unresolved_refs"));
+        result_schema["properties"].contains("unresolved_refs") &&
+        result_schema["properties"].contains("scope_fingerprint"));
     const std::string sample_result = nlohmann::ordered_json{
-        {"status", "available"}, {"scope", "local/project/session"},
+        {"status", "available"}, {"scope_fingerprint", "sha256:scope"},
         {"history_watermark", 12}, {"history_fingerprint", "sha256:history"},
         {"unresolved_refs", nlohmann::ordered_json::array()},
         {"predictions", nlohmann::ordered_json::array({nlohmann::ordered_json{

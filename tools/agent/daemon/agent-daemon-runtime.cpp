@@ -648,11 +648,19 @@ make_daemon_semi_oracle_relation_provider(
 
 common_tool_execution_result daemon_outcome_predict(
         common_learning_lifecycle_store & store,
+        common_flydelta_outcome_guidance_config config,
         const std::string & namespace_id,
         const std::string & project_id,
         const std::string & session_id,
         const std::string & input) {
     using json = nlohmann::ordered_json;
+    if (config.mode == common_flydelta_outcome_guidance_mode::off) {
+        return common_tool_execution_result::failure(
+            "tool.outcome.guidance_disabled", common_tool_failure_class::policy, false,
+            "Historical outcome guidance is disabled by runtime configuration.",
+            "runtime.adaptation.flydelta.outcome_guidance.mode is off");
+    }
+    config.mode = common_flydelta_outcome_guidance_mode::shadow;
     const auto args = json::parse(input, nullptr, false);
     if (!args.is_object()) return common_tool_execution_result::failure(
         "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
@@ -675,19 +683,31 @@ common_tool_execution_result daemon_outcome_predict(
 
     struct row_entry {
         common_flydelta_outcome_guidance_observation observation;
-        std::string scope;
+        std::string opaque_ref;
         uint64_t registration_order = 0;
     };
     std::vector<row_entry> rows;
     for (const auto & record : records) {
         if (record.kind != common_learning_lifecycle_kind::flydelta_result ||
+                (record.status != common_learning_lifecycle_status::observed &&
+                 record.status != common_learning_lifecycle_status::rejected) ||
                 record.registration_order == 0) continue;
         try {
             const auto payload = json::parse(record.payload_json, nullptr, false);
             if (!payload.is_object() || payload.value("record_type", std::string{}) != "candidate_search_decision" ||
-                    !payload.contains("outcome_guidance") || !payload["outcome_guidance"].is_object()) continue;
+                    !payload.value("host_evaluated", false) || !payload.contains("outcome_guidance") ||
+                    !payload["outcome_guidance"].is_object()) continue;
             const auto & g = payload["outcome_guidance"];
-            if (g.value("schema_version", 0) != 1) continue;
+            if (!g.contains("schema_version") || !g["schema_version"].is_number_integer() ||
+                    g["schema_version"].get<int>() != 1 ||
+                    !g.value("comparison_completed", false) || !g.value("overlay_applied", false)) continue;
+            if (!g.contains("rank") || (!g["rank"].is_number_unsigned() && !g["rank"].is_number_integer()) ||
+                    !g.contains("relative_layer") || !g["relative_layer"].is_number() ||
+                    !g.contains("relative_dose") || !g["relative_dose"].is_number() ||
+                    !g.contains("mixed_coefficients") || !g["mixed_coefficients"].is_boolean() ||
+                    !g.contains("diagnostic_margin_sign") || !g["diagnostic_margin_sign"].is_number_integer() ||
+                    !g.contains("outcome_known") || !g["outcome_known"].is_boolean() ||
+                    !payload.contains("verifier_known") || !payload["verifier_known"].is_boolean()) continue;
             row_entry entry;
             entry.registration_order = record.registration_order;
             auto & o = entry.observation;
@@ -712,16 +732,39 @@ common_tool_execution_result daemon_outcome_predict(
             o.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
             o.comparison_completed = g.value("comparison_completed", false);
             o.overlay_applied = g.value("overlay_applied", false);
+            if (o.rank == 0 || o.rank > 16 || !std::isfinite(o.relative_layer) ||
+                    !std::isfinite(o.relative_dose) || o.relative_layer < 0.0 || o.relative_layer > 1.0 ||
+                    o.relative_dose < 0.0 || o.relative_dose > 1.0 ||
+                    o.diagnostic_margin_sign < -1 || o.diagnostic_margin_sign > 1 ||
+                    o.stable_observation_id.empty() || o.stable_observation_id.size() > 512) continue;
             const auto outcome = payload.value("outcome", std::string("unknown"));
-            o.outcome = outcome == "helped" ? common_flydelta_counterfactual_outcome::helped :
-                outcome == "neutral" ? common_flydelta_counterfactual_outcome::neutral :
-                outcome == "harmed" ? common_flydelta_counterfactual_outcome::harmed :
-                common_flydelta_counterfactual_outcome::unknown;
-            o.outcome_known = g.value("outcome_known",
-                o.outcome != common_flydelta_counterfactual_outcome::unknown);
+            if (outcome == "helped") o.outcome = common_flydelta_counterfactual_outcome::helped;
+            else if (outcome == "neutral") o.outcome = common_flydelta_counterfactual_outcome::neutral;
+            else if (outcome == "harmed") o.outcome = common_flydelta_counterfactual_outcome::harmed;
+            else if (outcome == "unknown") o.outcome = common_flydelta_counterfactual_outcome::unknown;
+            else continue;
+            // Lifecycle rejection is the host's disposition for a verified
+            // HARMED candidate, not evidence that the comparison is unusable.
+            // Keep it in the posterior while rejecting inconsistent records.
+            if ((record.status == common_learning_lifecycle_status::rejected) !=
+                    (o.outcome == common_flydelta_counterfactual_outcome::harmed)) continue;
+            o.outcome_known = g.value("outcome_known", false);
             o.verifier_known = payload.value("verifier_known", false);
-            entry.scope = record.namespace_id + "/" + record.project_id + "/" + record.session_id;
-            if (!o.stable_observation_id.empty() && !o.fixture_group_id.empty()) rows.push_back(std::move(entry));
+            if (o.outcome_known != (o.outcome != common_flydelta_counterfactual_outcome::unknown) ||
+                    (o.outcome_known && !o.verifier_known) || o.rank == 0 ||
+                    o.context.scope_fingerprint.empty() || o.context.model_profile_fingerprint.empty() ||
+                    o.context.tokenizer_fingerprint.empty() || o.context.template_fingerprint.empty() ||
+                    o.context.baseline_deployment_fingerprint.empty() || o.context.verifier_revision.empty() ||
+                    o.context.semantic_domain.empty() || o.context.strategy.empty() || o.context.estimator.empty() ||
+                    o.fixture_group_id.empty() ||
+                    (!o.basis_identity.empty() && o.basis_identity.size() > 512) ||
+                    (o.basis_identity.empty() && !(o.context.strategy == "whirlpool" &&
+                        o.context.estimator == "layer-region-prior-v2"))) continue;
+            const std::string ref_material = json::array({
+                namespace_id, project_id, session_id, o.stable_observation_id}).dump();
+            entry.opaque_ref = "outcome:sha256:" + hash_sha256_hex(
+                ref_material.data(), ref_material.size());
+            rows.push_back(std::move(entry));
         } catch (...) {
             // Invalid legacy records are ignored; they are not model-visible evidence.
         }
@@ -737,13 +780,16 @@ common_tool_execution_result daemon_outcome_predict(
             if (!ref.is_string() || ref.get<std::string>().empty()) return common_tool_execution_result::failure(
                 "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
                 "candidate_refs contains an invalid observation reference.", "reference must be a non-empty string");
+            if (ref.get<std::string>().size() > 256) return common_tool_execution_result::failure(
+                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "candidate_refs contains an invalid observation reference.", "reference exceeds 256 characters");
             requested.push_back(ref.get<std::string>());
         }
     } else {
         std::set<std::string> seen;
         for (auto it = rows.rbegin(); it != rows.rend() && requested.size() < limit; ++it)
-            if (seen.insert(it->observation.stable_observation_id).second)
-                requested.push_back(it->observation.stable_observation_id);
+            if (seen.insert(it->opaque_ref).second)
+                requested.push_back(it->opaque_ref);
     }
 
     json predictions = json::array();
@@ -751,7 +797,6 @@ common_tool_execution_result daemon_outcome_predict(
     json unresolved_refs = json::array();
     size_t effective_groups = 0;
     std::string fingerprints;
-    const std::string expected_scope = namespace_id + "/" + project_id + "/" + session_id;
     const auto same_observation = [](const auto & a, const auto & b) {
         return a.stable_observation_id == b.stable_observation_id &&
             a.fixture_group_id == b.fixture_group_id && a.basis_identity == b.basis_identity &&
@@ -775,7 +820,7 @@ common_tool_execution_result daemon_outcome_predict(
         if (!handled.insert(ref).second) continue;
         const row_entry * target = nullptr;
         bool conflict = false;
-        for (const auto & row : rows) if (row.observation.stable_observation_id == ref && row.scope == expected_scope) {
+        for (const auto & row : rows) if (row.opaque_ref == ref) {
             if (target && !same_observation(target->observation, row.observation)) {
                 conflict = true;
                 break;
@@ -790,7 +835,11 @@ common_tool_execution_result daemon_outcome_predict(
         for (const auto & row : rows) {
             const auto & a = row.observation.context;
             const auto & b = target->observation.context;
-            if (row.scope == target->scope && row.registration_order < target->registration_order &&
+            // list_scope_with_watermark() has already restricted this snapshot
+            // to the current namespace/project/session. Keep the chronological
+            // and leave-one-fixture-group-out checks here, without reconstructing
+            // scope from delimiter-joined strings.
+            if (row.registration_order < target->registration_order &&
                     row.observation.fixture_group_id != target->observation.fixture_group_id &&
                     a.scope_fingerprint == b.scope_fingerprint && a.model_profile_fingerprint == b.model_profile_fingerprint &&
                     a.tokenizer_fingerprint == b.tokenizer_fingerprint && a.template_fingerprint == b.template_fingerprint &&
@@ -798,8 +847,6 @@ common_tool_execution_result daemon_outcome_predict(
                     a.ruleset_revision == b.ruleset_revision && a.action_contract_fingerprint == b.action_contract_fingerprint)
                 history.push_back(row.observation);
         }
-        common_flydelta_outcome_guidance_config config;
-        config.mode = common_flydelta_outcome_guidance_mode::shadow;
         common_flydelta_outcome_guidance_candidate candidate;
         candidate.arm_id = ref;
         candidate.rank = target->observation.rank;
@@ -818,7 +865,10 @@ common_tool_execution_result daemon_outcome_predict(
         }
         const auto & p = decision.predictions.front();
         effective_groups += p.fixture_groups;
-        fingerprints += ref + decision.history_fingerprint;
+        fingerprints += ref;
+        fingerprints.push_back('\0');
+        fingerprints += decision.history_fingerprint;
+        fingerprints.push_back('\n');
         predictions.push_back({
             {"observation_ref", ref}, {"p_known", p.p_known},
             {"p_known_interval", {p.p_known_low, p.p_known_high}},
@@ -837,9 +887,12 @@ common_tool_execution_result daemon_outcome_predict(
         });
     }
     const std::string fingerprint = hash_sha256_hex(fingerprints.data(), fingerprints.size());
+    const std::string scope_material = json::array({namespace_id, project_id, session_id}).dump();
+    const std::string scope_fingerprint = "sha256:" + hash_sha256_hex(
+        scope_material.data(), scope_material.size());
     return common_tool_execution_result::success(json{
         {"status", effective_groups ? "available" : "insufficient_history"},
-        {"scope", expected_scope}, {"history_watermark", watermark},
+        {"scope_fingerprint", scope_fingerprint}, {"history_watermark", watermark},
         {"history_fingerprint", "sha256:" + fingerprint}, {"predictions", std::move(predictions)},
         {"unresolved_refs", std::move(unresolved_refs)},
     }.dump());
@@ -1108,9 +1161,10 @@ bool resolve_agent_daemon_tooling(
     }
     if (learning_lifecycle_store != nullptr && !request.session_id.empty()) {
         tool_request.outcome_predict_tool_call = [learning_lifecycle_store,
+                guidance_config = options.adaptation_flydelta_outcome_guidance,
                 namespace_id = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
                 project_id = request.project_id, session_id = request.session_id](const std::string & input) {
-            return daemon_outcome_predict(*learning_lifecycle_store,
+            return daemon_outcome_predict(*learning_lifecycle_store, guidance_config,
                 namespace_id, project_id, session_id, input);
         };
     } else {
@@ -1804,12 +1858,14 @@ void configure_agent_daemon_provider_probe(
     common_plan_store * probe_plan_store = runtime.plan_store.get();
     agent_resource_store * probe_resource_store = runtime.resource_store.get();
     common_agent_data_store * probe_data_store = runtime.data_store.get();
+    auto * lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store;
     runtime.probe_mcp_providers = [
         probe_options = options,
         probe_memory_store,
         probe_plan_store,
         probe_resource_store,
-        probe_data_store](
+        probe_data_store,
+        lifecycle_store_ref](
             common_agent_runtime_tooling & retained_tooling,
             std::vector<common_agent_daemon_provider_readiness> & provider_status,
             std::string & probe_error) {
@@ -1842,7 +1898,10 @@ void configure_agent_daemon_provider_probe(
                 probe_resource_store,
                 native_tooling,
                 native_error,
-                probe_data_store)) {
+                probe_data_store,
+                std::nullopt,
+                nullptr,
+                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr)) {
             retained_tooling = std::move(native_tooling);
         }
 
@@ -1877,7 +1936,10 @@ void configure_agent_daemon_provider_probe(
                 probe_resource_store,
                 provider_tooling,
                 provider_error,
-                probe_data_store);
+                probe_data_store,
+                std::nullopt,
+                nullptr,
+                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr);
             if (provider_ready) {
                 status.status = "ready";
                 for (auto & tool : provider_tooling.tools) {

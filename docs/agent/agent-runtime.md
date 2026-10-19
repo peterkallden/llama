@@ -4597,8 +4597,12 @@ The read-only MCP tool `outcome.predict` exposes retrospective predictions for
 host-issued FlyDelta observation references in the current session. It is
 available through the `analysis`, `research` and dynamic `all-configured`
 profiles only when the daemon lifecycle journal is bound. Candidate features
-come from that journal; callers cannot provide training observations or raw
-features. The tool is not a source of truth or learning credit. See
+come from that journal; session-bound observation handles and scope fingerprints
+avoid exposing raw lifecycle/session IDs. Callers cannot provide training
+observations or raw features. MCP `tools/list` publishes its result schema and
+successful calls provide matching structured content. The tool is not a source
+of truth or learning credit. It uses the same FlyDelta guidance settings and
+does not read history when that mode is `off`. See
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
 
 `runtime.adaptation.flydelta.teacher_scoring_backend` defaults to `auto`,
