@@ -91,7 +91,13 @@ bool run_tfo_lite_coefficient_search(
             }
             common_flydelta_outcome_guidance_decision guidance;
             std::string guidance_error;
-            if (adviser(guidance_candidates, pending_coefficients.size(), guidance, guidance_error) &&
+            common_flydelta_outcome_guidance_request request;
+            request.stage = "tfo_population";
+            request.round = iteration;
+            request.decision_id = "tfo-population-" + std::to_string(iteration);
+            request.candidates = guidance_candidates;
+            request.selection_limit = pending_coefficients.size();
+            if (adviser(request, guidance, guidance_error) &&
                     guidance.selected_order.size() == pending_coefficients.size()) {
                 std::vector<size_t> ordered_indices;
                 std::vector<std::vector<float>> ordered_coefficients;

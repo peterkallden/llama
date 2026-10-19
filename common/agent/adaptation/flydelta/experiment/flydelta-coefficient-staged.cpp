@@ -61,7 +61,12 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         }
         common_flydelta_outcome_guidance_decision guidance;
         std::string guidance_error;
-        if (adviser(candidates, top_k, guidance, guidance_error) &&
+        common_flydelta_outcome_guidance_request request;
+        request.stage = "coefficient_full_generation_frontier";
+        request.candidates = candidates;
+        request.selection_limit = top_k;
+        request.decision_id = "coefficient-full-generation-frontier";
+        if (adviser(request, guidance, guidance_error) &&
                 guidance.selected_order.size() == ranking.size()) {
             std::vector<size_t> reordered;
             reordered.reserve(ranking.size());

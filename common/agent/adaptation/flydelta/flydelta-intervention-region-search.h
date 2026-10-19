@@ -66,6 +66,9 @@ struct common_flydelta_intervention_region_trial {
     common_flydelta_decision_margin margin;
     common_flydelta_margin_comparison margin_comparison;
     bool executed = false;
+    bool overlay_applied = false;
+    // Set only after the daemon has run a matched full-generation baseline / candidate pair.
+    bool full_generation_completed = false;
     // Full generation/host-verification was attempted. This is deliberately
     // separate from verifier_known: an attempted verifier may return
     // UNKNOWN when the fixture has no applicable semantic predicate.

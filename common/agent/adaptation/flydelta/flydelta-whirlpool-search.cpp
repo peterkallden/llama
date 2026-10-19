@@ -16,6 +16,33 @@ bool contains(const std::vector<uint32_t> & values, uint32_t value) {
     return std::find(values.begin(), values.end(), value) != values.end();
 }
 
+std::vector<uint32_t> layers_for_order(
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
+        const std::vector<size_t> & order) {
+    std::vector<uint32_t> layers;
+    layers.reserve(order.size());
+    for (const size_t index : order) {
+        if (index >= candidates.size()) return {};
+        try {
+            constexpr char prefix[] = "layer:";
+            const std::string & id = candidates[index].arm_id;
+            if (id.compare(0, sizeof(prefix) - 1, prefix) != 0) return {};
+            layers.push_back(static_cast<uint32_t>(std::stoul(id.substr(sizeof(prefix) - 1))));
+        } catch (...) { return {}; }
+    }
+    return layers;
+}
+
+bool valid_order(const std::vector<size_t> & order, size_t size) {
+    if (order.size() != size) return false;
+    std::vector<bool> seen(size, false);
+    for (const size_t index : order) {
+        if (index >= size || seen[index]) return false;
+        seen[index] = true;
+    }
+    return true;
+}
+
 bool safe_geometry(const common_flydelta_representation_diagnostics & geometry,
         bool available, const common_flydelta_whirlpool_search_config & config) {
     // A margin-only Whirlpool is allowed when no dose controller is active.
@@ -154,6 +181,18 @@ bool common_flydelta_whirlpool_trace_validate(
             error = "FlyDelta Whirlpool round trace is invalid";
             return false;
         }
+        for (const auto layer : round.guidance_selected_layers) {
+            if (!contains(config.available_layers, layer)) {
+                error = "FlyDelta Whirlpool guidance trace selected an unavailable layer";
+                return false;
+            }
+        }
+    }
+    for (const auto layer : trace.initial_centre_guidance_selected_layers) {
+        if (!contains(config.available_layers, layer)) {
+            error = "FlyDelta Whirlpool initial guidance selected an unavailable layer";
+            return false;
+        }
     }
     return true;
 }
@@ -166,7 +205,8 @@ bool common_flydelta_run_whirlpool_search_batched(
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
         common_flydelta_whirlpool_trace & trace,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     error.clear();
     trials.clear();
     selection = {};
@@ -191,6 +231,68 @@ bool common_flydelta_run_whirlpool_search_batched(
     trace.model_evaluations = 1;
 
     uint32_t centre = initial_centre(config);
+    const bool has_current_diagnostic = std::any_of(config.layer_diagnostics.begin(),
+        config.layer_diagnostics.end(), [&](const auto & diagnostic) {
+            return diagnostic.layer_index != 0 && contains(config.available_layers,
+                diagnostic.layer_index);
+        });
+    trace.initial_centre_source = has_current_diagnostic ? "current_diagnostic"
+        : (!config.seed_layers.empty() ? "seed_layer" : "model_midpoint");
+    if (adviser) {
+        common_flydelta_outcome_guidance_request request;
+        request.stage = "whirlpool_initial_centre";
+        request.phase_id = 0;
+        request.round = 0;
+        request.decision_id = "whirlpool:initial-centre";
+        request.selection_limit = 1;
+        request.policy_sequence_start = 2;
+        request.candidates.reserve(config.available_layers.size());
+        for (const uint32_t layer : config.available_layers) {
+            common_flydelta_outcome_guidance_candidate candidate;
+            candidate.arm_id = "layer:" + std::to_string(layer);
+            candidate.rank = 1;
+            candidate.relative_layer = config.available_layers.size() > 1
+                ? static_cast<double>(layer - config.available_layers.front()) /
+                    static_cast<double>(config.available_layers.back() - config.available_layers.front())
+                : 0.0;
+            candidate.relative_dose = std::min(1.0, static_cast<double>(config.total_scale));
+            request.candidates.push_back(std::move(candidate));
+        }
+        common_flydelta_outcome_guidance_decision decision;
+        std::string guidance_error;
+        if (adviser(request, decision, guidance_error)) {
+            trace.initial_centre_guidance_decision_id = request.decision_id;
+            trace.initial_centre_guidance_original_layers = layers_for_order(
+                request.candidates, decision.original_order);
+            trace.initial_centre_guidance_posterior_layers = layers_for_order(
+                request.candidates, decision.shadow_order);
+            trace.initial_centre_guidance_hypothetical_layers = layers_for_order(
+                request.candidates, decision.mixed_policy_order);
+            trace.initial_centre_guidance_selected_layers = layers_for_order(
+                request.candidates, decision.selected_order);
+            trace.initial_centre_guidance_history_fingerprint = decision.history_fingerprint;
+            trace.initial_centre_guidance_fallback_reason = decision.fallback_reason;
+            const bool has_history = std::any_of(decision.predictions.begin(),
+                decision.predictions.end(), [](const auto & prediction) {
+                    return prediction.level != "global_prior";
+                });
+            if (!decision.shadow_mode && decision.fallback_reason.empty() &&
+                    !has_current_diagnostic && has_history &&
+                    valid_order(decision.selected_order, request.candidates.size()) &&
+                    !decision.selected_order.empty()) {
+                const auto selected = layers_for_order(request.candidates,
+                    {decision.selected_order.front()});
+                if (!selected.empty() && contains(config.available_layers, selected.front())) {
+                    centre = selected.front();
+                    trace.initial_centre_source = "bayesian_posterior";
+                }
+            }
+        } else {
+            trace.initial_centre_guidance_decision_id = request.decision_id;
+            trace.initial_centre_guidance_fallback_reason = guidance_error.empty()
+                ? "adviser_unavailable" : guidance_error;
+        }
+    }
     uint32_t radius = config.initial_radius;
     std::vector<uint32_t> visited;
     float best_objective = -std::numeric_limits<float>::infinity();
@@ -203,8 +305,66 @@ bool common_flydelta_run_whirlpool_search_batched(
         round_trace.round = round;
         round_trace.centre_before = centre;
         round_trace.radius_before = radius;
-        const auto round_probes = probes(centre, radius, config.available_layers,
-            std::min(config.probes_per_round, config.max_trials - trials.size()));
+        const auto proposed_layers = probes(centre, radius, config.available_layers,
+            config.available_layers.size());
+        std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
+        for (const uint32_t layer : proposed_layers) {
+            if (contains(visited, layer)) continue;
+            common_flydelta_outcome_guidance_candidate candidate;
+            candidate.arm_id = "layer:" + std::to_string(layer);
+            candidate.rank = 1;
+            candidate.relative_layer = config.available_layers.size() > 1
+                ? static_cast<double>(layer - config.available_layers.front()) /
+                    static_cast<double>(config.available_layers.back() - config.available_layers.front())
+                : 0.0;
+            candidate.relative_dose = std::min(1.0, static_cast<double>(config.total_scale));
+            guidance_candidates.push_back(std::move(candidate));
+        }
+        std::vector<uint32_t> round_probes;
+        const size_t round_limit = std::min(config.probes_per_round,
+            config.max_trials - trials.size());
+        if (adviser && !guidance_candidates.empty()) {
+            common_flydelta_outcome_guidance_request request;
+            request.stage = "whirlpool_probe";
+            request.phase_id = 1;
+            request.round = round;
+            request.decision_id = "whirlpool:probe:" + std::to_string(round);
+            request.candidates = guidance_candidates;
+            request.selection_limit = std::min(round_limit, guidance_candidates.size());
+            common_flydelta_outcome_guidance_decision decision;
+            std::string guidance_error;
+            if (adviser(request, decision, guidance_error)) {
+                round_trace.guidance_decision_id = request.decision_id;
+                round_trace.guidance_original_layers = layers_for_order(
+                    request.candidates, decision.original_order);
+                round_trace.guidance_posterior_layers = layers_for_order(
+                    request.candidates, decision.shadow_order);
+                round_trace.guidance_hypothetical_layers = layers_for_order(
+                    request.candidates, decision.mixed_policy_order);
+                round_trace.guidance_selected_layers = layers_for_order(
+                    request.candidates, decision.selected_order);
+                round_trace.guidance_history_fingerprint = decision.history_fingerprint;
+                round_trace.guidance_fallback_reason = decision.fallback_reason;
+                if (valid_order(decision.selected_order, guidance_candidates.size())) {
+                    for (size_t n = 0; n < request.selection_limit; ++n) {
+                        const auto selected = layers_for_order(request.candidates,
+                            {decision.selected_order[n]});
+                        if (!selected.empty()) round_probes.push_back(selected.front());
+                    }
+                } else round_trace.guidance_fallback_reason = "invalid_adviser_order";
+            } else {
+                round_trace.guidance_decision_id = request.decision_id;
+                round_trace.guidance_fallback_reason = guidance_error.empty()
+                    ? "adviser_unavailable" : guidance_error;
+            }
+        }
+        if (round_probes.empty()) {
+            for (size_t i = 0; i < guidance_candidates.size() && round_probes.size() < round_limit; ++i) {
+                const auto selected = layers_for_order(guidance_candidates, {i});
+                if (!selected.empty()) round_probes.push_back(selected.front());
+            }
+        }
+        if (round_probes.size() > round_limit) round_probes.resize(round_limit);
         std::vector<common_flydelta_intervention_region_candidate> candidates;
         for (const uint32_t layer : round_probes) {
             if (contains(visited, layer) || trials.size() + candidates.size() >= config.max_trials) continue;
@@ -340,6 +500,7 @@ bool common_flydelta_run_whirlpool_search_batched(
             region_trial.margin_comparison.baseline = baseline_margin;
             region_trial.margin_comparison.candidate = margin;
             region_trial.executed = counterfactual.executed;
+            region_trial.overlay_applied = counterfactual.overlay_applied;
             region_trial.host_evaluated = counterfactual.host_evaluated ||
                 counterfactual.verifier_known;
             region_trial.verifier_known = baseline.verifier_known && counterfactual.verifier_known;
@@ -416,7 +577,8 @@ bool common_flydelta_run_whirlpool_search(
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
         common_flydelta_whirlpool_trace & trace,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     if (!runner) {
         error = "FlyDelta Whirlpool runner is invalid";
         return false;
@@ -452,5 +614,5 @@ bool common_flydelta_run_whirlpool_search(
             return true;
         };
     return common_flydelta_run_whirlpool_search_batched(
-        fixture, config, runner, batch_runner, trials, selection, trace, error);
+        fixture, config, runner, batch_runner, trials, selection, trace, error, adviser);
 }

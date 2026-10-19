@@ -204,7 +204,8 @@ bool common_flydelta_run_search_pipeline_batched(
         const common_flydelta_search_pipeline_runner & runner,
         const common_flydelta_search_pipeline_batch_runner & batch_runner,
         common_flydelta_search_pipeline_result & result,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});
 
 // Appends every executed scale arm as an experimental lifecycle result. The
 // caller supplies the immutable experimental artifact id; this helper only

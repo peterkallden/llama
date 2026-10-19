@@ -242,6 +242,7 @@ bool common_flydelta_run_intervention_region_search(
         region_trial.margin_comparison.baseline = baseline_margin;
         region_trial.margin_comparison.candidate = margin;
         region_trial.executed = counterfactual.executed;
+        region_trial.overlay_applied = counterfactual.overlay_applied;
         // Older pure host runners only exposed verifier_known. Preserve that
         // contract while preferring the explicit execution provenance when a
         // model adapter supplies it.

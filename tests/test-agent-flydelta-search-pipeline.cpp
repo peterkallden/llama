@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 
 #include <cmath>
+#include <nlohmann/json.hpp>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -258,6 +259,7 @@ int main() {
     // runner while keeping baseline, scoring and selection on the CPU.
     common_flydelta_search_pipeline_result batched_whirlpool_result;
     size_t batch_calls = 0;
+    std::vector<std::string> guidance_stages;
     CHECK(common_flydelta_run_search_pipeline_batched(
         make_fixture(), whirlpool_config, {input},
         [&](const common_flydelta_experiment_fixture &,
@@ -312,8 +314,27 @@ int main() {
                 batch_geometry_available.push_back(true);
             }
             return true;
-        }, batched_whirlpool_result, error));
+        }, batched_whirlpool_result, error,
+        [&](const auto & request, auto & decision, std::string &) {
+            guidance_stages.push_back(request.stage);
+            decision.original_order.resize(request.candidates.size());
+            decision.shadow_order.resize(request.candidates.size());
+            decision.mixed_policy_order.resize(request.candidates.size());
+            decision.selected_order.resize(request.candidates.size());
+            decision.selection_reasons.assign(request.candidates.size(), "identity");
+            decision.mixed_policy_reasons.assign(request.candidates.size(), "identity");
+            for (size_t i = 0; i < request.candidates.size(); ++i) {
+                decision.original_order[i] = i;
+                decision.shadow_order[i] = i;
+                decision.mixed_policy_order[i] = i;
+                decision.selected_order[i] = i;
+            }
+            return true;
+        }));
     CHECK(batch_calls == 1);
+    CHECK(guidance_stages.size() == 2);
+    CHECK(guidance_stages.front() == "whirlpool_initial_centre");
+    CHECK(guidance_stages.back() == "whirlpool_probe");
     CHECK(batched_whirlpool_result.directions.front().region_trials.size() == 4);
     CHECK(batched_whirlpool_result.selection.selected);
     CHECK(batched_whirlpool_result.directions.front().region_trials[
@@ -323,6 +344,40 @@ int main() {
     CHECK(common_flydelta_append_search_pipeline_lifecycle(
         region_lifecycle, lifecycle_context, make_fixture(), region_result,
         "flydelta://sideband/search-pipeline-region", error));
+
+    auto verified_whirlpool = batched_whirlpool_result;
+    verified_whirlpool.directions.front().direction.extraction_id = "verified-direction";
+    auto & verified_trial = verified_whirlpool.directions.front().region_trials.front();
+    verified_trial.host_evaluated = true;
+    verified_trial.verifier_known = true;
+    verified_trial.executed = true;
+    verified_trial.overlay_applied = true;
+    verified_trial.full_generation_completed = true;
+    verified_trial.outcome = common_flydelta_counterfactual_outcome::helped;
+    auto guidance_fixture = make_fixture();
+    guidance_fixture.scope_fingerprint = "scope";
+    guidance_fixture.baseline_deployment_fingerprint = "deployment";
+    guidance_fixture.outcome_guidance_verifier_revision = "verifier-revision";
+    guidance_fixture.guidance_fixture_group_id = "fixture-group-1";
+    guidance_fixture.semantic_domain = "dataset";
+    guidance_fixture.model_n_layers = 8;
+    common_learning_in_memory_lifecycle_store verified_region_lifecycle;
+    CHECK(common_flydelta_append_search_pipeline_lifecycle(
+        verified_region_lifecycle, lifecycle_context, guidance_fixture, verified_whirlpool,
+        "flydelta://sideband/verified-whirlpool", error));
+    const auto verified_region_records = verified_region_lifecycle.list(error);
+    CHECK(error.empty() && !verified_region_records.empty());
+    bool found_verified_guidance = false;
+    for (const auto & record : verified_region_records) {
+        const auto payload = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
+        if (!payload.is_object() || !payload.contains("outcome_guidance")) continue;
+        found_verified_guidance = true;
+        CHECK(payload["outcome_guidance"]["strategy"] == "whirlpool");
+        CHECK(payload["outcome_guidance"]["comparison_completed"] == true);
+        CHECK(payload["outcome_guidance"]["overlay_applied"] == true);
+        CHECK(payload["outcome_guidance"]["outcome_known"] == true);
+    }
+    CHECK(found_verified_guidance);
     auto region_records = region_lifecycle.list(error);
     CHECK(error.empty() && region_records.size() == 16);
     CHECK(region_records.front().payload_json.find("direction-layer-scale-region") !=

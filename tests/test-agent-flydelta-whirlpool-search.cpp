@@ -142,6 +142,70 @@ int main() {
     CHECK(common_flydelta_whirlpool_trace_validate(
         trace, batch_config, trials.size(), error));
 
+    common_flydelta_whirlpool_search_config guided_config = batch_config;
+    guided_config.layer_diagnostics.clear();
+    size_t guidance_requests = 0;
+    uint32_t first_guided_layer = 0;
+    const common_flydelta_outcome_guidance_adviser guided_adviser =
+        [&guidance_requests, &first_guided_layer](const auto & request,
+                auto & decision, std::string &) {
+            ++guidance_requests;
+            decision.original_order.resize(request.candidates.size());
+            decision.shadow_order.resize(request.candidates.size());
+            decision.mixed_policy_order.resize(request.candidates.size());
+            decision.selected_order.resize(request.candidates.size());
+            decision.selection_reasons.assign(request.candidates.size(), "guided");
+            decision.mixed_policy_reasons.assign(request.candidates.size(), "guided");
+            for (size_t i = 0; i < request.candidates.size(); ++i) {
+                decision.original_order[i] = i;
+                decision.shadow_order[i] = i;
+                decision.mixed_policy_order[i] = i;
+                decision.selected_order[i] = i;
+            }
+            if (request.stage == "whirlpool_initial_centre") {
+                decision.shadow_mode = false;
+                decision.predictions.push_back({});
+                decision.predictions.back().level = "backoff";
+                std::rotate(decision.selected_order.begin(),
+                    decision.selected_order.begin() + 5, decision.selected_order.end());
+                decision.mixed_policy_order = decision.selected_order;
+            } else if (request.stage == "whirlpool_probe") {
+                std::rotate(decision.selected_order.begin(),
+                    decision.selected_order.end() - 1, decision.selected_order.end());
+                decision.mixed_policy_order = decision.selected_order;
+                const std::string & id = request.candidates[decision.selected_order[0]].arm_id;
+                first_guided_layer = static_cast<uint32_t>(std::stoul(id.substr(6)));
+            }
+            decision.history_fingerprint = "sha256:test-history";
+            return request.selection_limit <= request.candidates.size();
+        };
+    trials.clear();
+    selection = {};
+    trace = {};
+    CHECK(common_flydelta_run_whirlpool_search_batched(
+        fixture(), guided_config, batch_baseline_runner, batch_runner,
+        trials, selection, trace, error, guided_adviser));
+    CHECK(guidance_requests == 2);
+    CHECK(trace.initial_centre_source == "bayesian_posterior");
+    CHECK(trace.rounds.front().centre_before == 6);
+    CHECK(trace.rounds.front().probed_layers.front() == first_guided_layer);
+    CHECK(trace.initial_centre_guidance_decision_id == "whirlpool:initial-centre");
+    CHECK(trace.rounds.front().guidance_decision_id == "whirlpool:probe:0");
+    CHECK(trace.rounds.front().guidance_history_fingerprint == "sha256:test-history");
+    CHECK(common_flydelta_whirlpool_trace_validate(trace, guided_config, trials.size(), error));
+
+    auto diagnostic_wins_config = guided_config;
+    diagnostic_wins_config.layer_diagnostics = config.layer_diagnostics;
+    trials.clear();
+    selection = {};
+    trace = {};
+    guidance_requests = 0;
+    CHECK(common_flydelta_run_whirlpool_search_batched(
+        fixture(), diagnostic_wins_config, batch_baseline_runner, batch_runner,
+        trials, selection, trace, error, guided_adviser));
+    CHECK(trace.initial_centre_source == "current_diagnostic");
+    CHECK(trace.rounds.front().centre_before == 5);
+
     common_flydelta_whirlpool_search_config invalid = config;
     invalid.probes_per_round = 1;
     CHECK(!common_flydelta_whirlpool_search_config_validate(invalid, error));

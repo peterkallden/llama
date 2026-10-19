@@ -234,12 +234,6 @@ using common_flydelta_coefficient_search_batch_runner = std::function<bool(
         std::vector<bool> & geometry_available,
         std::string & error)>;
 
-using common_flydelta_outcome_guidance_adviser = std::function<bool(
-        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
-        size_t selection_limit,
-        common_flydelta_outcome_guidance_decision & decision,
-        std::string & error)>;
-
 // Runs the cheap bounded coefficient stencil. Decision margin is diagnostic
 // and may rank follow-up work, while only host-verified counterfactual
 // classification can select a coefficient trial.

@@ -520,6 +520,21 @@ bool daemon_flydelta_run_search_pipeline(
     fixture.template_fingerprint = job.seed.template_fingerprint;
     fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
     fixture.verifier_revision = job.seed.verifier_ref;
+    fixture.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
+    fixture.semantic_domain = job.seed.behavior_key.empty()
+        ? common_adaptation_evidence_source_name(job.seed.source) : job.seed.behavior_key;
+    fixture.model_n_layers = provider->model_n_layers;
+    const std::string baseline_identity = "flydelta-base-deployment-v1\n" +
+        job.seed.model_profile_fingerprint + "\n" + job.seed.tokenizer_fingerprint + "\n" +
+        job.seed.template_fingerprint + "\n" + std::to_string(provider->model_n_layers);
+    fixture.baseline_deployment_fingerprint = "sha256:" +
+        hash_sha256_hex(baseline_identity.data(), baseline_identity.size());
+    fixture.outcome_guidance_verifier_revision = job.seed.verifier_contract_revision.empty()
+        ? daemon_flydelta_verifier_contract_revision(provider->oracle_registry, job.seed.verifier_ref)
+        : job.seed.verifier_contract_revision;
+    fixture.guidance_fixture_group_id = job.seed.fixture_group_id;
+    fixture.ruleset_revision = job.seed.ruleset_revision;
+    fixture.action_contract_fingerprint = job.seed.action_contract_fingerprint;
     if (!common_flydelta_experiment_fixture_validate(fixture, error)) return false;
 
     std::vector<common_flydelta_basis_direction> basis;
@@ -780,8 +795,349 @@ bool daemon_flydelta_run_search_pipeline(
         }
         return true;
     };
+    const auto guidance_config = provider->outcome_guidance_config;
+    common_flydelta_outcome_guidance_adviser whirlpool_adviser;
+    if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+            provider->lifecycle_store && !fixture.scope_fingerprint.empty() &&
+            !fixture.model_profile_fingerprint.empty() &&
+            !fixture.tokenizer_fingerprint.empty() && !fixture.template_fingerprint.empty() &&
+            !fixture.baseline_deployment_fingerprint.empty() &&
+            !fixture.outcome_guidance_verifier_revision.empty()) {
+        common_flydelta_outcome_guidance_context base_context;
+        base_context.scope_fingerprint = fixture.scope_fingerprint;
+        base_context.model_profile_fingerprint = fixture.model_profile_fingerprint;
+        base_context.tokenizer_fingerprint = fixture.tokenizer_fingerprint;
+        base_context.template_fingerprint = fixture.template_fingerprint;
+        base_context.baseline_deployment_fingerprint = fixture.baseline_deployment_fingerprint;
+        base_context.verifier_revision = fixture.outcome_guidance_verifier_revision;
+        base_context.ruleset_revision = fixture.ruleset_revision;
+        base_context.action_contract_fingerprint = fixture.action_contract_fingerprint;
+        base_context.semantic_domain = fixture.semantic_domain;
+        base_context.strategy = "whirlpool";
+        base_context.estimator = "layer-region-prior-v1";
+        const nlohmann::ordered_json context_identity = {
+            {"scope", base_context.scope_fingerprint},
+            {"model", base_context.model_profile_fingerprint},
+            {"tokenizer", base_context.tokenizer_fingerprint},
+            {"template", base_context.template_fingerprint},
+            {"deployment", base_context.baseline_deployment_fingerprint},
+            {"verifier", base_context.verifier_revision},
+            {"ruleset", base_context.ruleset_revision},
+            {"action_contract", base_context.action_contract_fingerprint},
+        };
+        const std::string context_bytes = context_identity.dump();
+        const std::string context_fingerprint = "sha256:" +
+            hash_sha256_hex(context_bytes.data(), context_bytes.size());
+        const auto history_projection_started = std::chrono::steady_clock::now();
+        std::vector<common_flydelta_outcome_guidance_observation> whirlpool_history;
+        uint64_t history_watermark = 0;
+        size_t history_rows_read = 0;
+        size_t history_rows_rejected = 0;
+        std::string history_failure;
+        std::vector<common_learning_lifecycle_record> history_records;
+        if (!provider->lifecycle_store->list_scope_with_watermark(
+                job.seed.scope.namespace_id, job.seed.scope.project_id,
+                job.seed.scope.session_id, history_records, history_watermark, error)) {
+            history_failure = "lifecycle_history_read_failed:" + error;
+            error.clear();
+        } else {
+            history_rows_read = history_records.size();
+            std::set<std::string> observation_ids;
+            nlohmann::ordered_json frozen_rows = nlohmann::ordered_json::array();
+            bool snapshot_found = false;
+            bool snapshot_invalid = false;
+            for (const auto & record : history_records) {
+                if (record.kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                        record.registration_order == 0) continue;
+                try {
+                    const auto payload = nlohmann::ordered_json::parse(
+                        record.payload_json, nullptr, false);
+                    if (!payload.is_object() || payload.value("record_type", "") !=
+                            "outcome_guidance_history_snapshot" ||
+                            payload.value("job_id", "") != job.id ||
+                            payload.value("context_fingerprint", "") != context_fingerprint) continue;
+                    if (payload.value("schema_version", 0) != 2 || !payload.contains("rows") ||
+                            !payload["rows"].is_array()) { snapshot_invalid = true; break; }
+                    const auto canonical = nlohmann::ordered_json{
+                        {"builder_revision", "flydelta-outcome-history-snapshot-v2"},
+                        {"context_fingerprint", context_fingerprint},
+                        {"source_watermark", payload.value("source_watermark", uint64_t{0})},
+                        {"rows", payload["rows"]},
+                    };
+                    const std::string bytes = canonical.dump();
+                    const std::string expected = "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+                    if (payload.value("snapshot_fingerprint", std::string()) != expected ||
+                            record.content_hash != expected) { snapshot_invalid = true; break; }
+                    frozen_rows = payload["rows"];
+                    history_watermark = payload.value("source_watermark", uint64_t{0});
+                    snapshot_found = true;
+                    break;
+                } catch (const std::exception &) {
+                    ++history_rows_rejected;
+                }
+            }
+            if (!snapshot_found && !snapshot_invalid) {
+                for (const auto & record : history_records) {
+                    if (record.kind != common_learning_lifecycle_kind::flydelta_result ||
+                            record.registration_order == 0) continue;
+                    try {
+                        const auto payload = nlohmann::ordered_json::parse(
+                            record.payload_json, nullptr, false);
+                        if (!payload.is_object() || payload.value("record_type", "") !=
+                                "candidate_search_decision" || !payload.contains("outcome_guidance") ||
+                                !payload["outcome_guidance"].is_object()) continue;
+                        frozen_rows.push_back({
+                            {"outcome_guidance", payload["outcome_guidance"]},
+                            {"outcome", payload.value("outcome", "unknown")},
+                            {"verifier_known", payload.value("verifier_known", false)},
+                            {"source_registration_order", record.registration_order},
+                        });
+                    } catch (const std::exception &) {
+                        ++history_rows_rejected;
+                    }
+                }
+                const auto canonical = nlohmann::ordered_json{
+                    {"builder_revision", "flydelta-outcome-history-snapshot-v2"},
+                    {"context_fingerprint", context_fingerprint},
+                    {"source_watermark", history_watermark}, {"rows", frozen_rows},
+                };
+                const std::string bytes = canonical.dump();
+                const std::string fingerprint = "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+                common_learning_lifecycle_record snapshot;
+                snapshot.event_id = job.id + ":outcome-guidance-snapshot:" + context_fingerprint;
+                snapshot.idempotency_key = snapshot.event_id;
+                snapshot.subject_id = job.id;
+                snapshot.kind = common_learning_lifecycle_kind::flydelta_experiment;
+                snapshot.status = common_learning_lifecycle_status::observed;
+                snapshot.source_id = "daemon-flydelta-outcome-guidance-snapshot";
+                snapshot.namespace_id = job.seed.scope.namespace_id;
+                snapshot.project_id = job.seed.scope.project_id;
+                snapshot.session_id = job.seed.scope.session_id;
+                snapshot.content_hash = fingerprint;
+                snapshot.created_at = std::to_string(std::time(nullptr));
+                snapshot.payload_json = nlohmann::ordered_json{
+                    {"record_type", "outcome_guidance_history_snapshot"},
+                    {"schema_version", 2}, {"job_id", job.id},
+                    {"context_fingerprint", context_fingerprint},
+                    {"source_watermark", history_watermark},
+                    {"snapshot_fingerprint", fingerprint}, {"rows", frozen_rows},
+                }.dump();
+                if (!provider->lifecycle_store->append(snapshot, error)) {
+                    history_failure = "history_snapshot_persist_failed:" + error;
+                    error.clear();
+                }
+            }
+            if (snapshot_invalid) history_failure = "frozen_history_snapshot_fingerprint_invalid";
+            if (history_failure.empty()) {
+                for (const auto & row : frozen_rows) {
+                    try {
+                        const auto & g = row.value("outcome_guidance", nlohmann::ordered_json{});
+                        if (!g.is_object() || g.value("schema_version", 0) != 1 ||
+                                g.value("scope_fingerprint", "") != base_context.scope_fingerprint) {
+                            ++history_rows_rejected;
+                            continue;
+                        }
+                        common_flydelta_outcome_guidance_observation observation;
+                        observation.stable_observation_id = g.value("observation_id", "");
+                        observation.fixture_group_id = g.value("fixture_group_id", "");
+                        observation.context.scope_fingerprint = g.value("scope_fingerprint", "");
+                        observation.context.model_profile_fingerprint = g.value("model_profile_fingerprint", "");
+                        observation.context.tokenizer_fingerprint = g.value("tokenizer_fingerprint", "");
+                        observation.context.template_fingerprint = g.value("template_fingerprint", "");
+                        observation.context.baseline_deployment_fingerprint = g.value("baseline_deployment_fingerprint", "");
+                        observation.context.verifier_revision = g.value("verifier_revision", "");
+                        observation.context.ruleset_revision = g.value("ruleset_revision", "");
+                        observation.context.action_contract_fingerprint = g.value("action_contract_fingerprint", "");
+                        observation.context.semantic_domain = g.value("domain", "");
+                        observation.context.strategy = g.value("strategy", "");
+                        observation.context.estimator = g.value("estimator", "");
+                        observation.basis_identity = g.value("basis_id", "");
+                        observation.rank = g.value("rank", size_t{0});
+                        observation.relative_layer = g.value("relative_layer", 0.0);
+                        observation.relative_dose = g.value("relative_dose", 0.0);
+                        observation.mixed_coefficients = g.value("mixed_coefficients", false);
+                        observation.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
+                        observation.comparison_completed = g.value("comparison_completed", false);
+                        observation.overlay_applied = g.value("overlay_applied", false);
+                        const std::string outcome = row.value("outcome", "unknown");
+                        observation.outcome = outcome == "helped" ? common_flydelta_counterfactual_outcome::helped :
+                            outcome == "neutral" ? common_flydelta_counterfactual_outcome::neutral :
+                            outcome == "harmed" ? common_flydelta_counterfactual_outcome::harmed :
+                            common_flydelta_counterfactual_outcome::unknown;
+                        observation.outcome_known = g.value("outcome_known",
+                            observation.outcome != common_flydelta_counterfactual_outcome::unknown);
+                        observation.verifier_known = row.value("verifier_known", false);
+                        if (observation.stable_observation_id.empty() ||
+                                !observation_ids.insert(observation.stable_observation_id).second) {
+                            ++history_rows_rejected;
+                            continue;
+                        }
+                        whirlpool_history.push_back(std::move(observation));
+                    } catch (const std::exception &) {
+                        ++history_rows_rejected;
+                    }
+                }
+            }
+        }
+        const double projection_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - history_projection_started).count();
+        auto whirlpool_policy_cursor = std::make_shared<size_t>(0);
+        whirlpool_adviser = [provider, job, base_context, history = std::move(whirlpool_history),
+                guidance_config, context_fingerprint, history_watermark, history_rows_read,
+                history_rows_rejected, whirlpool_policy_cursor,
+                history_failure, projection_ms](const common_flydelta_outcome_guidance_request & request,
+                common_flydelta_outcome_guidance_decision & decision, std::string & adviser_error) {
+            if (request.schema_version != 1 || request.stage.empty() || request.decision_id.empty() ||
+                    request.selection_limit > request.candidates.size()) {
+                adviser_error = "invalid_typed_guidance_request";
+                return false;
+            }
+            auto context = base_context;
+            if (request.stage == "whirlpool_initial_centre" || request.stage == "whirlpool_probe") {
+                context.strategy = "whirlpool";
+                context.estimator = "layer-region-prior-v1";
+            }
+            uint64_t request_hash = 1469598103934665603ULL;
+            for (const unsigned char ch : job.id + ":" + request.stage + ":" +
+                    request.decision_id + ":" + std::to_string(request.round)) {
+                request_hash ^= ch;
+                request_hash *= 1099511628211ULL;
+            }
+            const uint64_t seed = guidance_config.seed ^ request_hash;
+            const size_t policy_cursor_before = *whirlpool_policy_cursor;
+            size_t policy_start = request.policy_sequence_start < 4
+                ? request.policy_sequence_start
+                : (static_cast<size_t>(seed) + policy_cursor_before) % 4;
+            if (!history_failure.empty()) adviser_error = history_failure;
+            const auto started = std::chrono::steady_clock::now();
+            const bool built = history_failure.empty() && common_flydelta_outcome_guidance_build_decision(
+                guidance_config, context, history, request.candidates, request.selection_limit,
+                seed, decision, adviser_error,
+                common_flydelta_outcome_guidance_policy::posterior_sampling, policy_start);
+            if (!built) {
+                decision = {};
+                decision.fallback_reason = adviser_error.empty() ? "guidance_unavailable" : adviser_error;
+                for (size_t i = 0; i < request.candidates.size(); ++i) {
+                    decision.original_order.push_back(i);
+                    decision.shadow_order.push_back(i);
+                    decision.mixed_policy_order.push_back(i);
+                    decision.selected_order.push_back(i);
+                    decision.selection_reasons.push_back("fallback_existing_order");
+                    decision.mixed_policy_reasons.push_back("fallback_existing_order");
+                }
+                adviser_error.clear();
+            }
+            decision.stage = request.stage;
+            decision.phase_id = request.phase_id;
+            decision.round = request.round;
+            decision.decision_id = request.decision_id;
+            decision.shadow_mode = guidance_config.mode == common_flydelta_outcome_guidance_mode::shadow;
+            const std::string stable_id = job.id + ":" + request.stage + ":" +
+                std::to_string(request.phase_id) + ":" + std::to_string(request.round) + ":" +
+                request.decision_id;
+            nlohmann::ordered_json candidate_identity = nlohmann::ordered_json::array();
+            for (const auto & candidate : request.candidates) candidate_identity.push_back({
+                {"arm_id", candidate.arm_id}, {"basis_identity", candidate.basis_identity},
+                {"rank", candidate.rank}, {"relative_layer", candidate.relative_layer},
+                {"relative_dose", candidate.relative_dose},
+                {"mixed_coefficients", candidate.mixed_coefficients},
+                {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
+            });
+            const std::string candidate_bytes = candidate_identity.dump();
+            const std::string candidate_fingerprint = "sha256:" +
+                hash_sha256_hex(candidate_bytes.data(), candidate_bytes.size());
+            nlohmann::ordered_json decision_identity = {
+                {"history", decision.history_fingerprint},
+                {"context", context_fingerprint},
+                {"candidate_pool", candidate_fingerprint},
+                {"selected", decision.selected_order},
+                {"posterior", decision.shadow_order},
+                {"mixed", decision.mixed_policy_order},
+                {"seed", seed}, {"mode", common_flydelta_outcome_guidance_mode_name(
+                    guidance_config.mode)},
+                {"harm_penalty", guidance_config.harm_penalty},
+                {"policy_sequence_start", policy_start},
+            };
+            nlohmann::ordered_json prediction_identity = nlohmann::ordered_json::array();
+            for (const auto & prediction : decision.predictions) prediction_identity.push_back({
+                {"arm_id", prediction.arm_id}, {"level", prediction.level},
+                {"p_known", prediction.p_known},
+                {"p_helped", prediction.p_helped_given_known},
+                {"p_neutral", prediction.p_neutral_given_known},
+                {"p_harmed", prediction.p_harmed_given_known},
+                {"utility", prediction.expected_utility},
+            });
+            decision_identity["predictions"] = std::move(prediction_identity);
+            const std::string decision_bytes = decision_identity.dump();
+            const std::string decision_fingerprint = "sha256:" +
+                hash_sha256_hex(decision_bytes.data(), decision_bytes.size());
+            if (provider->lifecycle_store) {
+                common_flydelta_lifecycle_event_context event;
+                event.event_id = stable_id + ":" + candidate_fingerprint + ":limit:" +
+                    std::to_string(request.selection_limit);
+                event.idempotency_key = event.event_id;
+                event.source_id = "daemon-flydelta-outcome-guidance";
+                event.scope = job.seed.scope;
+                event.content_hash = decision_fingerprint;
+                event.created_at = std::to_string(std::time(nullptr));
+                std::string persist_error;
+                if (!common_flydelta_append_outcome_guidance_decision_lifecycle(
+                        *provider->lifecycle_store, event, job.id, guidance_config.mode, seed,
+                        request.phase_id, request.round, request.selection_limit, policy_start,
+                        policy_cursor_before,
+                        std::min(request.selection_limit, request.candidates.size()),
+                        context, request.candidates, decision, persist_error)) {
+                    decision.fallback_reason = "lifecycle_write_failed:" + persist_error;
+                    decision.selected_order = decision.original_order;
+                } else {
+                    *whirlpool_policy_cursor +=
+                        std::min(request.selection_limit, request.candidates.size());
+                }
+            }
+            nlohmann::ordered_json trace = {
+                {"event", "flydelta_outcome_guidance"}, {"schema_version", 3},
+                {"stage", request.stage}, {"decision_id", request.decision_id},
+                {"phase_id", request.phase_id}, {"round", request.round}, {"job_id", job.id},
+                {"mode", common_flydelta_outcome_guidance_mode_name(guidance_config.mode)},
+                {"history_snapshot", context_fingerprint}, {"history_watermark", history_watermark},
+                {"read_history_rows", history_rows_read},
+                {"compatible_history_rows", decision.compatible_history_rows},
+                {"deduplicated_history_rows", decision.deduplicated_history_rows},
+                {"rejected_history_rows", history_rows_rejected +
+                    decision.rejected_history_rows},
+                {"history_projection_ms", projection_ms},
+                {"history_fallback_reason", history_failure},
+                {"selection_limit", request.selection_limit}, {"candidate_count", request.candidates.size()},
+                {"seed", seed}, {"policy_sequence_start", policy_start},
+                {"history_fingerprint", decision.history_fingerprint},
+                {"original_order", decision.original_order}, {"posterior_order", decision.shadow_order},
+                {"hypothetical_order", decision.mixed_policy_order},
+                {"selected_order", decision.selected_order}, {"fallback_reason", decision.fallback_reason},
+                {"predictions", nlohmann::ordered_json::array()},
+                {"candidate_pool", nlohmann::ordered_json::array()},
+            };
+            for (const auto & candidate : request.candidates) trace["candidate_pool"].push_back({
+                {"arm_id", candidate.arm_id}, {"rank", candidate.rank},
+                {"relative_layer", candidate.relative_layer}, {"relative_dose", candidate.relative_dose},
+                {"basis_identity", candidate.basis_identity},
+            });
+            for (const auto & prediction : decision.predictions) trace["predictions"].push_back({
+                {"arm_id", prediction.arm_id}, {"level", prediction.level},
+                {"p_known", prediction.p_known}, {"p_helped", prediction.p_helped_given_known},
+                {"p_neutral", prediction.p_neutral_given_known}, {"p_harmed", prediction.p_harmed_given_known},
+                {"expected_utility", prediction.expected_utility},
+                {"fixture_groups", prediction.fixture_groups},
+                {"backoff_groups", prediction.backoff_fixture_groups},
+            });
+            trace["prediction_and_ordering_ms"] = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - started).count();
+            std::clog << "[flydelta] outcome_guidance " << trace.dump() << '\n';
+            return true;
+        };
+    }
     if (!common_flydelta_run_search_pipeline_batched(
-            fixture, config, {input}, runner, batch_runner, result, error)) return false;
+            fixture, config, {input}, runner, batch_runner, result, error,
+            whirlpool_adviser)) return false;
 
     // Whirlpool/region search ranks compact diagnostic observations first.
     // Only the bounded frontier is re-run with generation and host
@@ -850,6 +1206,7 @@ bool daemon_flydelta_run_search_pipeline(
     common_flydelta_counterfactual_trial baseline_trial;
     baseline_trial.executed = baseline_arm.executed;
     baseline_trial.host_evaluated = baseline_arm.host_evaluated;
+    baseline_trial.overlay_applied = baseline_arm.overlay_applied;
     baseline_trial.passed = daemon_flydelta_arm_semantic_passed(baseline_arm);
     baseline_trial.quality = baseline_arm.quality;
     baseline_trial.verifier_known = baseline_arm.verifier_known;
@@ -866,6 +1223,7 @@ bool daemon_flydelta_run_search_pipeline(
         common_flydelta_counterfactual_trial candidate_trial;
         candidate_trial.executed = arm.executed;
         candidate_trial.host_evaluated = arm.host_evaluated;
+        candidate_trial.overlay_applied = arm.overlay_applied;
         candidate_trial.passed = daemon_flydelta_arm_semantic_passed(arm);
         candidate_trial.quality = arm.quality;
         candidate_trial.verifier_known = arm.verifier_known;
@@ -886,6 +1244,10 @@ bool daemon_flydelta_run_search_pipeline(
         trial.margin_comparison.baseline = baseline_arm.margin;
         trial.margin_comparison.candidate = arm.margin;
         trial.executed = candidate_trial.executed;
+        trial.overlay_applied = candidate_trial.overlay_applied;
+        trial.full_generation_completed = baseline_trial.executed &&
+            candidate_trial.executed && baseline_trial.host_evaluated &&
+            candidate_trial.host_evaluated;
         // This loop iterates only over the bounded full-generation frontier,
         // but the result still comes from the arm's actual execution metadata.
         trial.host_evaluated = candidate_trial.host_evaluated;
@@ -928,6 +1290,23 @@ bool daemon_flydelta_run_search_pipeline(
     result.search_status = result.selection.selected
         ? common_flydelta_search_status::candidate_available
         : common_flydelta_search_status::no_useful_utility;
+    if (provider->lifecycle_store) {
+        common_flydelta_lifecycle_event_context lifecycle_context;
+        lifecycle_context.event_id = job.id + ":whirlpool-verified-search-results";
+        lifecycle_context.idempotency_key = lifecycle_context.event_id;
+        lifecycle_context.source_id = "daemon-flydelta-whirlpool-search-results";
+        lifecycle_context.scope = job.seed.scope;
+        lifecycle_context.content_hash = job.seed.candidate_ref + ":" +
+            std::to_string(result.selection.selected ? result.selection.region_trial_index : 0);
+        lifecycle_context.created_at = std::to_string(std::time(nullptr));
+        std::string lifecycle_error;
+        if (!common_flydelta_append_search_pipeline_lifecycle(
+                *provider->lifecycle_store, lifecycle_context, fixture, result,
+                job.seed.candidate_ref, lifecycle_error)) {
+            std::clog << "[flydelta] whirlpool_result_persistence_failed job="
+                << job.id << " error=" << lifecycle_error << '\n';
+        }
+    }
     return true;
 }
 
@@ -1538,7 +1917,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                     if (!payload.is_object() || payload.value("record_type", "") !=
                             "outcome_guidance_decision" || payload.value("job_id", "") != job.id ||
                             (payload.value("schema_version", 0) != 2 &&
-                             payload.value("schema_version", 0) != 3) ||
+                             payload.value("schema_version", 0) != 3 &&
+                             payload.value("schema_version", 0) != 4) ||
                             !payload.contains("candidate_pool_fingerprint")) continue;
                     const int phase_id = payload.value("phase_id", -1);
                     const size_t sequence = payload.value("decision_sequence", size_t{0});
@@ -1546,8 +1926,14 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                         "candidate_pool_fingerprint", std::string());
                     if (phase_id < 0 || pool_fingerprint.empty()) continue;
                     const size_t selection_limit = payload.value("selection_limit", size_t{0});
-                    const std::string key = std::to_string(phase_id) + ":" +
-                        pool_fingerprint + ":" + std::to_string(selection_limit);
+                    const std::string key = payload.value("schema_version", 0) >= 4
+                        ? payload.value("stage", std::string("")) + ":" +
+                            std::to_string(phase_id) + ":" +
+                            std::to_string(payload.value("round", size_t{0})) + ":" +
+                            payload.value("decision_id", std::string("")) + ":" +
+                            pool_fingerprint + ":" + std::to_string(selection_limit)
+                        : std::to_string(phase_id) + ":" + pool_fingerprint + ":" +
+                            std::to_string(selection_limit);
                     (*persisted_guidance_sequence_by_pool)[key] = sequence;
                     if (payload.value("schema_version", 0) >= 3) {
                         const size_t policy_start = payload.value("policy_sequence_start", size_t{0}) % 4;
@@ -1767,9 +2153,17 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             history_failure_reason = guidance_history_failure_reason,
             read_history_rows = guidance_read_history_rows,
             ineligible_rows = guidance_ineligible_history_rows](
-            const std::vector<common_flydelta_outcome_guidance_candidate> & pool,
-                const size_t limit, common_flydelta_outcome_guidance_decision & decision,
+            const common_flydelta_outcome_guidance_request & request,
+                common_flydelta_outcome_guidance_decision & decision,
                 std::string & adviser_error) {
+            const auto & pool = request.candidates;
+            const size_t limit = request.selection_limit;
+            const std::string stage = request.stage.empty() ? "coefficient_search" : request.stage;
+            const int decision_phase_id = request.phase_id >= 0 ? request.phase_id : phase_id;
+            const size_t round = request.round;
+            const std::string decision_id = request.decision_id.empty()
+                ? stage + ":" + std::to_string(decision_phase_id) + ":" + std::to_string(round)
+                : request.decision_id;
             double prediction_ms = 0.0;
             nlohmann::ordered_json pool_identity = nlohmann::ordered_json::array();
             for (const auto & candidate : pool) pool_identity.push_back({
@@ -1781,8 +2175,9 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             const std::string pool_bytes = pool_identity.dump();
             const std::string pool_fingerprint = "sha256:" +
                 hash_sha256_hex(pool_bytes.data(), pool_bytes.size());
-            const std::string sequence_key = std::to_string(phase_id) + ":" +
-                pool_fingerprint + ":" + std::to_string(limit);
+            const std::string sequence_key = stage + ":" + std::to_string(decision_phase_id) + ":" +
+                std::to_string(round) + ":" + decision_id + ":" + pool_fingerprint + ":" +
+                std::to_string(limit);
             size_t wave_index = 0;
             const auto persisted = persisted_guidance_sequence_by_pool->find(sequence_key);
             if (persisted != persisted_guidance_sequence_by_pool->end()) {
@@ -1796,13 +2191,20 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 policy_origin ^= ch;
                 policy_origin *= 1099511628211ULL;
             }
-            policy_origin ^= static_cast<uint64_t>(phase_id);
+            for (const unsigned char ch : stage) {
+                policy_origin ^= ch;
+                policy_origin *= 1099511628211ULL;
+            }
+            policy_origin ^= static_cast<uint64_t>(decision_phase_id);
+            policy_origin ^= static_cast<uint64_t>(round) << 16;
             size_t policy_cursor_before = (*next_guidance_policy_cursor_by_phase)[phase_id];
             size_t policy_sequence_start = static_cast<size_t>(
                 (policy_origin + policy_cursor_before) % 4);
             const auto persisted_policy_start =
                 persisted_guidance_policy_start_by_pool->find(sequence_key);
-            if (persisted_policy_start != persisted_guidance_policy_start_by_pool->end()) {
+            if (request.policy_sequence_start < 4) {
+                policy_sequence_start = request.policy_sequence_start;
+            } else if (persisted_policy_start != persisted_guidance_policy_start_by_pool->end()) {
                 policy_sequence_start = persisted_policy_start->second;
                 const auto persisted_cursor =
                     persisted_guidance_policy_cursor_before_by_pool->find(sequence_key);
@@ -1816,7 +2218,9 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             const size_t policy_slots_consumed = std::min(limit, pool.size());
             uint64_t wave_seed = 1469598103934665603ULL;
             for (const unsigned char ch : job_id) { wave_seed ^= ch; wave_seed *= 1099511628211ULL; }
-            wave_seed ^= static_cast<uint64_t>(phase_id);
+            wave_seed ^= static_cast<uint64_t>(decision_phase_id);
+            for (const unsigned char ch : stage) { wave_seed ^= ch; wave_seed *= 1099511628211ULL; }
+            wave_seed ^= static_cast<uint64_t>(round);
             wave_seed *= 1099511628211ULL;
             wave_seed ^= static_cast<uint64_t>(wave_index);
             if (history_load_failed) {
@@ -1841,12 +2245,18 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 }
                 adviser_error.clear();
             }
+            decision.stage = stage;
+            decision.phase_id = decision_phase_id;
+            decision.round = round;
+            decision.decision_id = decision_id;
+            decision.shadow_mode = guidance_config.mode == common_flydelta_outcome_guidance_mode::shadow;
             prediction_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - prediction_started).count();
             if (lifecycle_store) {
                 common_flydelta_lifecycle_event_context event_context;
-                event_context.event_id = job_id + ":outcome-guidance-v3:" +
-                    std::to_string(phase_id) + ":" + std::to_string(wave_index) + ":" +
+                event_context.event_id = job_id + ":outcome-guidance-v4:" + stage + ":" +
+                    std::to_string(decision_phase_id) + ":" + std::to_string(round) + ":" +
+                    decision_id + ":" + std::to_string(wave_index) + ":" +
                     decision.history_fingerprint + ":" + pool_fingerprint + ":limit:" +
                     std::to_string(limit);
                 event_context.idempotency_key = event_context.event_id;
@@ -1864,7 +2274,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 std::string persist_error;
                 const bool decision_persisted = common_flydelta_append_outcome_guidance_decision_lifecycle(
                     *lifecycle_store, event_context, job_id, guidance_config.mode,
-                        wave_seed, phase_id, wave_index, limit, policy_sequence_start,
+                        wave_seed, decision_phase_id, wave_index, limit, policy_sequence_start,
                         policy_cursor_before, policy_slots_consumed, guidance_context, pool,
                         decision, persist_error);
                 if (!decision_persisted) {
@@ -1891,8 +2301,10 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 {"event", "flydelta_outcome_guidance"},
                 {"schema_version", 2},
                 {"stage", "decision_before_execution"},
+                {"search_stage", stage}, {"search_round", round},
+                {"decision_id", decision_id},
                 {"job_id", job_id},
-                {"phase_id", phase_id},
+                {"phase_id", decision_phase_id},
                 {"seed", wave_seed},
                 {"mode", common_flydelta_outcome_guidance_mode_name(guidance_config.mode)},
                 {"history_fingerprint", decision.history_fingerprint},

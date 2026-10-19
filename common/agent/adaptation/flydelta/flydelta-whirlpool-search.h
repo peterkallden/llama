@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +53,13 @@ struct common_flydelta_whirlpool_round_trace {
     float best_probe_score = 0.0f;
     uint32_t centre_after = 0;
     uint32_t radius_after = 0;
+    std::string guidance_decision_id;
+    std::vector<uint32_t> guidance_original_layers;
+    std::vector<uint32_t> guidance_posterior_layers;
+    std::vector<uint32_t> guidance_hypothetical_layers;
+    std::vector<uint32_t> guidance_selected_layers;
+    std::string guidance_history_fingerprint;
+    std::string guidance_fallback_reason;
 };
 
 struct common_flydelta_whirlpool_trace {
@@ -61,6 +69,14 @@ struct common_flydelta_whirlpool_trace {
     float best_search_score = 0.0f;
     uint32_t final_centre = 0;
     uint32_t final_radius = 0;
+    std::string initial_centre_source = "legacy_seed";
+    std::string initial_centre_guidance_decision_id;
+    std::vector<uint32_t> initial_centre_guidance_original_layers;
+    std::vector<uint32_t> initial_centre_guidance_posterior_layers;
+    std::vector<uint32_t> initial_centre_guidance_hypothetical_layers;
+    std::vector<uint32_t> initial_centre_guidance_selected_layers;
+    std::string initial_centre_guidance_history_fingerprint;
+    std::string initial_centre_guidance_fallback_reason;
     std::vector<common_flydelta_whirlpool_round_trace> rounds;
 };
 
@@ -103,7 +119,8 @@ bool common_flydelta_run_whirlpool_search_batched(
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
         common_flydelta_whirlpool_trace & trace,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});
 
 // Runs a bounded layer-only Whirlpool search. The baseline is evaluated once;
 // every other arm uses the existing candidate/overlay runner. UNKNOWN and
@@ -116,4 +133,5 @@ bool common_flydelta_run_whirlpool_search(
         std::vector<common_flydelta_intervention_region_trial> & trials,
         common_flydelta_intervention_region_selection & selection,
         common_flydelta_whirlpool_trace & trace,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser = {});

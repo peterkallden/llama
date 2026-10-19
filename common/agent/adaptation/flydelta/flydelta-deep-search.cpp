@@ -169,7 +169,12 @@ bool common_flydelta_run_deep_search_batched(
         }
         common_flydelta_outcome_guidance_decision guidance;
         std::string guidance_error;
-        if (adviser(guidance_candidates, top_k, guidance, guidance_error) &&
+        common_flydelta_outcome_guidance_request request;
+        request.stage = "deep_full_generation_frontier";
+        request.candidates = guidance_candidates;
+        request.selection_limit = top_k;
+        request.decision_id = "deep-full-generation-frontier";
+        if (adviser(request, guidance, guidance_error) &&
                 guidance.selected_order.size() == ranking.size()) {
             std::vector<size_t> reordered;
             std::vector<bool> used(ranking.size(), false);

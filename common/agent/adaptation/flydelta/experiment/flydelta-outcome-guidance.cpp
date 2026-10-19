@@ -617,8 +617,10 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         hash_sha256_hex(candidate_pool_canonical.data(), candidate_pool_canonical.size());
     json payload = {
         {"record_type", "outcome_guidance_decision"},
-        {"schema_version", 3}, {"job_id", job_id}, {"seed", seed},
+        {"schema_version", 4}, {"job_id", job_id}, {"seed", seed},
         {"phase_id", phase_id}, {"decision_sequence", decision_sequence},
+        {"stage", decision.stage}, {"round", decision.round},
+        {"decision_id", decision.decision_id},
         {"selection_limit", selection_limit},
         {"policy_sequence_start", policy_sequence_start % 4},
         {"policy_cursor_before", policy_cursor_before},

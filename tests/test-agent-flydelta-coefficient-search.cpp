@@ -290,8 +290,10 @@ int main() {
     batched_tfo_config.max_batch_arms = 2;
     size_t tfo_guidance_calls = 0;
     const common_flydelta_outcome_guidance_adviser identity_adviser =
-        [&tfo_guidance_calls](const auto & pool, size_t limit, auto & decision, std::string &) {
+        [&tfo_guidance_calls](const auto & request, auto & decision, std::string &) {
             ++tfo_guidance_calls;
+            const auto & pool = request.candidates;
+            const size_t limit = request.selection_limit;
             decision.original_order.resize(pool.size());
             decision.shadow_order.resize(pool.size());
             decision.selected_order.resize(pool.size());
@@ -428,8 +430,10 @@ int main() {
     std::vector<common_flydelta_coefficient_trial> staged_trials;
     common_flydelta_coefficient_selection staged_selection;
     const common_flydelta_outcome_guidance_adviser staged_identity_adviser =
-        [&staged_guidance_calls](const auto & pool, size_t limit, auto & decision, std::string &) {
+        [&staged_guidance_calls](const auto & request, auto & decision, std::string &) {
             ++staged_guidance_calls;
+            const auto & pool = request.candidates;
+            const size_t limit = request.selection_limit;
             decision.original_order.resize(pool.size());
             decision.shadow_order.resize(pool.size());
             decision.selected_order.resize(pool.size());

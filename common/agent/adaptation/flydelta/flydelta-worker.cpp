@@ -606,6 +606,13 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
                 {"round", round.round}, {"centre_before", round.centre_before},
                 {"radius_before", round.radius_before},
                 {"probed_layers", round.probed_layers},
+                {"guidance_decision_id", round.guidance_decision_id},
+                {"guidance_original_layers", round.guidance_original_layers},
+                {"guidance_posterior_layers", round.guidance_posterior_layers},
+                {"guidance_hypothetical_layers", round.guidance_hypothetical_layers},
+                {"guidance_selected_layers", round.guidance_selected_layers},
+                {"guidance_history_fingerprint", round.guidance_history_fingerprint},
+                {"guidance_fallback_reason", round.guidance_fallback_reason},
                 {"best_probe_layer", round.best_probe_layer},
                 {"best_probe_score", round.best_probe_score},
                 {"centre_after", round.centre_after},
@@ -619,6 +626,14 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
             {"best_search_score", value.best_search_score},
             {"final_centre", value.final_centre},
             {"final_radius", value.final_radius},
+            {"initial_centre_source", value.initial_centre_source},
+            {"initial_centre_guidance_decision_id", value.initial_centre_guidance_decision_id},
+            {"initial_centre_guidance_original_layers", value.initial_centre_guidance_original_layers},
+            {"initial_centre_guidance_posterior_layers", value.initial_centre_guidance_posterior_layers},
+            {"initial_centre_guidance_hypothetical_layers", value.initial_centre_guidance_hypothetical_layers},
+            {"initial_centre_guidance_selected_layers", value.initial_centre_guidance_selected_layers},
+            {"initial_centre_guidance_history_fingerprint", value.initial_centre_guidance_history_fingerprint},
+            {"initial_centre_guidance_fallback_reason", value.initial_centre_guidance_fallback_reason},
             {"rounds", std::move(rounds)}
         });
     }

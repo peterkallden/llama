@@ -4,6 +4,7 @@
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -123,6 +124,11 @@ struct common_flydelta_outcome_guidance_replay_metrics {
 };
 
 struct common_flydelta_outcome_guidance_decision {
+    bool shadow_mode = true;
+    std::string stage;
+    int phase_id = -1;
+    size_t round = 0;
+    std::string decision_id;
     std::vector<size_t> original_order;
     // Posterior-only rank, hypothetical mixed-policy order, and actual order
     // remain distinct in both shadow and experimental modes.
@@ -139,6 +145,26 @@ struct common_flydelta_outcome_guidance_decision {
     size_t rejected_history_rows = 0;
     std::string fallback_reason;
 };
+
+// Every guidance invocation identifies the algorithmic stage and bounded
+// decision point. This metadata is diagnostic/resumable state, not evidence.
+struct common_flydelta_outcome_guidance_request {
+    int schema_version = 1;
+    std::string stage;
+    int phase_id = -1;
+    size_t round = 0;
+    std::string decision_id;
+    std::vector<common_flydelta_outcome_guidance_candidate> candidates;
+    size_t selection_limit = 0;
+    // Whirlpool's initial centre must use posterior ordering specifically;
+    // other calls leave this unset and consume the persisted four-slot cursor.
+    size_t policy_sequence_start = static_cast<size_t>(-1);
+};
+
+using common_flydelta_outcome_guidance_adviser = std::function<bool(
+        const common_flydelta_outcome_guidance_request & request,
+        common_flydelta_outcome_guidance_decision & decision,
+        std::string & error)>;
 
 bool common_flydelta_outcome_guidance_build_decision(
         const common_flydelta_outcome_guidance_config & config,

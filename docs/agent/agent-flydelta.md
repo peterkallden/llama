@@ -2177,10 +2177,10 @@ driver can force each control-plane strategy with
 and compare enabled/disabled with `LLAMA_AGENT_LOW_RANK_DISABLE_FACTORIZED=1`
 (`LLAMA_AGENT_LOW_RANK_FACTORIZED=0` remains a compatibility alias).
 
-### Historical outcome guidance for Deep and TFO-lite
+### Historical outcome guidance for Whirlpool, Deep and TFO-lite
 
 `runtime.adaptation.flydelta.outcome_guidance` adds a rebuildable projection of
-host-verified coefficient-search history. The default `mode: "shadow"` logs
+host-verified search history. The default `mode: "shadow"` logs
 predictions, uncertainty intervals, candidate order and history fingerprint;
 the existing shortlist, proposal order, batch boundaries and model-call count
 remain unchanged. `mode: "experimental"` enables bounded arm ordering.
@@ -2218,11 +2218,31 @@ updates only outcome verifiability, even when individual verifier calls had
 known statuses. Legacy rows without required provenance or durable registration
 order are counted as ineligible.
 
-Deep uses experimental ordering when choosing among its existing shortlist
-slots for full generation. TFO-lite can reorder its already proposed
-population before the existing bounded waves; it still evaluates the same
-population, so a shorter discovery order does not imply fewer model calls or
-lower total runtime. Candidate IDs and baseline/result pairing remain stable.
+Whirlpool, Deep and TFO use the same job-frozen snapshot and exact hard
+compatibility partition. The snapshot is created before the first Whirlpool
+decision and reused by later Deep/TFO decisions and resumes. TFO/Deep outcomes
+may inform Whirlpool only through the coarser same-domain backoff (at least
+eight independent fixture groups); no model/verifier/scope boundary is crossed.
+Whirlpool first honors current-job layer diagnostics. If those are absent, an
+experimental run may use a posterior-ranked initial centre when compatible
+history exists; otherwise the existing seed-layer/model midpoint remains the
+fallback. Each round forms its full legal discrete proposal pool before the
+existing probe budget is applied. The mixed policy can reorder/select only
+within that pool. After execution, Whirlpool's current-task measured objective
+still controls recentering and shrinkage; historical scores are not added to
+that objective. Each decision persists its four-slot policy cursor; stable
+stage/phase/round/decision IDs and the frozen history snapshot let a retry
+reproduce the same cursor position and candidate ordering.
+
+Only matched full-generation Whirlpool frontier comparisons with a completed
+baseline/candidate execution can enter the outcome projection. Diagnostic
+captures, teacher margins, geometry, and unverified probes remain diagnostics.
+Completed but inconclusive comparisons can update verifiability only. Deep
+uses experimental ordering when choosing among its existing shortlist slots
+for full generation. TFO-lite can reorder its already proposed population
+before the existing bounded waves; it still evaluates the same population, so
+a shorter discovery order does not imply fewer model calls or lower total
+runtime. Candidate IDs and baseline/result pairing remain stable.
 If history access, guidance or lifecycle logging fails, the existing order is
 used and the reason is logged. Compare `off`, `shadow` and `experimental` on
 the same fixtures, basis, dose limits and evaluation budget; report verified
@@ -2242,8 +2262,11 @@ cached per category for the frozen job projection, rather than recomputed by
 scanning rows for each arm or wave.
 
 Daemon logs contain `[flydelta] outcome_guidance` JSON events with
-`event: "flydelta_outcome_guidance"` and trace `schema_version: 2`. These are
-emitted at `stage: "decision_before_execution"`, including fallback decisions.
+`event: "flydelta_outcome_guidance"`. Coefficient-stage decision events use
+trace schema 2; typed Whirlpool-stage events use schema 3 and carry `stage`,
+`round` and a stable `decision_id`. Both are emitted before execution,
+including fallback decisions. Guidance events report history rows read,
+compatible, deduplicated and rejected, plus projection and ordering time.
 They include job/phase/decision identity, seed, history fingerprint and watermark,
 candidate-pool fingerprint and candidate arm IDs with basis/rank/layer/dose
 categories. `original_arm_ids` and `posterior_ranked_arm_ids` describe the full
@@ -2255,8 +2278,13 @@ posterior probabilities, intervals, effective counts and fallback reasons remain
 available in the same event. Correlate selected arm IDs with later execution and
 verification records: a decision alone does not confirm that an arm ran or
 earned learning credit. In `shadow`, selected IDs retain the original order.
-No decision event is expected in `off` or when execution never reaches the
-Deep/TFO adviser; a trace without these events cannot establish guidance impact.
+No decision event is expected in `off`; a trace without these events cannot
+establish guidance impact. Whirlpool's serialized search trace also records
+the initial-centre source and, per decision, candidate layer order, posterior
+order, hypothetical mixed-policy selection, actual selected layers, history
+fingerprint and fallback reason. This is decision provenance; correlate it
+with executed region arms and full-verifier outcomes before interpreting it as
+a behavioral result.
 
 The model-free chronological replay API
 `common_flydelta_outcome_guidance_replay` reserves complete fixture groups for

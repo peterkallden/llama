@@ -164,7 +164,8 @@ bool common_flydelta_run_search_pipeline_batched(
         const common_flydelta_search_pipeline_runner & runner,
         const common_flydelta_search_pipeline_batch_runner & batch_runner,
         common_flydelta_search_pipeline_result & result,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_outcome_guidance_adviser & adviser) {
     error.clear();
     result = {};
     if (!common_flydelta_experiment_fixture_validate(fixture, error) ||
@@ -321,11 +322,11 @@ bool common_flydelta_run_search_pipeline_batched(
                             fixture, whirlpool_config, whirlpool_runner,
                             whirlpool_batch_runner, direction_result.region_trials,
                             direction_result.region_selection,
-                            direction_result.whirlpool_trace, error)) return false;
+                            direction_result.whirlpool_trace, error, adviser)) return false;
                 } else if (!common_flydelta_run_whirlpool_search(
                         fixture, whirlpool_config, whirlpool_runner,
                         direction_result.region_trials, direction_result.region_selection,
-                        direction_result.whirlpool_trace, error)) return false;
+                        direction_result.whirlpool_trace, error, adviser)) return false;
             } else if (!common_flydelta_run_intervention_region_search(
                     fixture, region_config, region_runner,
                     direction_result.region_trials, direction_result.region_selection, error)) {
@@ -496,6 +497,56 @@ bool common_flydelta_append_search_pipeline_lifecycle(
             observation.sequence_margin_available = region.margin_comparison.available;
             observation.sequence_margin = region.margin_comparison;
             observation.budget_remaining = region.safe_to_continue;
+
+            // Only the final, host-known frontier comparison contributes an
+            // outcome observation. Earlier diagnostic probes are not evidence.
+            if (direction.whirlpool_trace.model_evaluations > 0 &&
+                    fixture.model_n_layers > 1 &&
+                    !fixture.guidance_fixture_group_id.empty() &&
+                    !fixture.scope_fingerprint.empty() &&
+                    !fixture.baseline_deployment_fingerprint.empty() &&
+                    !fixture.outcome_guidance_verifier_revision.empty() &&
+                    region.full_generation_completed && region.overlay_applied &&
+                    !direction.direction.extraction_id.empty()) {
+                uint64_t stable_hash = 1469598103934665603ULL;
+                const std::string logical_arm = direction.direction.extraction_id + ":" +
+                    std::to_string(region.candidate.anchor_layer_index) + ":" +
+                    std::to_string(region.candidate.layer_indices.size()) + ":" +
+                    std::to_string(region.candidate.total_scale);
+                for (const unsigned char ch : logical_arm) {
+                    stable_hash ^= ch;
+                    stable_hash *= 1099511628211ULL;
+                }
+                observation.guidance_observation_id = fixture.task_fingerprint +
+                    ":whirlpool:" + std::to_string(stable_hash);
+                observation.guidance_fixture_group_id = fixture.guidance_fixture_group_id;
+                observation.guidance_scope_fingerprint = fixture.scope_fingerprint;
+                observation.guidance_model_profile_fingerprint = fixture.model_profile_fingerprint;
+                observation.guidance_tokenizer_fingerprint = fixture.tokenizer_fingerprint;
+                observation.guidance_template_fingerprint = fixture.template_fingerprint;
+                observation.guidance_baseline_deployment_fingerprint =
+                    fixture.baseline_deployment_fingerprint;
+                observation.guidance_verifier_revision = fixture.outcome_guidance_verifier_revision;
+                observation.guidance_ruleset_revision = fixture.ruleset_revision;
+                observation.guidance_action_contract_fingerprint = fixture.action_contract_fingerprint;
+                observation.guidance_domain = fixture.semantic_domain;
+                observation.guidance_strategy = "whirlpool";
+                observation.guidance_estimator = "layer-region-prior-v1";
+                observation.guidance_basis_id = direction.direction.extraction_id;
+                observation.guidance_rank = 1;
+                observation.guidance_relative_layer = static_cast<double>(
+                    region.candidate.anchor_layer_index) /
+                    static_cast<double>(fixture.model_n_layers - 1);
+                observation.guidance_relative_dose = std::max(0.0, std::min(1.0,
+                    static_cast<double>(region.executed_total_scale)));
+                observation.guidance_margin_sign = region.margin_comparison.available
+                    ? (region.margin_comparison.normalized_delta() < 0.0f ? -1 :
+                        (region.margin_comparison.normalized_delta() > 0.0f ? 1 : 0)) : 0;
+                observation.guidance_comparison_completed = true;
+                observation.guidance_overlay_applied = true;
+                observation.guidance_outcome_known =
+                    region.outcome != common_flydelta_counterfactual_outcome::unknown;
+            }
 
             common_flydelta_search_decision decision;
             if (!common_flydelta_decide_search_disposition(

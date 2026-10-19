@@ -100,6 +100,24 @@ int main() {
     CHECK(shadow.predictions[0].backoff_fixture_groups >= 8);
     CHECK(shadow.predictions[0].backoff_prior_strength == 4.0);
 
+    // Layer search can borrow only the deliberately weak same-domain prior
+    // from Deep/TFO strategies; the exact deployment/verifier partition stays.
+    auto whirlpool_context = c;
+    whirlpool_context.strategy = "whirlpool";
+    whirlpool_context.estimator = "layer-region-prior-v1";
+    common_flydelta_outcome_guidance_candidate layer_candidate;
+    layer_candidate.arm_id = "layer:12";
+    layer_candidate.rank = 1;
+    layer_candidate.relative_layer = .5;
+    layer_candidate.relative_dose = .2;
+    common_flydelta_outcome_guidance_decision cross_stage;
+    CHECK(common_flydelta_outcome_guidance_build_decision(
+        config, whirlpool_context, history, {layer_candidate}, 1, 56, cross_stage, error));
+    CHECK(cross_stage.predictions.size() == 1);
+    CHECK(cross_stage.predictions.front().level == "backoff");
+    CHECK(cross_stage.predictions.front().backoff_fixture_groups >= 8);
+    CHECK(cross_stage.predictions.front().p_helped_given_known > .60);
+
     common_flydelta_outcome_guidance_decision direct;
     common_flydelta_outcome_guidance_candidate direct_candidate;
     direct_candidate.arm_id = "direct";
@@ -199,6 +217,10 @@ int main() {
     guidance_event.scope.session_id = "guidance-session";
     guidance_event.content_hash = "sha256:guidance-test";
     guidance_event.created_at = "2026-10-18T00:00:00Z";
+    experimental_a.stage = "tfo_population";
+    experimental_a.phase_id = 2;
+    experimental_a.round = 1;
+    experimental_a.decision_id = "tfo-population-1";
     CHECK(common_flydelta_append_outcome_guidance_decision_lifecycle(
         guidance_store, guidance_event, "job-guidance", config.mode, config.seed, 0, 0,
         candidates.size(), 0, 0, candidates.size(), c, candidates, experimental_a, error));
@@ -207,6 +229,10 @@ int main() {
     const auto guidance_payload = nlohmann::ordered_json::parse(
         guidance_records.front().payload_json);
     CHECK(guidance_payload["record_type"] == "outcome_guidance_decision");
+    CHECK(guidance_payload["schema_version"] == 4);
+    CHECK(guidance_payload["stage"] == "tfo_population");
+    CHECK(guidance_payload["round"] == 1);
+    CHECK(guidance_payload["decision_id"] == "tfo-population-1");
     CHECK(guidance_payload["decision_sequence"] == 0);
     CHECK(guidance_payload["policy_sequence_start"] == 0);
     CHECK(guidance_payload["policy_slots_consumed"] == candidates.size());
