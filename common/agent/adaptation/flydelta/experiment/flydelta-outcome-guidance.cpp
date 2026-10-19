@@ -298,6 +298,7 @@ bool common_flydelta_outcome_guidance_build_decision(
         size_t raw_observations = 0;
     };
     std::map<bucket_key, cached_bucket> bucket_cache;
+    std::map<bucket_key, double> sampled_by_posterior;
     for (const auto * row : rows) {
         const auto key = key_for(*row);
         auto & cached = bucket_cache[key];
@@ -386,11 +387,23 @@ bool common_flydelta_outcome_guidance_build_decision(
         p.backoff_categorical_prior_strength = category_prior;
         p.raw_observations = cached.raw_observations;
         p.fixture_groups = leaf_groups;
+        const std::string identity_material=nlohmann::ordered_json{
+            {"context",hard_key(context)},{"category",exact}}.dump();
+        p.posterior_identity="sha256:"+hash_sha256_hex(identity_material.data(),identity_material.size());
+        auto draw=sampled_by_posterior.find(exact);
+        if(draw==sampled_by_posterior.end()) {
+            const std::string seed_material=nlohmann::ordered_json{
+                {"seed",config.seed},{"decision_seed",job_seed},
+                {"posterior_identity",p.posterior_identity}}.dump();
+            const auto seed_hex=hash_sha256_hex(seed_material.data(),seed_material.size()).substr(0,16);
+            std::mt19937_64 posterior_rng(std::stoull(seed_hex,nullptr,16));
+            draw=sampled_by_posterior.emplace(exact,common_outcome_guidance_sample_expected_utility(
+                posterior,{1.0,0.0,-config.harm_penalty},posterior_rng)).first;
+        }
+        p.sampled_utility=draw->second;
         d.predictions.push_back(p);
         by_mean.push_back({i, p.expected_utility});
-        const double utility = common_outcome_guidance_sample_expected_utility(
-            posterior, {1.0, 0.0, -config.harm_penalty}, rng);
-        sampled.push_back({i,utility});
+        sampled.push_back({i,p.sampled_utility});
     }
     std::stable_sort(sampled.begin(),sampled.end(),[](const auto & a,const auto & b){return a.utility>b.utility;});
     std::stable_sort(by_mean.begin(), by_mean.end(), [](const auto & a, const auto & b) {
@@ -631,6 +644,7 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
     json payload = {
         {"record_type", "outcome_guidance_decision"},
         {"schema_version", 4}, {"job_id", job_id}, {"seed", seed},
+        {"sampling_revision", "posterior-category-sampling-v2"},
         {"phase_id", phase_id}, {"decision_sequence", decision_sequence},
         {"stage", decision.stage}, {"round", decision.round},
         {"decision_id", decision.decision_id},
@@ -676,6 +690,7 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
     }
     for (const auto & p : decision.predictions) payload["predictions"].push_back({
         {"arm_id", p.arm_id}, {"level", p.level}, {"p_known", p.p_known},
+        {"posterior_identity",p.posterior_identity},{"sampled_utility",p.sampled_utility},
         {"p_known_interval_95_approx", {p.p_known_low, p.p_known_high}},
         {"p_helped_given_known", p.p_helped_given_known},
         {"p_neutral_given_known", p.p_neutral_given_known},

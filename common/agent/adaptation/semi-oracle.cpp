@@ -566,8 +566,9 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
             }
             common_semi_oracle_search_result searched;
             problem.transition_adviser = q.transition_adviser;
+            problem.transition_score = q.transition_score;
             problem.record_history = q.record_search_history;
-            if(!common_semi_oracle_search_astar(problem,q.budget,searched)) {
+            if(!common_semi_oracle_search_run(problem,q.budget,{},q.use_historical_order,searched)) {
                 out.verdict=common_semi_oracle_verdict::unknown;
                 out.reason=searched.error.empty()?"bounded algebra A* failed":searched.error;
                 return true;

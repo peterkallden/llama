@@ -9,6 +9,7 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
@@ -82,6 +83,23 @@ int main() {
         {"fixture-a","bad",{1.0}}, {"fixture-a","bad",{1.0,0.0}}};
     CHECK(!common_outcome_guidance_build_projection(invalid_projection_rows,
         "test-builder-v1","bad-source",0,projection,error));
+    const std::vector<common_outcome_guidance_projection_observation> inconsistent_fixtures={
+        {"fixture-a","same-category",{1.0}}, {"fixture-b","same-category",{1.0,0.0}}};
+    CHECK(!common_outcome_guidance_build_projection(inconsistent_fixtures,
+        "test-builder-v1","bad-source",0,projection,error));
+    const double huge=std::numeric_limits<double>::max();
+    CHECK(!common_outcome_guidance_build_projection({{"fixture-a","overflow",{huge}},
+        {"fixture-a","overflow",{huge}}},"test-builder-v1","bad-source",0,projection,error));
+    CHECK(!common_outcome_guidance_make_posterior(huge,huge,.5,{1.0},{1.0},0.0,0.0,shared_posterior));
+    std::vector<common_outcome_guidance_projection_observation> fractional_rows={
+        {"fixture-a","float-sum",{1e16,1e16}},
+        {"fixture-a","float-sum",{1.0,0.0}},
+        {"fixture-a","float-sum",{1.0,0.0}}};
+    CHECK(common_outcome_guidance_build_projection(fractional_rows,"test-builder-v1","same-source",0,projection,error));
+    std::reverse(fractional_rows.begin(),fractional_rows.end());
+    CHECK(common_outcome_guidance_build_projection(fractional_rows,"test-builder-v1","same-source",0,reordered_projection,error));
+    CHECK(projection.fingerprint==reordered_projection.fingerprint&&
+        projection.fixture_categories==reordered_projection.fixture_categories);
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
     CHECK(catalog.bootstrap("analysis", bootstrap, error));
@@ -186,6 +204,23 @@ int main() {
     CHECK(shadow.predictions[0].p_harmed_high > shadow.predictions[0].p_harmed_low);
     CHECK(shadow.predictions[0].backoff_fixture_groups >= 8);
     CHECK(shadow.predictions[0].backoff_prior_strength == 4.0);
+    auto shared_candidates=candidates;
+    auto same_posterior=candidates[0];same_posterior.arm_id="same-posterior";
+    shared_candidates.push_back(same_posterior);
+    common_flydelta_outcome_guidance_decision shared_draw,reordered_draw;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config,c,history,shared_candidates,
+        shared_candidates.size(),55,shared_draw,error));
+    CHECK(shared_draw.predictions.front().posterior_identity==shared_draw.predictions.back().posterior_identity);
+    CHECK(shared_draw.predictions.front().sampled_utility==shared_draw.predictions.back().sampled_utility);
+    CHECK(shared_draw.predictions[0].posterior_identity!=shared_draw.predictions[1].posterior_identity);
+    std::reverse(shared_candidates.begin(),shared_candidates.end());
+    CHECK(common_flydelta_outcome_guidance_build_decision(config,c,history,shared_candidates,
+        shared_candidates.size(),55,reordered_draw,error));
+    for(const auto & expected:shared_draw.predictions){
+        const auto actual=std::find_if(reordered_draw.predictions.begin(),reordered_draw.predictions.end(),
+            [&](const auto & value){return value.arm_id==expected.arm_id;});
+        CHECK(actual!=reordered_draw.predictions.end()&&actual->sampled_utility==expected.sampled_utility);
+    }
 
     // Layer search can borrow only the deliberately weak same-domain prior
     // from Deep/TFO strategies; the exact deployment/verifier partition stays.

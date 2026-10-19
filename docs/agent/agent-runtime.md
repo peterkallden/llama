@@ -4633,6 +4633,15 @@ branch ranking, never as a search feature. See
 [SemiOracle search policy and historical guidance](agent-semi-oracle.md#historical-ordering-for-algebra-search)
 and [configuration example](../../examples/agent-host-config-adaptation.json).
 
+Frontier guidance uses an absolute incoming-transition score, including for a
+parent with only one legal successor. Sibling positions are not comparable
+across parents and are not used as frontier scores. Goal reachability can
+remain verified after depth pruning, but optimality and Focal bound-proof flags
+are then false. Target Hunt feature/evaluator V3 and history payload version 4
+separate the corrected symmetry transform from older history. These seam
+corrections await compilation and test execution; see the SemiOracle document's
+implementation-status section for the remaining production and smoke work.
+
 The `semi-oracle` tool profile also includes `oracle.problem.define`. With an
 active `target_hunt` RuleSet, it admits a bounded grid/start/target into the
 existing session-state store. `oracle.action.verify` advances a legal move;

@@ -136,7 +136,7 @@ allow writes. Normal native session operations require no filesystem-write
 permission. Search preserves the problem position.
 
 Guidance uses `runtime.adaptation.semi_oracle.outcome_guidance`, default `shadow`.
-Target Hunt history has a separate V2 family, partitioned by scope,
+Target Hunt history has a separate V3 family, partitioned by scope,
 RuleSet/revision, evaluator, action contract and budget. Categories use progress
 toward the target and local free exits excluding the immediate return. BFS
 distances never enter the adviser. Rotated/reflected copies and positions of
@@ -176,7 +176,62 @@ is required.
 
 The CTest also writes `pocs/agent/target-hunt-trace.jsonl` under its build tree.
 
-On the 2026-10-19 Vulkan/Cozo build, all 32 held-out maps were run at each
+### Implementation status after the seam review
+
+The latest source corrections have not been compiled or tested. They replace
+local sibling ranks with absolute posterior scores in the frontier, including
+singleton successors. Scores use the state before the action and are retained
+with the generated node. Algebra also uses these scores within an exact
+minimum-`f` frontier. `shadow` retains the ordinary executed order.
+
+Target Hunt features are now `target_hunt_features_v3`, with suffix family
+`target_hunt_search_suffix_v3`, history payload version 4 and evaluator
+`target_hunt_astar_v3`. The wall mask, goal vector and movement vector are
+transformed in the same coordinate frame. Coarse categories distinguish exit
+degree and terminal/straight/corner/junction shape. Older payloads remain in
+storage but do not contribute to this new feature/evaluator family.
+
+Depth pruning can remove a cheaper route. If a goal is subsequently found,
+reachability remains verified but optimality and Focal cost-bound proof flags
+are conservatively false. The response reason explicitly reports this limit.
+Exact search no longer scans the entire frontier merely to discard stale
+entries before every expansion; selected candidates still reject stale paths.
+Projection validation rejects category-dimension changes across fixtures and
+non-finite accumulated weights. Accumulation and fingerprints are canonicalized
+in projection format version 2. Invalid projection construction falls back to
+deterministic search with a diagnostic reason. The fixture count reports the
+union of eligible contributing groups, rather than the largest category count.
+
+The full implementation plan still requires the following work:
+
+- Extract the common immutable projection/decision interface through FlyDelta's
+  frozen job history and MCP inspection, including reuse across Whirlpool,
+  Deep and TFO and their resume paths. They currently share posterior math;
+  FlyDelta retains its own per-decision history projection.
+- Add atomic search-history revision/snapshot support in the production stores,
+  and move cache ownership to the runtime/store binding with workspace-budget
+  accounting. The process-local 16-entry LRU currently reads and parses rows
+  before lookup, copies cached projections and has no byte budget. Its row
+  fingerprint fallback is safe but does not avoid those costs.
+- Persist versioned BFS branch-quality observations through the existing
+  evaluation store and expose the separate family to the search adviser.
+  Currently the truth pass and branch-quality ranking are smoke-local; the
+  production/search-matrix adviser consumes censored suffix history. The two
+  experiments therefore do not yet demonstrate branch-label-guided search.
+- Complete the independent map families (64 training and 32 held-out maps per
+  family), exact posterior-mean comparison, per-map calibration/confidence
+  reporting, explicit frontier-selection traces and cold/warm/trace-disabled
+  cost measurements. Cache board/state/action features within a search instead
+  of repeatedly parsing grids and scanning target rectangles. The present smoke
+  has one mixed 64/32 set of corridor and random-obstacle maps.
+- Complete daemon/provider/MCP, store-reopen and interrupted-resume verification
+  for these new seams, then rebuild and run the revised regression/smoke suite.
+
+The measurements below are retained results from commit `574e6ea29`, before
+the score and feature corrections above. They are not verification or
+performance measurements of the current source.
+
+On that 2026-10-19 Vulkan/Cozo build, all 32 held-out maps were run at each
 budget across eight seeds. Exact A* results were:
 
 | Budget | Policy | Solved / 256 | Expansions total | Summed per-search wall ms |
@@ -282,7 +337,7 @@ depth-limited nodes and budget stops remain unknown. Unknown mass updates only
 the Beta model for classification within the search budget, not the two
 Dirichlet categories. These are coarse statistics by rewrite primitive under
 the observed search policy and budget, not a learned state-value function.
-Target Hunt uses a distinct `target_hunt_search_suffix_v2` family and
+Target Hunt uses a distinct `target_hunt_search_suffix_v3` family and
 versioned, symmetry-normalized local features. It backs off from fine local
 wall/goal/action patterns to Manhattan progress and successor degree unless at
 least eight independent fixture groups support the fine category. This suffix

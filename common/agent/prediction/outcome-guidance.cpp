@@ -14,7 +14,7 @@ std::pair<double, double> interval(double a, double b) {
     const double total = a + b;
     const double mean = total > 0.0 ? a / total : 0.5;
     const double variance = total > 0.0
-        ? a * b / (total * total * (total + 1.0)) : 0.25;
+        ? mean * (1.0 - mean) / (total + 1.0) : 0.25;
     const double radius = 1.96 * std::sqrt(std::max(0.0, variance));
     return {std::max(0.0, mean - radius), std::min(1.0, mean + radius)};
 }
@@ -49,10 +49,31 @@ bool common_outcome_guidance_build_projection(
         error="outcome projection requires builder and source fingerprints";return false;
     }
     std::map<std::string,std::map<std::string,std::vector<double>>> grouped;
+    std::map<std::string,size_t> category_dimensions;
     json canonical=json::array();
+    // Canonicalize accumulation as well as serialization: floating-point sums
+    // must not differ for two inputs carrying the same projection fingerprint.
+    std::vector<const common_outcome_guidance_projection_observation *> ordered;
+    ordered.reserve(observations.size());
     for(const auto & row:observations){
+        for(double value:row.outcome_weights)if(!std::isfinite(value)||value<0.0){
+            error="outcome projection weights must be finite and non-negative";return false;
+        }
+        ordered.push_back(&row);
+    }
+    std::sort(ordered.begin(),ordered.end(),[](const auto * lhs,const auto * rhs){
+        if(lhs->fixture_group!=rhs->fixture_group)return lhs->fixture_group<rhs->fixture_group;
+        if(lhs->category!=rhs->category)return lhs->category<rhs->category;
+        return lhs->outcome_weights<rhs->outcome_weights;
+    });
+    for(const auto * entry:ordered){
+        const auto & row=*entry;
         if(row.fixture_group.empty()||row.category.empty()||row.outcome_weights.empty()){
             error="outcome projection row has an empty identity or category vector";return false;
+        }
+        const auto dimension=category_dimensions.emplace(row.category,row.outcome_weights.size());
+        if(!dimension.second&&dimension.first->second!=row.outcome_weights.size()){
+            error="outcome projection category dimension changed across fixtures";return false;
         }
         auto & target=grouped[row.fixture_group][row.category];
         if(!target.empty()&&target.size()!=row.outcome_weights.size()){
@@ -63,13 +84,20 @@ bool common_outcome_guidance_build_projection(
         for(size_t i=0;i<row.outcome_weights.size();++i){
             const double value=row.outcome_weights[i];
             if(!std::isfinite(value)||value<0.0){error="outcome projection weights must be finite and non-negative";return false;}
-            target[i]+=value;weights.push_back(value);
+            target[i]+=value;
+            if(!std::isfinite(target[i])){error="outcome projection weight sum overflowed";return false;}
+            weights.push_back(value);
         }
         canonical.push_back({{"fixture_group",row.fixture_group},{"category",row.category},{"weights",weights}});
     }
     for(auto & fixture:grouped)for(auto & category:fixture.second){
-        double total=0.0;for(double value:category.second)total+=value;
-        if(total>0.0)for(auto & value:category.second)value/=total;
+        // Scale first so even a finite vector whose total exceeds DBL_MAX
+        // has a finite, normalized group contribution.
+        const double scale=*std::max_element(category.second.begin(),category.second.end());
+        if(scale>0.0){
+            double total=0.0;for(double value:category.second)total+=value/scale;
+            for(auto & value:category.second)value=(value/scale)/total;
+        }
     }
     projection.builder_revision=builder_revision;
     projection.source_fingerprint=source_fingerprint;
@@ -79,7 +107,8 @@ bool common_outcome_guidance_build_projection(
     std::sort(canonical.begin(),canonical.end(),[](const auto & lhs,const auto & rhs){
         return lhs.dump()<rhs.dump();
     });
-    const auto fingerprint_input=json{{"builder_revision",builder_revision},{"source_fingerprint",source_fingerprint},
+    const auto fingerprint_input=json{{"projection_format_version",2},
+        {"builder_revision",builder_revision},{"source_fingerprint",source_fingerprint},
         {"source_watermark",source_watermark},{"observations",canonical}}.dump();
     projection.fingerprint="sha256:"+hash_sha256_hex(fingerprint_input.data(),fingerprint_input.size());
     return true;
@@ -115,6 +144,7 @@ bool common_outcome_guidance_make_posterior(
     posterior.known_beta = 1.0 + unknown_weight +
         verifiability_prior_strength * (1.0 - prior_known_mean);
     const double known_total = posterior.known_alpha + posterior.known_beta;
+    if(!std::isfinite(known_total)){posterior={};return false;}
     posterior.p_known = posterior.known_alpha / known_total;
     const auto known_bounds = interval(posterior.known_alpha, posterior.known_beta);
     posterior.p_known_low = known_bounds.first;
@@ -132,6 +162,7 @@ bool common_outcome_guidance_make_posterior(
         posterior.category_alpha.push_back(alpha);
         alpha_sum += alpha;
     }
+    if(!std::isfinite(alpha_sum)){posterior={};return false;}
     for (size_t i = 0; i < posterior.category_alpha.size(); ++i) {
         const double alpha = posterior.category_alpha[i];
         posterior.category_probabilities.push_back(alpha / alpha_sum);

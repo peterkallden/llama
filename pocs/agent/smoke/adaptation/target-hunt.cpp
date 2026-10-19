@@ -97,6 +97,10 @@ int main(int argc,char ** argv){try{
     require(common_semi_oracle_target_problem(rule,"grid: ..#/...\nstart: 0,0\ntarget: 1,2",rectangle,error),error);
     require(common_semi_oracle_target_problem(rule,"grid: ../../.#\nstart: 0,1\ntarget: 2,0",rotated,error),error);
     require(common_semi_oracle_target_group(rectangle)==common_semi_oracle_target_group(rotated),"rectangular rotation leaked between fixture groups");
+    require(common_semi_oracle_target_category(rectangle,"east")==
+        common_semi_oracle_target_category(rotated,"south"),"fine features mixed wall and direction coordinate frames");
+    require(common_semi_oracle_target_coarse_category(rectangle,"east")==
+        common_semi_oracle_target_coarse_category(rotated,"south"),"coarse features changed under rectangular rotation");
     require(!training.define_problem("grid: ../.\nstart: 0,0\ntarget: 1,0",state,error),"ragged grid accepted");
     require(!training.define_problem("grid: .#\nstart: 0,0\ntarget: 0,1",state,error),"blocked target accepted");
     require(!training.define_problem("grid: ..\nstart: -1,0\ntarget: 0,1",state,error),"negative coordinate accepted");
@@ -225,7 +229,7 @@ int main(int argc,char ** argv){try{
             {"guided_optimal_top1",map_guided},{"strict_sibling_pairs",map_pairs},
             {"baseline_correct_pairs",map_base_correct},{"guided_correct_pairs",map_guide_correct}});
     }
-    const json branch_report={{"truth_source","independent_reverse_bfs"},{"feature_version","target_hunt_features_v2"},
+    const json branch_report={{"truth_source","independent_reverse_bfs"},{"feature_version","target_hunt_features_v3"},
         {"training_fixture_groups",64},{"heldout_fixture_groups",32},{"projection_fingerprint",branch_projection.fingerprint},
         {"baseline_optimal_top1",branch_baseline_top1},{"posterior_mean_optimal_top1",branch_guided_top1},
         {"strict_sibling_pairs",branch_pairs},{"baseline_correct_pairs",branch_baseline_correct},

@@ -181,7 +181,7 @@ int main() {
     CHECK(store.list_search_history(maze_rules.id,maze_rules.revision,128,search_history,error)&&search_history.size()==1);
     std::string maze_evaluation;
     CHECK(store.get_evaluation_payload(search_history.front().evaluation_id,maze_evaluation,found,error)&&found);
-    CHECK(maze_evaluation.find("target_hunt_astar_v2")!=std::string::npos);
+    CHECK(maze_evaluation.find("target_hunt_astar_v3")!=std::string::npos);
     CHECK(store.get_revision(maze_rules.id,maze_rules.revision,loaded,found,error)&&found&&loaded.domain==common_semi_oracle_domain::target_hunt);
     common_semi_oracle_tool_service resumed_maze(store,"host","session-maze");
     CHECK(resumed_maze.search_active_goal(goal_result,error));

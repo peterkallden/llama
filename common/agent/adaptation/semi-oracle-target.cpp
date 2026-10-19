@@ -126,6 +126,16 @@ std::string common_semi_oracle_target_category(const std::string & state, const 
     board b; std::string error, next;
     if (!parse(state,b,error) || !move(b,action,next)) return {};
     const int ai = action_index(action), nr = b.row+dr[ai], nc = b.col+dc[ai];
+    const int gx=(b.tc-nc)>0?1:(b.tc-nc)<0?-1:0;
+    const int gy=(b.tr-nr)>0?1:(b.tr-nr)<0?-1:0;
+    const bool can_continue=(gx!=0&&b.free(nr,nc+gx))||(gy!=0&&b.free(nr+gy,nc));
+    const int continuation_blocked=(gx!=0||gy!=0)&&!can_continue;
+    int box_cells=0,box_walls=0;
+    for(int rr=std::min(nr,b.tr);rr<=std::max(nr,b.tr);++rr)
+        for(int cc=std::min(nc,b.tc);cc<=std::max(nc,b.tc);++cc){
+            ++box_cells;if(!b.free(rr,cc))++box_walls;
+        }
+    const int box_density_bucket=box_cells>0?std::min(3,(4*box_walls)/box_cells):0;
     auto transform=[](int x,int y,int rotation,bool reflect){
         if(reflect)x=-x;
         for(int i=0;i<rotation;++i){const int previous=x;x=-y;y=previous;}
@@ -133,31 +143,23 @@ std::string common_semi_oracle_target_category(const std::string & state, const 
     };
     std::string canonical;
     for(int rotation=0;rotation<4;++rotation)for(bool reflect:{false,true}){
-        std::string mask;
+        std::string mask(9,'0');
         for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x){
             const auto p=transform(x,y,rotation,reflect);
-            mask+=b.free(nr+p.second,nc+p.first)?'1':'0';
+            // Transform each observed cell into the same coordinate frame
+            // used for the goal and action vectors below.
+            mask[size_t((p.second+1)*3+p.first+1)]=b.free(nr+y,nc+x)?'1':'0';
         }
-        const int gx=(b.tc-nc)>0?1:(b.tc-nc)<0?-1:0;
-        const int gy=(b.tr-nr)>0?1:(b.tr-nr)<0?-1:0;
         const auto goal=transform(gx,gy,rotation,reflect);
         const auto move_vector=transform(dc[ai],dr[ai],rotation,reflect);
         // Whether the most direct continuation is blocked is intentionally a
         // local/topological feature, not an exact-distance or path oracle.
-        const bool can_continue=(gx!=0&&b.free(nr,nc+gx))||(gy!=0&&b.free(nr+gy,nc));
-        const int continuation_blocked=(gx!=0||gy!=0)&&!can_continue;
-        int box_cells=0,box_walls=0;
-        for(int rr=std::min(nr,b.tr);rr<=std::max(nr,b.tr);++rr)
-            for(int cc=std::min(nc,b.tc);cc<=std::max(nc,b.tc);++cc){
-                ++box_cells;if(!b.free(rr,cc))++box_walls;
-            }
-        const int box_density_bucket=box_cells>0?std::min(3,(4*box_walls)/box_cells):0;
         const std::string candidate=mask+":"+std::to_string(goal.first)+","+std::to_string(goal.second)+":"+
             std::to_string(move_vector.first)+","+std::to_string(move_vector.second)+":"+
             std::to_string(continuation_blocked)+":"+std::to_string(box_density_bucket);
         if(canonical.empty()||candidate<canonical)canonical=candidate;
     }
-    return "target_hunt_features_v2:fine:"+digest(canonical);
+    return "target_hunt_features_v3:fine:"+digest(canonical);
 }
 std::string common_semi_oracle_target_coarse_category(const std::string & state, const std::string & action) {
     board b; std::string error, next;
@@ -168,7 +170,8 @@ std::string common_semi_oracle_target_coarse_category(const std::string & state,
     const int before=std::abs(b.row-b.tr)+std::abs(b.col-b.tc);
     const int after=std::abs(nr-b.tr)+std::abs(nc-b.tc);
     const int progress=after<before?1:after==before?0:-1;
-    const int shape=exits<=1?1:exits==2?2:3;
+    // Keep exact exit degree as well as terminal / straight / corner / junction.
+    const int shape=exits==0?0:exits==1?(b.free(nr+dr[ai],nc+dc[ai])?1:2):3;
     int box_cells=0,box_walls=0;
     for(int r=std::min(nr,b.tr);r<=std::max(nr,b.tr);++r)
         for(int c=std::min(nc,b.tc);c<=std::max(nc,b.tc);++c){++box_cells;if(!b.free(r,c))++box_walls;}
@@ -177,8 +180,9 @@ std::string common_semi_oracle_target_coarse_category(const std::string & state,
     const int gy=(b.tr-nr)>0?1:(b.tr-nr)<0?-1:0;
     const bool can_continue=(gx!=0&&b.free(nr,nc+gx))||(gy!=0&&b.free(nr+gy,nc));
     const int blocked=(gx!=0||gy!=0)&&!can_continue;
-    return "target_hunt_features_v2:coarse:"+std::to_string(progress)+":"+
-        std::to_string(shape)+":"+std::to_string(blocked)+":"+std::to_string(density);
+    return "target_hunt_features_v3:coarse:"+std::to_string(progress)+":"+
+        std::to_string(exits)+":"+std::to_string(shape)+":"+
+        std::to_string(blocked)+":"+std::to_string(density);
 }
 std::string common_semi_oracle_target_group(const std::string & state) {
     board b; std::string error; if (!parse(state,b,error)) return {};
@@ -203,7 +207,7 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
         const common_semi_oracle_query & q, common_semi_oracle_result & out, std::string & error) {
     if (!common_semi_oracle_target_state(r,q.state_json,error)) return false;
     board b; if (!parse(q.state_json,b,error)) return false;
-    out.evaluator_revision = "target_hunt_astar_v2";
+    out.evaluator_revision = "target_hunt_astar_v3";
     if (q.level == common_semi_oracle_level::local) {
         std::map<std::string,std::string> f;
         if (!fields(q.action_dsl,"open! target_hunt.move",f,error)) return false;
@@ -231,6 +235,7 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
         for(const auto & action:order){std::string next;if(move(x,action,next))transitions.push_back({next,action,1});}return true;};
     problem.heuristic=[](const std::string & s){board x;std::string e;parse(s,x,e);return size_t(std::abs(x.row-x.tr)+std::abs(x.col-x.tc));};
     problem.heuristic_admissible=true;problem.transition_adviser=q.transition_adviser;problem.record_history=q.record_search_history;
+    problem.transition_score=q.transition_score;
     common_semi_oracle_search_result result;
     if(!common_semi_oracle_search_run(problem,q.budget,q.search_policy,q.use_historical_order,result)){error=result.error;return false;}
     out.applied_search_policy = q.search_policy;
@@ -241,9 +246,9 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
         path.push_back({{"state",{{"position",json::parse(step.state)["position"]}}},{"action",step.action},{"cost",step.cost}});previous=step.state;}
     out.verdict=result.found?common_semi_oracle_verdict::satisfied:result.exhausted?common_semi_oracle_verdict::violated:common_semi_oracle_verdict::unknown;
     out.reason=result.found
-        ? (result.algorithm==common_semi_oracle_search_algorithm::focal && result.suboptimality_bound>1.0
+        ? (result.optimality_proven ? "verified shortest path" : result.suboptimality_bound_proven
             ? "verified path within host-selected Focal A* cost bound"
-            : "verified shortest path")
+            : "verified path; global cost guarantee unavailable after depth pruning")
         : result.exhausted?"reachable state space exhausted without target":"search budget exhausted: "+result.stop_reason;
     if(result.found)out.proof_json=json{{"algorithm",result.algorithm==common_semi_oracle_search_algorithm::focal?"focal_astar_v1":"exact_astar_v1"},
         {"suboptimality_bound",result.suboptimality_bound},{"suboptimality_bound_proven",result.suboptimality_bound_proven},

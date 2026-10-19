@@ -83,6 +83,8 @@ struct common_flydelta_outcome_guidance_candidate {
 
 struct common_flydelta_outcome_guidance_prediction {
     std::string arm_id;
+    std::string posterior_identity;
+    double sampled_utility = 0.0;
     std::string level;
     double p_known = 0.5;
     double p_helped_given_known = 1.0 / 3.0;

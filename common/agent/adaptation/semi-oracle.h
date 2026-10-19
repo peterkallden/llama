@@ -59,6 +59,11 @@ using common_semi_oracle_transition_adviser = std::function<bool(
         const std::string &, const std::vector<std::string> &,
         std::vector<size_t> &, std::string &)>;
 
+// Host-owned score for one legal transition: state before, state after, action.
+// Lower scores are preferred. This changes frontier ordering only.
+using common_semi_oracle_transition_score = std::function<double(
+        const std::string &, const std::string &, const std::string &)>;
+
 struct common_semi_oracle_query {
     std::string ruleset_id;
     uint64_t ruleset_revision = 0;
@@ -70,6 +75,7 @@ struct common_semi_oracle_query {
     // Optional host-selected action ordering. It can affect exploration order only.
     std::vector<std::string> guidance;
     common_semi_oracle_transition_adviser transition_adviser;
+    common_semi_oracle_transition_score transition_score;
     bool record_search_history = false;
     bool use_historical_order = false;
     common_semi_oracle_search_policy search_policy;

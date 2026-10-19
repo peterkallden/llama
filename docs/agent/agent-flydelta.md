@@ -2403,6 +2403,17 @@ utility instead of sampling. Runtime configuration deliberately exposes no
 third production selection policy; `experimental` continues to use posterior
 sampling, while `shadow` keeps the actual arm order unchanged.
 
+The latest source correction samples once per explicit posterior category and
+decision seed. Arms tied to the same parameter share a draw and retain their
+existing order on equal utility; different parameter identities can still
+sample independently even when their numerical posteriors match. The seed is
+derived from the compatibility/category identity, so candidate iteration order
+does not assign a different draw. Decision payloads include `posterior_identity`
+and `sampled_utility`. This correction awaits compilation and regression runs.
+Lifecycle decisions identify it with `sampling_revision` equal to
+`posterior-category-sampling-v2`. Previously persisted decision payloads are
+not rewritten by this change.
+
 #### Shared prediction core and MCP inspection
 
 The Beta/Dirichlet posterior calculations and approximate marginal intervals

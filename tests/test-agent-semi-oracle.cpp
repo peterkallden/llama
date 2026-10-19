@@ -461,5 +461,47 @@ int main() {
     CHECK(focal_search.found && focal_search.total_cost == 3 &&
         !focal_search.optimality_proven && focal_search.suboptimality_bound_proven &&
         focal_search.suboptimality_bound == 1.5);
+
+    // A cheap path was pruned by depth, so selecting an expensive goal later
+    // proves reachability but cannot establish a global cost guarantee.
+    auto depth_pruned=focal_problem;
+    depth_pruned.heuristic=[](const std::string &){return size_t{0};};
+    depth_pruned.historical_score={};
+    depth_pruned.expand=[](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & next,std::string &){
+        next.clear();
+        if(state=="root")next={{"cheap","enter",1},{"goal","expensive",10}};
+        else if(state=="cheap")next={{"pruned","continue",1}};
+        else if(state=="pruned")next={{"goal","finish",1}};
+        return true;
+    };
+    CHECK(common_semi_oracle_search_run(depth_pruned,{16,2},exact_policy,false,exact_search));
+    CHECK(exact_search.found&&exact_search.total_cost==10&&!exact_search.optimality_proven);
+    CHECK(common_semi_oracle_search_run(depth_pruned,{16,2},focal_policy,false,focal_search));
+    CHECK(focal_search.found&&!focal_search.optimality_proven&&!focal_search.suboptimality_bound_proven);
+
+    // Absolute incoming scores compare singleton branches from different
+    // parents; sibling ordinal zero for both would choose the wrong goal.
+    common_semi_oracle_search_problem absolute_score;
+    absolute_score.initial_state="root";
+    absolute_score.heuristic_admissible=true;
+    absolute_score.is_goal=[](const std::string & state,bool & goal,std::string &){
+        goal=state=="goal-left"||state=="goal-right";return true;
+    };
+    absolute_score.expand=[](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & next,std::string &){
+        next.clear();
+        if(state=="root")next={{"left","left",1},{"right","right",1}};
+        else if(state=="left")next={{"goal-left","finish",1}};
+        else if(state=="right")next={{"goal-right","finish",1}};
+        return true;
+    };
+    absolute_score.transition_score=[](const std::string & before,const std::string &,const std::string &){
+        return before=="left"?.9:before=="right"?.1:0.0;
+    };
+    CHECK(common_semi_oracle_search_run(absolute_score,{16,8},exact_policy,true,exact_search));
+    CHECK(exact_search.found&&exact_search.path.back().state=="goal-right"&&exact_search.optimality_proven);
+    CHECK(common_semi_oracle_search_run(absolute_score,{16,8},exact_policy,false,exact_search));
+    CHECK(exact_search.path.back().state=="goal-left");
     return 0;
 }

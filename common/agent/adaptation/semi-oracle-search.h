@@ -26,6 +26,8 @@ struct common_semi_oracle_search_problem {
     // Stable host score for a generated state. Lower scores are preferred
     // only within the same admissible f frontier (or the configured FOCAL set).
     std::function<double(const std::string &, const std::string &)> historical_score;
+    // Prefer this callback when the score depends on the incoming transition.
+    common_semi_oracle_transition_score transition_score;
     // Guidance is an ordering hint only. It is never consulted by the goal
     // predicate, transition validator, or heuristic.
     std::function<size_t(const common_semi_oracle_search_transition &)> guidance_rank;

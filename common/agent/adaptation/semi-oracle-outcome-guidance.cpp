@@ -59,8 +59,8 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     const bool target=ruleset.domain==common_semi_oracle_domain::target_hunt;
     auto allowed=[&](const std::string & key){
         if(!target)return actions.count(key)!=0;
-        return key.rfind("target_hunt_features_v2:fine:",0)==0 ||
-            key.rfind("target_hunt_features_v2:coarse:",0)==0;
+        return key.rfind("target_hunt_features_v3:fine:",0)==0 ||
+            key.rfind("target_hunt_features_v3:coarse:",0)==0;
     };
     auto category=[&](const std::string & state,const std::string & action){
         return target?common_semi_oracle_target_category(state,action):action;
@@ -74,12 +74,12 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         return common_semi_oracle_evaluate(ruleset, query, result, error);
 
     // Scope, rule revision, proof contract and budget all partition this family.
-    const json context = {{"family", target?"target_hunt_search_suffix_v2":"algebra_search_suffix_v1"},
+    const json context = {{"family", target?"target_hunt_search_suffix_v3":"algebra_search_suffix_v1"},
         {"scope", fingerprint(json::array({host, project, session}).dump())},
         {"ruleset_id", ruleset.id}, {"revision", ruleset.revision},
         {"rule_fingerprint", ruleset.semantic_fingerprint},
         {"action_contract", ruleset.action_contract_fingerprint},
-        {"evaluator_revision", target?"target_hunt_astar_v2":"linear_astar_v1"}, {"goal", query.goal},
+        {"evaluator_revision", target?"target_hunt_astar_v3":"linear_astar_v1"}, {"goal", query.goal},
         {"host_action_order", query.level == common_semi_oracle_level::guided
             ? query.guidance : std::vector<std::string>{}},
         {"max_expansions", query.budget.max_expansions}, {"max_depth", query.budget.max_depth}};
@@ -113,7 +113,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         try {
             const auto row = json::parse(record.second);
             if (!row.at("schema_version").is_number_integer() ||
-                    row.at("schema_version") != (target?3:1) || row.at("context") != context ||
+                    row.at("schema_version") != (target?4:1) || row.at("context") != context ||
                     !row.at("fixture_group").is_string() ||
                     !row.at("observations").is_object()) { ++rejected; continue; }
             const auto group = row.at("fixture_group").get<std::string>();
@@ -158,26 +158,38 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     }
     if(!projection_hit) {
         if(!common_outcome_guidance_build_projection(projection_rows,"semi-oracle-outcome-projection-v2",
-                source_fingerprint,0,projection,error))return false;
-        std::lock_guard<std::mutex> lock(projection_cache_mutex);
-        const auto concurrent=projection_cache_index.find(source_fingerprint);
-        if(concurrent!=projection_cache_index.end()) {
-            projection=concurrent->second->value;
-            projection_cache_lru.splice(projection_cache_lru.begin(),projection_cache_lru,concurrent->second);
+                source_fingerprint,0,projection,error)) {
+            fallback="search_history_projection_invalid";
+            history_error=error;
+            error.clear();
+            projection={};
         } else {
-            projection_cache_lru.push_front({source_fingerprint,projection});
-            projection_cache_index[source_fingerprint]=projection_cache_lru.begin();
-        }
-        while(projection_cache_lru.size()>projection_cache_capacity){
-            projection_cache_index.erase(projection_cache_lru.back().key);
-            projection_cache_lru.pop_back();
+            std::lock_guard<std::mutex> lock(projection_cache_mutex);
+            const auto concurrent=projection_cache_index.find(source_fingerprint);
+            if(concurrent!=projection_cache_index.end()) {
+                projection=concurrent->second->value;
+                projection_cache_lru.splice(projection_cache_lru.begin(),projection_cache_lru,concurrent->second);
+            } else {
+                projection_cache_lru.push_front({source_fingerprint,projection});
+                projection_cache_index[source_fingerprint]=projection_cache_lru.begin();
+            }
+            while(projection_cache_lru.size()>projection_cache_capacity){
+                projection_cache_index.erase(projection_cache_lru.back().key);
+                projection_cache_lru.pop_back();
+            }
         }
     }
     std::map<std::string,std::vector<double>> projected_weights;
     std::map<std::string,size_t> group_counts;
     projection.aggregate_excluding(fixture,projected_weights,group_counts);
     size_t eligible_fixture_groups=0;
-    for(const auto & item:group_counts)eligible_fixture_groups=std::max(eligible_fixture_groups,item.second);
+    for(const auto & group:projection.fixture_categories) {
+        if(group.first==fixture)continue;
+        const bool contributes=std::any_of(group.second.begin(),group.second.end(),[](const auto & item){
+            return std::any_of(item.second.begin(),item.second.end(),[](double value){return value>0.0;});
+        });
+        if(contributes)++eligible_fixture_groups;
+    }
     std::map<std::string,counts> weights;
     for(const auto & item:projected_weights)if(item.second.size()==3)
         weights[item.first]={item.second[0],item.second[1],item.second[2]};
@@ -187,7 +199,15 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     double adviser_ms=0.0;
     auto guided = query;
     guided.record_search_history = true;
-    if (!query.transition_adviser && fallback.empty()) {
+    guided.use_historical_order = config.mode == "experimental";
+    std::map<std::pair<std::string,std::string>,double> transition_scores;
+    if (!query.transition_adviser && !query.transition_score && fallback.empty()) {
+        guided.transition_score = [&](const std::string & before, const std::string &,
+                const std::string & action) {
+            const auto score=transition_scores.find({before,action});
+            if(score==transition_scores.end())throw std::runtime_error("missing transition posterior score");
+            return score->second;
+        };
         guided.transition_adviser = [&](const std::string & current, const std::vector<std::string> & candidates,
                 std::vector<size_t> & order, std::string & advice_error) {
             const auto advice_started=std::chrono::steady_clock::now();
@@ -242,15 +262,19 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             }
             if (matching_history) std::stable_sort(proposed.begin(), proposed.end(),
                 [&](size_t a, size_t b) { return utilities[a] > utilities[b]; });
+            // Absolute utilities are comparable across different parents.
+            // Cold start preserves deterministic frontier order for all siblings.
+            for(size_t i=0;i<candidates.size();++i)
+                transition_scores[{current,candidates[i]}]=matching_history?-utilities[i]:0.0;
             if (config.mode == "experimental") order = proposed;
             if (decisions.size() < 128) decisions.push_back({{"state_fingerprint", fingerprint(current)},
-                {"selection_reason", matching_history ? "posterior_sampling" : "cold_start_original_order"},
+                {"selection_reason", matching_history ? config.sampling_policy : "cold_start_original_order"},
                 {"predictions", predictions}, {"original_actions", candidates}, {"proposed_order", proposed}, {"executed_order", order}});
             else ++omitted_decisions;
             adviser_ms+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-advice_started).count();
             return true;
         };
-    } else if (query.transition_adviser) fallback = "existing host transition adviser retained";
+    } else if (query.transition_adviser || query.transition_score) fallback = "existing host transition guidance retained";
     const auto search_started=std::chrono::steady_clock::now();
     if (!common_semi_oracle_evaluate(ruleset, guided, result, error)) return false;
     const double search_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-search_started).count();
@@ -274,11 +298,12 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     for (const auto & item : observed) observations[item.first] = item.second;
     json history_refs = json::array();
     for (const auto & item : accepted) history_refs.push_back(item["evaluation_id"]);
-    result.search_guidance_json = json{{"schema_version", target?3:1}, {"context", context},
+    result.search_guidance_json = json{{"schema_version", target?4:1}, {"context", context},
         {"fixture_group", fixture}, {"observations", observations},
         {"diagnostics", {{"mode", config.mode}, {"seed", config.seed},
-            {"sampling_policy",config.sampling_policy},{"search_algorithm",config.search_algorithm},
-            {"suboptimality_bound",config.suboptimality_bound},
+            {"sampling_policy",config.sampling_policy},
+            {"search_algorithm",result.applied_search_policy.algorithm==common_semi_oracle_search_algorithm::focal?"focal":"exact"},
+            {"suboptimality_bound",result.applied_search_policy.suboptimality_bound},
             {"family",context["family"]},{"evaluator_revision",context["evaluator_revision"]},
             {"ruleset_id", ruleset.id}, {"ruleset_revision", ruleset.revision},
             {"fixture_group", fixture}, {"scope_fingerprint", context["scope"]},
@@ -296,7 +321,8 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             {"callback_error", trace.value("callback_error", std::string{})},
             {"decisions", decisions}, {"decision_count", decisions.size() + omitted_decisions},
             {"omitted_decisions", omitted_decisions}}}}.dump();
-    if (result.guidance_ref.empty()) result.guidance_ref = "semi-oracle-history:" + history_fingerprint;
+    if (result.guidance_ref.empty() && !history_fingerprint.empty())
+        result.guidance_ref = "semi-oracle-history:" + history_fingerprint;
     if(target) {
         auto persisted=json::parse(result.search_guidance_json);
         persisted["problem_state"]=state;
