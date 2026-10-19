@@ -1,4 +1,5 @@
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/semi-oracle-target.h"
 #include "agent/adaptation/semi-oracle-sft-candidate.h"
 
 #include <nlohmann/json.hpp>
@@ -165,26 +166,42 @@ bool common_semi_oracle_tool_service::verify_active_action(
 
 bool common_semi_oracle_tool_service::search_active_algebra_goal(
         common_semi_oracle_result & result, std::string & error) {
+    return search_active_goal(result,error,{2048,16});
+}
+
+bool common_semi_oracle_tool_service::define_problem(const std::string & dsl,
+        std::string & state, std::string & error) {
+    common_semi_oracle_ruleset ruleset; bool found=false;
+    if(!active_ruleset(ruleset,found,error))return false;
+    if(!found||ruleset.domain!=common_semi_oracle_domain::target_hunt){error="problem definition requires an active target_hunt RuleSet";return false;}
+    if(!common_semi_oracle_target_problem(ruleset,dsl,state,error))return false;
+    auto data=json::parse(state);data["problem_id"]=opaque_id(host_namespace_,session_id_,"problem");state=data.dump();
+    return initialize_active_state(state,true,error);
+}
+
+bool common_semi_oracle_tool_service::search_active_goal(common_semi_oracle_result & result,
+        std::string & error, common_semi_oracle_budget budget, const std::vector<std::string> & host_order) {
     common_semi_oracle_ruleset ruleset;
     bool found = false;
     if (!active_ruleset(ruleset, found, error)) return false;
-    if (!found || ruleset.domain != common_semi_oracle_domain::linear_algebra) {
-        error = "goal search requires an active linear_algebra RuleSet";
+    if (!found || (ruleset.domain != common_semi_oracle_domain::linear_algebra && ruleset.domain != common_semi_oracle_domain::target_hunt)) {
+        error = "goal search requires an active linear_algebra or target_hunt RuleSet";
         return false;
     }
     std::string state;
     if (!store_.get_session_state(session_id_, ruleset.id, ruleset.revision,
             state, found, error)) return false;
     if (!found) {
-        error = "goal search requires host-owned active equation state";
+        error = "goal search requires host-owned active problem state";
         return false;
     }
     const auto parsed = json::parse(state, nullptr, false);
+    if (ruleset.domain == common_semi_oracle_domain::target_hunt)
+        return verify_action(state,"",common_semi_oracle_level::bounded,"reach:target",budget,host_order,result,error);
     if (!parsed.is_object() || !parsed.contains("lhs") || !parsed["lhs"].is_string()) {
         error = "active algebra state is not a supported equation";
         return false;
     }
-    common_semi_oracle_budget budget;
     budget.max_expansions = 2048;
     budget.max_depth = 16;
     return verify_action(state,

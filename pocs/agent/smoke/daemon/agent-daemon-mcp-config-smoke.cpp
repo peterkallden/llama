@@ -5,6 +5,10 @@
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 #include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/schema/tool-output-codec.h"
+#include "tools/agent/mcp/agent-mcp-http-server.h"
+#include "tools/agent/daemon/agent-daemon-dispatcher.h"
+#include <thread>
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -633,35 +637,37 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "unknown profile capability was accepted\n");
         return 1;
     }
-    common_tool_catalog configured_catalog;
-    common_tool_bootstrap_result configured_bootstrap;
-    if (!configured_catalog.bootstrap(
-            capability_config.tool_profile,
-            configured_bootstrap,
-            error,
-            capability_config.tool_capabilities,
-            capability_config.tool_profiles)) {
-        std::fprintf(stderr, "configured capability profile bootstrap failed: %s\n", error.c_str());
-        return 1;
-    }
-    const auto configured_tools = configured_catalog.load_profile(
-        capability_config.tool_profile, error);
-    if (configured_tools.size() != 4 ||
-            error.size() != 0 ||
-            configured_tools[0].name != "repository.list" ||
-            configured_tools[3].name != "repository.diff") {
-        std::fprintf(stderr, "configured capability profile did not resolve its tools\n");
-        return 1;
-    }
-    common_tool_profile_snapshot configured_snapshot;
-    if (!configured_catalog.resolve_profile(
-            capability_config.tool_profile, configured_snapshot, error) ||
-            configured_snapshot.id != "local-developer" ||
-            configured_snapshot.tools.size() != 4 ||
-            configured_snapshot.allow_network.value_or(true) ||
-            !configured_snapshot.allow_policy_gated_writes.value_or(false)) {
-        std::fprintf(stderr, "configured immutable profile snapshot was not resolved\n");
-        return 1;
+    {
+        common_tool_catalog configured_catalog;
+        common_tool_bootstrap_result configured_bootstrap;
+        if (!configured_catalog.bootstrap(
+                capability_config.tool_profile,
+                configured_bootstrap,
+                error,
+                capability_config.tool_capabilities,
+                capability_config.tool_profiles)) {
+            std::fprintf(stderr, "configured capability profile bootstrap failed: %s\n", error.c_str());
+            return 1;
+        }
+        const auto configured_tools = configured_catalog.load_profile(
+            capability_config.tool_profile, error);
+        if (configured_tools.size() != 4 ||
+                error.size() != 0 ||
+                configured_tools[0].name != "repository.list" ||
+                configured_tools[3].name != "repository.diff") {
+            std::fprintf(stderr, "configured capability profile did not resolve its tools\n");
+            return 1;
+        }
+        common_tool_profile_snapshot configured_snapshot;
+        if (!configured_catalog.resolve_profile(
+                capability_config.tool_profile, configured_snapshot, error) ||
+                configured_snapshot.id != "local-developer" ||
+                configured_snapshot.tools.size() != 4 ||
+                configured_snapshot.allow_network.value_or(true) ||
+                !configured_snapshot.allow_policy_gated_writes.value_or(false)) {
+            std::fprintf(stderr, "configured immutable profile snapshot was not resolved\n");
+            return 1;
+        }
     }
 
     agent_host_config remote_config;
@@ -804,6 +810,7 @@ int main(int argc, char ** argv) {
         auto oracle_options = options;
         oracle_options.mcp_providers.clear();
         oracle_options.tool_profile = "semi-oracle";
+        oracle_options.max_tool_rounds = 16;
         oracle_options.adaptation_semi_oracle_outcome_guidance = {"experimental", 42, 17};
         common_agent_runtime_session_host_turn_request request;
         request.session_id = "guidance-native";
@@ -861,6 +868,76 @@ int main(int argc, char ** argv) {
         const auto off_result = json::parse(off.content_json)["result"];
         if (!off_result["guidance"].empty() || off_result["proof"]["solution"] != result["proof"]["solution"])
             return __LINE__;
+        // Invoke every Target Hunt operation through the real daemon-resolved view.
+        const std::vector<std::pair<std::string,json>> calls={
+            {"oracle.ruleset.define",{{"ruleset_dsl","name: Maze\ndescription: MCP integration\ndomain: target_hunt\nmovement: orthogonal\nmax_rows: 32\nmax_columns: 32"}}},
+            {"oracle.problem.define",{{"problem_dsl","grid: .../.#./...\nstart: 0,0\ntarget: 2,2"}}},
+            {"oracle.action.verify",{{"action_dsl","open! target_hunt.move\ndirection: east"}}},
+            {"oracle.goal.search",json::object()}};
+        for(const auto & call:calls){
+            const auto actual=oracle_tooling.tool_view->call({"native-target",call.first,call.second.dump()},error);
+            if(!actual.ok){std::fprintf(stderr,"Target Hunt native %s failed: %s / %s\n",call.first.c_str(),error.c_str(),actual.content_json.c_str());return 1;}
+            const auto value=json::parse(actual.content_json);
+            for(const auto & definition:registry.list_tools())if(definition.name==call.first){
+                if(!common_schema_normalize_and_validate_object(actual.content_json,definition.output_schema_json,normalized,error)){
+                    std::fprintf(stderr,"Target Hunt output schema: %s\n",error.c_str());return 1;}
+                if(definition.read_only!=(call.first=="oracle.goal.search"))return __LINE__;
+            }
+            if(call.first=="oracle.goal.search"&&(value["result"]["verdict"]!="SATISFIED"||value["result"]["proof"]["total_cost"]!=3))return __LINE__;
+        }
+        common_agent_tool_call dsl_call;
+        if(!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+                "open! oracle.action.verify\naction_dsl: \"open! target_hunt.move\\ndirection: south\"",
+                oracle_tooling.tools,dsl_call,error)||json::parse(dsl_call.arguments_json)!=json{{"action_dsl","open! target_hunt.move\ndirection: south"}})return __LINE__;
+        common_agent_daemon_runtime proxy_runtime;
+        proxy_runtime.tool_executor=[&](const common_agent_daemon_tool_payload & input,agent_tool_result & output,std::string & e){
+            output=oracle_tooling.tool_view->call({"http-target",input.tool_name,input.arguments_json},e);return output.ok;};
+        common_agent_daemon_dispatcher dispatcher(std::move(proxy_runtime),8,1);
+        agent_mcp_http_server_options http_options;
+        http_options.bearer_token="target-test";
+        http_options.default_policy={"target-test","llama-agent",request.namespace_id,request.project_id,"semi-oracle",
+            {"oracle.ruleset.define","oracle.problem.define","oracle.action.verify","oracle.goal.search"},true};
+        http_options.execute_tool=[&](const agent_mcp_caller_policy & policy,const std::string & name,const agent_mcp_json & args,
+                agent_mcp_server_tool_result & output,std::string & e){
+            common_agent_daemon_command command;command.request_id="target-http";command.type=common_agent_daemon_command_type::execute_tool;
+            command.tool=common_agent_daemon_tool_payload{{policy.namespace_id,request.session_id},policy.project_id,policy.tool_profile,name,args.dump(),policy.allow_writes};
+            common_agent_daemon_command_result response;const bool ok=dispatcher.execute(command,response,e);
+            const auto & value=response.tool_result;
+            agent_mcp_set_tool_call_result(output,ok&&value.ok,json::parse(value.content_json,nullptr,false),value.content_summary,
+                value.failure_code,"execution",value.retryable,value.raw_diagnostic);return output.ok;};
+        agent_mcp_http_server http_server(std::move(registry),std::move(http_options));
+        if(!http_server.bind(error))return __LINE__;
+        std::string listen_error;
+        std::thread http_thread([&]{http_server.listen(listen_error);});
+        bool http_ok=true;
+        try {
+            httplib::Client client("127.0.0.1",http_server.port());client.set_read_timeout(10,0);
+            httplib::Headers headers={{"Authorization","Bearer target-test"}};
+            const auto init=client.Post("/mcp",headers,R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"target-test","version":"1"}}})","application/json");
+            http_ok=init&&init->status==200;
+            if(http_ok){headers.emplace("Mcp-Session-Id",init->get_header_value("Mcp-Session-Id"));
+                headers.emplace("MCP-Protocol-Version",init->get_header_value("MCP-Protocol-Version"));
+                const auto listed=client.Post("/mcp",headers,R"({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}})","application/json");
+                bool problem_advertised=false;
+                if(listed&&listed->status==200){
+                    const auto listed_payload=json::parse(listed->body);
+                    for(const auto & entry:listed_payload["result"]["tools"])
+                        if(entry["name"]=="oracle.problem.define")problem_advertised=entry["annotations"]["readOnlyHint"]==false&&entry.contains("outputSchema");
+                }
+                http_ok=problem_advertised;
+                for(const auto & call:calls){
+                    const auto reply=client.Post("/mcp",headers,json{{"jsonrpc","2.0"},{"id",2},{"method","tools/call"},
+                        {"params",{{"name",call.first},{"arguments",call.second}}}}.dump(),"application/json");
+                    if(!reply||reply->status!=200){http_ok=false;break;}
+                    const auto payload=json::parse(reply->body);
+                    if(!payload.contains("result")||payload["result"].value("isError",false)||
+                            !payload["result"]["structuredContent"].value("ok",false)){
+                        std::fprintf(stderr,"Target MCP HTTP failure: %s\n",reply->body.c_str());http_ok=false;break;}
+                }
+            }
+        }catch(const std::exception & e){std::fprintf(stderr,"Target HTTP exception: %s\n",e.what());http_ok=false;}
+        http_server.stop();http_thread.join();
+        if(!http_ok)return 1;
     }
 
     common_agent_runtime_tooling tooling;

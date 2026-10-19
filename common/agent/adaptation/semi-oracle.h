@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-enum class common_semi_oracle_domain { placement_game, linear_algebra };
+enum class common_semi_oracle_domain { placement_game, linear_algebra, target_hunt };
 enum class common_semi_oracle_scope { session, host };
 enum class common_semi_oracle_rule_authority { declared, verified, inferred };
 enum class common_semi_oracle_level { local, bounded, guided };

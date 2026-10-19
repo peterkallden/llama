@@ -50,6 +50,10 @@ public:
     // for x using the bounded exact-rewrite A* problem.
     bool search_active_algebra_goal(
             common_semi_oracle_result & result, std::string & error);
+    bool define_problem(const std::string & problem_dsl, std::string & state, std::string & error);
+    bool search_active_goal(common_semi_oracle_result & result, std::string & error,
+            common_semi_oracle_budget budget = {2048, 1024},
+            const std::vector<std::string> & host_order = {});
     // Host-only strategic ranking. The complete bounded ranking and proofs
     // are appended through the configured semi-oracle evaluation store.
     bool rank_placements(const std::string & state_json,

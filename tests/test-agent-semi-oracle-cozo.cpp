@@ -166,6 +166,27 @@ int main() {
     CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
         after.find("\"rhs\":\"4\"") != std::string::npos);
     store.close();
+    CHECK(store.open(db,error));
+    common_semi_oracle_tool_service maze(store,"host","session-maze");
+    common_semi_oracle_ruleset maze_rules;
+    CHECK(maze.define_ruleset("name: Maze\ndescription: persisted grid\ndomain: target_hunt\nmovement: orthogonal\nmax_rows: 32\nmax_columns: 32",common_semi_oracle_rule_authority::declared,maze_rules,error));
+    std::string maze_state;
+    CHECK(maze.define_problem("grid: .../.#./...\nstart: 0,0\ntarget: 2,2",maze_state,error));
+    CHECK(maze.verify_active_action("direction: east",turn_result,before,after,error));
+    CHECK(turn_result.verdict==common_semi_oracle_verdict::satisfied);
+    CHECK(maze.search_active_goal(goal_result,error));
+    CHECK(goal_result.verdict==common_semi_oracle_verdict::satisfied);
+    store.close();CHECK(store.open(db,error));
+    CHECK(store.get_session_state("session-maze",maze_rules.id,maze_rules.revision,persisted_state,found,error)&&found&&persisted_state==after);
+    CHECK(store.list_search_history(maze_rules.id,maze_rules.revision,128,search_history,error)&&search_history.size()==1);
+    std::string maze_evaluation;
+    CHECK(store.get_evaluation_payload(search_history.front().evaluation_id,maze_evaluation,found,error)&&found);
+    CHECK(maze_evaluation.find("target_hunt_astar_v1")!=std::string::npos);
+    CHECK(store.get_revision(maze_rules.id,maze_rules.revision,loaded,found,error)&&found&&loaded.domain==common_semi_oracle_domain::target_hunt);
+    common_semi_oracle_tool_service resumed_maze(store,"host","session-maze");
+    CHECK(resumed_maze.search_active_goal(goal_result,error));
+    CHECK(goal_result.verdict==common_semi_oracle_verdict::satisfied);
+    store.close();
     std::filesystem::remove_all(dir,ec);
     return 0;
 }

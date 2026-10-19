@@ -2,16 +2,17 @@
 
 The semi-oracle is a host-side verifier for small, explicitly bounded rule
 families. It is not an LLM judge and the model cannot declare its own answer
-correct. V1 implements `placement_game` (small two-player placement games) and
-`linear_algebra` (one-variable linear equations over exact rational numbers).
-Chess, navigation, incomplete-information games, nonlinear algebra and
+correct. It implements `placement_game` (small two-player placement games),
+`linear_algebra` (one-variable linear equations over exact rational numbers),
+and `target_hunt` (bounded, fully observed orthogonal mazes).
+Chess, arbitrary navigation, incomplete-information games, nonlinear algebra and
 arbitrary executable user rules are unsupported.
 
 ## Tool boundary
 
 The model-facing native tool family is `semi-oracle`. Select it when the user
-has supplied rules for a small two-player placement game or a one-variable
-linear-equation task and wants a move/step checked. For a game with no stated
+has supplied rules for a small two-player placement game, a one-variable
+linear-equation task or Target Hunt and wants a move/step checked. For a game with no stated
 rules, ask for the rules first; do not treat the oracle as a general game
 solver or a general-purpose algebra tool.
 
@@ -25,10 +26,10 @@ solver or a general-purpose algebra tool.
   copied from the host's current state. The host rejects a no-op rewrite. The host
   supplies the active session binding, state, search level, budget and any
   guidance. The model only proposes the action/rewrite.
-- `oracle.goal.search` is a separate, argument-free host operation for a
-  declared linear-algebra session. It searches the host-owned active equation
-  for `x = rational`; it does not accept model-supplied state, goal, budget or
-  guidance and does not advance the session equation.
+- `oracle.goal.search` is an argument-free host operation for declared algebra
+  and Target Hunt sessions. It searches for `x = rational` or a shortest grid
+  path, using host-owned state, goal, budget and guidance. It preserves position
+  and equation state. `oracle.problem.define` admits Target Hunt maps explicitly.
 
 The daemon binds the regular tool adapter to a host-owned
 `common_semi_oracle_tool_service`. It opens SemiOracle on the configured
@@ -76,6 +77,113 @@ revision. Re-defining/correcting rules keeps the ID and creates a new revision
 with a parent link. A RuleSet starts session-scoped; promotion is an explicit
 host call. Promotion changes visibility, not semantic fingerprint or
 provenance, and does not upgrade inferred assertions.
+
+## Target Hunt: Maze
+
+Define rules once, then admit multiple maps without changing the rule revision.
+Pass this text as `oracle.ruleset.define.ruleset_dsl`:
+
+```text
+name: Target Hunt
+description: Find a shortest orthogonal path
+domain: target_hunt
+movement: orthogonal
+max_rows: 32
+max_columns: 32
+```
+
+Admit an explicit problem through MCP:
+
+```json
+{"name":"oracle.problem.define","arguments":{"problem_dsl":"grid: .../.#./...\nstart: 0,0\ntarget: 2,2"}}
+```
+
+The equivalent model-facing DSL is:
+
+```text
+open! oracle.problem.define
+problem_dsl: "grid: .../.#./...\nstart: 0,0\ntarget: 2,2"
+```
+
+Rows are separated by `/`; `.` is free and `#` blocked. Coordinates are
+zero-based `row,column`. Maps must be rectangular and within the RuleSet's
+1..32 row/column limits. Start and target must be free; they may coincide.
+Admission returns the host problem ID, fingerprint, position and action
+contract. Invalid input leaves the existing problem intact.
+
+```text
+open! oracle.action.verify
+action_dsl: "open! target_hunt.move\ndirection: east"
+```
+
+```json
+{"name":"oracle.action.verify","arguments":{"action_dsl":"open! target_hunt.move\ndirection: east"}}
+```
+
+Legal moves advance the persisted position. Illegal moves return `VIOLATED`
+and preserve it. `oracle.goal.search` takes `{}` (DSL: `open! oracle.goal.search`),
+returns a path from the current position, and does not execute its moves.
+The host defaults to 2,048 expansions and depth 1,024. A verified path is
+`SATISFIED`; exhausted reachable space is `VIOLATED`; a budget stop is `UNKNOWN`.
+Proofs contain the initial state once and compact per-step positions/actions.
+The search result ceiling is 256 KiB. Target Hunt admits no teaching/FlyDelta credit.
+
+Rule definition, problem admission and verified moves use the `session_state`
+tool risk class. MCP advertises `readOnlyHint=false`; inbound MCP policy must
+allow writes. Normal native session operations require no filesystem-write
+permission. Search preserves the problem position.
+
+Guidance uses `runtime.adaptation.semi_oracle.outcome_guidance`, default `shadow`.
+Target Hunt history has a separate V2 family, partitioned by scope,
+RuleSet/revision, evaluator, action contract and budget. Categories use progress
+toward the target and local free exits excluding the immediate return. BFS
+distances never enter the adviser. Rotated/reflected copies and positions of
+the same map/start/target share a fixture group. Proven-path observations are
+positive; other branches remain unknown unless an actual leaf was proved.
+A corridor allowing return is not a proven dead end. Algebra V1 remains readable.
+
+The model-free smoke trains on 64 maps and freezes history before evaluating
+32 held-out maps. It compares off/shadow/experimental across eight seeds and
+expansion budgets 16/64/256, depth 256. Independent BFS validates results;
+shadow must reproduce off. JSONL contains decisions, proofs, fingerprints and
+projection/adviser/search timing. Reproduce with:
+
+```sh
+cmake --build build-agent-vulkan-cozo --target llama-agent-semi-oracle-target-hunt-smoke
+build-agent-vulkan-cozo/bin/llama-agent-semi-oracle-target-hunt-smoke --trace /tmp/target-hunt.jsonl
+ctest --test-dir build-agent-vulkan-cozo -R 'semi-oracle' --output-on-failure
+```
+
+The frozen history retains all prediction inputs and source IDs, omitting
+verbose diagnostic payloads from repeated parsing; the trace includes that
+snapshot. Its projection timings describe this compact in-memory view, not
+database loading. Search timing includes domain validation and proof building.
+
+The smoke checks whether ordering reaches execution. Performance and budget
+success rates are measured results, not acceptance assumptions. Manhattan A*
+still selects by f, then h, before insertion-order guidance. No GPU/model is required.
+
+The CTest also writes `pocs/agent/target-hunt-trace.jsonl` under its build tree.
+
+On the 2026-10-19 Vulkan/Cozo build, the model-free CPU smoke changed 7,689
+successor-order decisions and changed the returned path or expansion count in
+233 of the 768 experimental searches. Shadow matched off for every proof and
+expansion count. The outcome and mean cost results were:
+
+| Expansion budget | Off found / 256 | Shadow found / 256 | Experimental found / 256 | Mean expansions off → experimental | Mean elapsed ms off → experimental |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 16 | 160 | 160 | 159 | 298 → 302 | 36 → 455 |
+| 64 | 240 | 240 | 240 | 511 → 515 | 63 → 625 |
+| 256 | 240 | 240 | 240 | 579 → 583 | 68 → 668 |
+
+Each budget row covers the same 32 held-out maps across eight seeds; these are
+repeated policy runs, not 256 independent maps. Experimental guidance therefore
+proved that historical ordering can affect execution, but this fixture set did
+not show a success-rate or expansion-cost benefit. Its measured time includes
+the compact in-memory history projection and adviser; it is not a database or
+GPU benchmark. The trace is at
+`build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl` and the CTest log is
+`/home/prbm/target-hunt-ctest-final-20261019.log`.
 
 ## Historical ordering for algebra search
 

@@ -17,7 +17,9 @@ bool common_tool_profile_to_chat_tools(const common_tool_catalog & catalog, cons
             definition.risk_class == common_tool_risk_class::artifact_write &&
             definition.requires_confirmation && registry.is_policy_gated(definition.name);
         const bool sandbox = definition.risk_class == common_tool_risk_class::sandbox_execution && definition.requires_confirmation && registry.is_policy_gated(definition.name);
-        if (!read_only && !proposal && !artifact_write && !sandbox) continue;
+        const bool session_state = definition.risk_class == common_tool_risk_class::session_state &&
+            !registry.is_read_only(definition.name) && !registry.is_policy_gated(definition.name);
+        if (!read_only && !session_state && !proposal && !artifact_write && !sandbox) continue;
         std::string compact_error;
         const auto model_description = common_render_compact_tool_description(
             definition.name,

@@ -91,6 +91,9 @@ bool is_definition_allowed(
     }
 
     switch (definition.risk_class) {
+        case common_tool_risk_class::session_state:
+            return !context.scope.session_id.empty() && !registry.is_read_only(definition.name) &&
+                !registry.is_policy_gated(definition.name);
         case common_tool_risk_class::local_read:
             return registry.is_read_only(definition.name);
 
@@ -241,7 +244,7 @@ bool is_mcp_definition_allowed(
     if (!definition.read_only &&
             !definition.writes_memory &&
             !definition.writes_plan &&
-            (!context.allow_policy_gated_writes || !definition.requires_confirmation)) {
+            !context.allow_policy_gated_writes) {
         return false;
     }
     return true;

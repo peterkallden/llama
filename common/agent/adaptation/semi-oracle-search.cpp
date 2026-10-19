@@ -62,7 +62,8 @@ bool common_semi_oracle_search_astar(
             const auto best = best_cost.find(nodes[i].state);
             if (!on_path[i] && (best == best_cost.end() || best->second != nodes[i].g)) continue;
             result.observations.push_back({nodes[i].action,
-                on_path[i] ? "goal_reached" : nodes[i].dead_end ? "dead_end" : "unknown"});
+                on_path[i] ? "goal_reached" : nodes[i].dead_end ? "dead_end" : "unknown",
+                nodes[nodes[i].parent].state, nodes[i].state});
         }
     };
     node start;
@@ -83,6 +84,7 @@ bool common_semi_oracle_search_astar(
         bool goal = false;
         if (!problem.is_goal(current.state, goal, result.error)) return false;
         if (goal) {
+            result.stop_reason = "goal_reached";
             result.found = true;
             result.total_cost = current.g;
             result.depth_reached = current.depth;
@@ -101,6 +103,7 @@ bool common_semi_oracle_search_astar(
             continue;
         }
         if (result.expansions >= budget.max_expansions) {
+            result.stop_reason = "max_expansions";
             finish_history(std::numeric_limits<size_t>::max());
             return true;
         }
@@ -166,6 +169,7 @@ bool common_semi_oracle_search_astar(
         }
     }
     result.exhausted = !depth_limited;
+    result.stop_reason = depth_limited ? "max_depth" : "frontier_exhausted";
     finish_history(std::numeric_limits<size_t>::max());
     return true;
 }

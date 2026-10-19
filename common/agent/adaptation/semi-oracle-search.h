@@ -51,10 +51,13 @@ struct common_semi_oracle_search_result {
         // goal_reached means a verified suffix exists; dead_end requires an
         // expanded state with no legal outgoing edges. All else is unknown.
         std::string outcome;
+        std::string state_before;
+        std::string state_after;
     };
     std::vector<observation> observations;
     size_t guidance_fallbacks = 0;
     std::string guidance_error;
+    std::string stop_reason;
 };
 
 bool common_semi_oracle_search_astar(

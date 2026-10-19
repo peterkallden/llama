@@ -254,6 +254,13 @@ bool agent_mcp_http_server::handle_message(
                 {"name", tool.name},
                 {"description", tool.description},
                 {"inputSchema", schema.is_discarded() ? agent_mcp_json::object() : schema},
+                {"annotations", {{"readOnlyHint", tool.read_only}}},
+                {"hostPolicy", {
+                    {"requiresConfirmation", tool.requires_confirmation},
+                    {"usesNetwork", tool.uses_network},
+                    {"writesMemory", tool.writes_memory},
+                    {"writesPlan", tool.writes_plan},
+                }},
             };
             const auto output_schema = agent_mcp_json::parse(
                 tool.output_schema_json, nullptr, false);

@@ -4609,7 +4609,7 @@ of truth or learning credit. It uses the same FlyDelta guidance settings and
 does not read history when that mode is `off`. See
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
 
-SemiOracle algebra search uses that same posterior math with independent
+SemiOracle algebra and Target Hunt search use that same posterior math with independent
 `runtime.adaptation.semi_oracle.outcome_guidance` settings: `mode` defaults to
 `shadow` (`off` and `experimental` are also supported), `seed` defaults to `0`,
 and `max_history_evaluations` defaults to `128` (range `1..1024`). These settings
@@ -4623,6 +4623,20 @@ normal order. MCP `oracle.goal.search` returns compact guidance diagnostics,
 and `agent_trace` logs the stored predictions and proposed/executed orders.
 See [SemiOracle historical ordering](agent-semi-oracle.md#historical-ordering-for-algebra-search)
 and [configuration example](../../examples/agent-host-config-adaptation.json).
+
+The `semi-oracle` tool profile also includes `oracle.problem.define`. With an
+active `target_hunt` RuleSet, it admits a bounded grid/start/target into the
+existing session-state store. `oracle.action.verify` advances a legal move;
+argument-free `oracle.goal.search` returns a shortest path without executing
+it. The native `session_state` risk class keeps these session mutations
+available to the agent while MCP correctly advertises them as writes.
+See [Target Hunt contracts and smoke](agent-semi-oracle.md#target-hunt-maze)
+and [JSON call examples](../../examples/agent-target-hunt.json).
+
+When these tools are imported through another MCP provider, writable tools
+require the receiving host's explicit write permission. A server's optional
+confirmation metadata does not substitute for that permission and its absence
+does not hide a write tool when permission has already been granted.
 
 `runtime.adaptation.flydelta.teacher_scoring_backend` defaults to `auto`,
 which uses compact target-log-probability graph scoring on the scheduler's
@@ -5030,7 +5044,7 @@ backend is configured.
 | `math.calculate`, `time.now` | Yes | A profile containing the tools, such as `minimal` |
 | Memory reads: `memory.search`, `memory.get`, `memory.inspect`, `memory.conflict_check` | Yes, when bound | A matching profile and a host-owned memory store, in-memory or persistent |
 | Memory proposals: `memory.remember`, `memory.propose_update`, `memory.propose_forget`, `memory.link`, `memory.compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
-| Semi-oracle: `oracle.ruleset.define`, `oracle.action.verify`, `oracle.goal.search` | Yes, when bound | The `semi-oracle` profile and an active supported session ruleset |
+| Semi-oracle: `oracle.ruleset.define`, `oracle.problem.define`, `oracle.action.verify`, `oracle.goal.search` | Yes, when bound | The `semi-oracle` profile; Target Hunt problem admission and moves use host-owned session state |
 | Planning: `plan.get`, `plan.propose` | Yes, when bound | A matching profile and plan store; `plan.get` is useful with a bound `plan_id` |
 | Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; `repository.search` accepts either a file or directory path |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |

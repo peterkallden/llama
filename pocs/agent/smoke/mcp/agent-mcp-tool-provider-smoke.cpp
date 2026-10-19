@@ -23,6 +23,7 @@ class fake_mcp_tool_client final : public agent_mcp_tool_client {
 public:
     std::string last_arguments;
     bool mirror_structured_text = false;
+    bool write_requires_confirmation = true;
     std::vector<mcp_agent_tool_definition> listed_tools;
 
     bool list_tools(
@@ -31,7 +32,7 @@ public:
             std::string & error) override {
         // Match the protocol parser's default model visibility and use named
         // fields so additions to the host contract cannot shift policy flags.
-        const auto definition = [](const std::string & name, const std::string & description,
+        const auto definition = [&](const std::string & name, const std::string & description,
                 const std::string & schema, bool read_only) {
             mcp_agent_tool_definition value;
             value.provider_id = "github";
@@ -39,7 +40,7 @@ public:
             value.description = description;
             value.input_schema_json = schema;
             value.read_only = read_only;
-            value.requires_confirmation = !read_only;
+            value.requires_confirmation = !read_only && write_requires_confirmation;
             value.uses_network = true;
             value.ui_visibility = {"model"};
             return value;
@@ -324,6 +325,15 @@ int main() {
         return 1;
     }
 
+    // Writable session operations such as oracle.problem.define may advertise
+    // no additional confirmation step. Explicit host write authority still controls exposure.
+    client.write_requires_confirmation = false;
+    auto nonconfirming_read_view=provider.resolve_tools(read_only_context,error);
+    auto nonconfirming_write_view=provider.resolve_tools(write_context,error);
+    if(!nonconfirming_read_view||!nonconfirming_write_view||
+            has_tool(nonconfirming_read_view->chat_tools(),"github_create_issue")||
+            !has_tool(nonconfirming_write_view->chat_tools(),"github_create_issue")||
+            !nonconfirming_write_view->call({"nonconfirming-write","github_create_issue",R"({"title":"explicitly allowed write"})"},error).ok) return 1;
     std::printf("mcp_exposed_tools=%zu\n", write_view->chat_tools().size());
     std::printf("mcp_search_result=%s\n", search_result.content_json.c_str());
     std::printf("mcp_create_result=%s\n", create_result.content_json.c_str());

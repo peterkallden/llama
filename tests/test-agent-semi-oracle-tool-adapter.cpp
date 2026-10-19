@@ -13,7 +13,7 @@ int main() {
     common_tool_catalog catalog;common_tool_bootstrap_result bootstrap;
     CHECK(catalog.bootstrap("semi-oracle",bootstrap,error));
     const auto definitions=catalog.load_profile("semi-oracle",error);
-    CHECK(error.empty()&&definitions.size()==3);
+    CHECK(error.empty()&&definitions.size()==4);
     const auto * goal_definition = catalog.find_definition("oracle.goal.search");
     CHECK(goal_definition != nullptr);
     std::string normalized;
@@ -31,7 +31,9 @@ int main() {
     };
     common_tool_registry registry;common_tool_adapter_result adapters;
     CHECK(common_register_native_tool_adapters(catalog,"semi-oracle",bindings,registry,adapters,error));
-    CHECK(adapters.registered.size()==3&&registry.contains("oracle.ruleset.define")&&registry.contains("oracle.action.verify")&&registry.contains("oracle.goal.search"));
+    CHECK(adapters.registered.size()==4&&registry.contains("oracle.ruleset.define")&&registry.contains("oracle.action.verify")&&registry.contains("oracle.goal.search")&&registry.contains("oracle.problem.define"));
+    CHECK(!registry.is_read_only("oracle.ruleset.define")&&!registry.is_read_only("oracle.problem.define")&&
+        !registry.is_read_only("oracle.action.verify")&&registry.is_read_only("oracle.goal.search"));
     const auto define=registry.execute({"oracle.ruleset.define","{\"ruleset_dsl\":\"open! oracle.ruleset.define\\nname: TTT\"}"});
     CHECK(define.ok);
     const auto verify=registry.execute({"oracle.action.verify","{\"action_dsl\":\"open! game.place_mark\\nplayer: X\\nrow: 0\\ncolumn: 0\"}"});

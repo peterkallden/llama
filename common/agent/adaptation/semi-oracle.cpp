@@ -1,5 +1,6 @@
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-search.h"
+#include "agent/adaptation/semi-oracle-target.h"
 
 #include <nlohmann/json.hpp>
 
@@ -15,7 +16,12 @@
 using json = nlohmann::ordered_json;
 
 const char * common_semi_oracle_domain_name(common_semi_oracle_domain v) {
-    return v == common_semi_oracle_domain::placement_game ? "placement_game" : "linear_algebra";
+    switch(v) {
+        case common_semi_oracle_domain::placement_game: return "placement_game";
+        case common_semi_oracle_domain::linear_algebra: return "linear_algebra";
+        case common_semi_oracle_domain::target_hunt: return "target_hunt";
+    }
+    return "unsupported";
 }
 const char * common_semi_oracle_scope_name(common_semi_oracle_scope v) {
     return v == common_semi_oracle_scope::session ? "session" : "host";
@@ -400,8 +406,9 @@ bool common_semi_oracle_parse_ruleset_dsl(const std::string & text, const std::s
         else if(k=="domain") {
             if(v=="placement_game") r.domain=common_semi_oracle_domain::placement_game;
             else if(v=="linear_algebra") r.domain=common_semi_oracle_domain::linear_algebra;
+            else if(v=="target_hunt") r.domain=common_semi_oracle_domain::target_hunt;
             else { error="unsupported semi-oracle domain: "+v; return false; }
-        } else if(k=="rows"||k=="columns"||k=="win_length") {
+        } else if(k=="rows"||k=="columns"||k=="win_length"||k=="max_rows"||k=="max_columns") {
             int n=0; if(!number(v,n)) { error="RuleSpec integer field is invalid: "+k; return false; }
             s[k]=n;
         } else if(k=="players") {
@@ -409,6 +416,7 @@ bool common_semi_oracle_parse_ruleset_dsl(const std::string & text, const std::s
             while(p>>token) players.push_back(token);
             s[k]=players;
         } else if(k=="variable") { s[k]=v; }
+        else if(k=="movement") { s[k]=v; }
         else { error="unsupported RuleSpec field: "+k; return false; }
     }
     r.spec_json=s.dump();
@@ -449,7 +457,10 @@ bool common_semi_oracle_validate_ruleset(const common_semi_oracle_ruleset & r, s
         if(rows<1||cols<1||rows>8||cols>8||win<2||win>std::max(rows,cols)||players.size()!=2||players[0].empty()||players[1].empty()||players[0]==players[1]) {
             error="placement_game requires rows/columns in 1..8, a valid win_length, and two distinct players"; return false;
         }
+    } else if(r.domain==common_semi_oracle_domain::target_hunt) {
+        if(!common_semi_oracle_target_rules(r,error)) return false;
     } else {
+        // Algebra retains its original RuleSpec.
         for(const auto & entry:s.items())if(entry.key()!="variable") {error="linear_algebra RuleSpec contains unsupported field: "+entry.key();return false;}
         if(!s.contains("variable")||!s["variable"].is_string()){error="linear_algebra requires a string variable field";return false;}
         const auto variable=s["variable"].get<std::string>();
@@ -469,7 +480,7 @@ bool common_semi_oracle_ruleset_from_json(const std::string & text, common_semi_
     error.clear(); const auto j=json::parse(text,nullptr,false); if(!j.is_object()) { error="RuleSet JSON is invalid"; return false; }
     try {
         r={}; r.schema_version=j.value("schema_version",0); r.id=j.value("id",""); r.name=j.value("name",""); r.description=j.value("description","");
-        const auto d=j.value("domain",""); if(d=="placement_game") r.domain=common_semi_oracle_domain::placement_game; else if(d=="linear_algebra") r.domain=common_semi_oracle_domain::linear_algebra; else {error="RuleSet domain is unknown";return false;}
+        const auto d=j.value("domain",""); if(d=="placement_game") r.domain=common_semi_oracle_domain::placement_game; else if(d=="linear_algebra") r.domain=common_semi_oracle_domain::linear_algebra; else if(d=="target_hunt") r.domain=common_semi_oracle_domain::target_hunt; else {error="RuleSet domain is unknown";return false;}
         const auto sc=j.value("scope",""); if(sc=="session") r.scope=common_semi_oracle_scope::session; else if(sc=="host") r.scope=common_semi_oracle_scope::host; else {error="RuleSet scope is unknown";return false;}
         r.scope_id=j.value("scope_id",""); r.revision=j.value("revision",uint64_t(0)); r.parent_revision=j.value("parent_revision",uint64_t(0)); r.semantic_fingerprint=j.value("semantic_fingerprint",""); r.action_contract_fingerprint=j.value("action_contract_fingerprint",""); r.spec_json=j.value("spec_json",""); r.active=j.value("active",false);
         for(const auto & a:j.value("assertions",json::array())) { common_semi_oracle_rule_authority au; const auto value=a.value("authority",""); if(value=="declared") au=common_semi_oracle_rule_authority::declared; else if(value=="verified") au=common_semi_oracle_rule_authority::verified; else if(value=="inferred") au=common_semi_oracle_rule_authority::inferred; else {error="RuleSet assertion authority is invalid";return false;} r.assertions.push_back({a.value("key", ""),a.value("value", ""),au,a.value("source_ref", "")}); }
@@ -478,6 +489,8 @@ bool common_semi_oracle_ruleset_from_json(const std::string & text, common_semi_
 }
 
 std::string common_semi_oracle_action_contract(const common_semi_oracle_ruleset & r) {
+    if(r.domain==common_semi_oracle_domain::target_hunt)
+        return "open! target_hunt.move\ndirection: north | south | east | west\nThe host supplies the current position; only legal orthogonal unit moves advance it.";
     if(r.domain==common_semi_oracle_domain::placement_game) {
         const auto s=spec(r);const auto players=s.value("players",std::vector<std::string>{});
         std::string p;for(size_t i=0;i<players.size();++i){if(i)p+=" or ";p+=players[i];}
@@ -497,6 +510,8 @@ bool common_semi_oracle_validate_state(const common_semi_oracle_ruleset & r,
         json state; int rows = 0, columns = 0, win_length = 0;
         return game_state(r, state_json, state, rows, columns, win_length, error);
     }
+    if (r.domain == common_semi_oracle_domain::target_hunt)
+        return common_semi_oracle_target_state(r, state_json, error);
     const auto state = json::parse(state_json, nullptr, false);
     if (!state.is_object() || !state.contains("lhs") || !state.contains("rhs") ||
             !state["lhs"].is_string() || !state["rhs"].is_string()) {
@@ -521,8 +536,10 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
         ? "linear_astar_v1" : "v1";
     if(!r.active || !common_semi_oracle_validate_ruleset(r,error)) { if(error.empty()) error="RuleSet is not active"; return false; }
     if(q.ruleset_id!=r.id||q.ruleset_revision!=r.revision) {error="query RuleSet identity or revision does not match active RuleSet";return false;}
-    if(q.budget.max_expansions==0||q.budget.max_expansions>100000||q.budget.max_depth==0||q.budget.max_depth>64) {error="semi-oracle search budget is outside the supported bound";return false;}
+    if(q.budget.max_expansions==0||q.budget.max_expansions>100000||q.budget.max_depth==0||q.budget.max_depth>(r.domain==common_semi_oracle_domain::target_hunt?1024:64)) {error="semi-oracle search budget is outside the supported bound";return false;}
     if(q.level==common_semi_oracle_level::guided&&!q.guidance.empty()) out.guidance_ref="host-guidance:provided";
+    if(r.domain==common_semi_oracle_domain::target_hunt)
+        return common_semi_oracle_target_evaluate(r,q,out,error);
     if(r.domain==common_semi_oracle_domain::linear_algebra) {
         std::map<std::string,std::string> f;
         if(!optional_header_matches(q.action_dsl,"open! algebra.rewrite_equation",error)) return false;
@@ -671,6 +688,7 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
 }
 
 bool common_semi_oracle_learning_authorized(const common_semi_oracle_ruleset & r, const common_semi_oracle_result & result) {
+    if(r.domain==common_semi_oracle_domain::target_hunt) return false;
     if(!r.active||result.ruleset_id!=r.id||result.ruleset_revision!=r.revision||result.verdict==common_semi_oracle_verdict::unknown||
             result.evaluator_ref!=std::string("semi-oracle://evaluator/")+common_semi_oracle_domain_name(r.domain)||
             (result.evaluator_revision!="v1"&&result.evaluator_revision!="linear_astar_v1")) return false;

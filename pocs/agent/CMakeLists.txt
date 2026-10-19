@@ -144,6 +144,18 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Model-free Target Hunt domain, independent BFS and frozen-history comparison.
+set(TARGET llama-agent-semi-oracle-target-hunt-smoke)
+add_executable(${TARGET} smoke/adaptation/target-hunt.cpp)
+target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-adaptation-storage)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+if(LLAMA_BUILD_TESTS)
+    add_test(NAME llama-agent-semi-oracle-target-hunt-ctest COMMAND ${TARGET}
+        --trace ${CMAKE_CURRENT_BINARY_DIR}/target-hunt-trace.jsonl)
+    set_tests_properties(llama-agent-semi-oracle-target-hunt-ctest PROPERTIES TIMEOUT 180 LABELS "agent-adaptation")
+endif()
+
 # Optional Qwen/Phi smoke for natural RuleSpec DSL, dynamic action contracts,
 # and host semi-oracle verdicts. It is opt-in and retains full prompt/output.
 set(TARGET llama-agent-semi-oracle-model-smoke)

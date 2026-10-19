@@ -956,13 +956,27 @@ bool resolve_agent_daemon_tooling(
                     {"source_turn_id", source_turn_id},
                 }).dump());
             }
+            if (name == "oracle.problem.define") {
+                std::string state, problem_error;
+                if (!arguments.contains("problem_dsl") || !arguments["problem_dsl"].is_string() ||
+                        !service.define_problem(arguments["problem_dsl"].get<std::string>(),state,problem_error))
+                    return common_tool_execution_result::failure("tool.oracle.problem_rejected",common_tool_failure_class::validation,false,
+                        "The Target Hunt problem did not pass host validation.",problem_error);
+                const auto problem=json::parse(state);
+                std::string contract; if(!service.action_contract(contract,problem_error))
+                    return common_tool_execution_result::failure("tool.oracle.contract_unavailable",common_tool_failure_class::execution,false,
+                        "The action contract is unavailable.",problem_error);
+                return common_tool_execution_result::success(json{{"problem_id",problem["problem_id"]},
+                    {"problem_fingerprint",problem["problem_fingerprint"]},{"position",problem["position"]},
+                    {"action_contract",contract}}.dump());
+            }
             if (name == "oracle.goal.search") {
                 common_semi_oracle_result result;
                 std::string search_error;
-                if (!service.search_active_algebra_goal(result, search_error))
+                if (!service.search_active_goal(result, search_error))
                     return common_tool_execution_result::failure("tool.oracle.search_unavailable",
                         common_tool_failure_class::validation, false,
-                        "The host could not search the active algebra goal.", std::move(search_error));
+                        "The host could not search the active goal.", std::move(search_error));
                 const auto guidance = json::parse(result.search_guidance_json.empty() ? "{}" : result.search_guidance_json,
                     nullptr, false);
                 if (trace_enabled && guidance.is_object() && guidance.contains("diagnostics"))
