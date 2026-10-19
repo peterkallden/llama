@@ -137,8 +137,18 @@ int main() {
     CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.scope==common_semi_oracle_scope::host&&loaded.semantic_fingerprint==r.semantic_fingerprint);
     common_semi_oracle_result verdict;verdict.ruleset_id=r.id;verdict.ruleset_revision=1;verdict.verdict=common_semi_oracle_verdict::satisfied;verdict.proof_json="{}";
     CHECK(store.append_evaluation("eval-1",verdict,error));
+    common_semi_oracle_result goal_result;
+    CHECK(algebra_service.search_active_algebra_goal(goal_result, error));
+    CHECK(!goal_result.search_guidance_json.empty());
+    std::vector<common_semi_oracle_search_history_record> search_history;
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision, 128, search_history, error));
+    CHECK(search_history.size() == 1 && search_history[0].guidance_json == goal_result.search_guidance_json);
     store.close();
     CHECK(store.open(db,error));
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision, 128, search_history, error));
+    CHECK(search_history.size() == 1 && search_history[0].guidance_json == goal_result.search_guidance_json);
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision + 1, 128, search_history, error));
+    CHECK(search_history.empty());
     CHECK(store.get_interaction(interaction.id, loaded_interaction, found, error) && found);
     std::string persisted_state;
     CHECK(store.get_session_state("session-play", active_game.id,

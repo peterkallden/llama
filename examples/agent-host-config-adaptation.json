@@ -6,6 +6,13 @@
     "adaptation": {
       "capture": true,
       "collection_allowed": true,
+      "semi_oracle": {
+        "outcome_guidance": {
+          "mode": "shadow",
+          "seed": 0,
+          "max_history_evaluations": 128
+        }
+      },
       "flydelta": {
         "enabled": true,
         "worker_count": 1,

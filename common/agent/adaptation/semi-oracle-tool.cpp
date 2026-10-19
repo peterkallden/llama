@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <utility>
 
 namespace {
 using json = nlohmann::ordered_json;
@@ -22,9 +23,10 @@ std::string opaque_id(const std::string & host, const std::string & session, con
 
 common_semi_oracle_tool_service::common_semi_oracle_tool_service(
         common_semi_oracle_store & store, std::string host_namespace,
-        std::string session_id)
+        std::string session_id, common_semi_oracle_outcome_guidance_config guidance,
+        std::string project_id)
     : store_(store), host_namespace_(std::move(host_namespace)),
-      session_id_(std::move(session_id)) {}
+      session_id_(std::move(session_id)), guidance_(std::move(guidance)), project_id_(std::move(project_id)) {}
 
 bool common_semi_oracle_tool_service::define_ruleset(const std::string & dsl,
         common_semi_oracle_rule_authority authority,
@@ -106,8 +108,16 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     query.ruleset_id=ruleset.id;query.ruleset_revision=ruleset.revision;
     query.level=level;query.goal=goal;query.state_json=state_json;
     query.action_dsl=action_dsl;query.budget=budget;query.guidance=guidance;
-    if(!common_semi_oracle_evaluate(ruleset,query,result,error))return false;
+    if(!common_semi_oracle_evaluate_with_history(store_, guidance_, host_namespace_,
+            session_id_, ruleset, query, result, error, project_id_))return false;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
+    if (!result.search_guidance_json.empty()) {
+        auto metadata = json::parse(result.search_guidance_json, nullptr, false);
+        if (metadata.is_object() && metadata.contains("diagnostics") && metadata["diagnostics"].is_object()) {
+            metadata["diagnostics"]["evaluation_ref"] = evaluation_id;
+            result.search_guidance_json = metadata.dump();
+        }
+    }
     return store_.append_evaluation(evaluation_id,result,error);
 }
 

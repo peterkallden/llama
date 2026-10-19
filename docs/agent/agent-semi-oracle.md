@@ -77,6 +77,85 @@ with a parent link. A RuleSet starts session-scoped; promotion is an explicit
 host call. Promotion changes visibility, not semantic fingerprint or
 provenance, and does not upgrade inferred assertions.
 
+## Historical ordering for algebra search
+
+`oracle.goal.search` also consumes the shared posterior math in
+`common/agent/prediction/outcome-guidance.*` through the SemiOracle-specific
+`semi-oracle-outcome-guidance.*` adapter. The tool remains argument-free;
+the daemon supplies the policy and reads the existing evaluation store.
+Configure it independently of FlyDelta:
+
+```json
+{
+  "runtime": {
+    "adaptation": {
+      "semi_oracle": {
+        "outcome_guidance": {
+          "mode": "shadow",
+          "seed": 0,
+          "max_history_evaluations": 128
+        }
+      }
+    }
+  }
+}
+```
+
+`off` skips history reads and automatic history capture. The default `shadow`
+records posterior predictions and hypothetical orders while preserving the
+existing successor order. `experimental` samples the posterior to order
+host-generated legal rewrites. A* still sorts its frontier by cost plus
+heuristic, then heuristic: advice affects insertion-order ties, never edge
+costs, validity, goal checks or admissibility. A cold start without matching
+action history preserves the original order. Changing these configuration
+values requires daemon restart. `seed` is a non-negative integer;
+`max_history_evaluations` is bounded to 1..1024.
+
+The V1 search family has its own vocabulary: a discovered, verified goal
+suffix; a proven leaf with no successors; or an unresolved suffix. A discovered
+path labels its incoming actions as goal-reaching. A node is a dead end only
+after it has been expanded with no outgoing transitions. Unexpanded siblings,
+depth-limited nodes and budget stops remain unknown. Unknown mass updates only
+the Beta model for classification within the search budget, not the two
+Dirichlet categories. These are coarse statistics by rewrite primitive under
+the observed search policy and budget, not a learned state-value function.
+
+Each initial equation defines a fixture group, and each group contributes at
+most one unit of weight per action category across repeated searches. The
+current fixture is excluded from its own history. Exact host/project/session
+scope, RuleSet ID/revision, semantic and action-contract fingerprints, evaluator
+revision, goal, budget and any explicit host action order must match. Inferred
+rules provide no historical
+guidance or new history observations. Model identity is not a partition here:
+the search and its arithmetic are deterministic host operations.
+
+At the start of each call the adapter freezes a bounded evaluation view,
+sorted by evaluation ID; this order does not claim registration chronology or
+recency. A SHA-256 fingerprint records the compatible history projection.
+Both the in-memory and Cozo implementations persist the additive
+`search_guidance_json` field in the existing evaluation record; old records
+remain readable and have no historical observations. No new store is required.
+History read failure, adviser exceptions or an invalid permutation retain
+the normal search order and report a fallback. Completed evaluation storage
+continues through the existing tool service.
+
+MCP `oracle.goal.search` publishes a compact `guidance` summary through its
+canonical output schema. Full diagnostics are saved with the evaluation and
+logged as `[semi-oracle] outcome_guidance` when `agent_trace` is enabled:
+history fingerprint and source evaluation references, accepted/rejected records,
+duplicate/conflict counts, group counts, predictions and approximate marginal intervals,
+proposed order, executed order and fallback. Up to 128 expansion decisions
+are retained per call; further decisions are explicitly counted as omitted.
+The standalone `outcome.predict` tool continues to inspect FlyDelta history;
+it does not reinterpret search outcomes as HELPED/NEUTRAL/HARMED. Placement
+minimax still computes exact adversarial values without this A* ordering adapter.
+
+Implementation verification is pending: source regression cases cover
+shadow/off parity, experimental solution preservation, scope and fixture
+isolation, group weighting, malformed/conflicting retries, budget stops,
+inferred rules, fallback, invalid/throwing advisers and Cozo history after reopen.
+No build, CTest or model smoke was run as part of this integration sweep.
+
 ## Authority and FlyDelta
 
 Rule assertions retain `declared`, `verified` or `inferred` provenance. A

@@ -556,6 +556,36 @@ bool parse_agent_host_config_json(
             read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
             read_optional(adaptation, "backend", config.adaptation_transaction_backend);
             read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
+            if (adaptation.contains("semi_oracle")) {
+                const auto & oracle = adaptation["semi_oracle"];
+                if (!oracle.is_object()) { error = "runtime.adaptation.semi_oracle must be an object"; return false; }
+                if (oracle.contains("outcome_guidance")) {
+                    const auto & guidance = oracle["outcome_guidance"];
+                    if (!guidance.is_object()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance must be an object"; return false;
+                    }
+                    if (guidance.contains("mode") && !guidance["mode"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.mode must be a string"; return false;
+                    }
+                    for (const auto * key : {"seed", "max_history_evaluations"}) {
+                        if (guidance.contains(key) && !guidance[key].is_number_unsigned() &&
+                                (!guidance[key].is_number_integer() || guidance[key].get<int64_t>() < 0)) {
+                            error = std::string("runtime.adaptation.semi_oracle.outcome_guidance.") + key +
+                                " must be a non-negative integer"; return false;
+                        }
+                    }
+                    read_optional(guidance, "mode", config.adaptation_semi_oracle_outcome_guidance.mode);
+                    read_optional(guidance, "seed", config.adaptation_semi_oracle_outcome_guidance.seed);
+                    if (guidance.contains("max_history_evaluations") &&
+                            (guidance["max_history_evaluations"].get<uint64_t>() == 0 ||
+                             guidance["max_history_evaluations"].get<uint64_t>() > 1024)) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.max_history_evaluations must be 1..1024";
+                        return false;
+                    }
+                    read_optional(guidance, "max_history_evaluations",
+                        config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations);
+                }
+            }
             if (adaptation.contains("flydelta")) {
                 if (!adaptation["flydelta"].is_object()) {
                     error = "runtime.adaptation.flydelta must be an object";
@@ -1392,6 +1422,11 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"max_evidence", config.adaptation_max_evidence},
                 {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
+                {"semi_oracle", {{"outcome_guidance", {
+                    {"mode", config.adaptation_semi_oracle_outcome_guidance.mode},
+                    {"seed", config.adaptation_semi_oracle_outcome_guidance.seed},
+                    {"max_history_evaluations", config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations},
+                }}}},
                 {"flydelta", {
                     {"enabled", config.adaptation_flydelta_enabled},
                     {"worker_count", config.adaptation_flydelta_worker_count},
@@ -1698,6 +1733,11 @@ bool validate_agent_host_config(
     if (!common_flydelta_canary_policy_validate(
             config.adaptation_flydelta_canary_policy, error)) {
         error = "runtime.adaptation.flydelta.canary: " + error;
+        return false;
+    }
+    if (!common_semi_oracle_outcome_guidance_config_validate(
+            config.adaptation_semi_oracle_outcome_guidance, error)) {
+        error = "runtime.adaptation.semi_oracle.outcome_guidance: " + error;
         return false;
     }
     if (!common_flydelta_outcome_guidance_config_validate(
@@ -2233,6 +2273,7 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
     options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
     options.adaptation_flydelta_outcome_guidance = config.adaptation_flydelta_outcome_guidance;
+    options.adaptation_semi_oracle_outcome_guidance = config.adaptation_semi_oracle_outcome_guidance;
     options.adaptation_flydelta_teacher_scoring_backend =
         config.adaptation_flydelta_teacher_scoring_backend;
     options.max_tool_rounds = config.max_tool_rounds;

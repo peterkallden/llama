@@ -247,6 +247,25 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "host config schema_version mismatch\n");
         return 1;
     }
+    {
+        auto guidance_json = agent_host_config_to_json(loaded_config);
+        guidance_json["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"] = {
+            {"mode", "experimental"}, {"seed", 42}, {"max_history_evaluations", 17}};
+        agent_host_config guidance_config;
+        daemon_options guidance_options;
+        if (!parse_agent_host_config_json(guidance_json, guidance_config, error)) return __LINE__;
+        apply_agent_host_config_to_daemon_options(guidance_config, guidance_options);
+        if (guidance_options.adaptation_semi_oracle_outcome_guidance.mode != "experimental" ||
+                guidance_options.adaptation_semi_oracle_outcome_guidance.seed != 42 ||
+                guidance_options.adaptation_semi_oracle_outcome_guidance.max_history_evaluations != 17 ||
+                agent_host_config_to_json(guidance_config)["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"] !=
+                    guidance_json["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"]) return __LINE__;
+        guidance_config.adaptation_semi_oracle_outcome_guidance.mode = "invalid";
+        if (validate_agent_host_config(guidance_config, error)) return __LINE__;
+        guidance_json["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"]["seed"] = -1;
+        if (parse_agent_host_config_json(guidance_json, guidance_config, error)) return __LINE__;
+        error.clear();
+    }
     if (loaded_config.worker_count != 2) {
         std::fprintf(stderr, "host config worker_count mismatch\n");
         return 1;

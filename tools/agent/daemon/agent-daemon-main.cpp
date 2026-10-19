@@ -349,6 +349,10 @@ int main(int argc, char ** argv) {
         require_restart(candidate.resource_metadata_db != options.resource_metadata_db, "resources.metadata_db");
         require_restart(candidate.queue_capacity != options.queue_capacity, "limits.queue_capacity");
         require_restart(candidate.worker_count != options.worker_count, "limits.worker_count");
+        require_restart(candidate.adaptation_semi_oracle_outcome_guidance.mode != options.adaptation_semi_oracle_outcome_guidance.mode ||
+            candidate.adaptation_semi_oracle_outcome_guidance.seed != options.adaptation_semi_oracle_outcome_guidance.seed ||
+            candidate.adaptation_semi_oracle_outcome_guidance.max_history_evaluations != options.adaptation_semi_oracle_outcome_guidance.max_history_evaluations,
+            "runtime.adaptation.semi_oracle.outcome_guidance");
         require_restart(
             candidate.adaptation_flydelta_enabled != options.adaptation_flydelta_enabled ||
             candidate.adaptation_flydelta_worker_count != options.adaptation_flydelta_worker_count ||

@@ -2437,8 +2437,11 @@ observed arms: only earlier compatible outcomes are used, and the candidate's
 own fixture group is excluded. They are not predictions for arbitrary new
 arms and do not create verifier evidence, learning credit, lifecycle changes,
 or promotion. A response with `status="insufficient_history"` is not a negative
-outcome. SemiOracle does not yet have an outcome-history adapter; its bounded
-search verifier and successor-ordering seam remain independent.
+outcome. SemiOracle now consumes the same posterior math through its own
+[algebra search-history adapter](agent-semi-oracle.md#historical-ordering-for-algebra-search).
+Its goal/dead-end/unknown vocabulary, history partition and configuration are
+independent of FlyDelta. The MCP `outcome.predict` inspector still reads only
+FlyDelta intervention records; search diagnostics are exposed by `oracle.goal.search`.
 
 #### Verification status after the 2026-10-19 corrections
 

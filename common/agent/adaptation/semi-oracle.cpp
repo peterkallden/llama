@@ -548,6 +548,8 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
                 return true;
             }
             common_semi_oracle_search_result searched;
+            problem.transition_adviser = q.transition_adviser;
+            problem.record_history = q.record_search_history;
             if(!common_semi_oracle_search_astar(problem,q.budget,searched)) {
                 out.verdict=common_semi_oracle_verdict::unknown;
                 out.reason=searched.error.empty()?"bounded algebra A* failed":searched.error;
@@ -589,6 +591,14 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
             } else {
                 out.verdict=common_semi_oracle_verdict::unknown;
                 out.reason="algebra A* reached its expansion or depth bound before proving a path";
+            }
+            if (q.record_search_history) {
+                json observations = json::array();
+                for (const auto & item : searched.observations)
+                    observations.push_back({{"action", item.action}, {"outcome", item.outcome}});
+                out.search_guidance_json = json{{"observations", observations},
+                    {"callback_fallbacks", searched.guidance_fallbacks},
+                    {"callback_error", searched.guidance_error}}.dump();
             }
             return true;
         }

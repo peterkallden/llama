@@ -47,6 +47,12 @@ struct common_semi_oracle_budget {
     size_t max_depth = 8;
 };
 
+// Receives only host-generated legal successor actions. Returns a permutation
+// of their indices; it cannot introduce a state, action, cost or heuristic.
+using common_semi_oracle_transition_adviser = std::function<bool(
+        const std::string &, const std::vector<std::string> &,
+        std::vector<size_t> &, std::string &)>;
+
 struct common_semi_oracle_query {
     std::string ruleset_id;
     uint64_t ruleset_revision = 0;
@@ -57,6 +63,8 @@ struct common_semi_oracle_query {
     common_semi_oracle_budget budget;
     // Optional host-selected action ordering. It can affect exploration order only.
     std::vector<std::string> guidance;
+    common_semi_oracle_transition_adviser transition_adviser;
+    bool record_search_history = false;
 };
 
 struct common_semi_oracle_result {
@@ -72,6 +80,8 @@ struct common_semi_oracle_result {
     std::string counterexample_json;
     std::string reason;
     std::string guidance_ref;
+    // Host-owned search diagnostics, separate from proof and training credit.
+    std::string search_guidance_json;
 };
 
 enum class common_semi_oracle_placement_value { loss = -1, draw = 0, win = 1, unknown = 2 };

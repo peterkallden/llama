@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <tuple>
+#include <stdexcept>
 
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (false)
 
@@ -37,6 +38,25 @@ public:
         game_states[{session,ruleset,revision}]=state;return true;
     }
     bool append_evaluation(const std::string &,const common_semi_oracle_result & r,std::string &) override {evaluations.push_back(r);return true;}
+    bool list_search_history(const std::string & id, uint64_t revision, size_t limit,
+            std::vector<common_semi_oracle_search_history_record> & rows, std::string & error) const override {
+        ++history_reads; rows.clear(); error.clear();
+        if (fail_history) { error = "injected history error"; return false; }
+        if (override_history) {
+            rows = history_rows;
+            if (rows.size() > limit) rows.resize(limit);
+            return true;
+        }
+        for (size_t i = 0; i < evaluations.size() && rows.size() < limit; ++i)
+            if (evaluations[i].ruleset_id == id && evaluations[i].ruleset_revision == revision &&
+                    !evaluations[i].search_guidance_json.empty())
+                rows.push_back({"evaluation-" + std::to_string(i), evaluations[i].search_guidance_json});
+        return true;
+    }
+    mutable size_t history_reads = 0;
+    bool fail_history = false;
+    bool override_history = false;
+    std::vector<common_semi_oracle_search_history_record> history_rows;
     std::vector<std::string> list_host_rulesets(std::string &) const override {return host;}
     std::map<std::pair<std::string,uint64_t>,common_semi_oracle_ruleset> rules;
     std::map<std::string,std::pair<std::string,uint64_t>> bindings;
@@ -244,6 +264,105 @@ int main() {
     CHECK(searched_algebra.verdict==common_semi_oracle_verdict::satisfied&&
         searched_algebra.evaluator_revision=="linear_astar_v1"&&
         searched_algebra.proof_json.find("bounded_astar_v1")!=std::string::npos);
+    const auto first_guidance = nlohmann::ordered_json::parse(searched_algebra.search_guidance_json);
+    CHECK(first_guidance["diagnostics"]["mode"] == "shadow");
+    CHECK(first_guidance["diagnostics"]["fixture_groups"] == 0);
+    CHECK(first_guidance["diagnostics"]["fallback_reason"] == "");
+    common_semi_oracle_query history_query;
+    history_query.ruleset_id = managed_algebra.id;
+    history_query.ruleset_revision = managed_algebra.revision;
+    history_query.level = common_semi_oracle_level::bounded;
+    history_query.goal = "solve:x";
+    history_query.budget = {2048, 16};
+    history_query.state_json = R"({"lhs":"3x+6","rhs":"x+12"})";
+    history_query.action_dsl = "lhs: 3x+6\n";
+    common_semi_oracle_outcome_guidance_config guidance_config;
+    common_semi_oracle_result shadow_result, off_result, experimental_result;
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, shadow_result, error));
+    const auto shadow_history = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
+    CHECK(shadow_history["diagnostics"]["fixture_groups"] == 1);
+    CHECK(!shadow_history["diagnostics"]["decisions"].empty());
+    for (const auto & decision : shadow_history["diagnostics"]["decisions"])
+        for (size_t i = 0; i < decision["executed_order"].size(); ++i)
+            CHECK(decision["executed_order"][i] == i);
+    const auto reads_before_off = store.history_reads;
+    guidance_config.mode = "off";
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, off_result, error));
+    CHECK(store.history_reads == reads_before_off && off_result.search_guidance_json.empty());
+    CHECK(off_result.proof_json == shadow_result.proof_json && off_result.verdict == shadow_result.verdict);
+    guidance_config.mode = "experimental";
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    CHECK(experimental_result.verdict == off_result.verdict);
+    CHECK(nlohmann::ordered_json::parse(experimental_result.proof_json)["solution"] ==
+        nlohmann::ordered_json::parse(off_result.proof_json)["solution"]);
+    // Same fixture group cannot teach itself; other sessions cannot use it.
+    auto own_fixture = history_query;
+    own_fixture.state_json = R"({"lhs":"2(x+3)","rhs":"10"})";
+    own_fixture.action_dsl = "lhs: 2(x+3)\n";
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, own_fixture, experimental_result, error));
+    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fixture_groups"] == 0);
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "another-session",
+        managed_algebra, history_query, experimental_result, error));
+    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fixture_groups"] == 0);
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error, "different-project"));
+    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fixture_groups"] == 0);
+    // Repeating one fixture cannot turn it into multiple independent groups.
+    store.evaluations.push_back(searched_algebra);
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    const auto repeated_history = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
+    CHECK(repeated_history["diagnostics"]["fixture_groups"] == 1);
+    for (const auto & decision : repeated_history["diagnostics"]["decisions"])
+        for (const auto & prediction : decision["predictions"])
+            CHECK(prediction["effective_group_weight"].get<double>() <= 1.0 + 1e-12);
+    auto shallow_query = history_query;
+    shallow_query.budget.max_depth = 1;
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, shallow_query, experimental_result, error));
+    CHECK(experimental_result.verdict == common_semi_oracle_verdict::unknown);
+    const auto bounded_history = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
+    for (const auto & weights : bounded_history["observations"]) {
+        CHECK(weights[0] == 0 && weights[1] == 0);
+        CHECK(weights[2].get<double>() > 0.0);
+    }
+    auto inferred_rules = managed_algebra;
+    inferred_rules.assertions.front().authority = common_semi_oracle_rule_authority::inferred;
+    const auto reads_before_inferred = store.history_reads;
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        inferred_rules, history_query, experimental_result, error));
+    CHECK(store.history_reads == reads_before_inferred && experimental_result.search_guidance_json.empty());
+    store.override_history = true;
+    store.history_rows = {{"retry", searched_algebra.search_guidance_json}, {"retry", searched_algebra.search_guidance_json}};
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    const auto deduplicated = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
+    CHECK(deduplicated["diagnostics"]["fixture_groups"] == 1);
+    CHECK(deduplicated["diagnostics"]["duplicate_records"] == 1);
+    auto conflict = nlohmann::ordered_json::parse(searched_algebra.search_guidance_json);
+    conflict["observations"]["simplify lhs"] = {0.0, 1.0, 0.0};
+    store.history_rows[1].guidance_json = conflict.dump();
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    const auto conflicted = nlohmann::ordered_json::parse(experimental_result.search_guidance_json);
+    CHECK(conflicted["diagnostics"]["fixture_groups"] == 0);
+    CHECK(conflicted["diagnostics"]["conflicting_records"] == 1);
+    store.history_rows = {{"malformed", "{}"}};
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["rejected_records"] == 1);
+    store.override_history = false;
+    store.fail_history = true;
+    CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
+        managed_algebra, history_query, experimental_result, error));
+    CHECK(experimental_result.proof_json == off_result.proof_json);
+    CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fallback_reason"] ==
+        "search_history_unavailable");
+    store.fail_history = false;
     std::string state_before,state_after;
     CHECK(algebra_service.verify_active_action("open! algebra.rewrite_equation\nlhs: 2x+6\n",result,state_before,state_after,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&
@@ -255,5 +374,39 @@ int main() {
     CHECK(revised.id==managed.id&&revised.revision==2&&revised.parent_revision==1);
     CHECK(service.promote_active_ruleset_to_host(error));
     CHECK(store.list_host_rulesets(error).size()==1);
+    // A* advice changes only equal-priority successor ordering. Unexplored
+    // siblings stay unknown; a leaf is a dead end only after expansion.
+    common_semi_oracle_search_problem order_problem;
+    order_problem.initial_state = "root";
+    order_problem.heuristic_admissible = true;
+    order_problem.record_history = true;
+    order_problem.is_goal = [](const std::string & state, bool & goal, std::string &) {
+        goal = state == "goal"; return true;
+    };
+    order_problem.expand = [](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & transitions, std::string &) {
+        transitions.clear();
+        if (state == "root") transitions = {{"dead", "first", 1}, {"goal", "second", 1}};
+        return true;
+    };
+    common_semi_oracle_search_result normal_order, advised_order;
+    CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, normal_order));
+    CHECK(normal_order.found && normal_order.observations[0].outcome == "dead_end");
+    order_problem.transition_adviser = [](const std::string &, const std::vector<std::string> &,
+            std::vector<size_t> & order, std::string &) { order = {1, 0}; return true; };
+    CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, advised_order));
+    CHECK(advised_order.found && advised_order.total_cost == normal_order.total_cost &&
+        advised_order.expansions < normal_order.expansions);
+    CHECK(std::any_of(advised_order.observations.begin(), advised_order.observations.end(),
+        [](const auto & observation) { return observation.outcome == "unknown"; }));
+    order_problem.transition_adviser = [](const std::string &, const std::vector<std::string> &,
+            std::vector<size_t> & order, std::string &) { order = {0, 0}; return true; };
+    CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, advised_order));
+    CHECK(advised_order.found && advised_order.guidance_fallbacks == 1 &&
+        advised_order.expansions == normal_order.expansions);
+    order_problem.transition_adviser = [](const std::string &, const std::vector<std::string> &,
+            std::vector<size_t> &, std::string &) -> bool { throw std::runtime_error("test adviser"); };
+    CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, advised_order));
+    CHECK(advised_order.found && advised_order.guidance_fallbacks == 1);
     return 0;
 }

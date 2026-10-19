@@ -40,6 +40,7 @@
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <iostream>
 #include <nlohmann/json.hpp>
 #include <mutex>
 #include <regex>
@@ -920,6 +921,9 @@ bool resolve_agent_daemon_tooling(
     tool_request.data_store = data_store;
     if (semi_oracle_store != nullptr && !request.session_id.empty()) {
         tool_request.semi_oracle_tool_call = [semi_oracle_store,
+                guidance_config = options.adaptation_semi_oracle_outcome_guidance,
+                trace_enabled = options.agent_trace,
+                project_id = request.project_id,
                 host_namespace = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
                 session_id = request.session_id,
                 source_turn_id = request.turn_id,
@@ -929,7 +933,8 @@ bool resolve_agent_daemon_tooling(
             if (!arguments.is_object()) return common_tool_execution_result::failure(
                 "tool.oracle.invalid_arguments", common_tool_failure_class::validation, false,
                 "SemiOracle arguments must be an object.", "invalid JSON object");
-            common_semi_oracle_tool_service service(*semi_oracle_store, host_namespace, session_id);
+            common_semi_oracle_tool_service service(*semi_oracle_store, host_namespace, session_id,
+                guidance_config, project_id);
             if (name == "oracle.ruleset.define") {
                 if (!arguments.contains("ruleset_dsl") || !arguments["ruleset_dsl"].is_string())
                     return common_tool_execution_result::failure("tool.oracle.invalid_ruleset", common_tool_failure_class::validation, false,
@@ -958,6 +963,15 @@ bool resolve_agent_daemon_tooling(
                     return common_tool_execution_result::failure("tool.oracle.search_unavailable",
                         common_tool_failure_class::validation, false,
                         "The host could not search the active algebra goal.", std::move(search_error));
+                const auto guidance = json::parse(result.search_guidance_json.empty() ? "{}" : result.search_guidance_json,
+                    nullptr, false);
+                if (trace_enabled && guidance.is_object() && guidance.contains("diagnostics"))
+                    std::clog << "[semi-oracle] outcome_guidance " << guidance["diagnostics"].dump() << '\n';
+                auto guidance_summary = guidance.is_object() && guidance.contains("diagnostics")
+                    ? guidance["diagnostics"] : json::object();
+                guidance_summary.erase("decisions");
+                guidance_summary.erase("history_diagnostic");
+                guidance_summary.erase("history_evaluation_refs");
                 return common_tool_execution_result::success(json{
                     {"verdict", common_semi_oracle_verdict_name(result.verdict)},
                     {"ruleset_id", result.ruleset_id}, {"revision", result.ruleset_revision},
@@ -966,6 +980,7 @@ bool resolve_agent_daemon_tooling(
                     {"expansions", result.expansions}, {"depth_reached", result.depth_reached},
                     {"proof", json::parse(result.proof_json.empty() ? "null" : result.proof_json, nullptr, false)},
                     {"counterexample", json::parse(result.counterexample_json.empty() ? "null" : result.counterexample_json, nullptr, false)},
+                    {"guidance", guidance_summary},
                     {"reason", result.reason}}.dump());
             }
             if (name != "oracle.action.verify" || !arguments.contains("action_dsl") ||

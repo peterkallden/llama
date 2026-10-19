@@ -4605,6 +4605,21 @@ of truth or learning credit. It uses the same FlyDelta guidance settings and
 does not read history when that mode is `off`. See
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
 
+SemiOracle algebra search uses that same posterior math with independent
+`runtime.adaptation.semi_oracle.outcome_guidance` settings: `mode` defaults to
+`shadow` (`off` and `experimental` are also supported), `seed` defaults to `0`,
+and `max_history_evaluations` defaults to `128` (range `1..1024`). These settings
+are copied into the daemon's native tool service and require restart when
+changed. They operate even when FlyDelta is disabled. `shadow` keeps the normal
+A* order; `experimental` can change insertion-order ties among legal successors.
+The immutable history view is read once per goal search from existing
+SemiOracle evaluations. The current fixture group and incompatible scopes,
+rule/verifier revisions or budgets are excluded. History failure retains the
+normal order. MCP `oracle.goal.search` returns compact guidance diagnostics,
+and `agent_trace` logs the stored predictions and proposed/executed orders.
+See [SemiOracle historical ordering](agent-semi-oracle.md#historical-ordering-for-algebra-search)
+and [configuration example](../../examples/agent-host-config-adaptation.json).
+
 `runtime.adaptation.flydelta.teacher_scoring_backend` defaults to `auto`,
 which uses compact target-log-probability graph scoring on the scheduler's
 chosen backend. `cpu` selects the full-logit reference; `backend` requires

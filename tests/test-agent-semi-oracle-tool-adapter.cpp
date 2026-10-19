@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/registry/tool-registry.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <nlohmann/json.hpp>
 
@@ -12,6 +13,12 @@ int main() {
     CHECK(catalog.bootstrap("semi-oracle",bootstrap,error));
     const auto definitions=catalog.load_profile("semi-oracle",error);
     CHECK(error.empty()&&definitions.size()==3);
+    const auto * goal_definition = catalog.find_definition("oracle.goal.search");
+    CHECK(goal_definition != nullptr);
+    std::string normalized;
+    CHECK(common_schema_normalize_and_validate_object(
+        R"({"verdict":"UNKNOWN","ruleset_id":"test-rule","revision":1,"evaluator":"semi-oracle://evaluator/linear_algebra","evaluator_revision":"linear_astar_v1","level":"bounded","proof":null,"counterexample":null,"reason":"budget exhausted","guidance":{"mode":"shadow","decision_count":2}})",
+        goal_definition->result_schema_json, normalized, error));
     common_native_tool_bindings bindings;
     bindings.semi_oracle=[](const std::string & name,const std::string & input) {
         const auto args=nlohmann::json::parse(input,nullptr,false);

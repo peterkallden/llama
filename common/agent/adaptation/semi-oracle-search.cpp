@@ -16,6 +16,7 @@ struct node {
     size_t edge_cost = 0;
     size_t depth = 0;
     size_t ordinal = 0;
+    bool dead_end = false;
 };
 
 struct queue_item { size_t f = 0, h = 0, ordinal = 0, node_index = 0; };
@@ -51,6 +52,19 @@ bool common_semi_oracle_search_astar(
     std::unordered_map<std::string, size_t> best_cost;
     size_t ordinal = 0;
     bool depth_limited = false;
+    const auto finish_history = [&](size_t goal_index) {
+        if (!problem.record_history) return;
+        std::vector<bool> on_path(nodes.size(), false);
+        for (size_t at = goal_index; at != std::numeric_limits<size_t>::max(); at = nodes[at].parent)
+            on_path[at] = true;
+        for (size_t i = 1; i < nodes.size(); ++i) {
+            // Superseded paths must not supply extra evidence.
+            const auto best = best_cost.find(nodes[i].state);
+            if (!on_path[i] && (best == best_cost.end() || best->second != nodes[i].g)) continue;
+            result.observations.push_back({nodes[i].action,
+                on_path[i] ? "goal_reached" : nodes[i].dead_end ? "dead_end" : "unknown"});
+        }
+    };
     node start;
     start.state = problem.initial_state;
     start.h = problem.heuristic ? problem.heuristic(start.state) : 0;
@@ -79,22 +93,53 @@ bool common_semi_oracle_search_astar(
                 result.path.push_back({step.state, step.action, step.edge_cost});
             }
             std::reverse(result.path.begin(), result.path.end());
+            finish_history(item.node_index);
             return true;
         }
         if (current.depth >= budget.max_depth) {
             depth_limited = true;
             continue;
         }
-        if (result.expansions >= budget.max_expansions) return true;
+        if (result.expansions >= budget.max_expansions) {
+            finish_history(std::numeric_limits<size_t>::max());
+            return true;
+        }
 
         std::vector<common_semi_oracle_search_transition> transitions;
         if (!problem.expand(current.state, transitions, result.error)) return false;
         ++result.expansions;
+        nodes[item.node_index].dead_end = transitions.empty();
         result.depth_reached = std::max(result.depth_reached, current.depth + 1);
         if (problem.guidance_rank) {
             std::stable_sort(transitions.begin(), transitions.end(), [&](const auto & lhs, const auto & rhs) {
                 return problem.guidance_rank(lhs) < problem.guidance_rank(rhs);
             });
+        }
+        if (problem.transition_adviser && transitions.size() > 1) {
+            std::vector<std::string> actions;
+            for (const auto & transition : transitions) actions.push_back(transition.action);
+            std::vector<size_t> order;
+            std::string guidance_error;
+            bool valid = false;
+            try {
+                valid = problem.transition_adviser(current.state, actions, order, guidance_error) &&
+                    order.size() == transitions.size();
+                std::vector<bool> seen(transitions.size(), false);
+                for (size_t index : order) {
+                    if (index >= seen.size() || seen[index]) { valid = false; break; }
+                    seen[index] = true;
+                }
+            } catch (...) {
+                valid = false;
+                guidance_error = "transition adviser threw an exception";
+            }
+            if (valid) {
+                auto original = transitions;
+                for (size_t i = 0; i < order.size(); ++i) transitions[i] = original[order[i]];
+            } else {
+                ++result.guidance_fallbacks;
+                result.guidance_error = guidance_error.empty() ? "invalid transition permutation" : guidance_error;
+            }
         }
         for (const auto & transition : transitions) {
             if (transition.state.empty() || transition.cost == 0) continue;
@@ -121,5 +166,6 @@ bool common_semi_oracle_search_astar(
         }
     }
     result.exhausted = !depth_limited;
+    finish_history(std::numeric_limits<size_t>::max());
     return true;
 }

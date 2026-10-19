@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/semi-oracle-store.h"
+#include "agent/adaptation/semi-oracle-outcome-guidance.h"
 
 struct common_training_candidate;
 struct common_flydelta_teaching_relation;
@@ -12,7 +13,9 @@ struct common_flydelta_teaching_relation;
 class common_semi_oracle_tool_service {
 public:
     common_semi_oracle_tool_service(common_semi_oracle_store & store,
-            std::string host_namespace, std::string session_id);
+            std::string host_namespace, std::string session_id,
+            common_semi_oracle_outcome_guidance_config guidance = {},
+            std::string project_id = {});
 
     bool define_ruleset(const std::string & ruleset_dsl,
             common_semi_oracle_rule_authority host_asserted_authority,
@@ -78,4 +81,6 @@ private:
     common_semi_oracle_store & store_;
     std::string host_namespace_;
     std::string session_id_;
+    common_semi_oracle_outcome_guidance_config guidance_;
+    std::string project_id_;
 };

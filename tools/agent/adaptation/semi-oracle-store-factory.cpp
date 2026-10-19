@@ -71,6 +71,20 @@ public:
         const auto it = evaluations_.find(id); found = it != evaluations_.end();
         if (found) payload = it->second.proof_json; return true;
     }
+    bool list_search_history(const std::string & id, uint64_t revision, size_t limit,
+            std::vector<common_semi_oracle_search_history_record> & records,
+            std::string & error) const override {
+        std::lock_guard<std::mutex> lock(mutex_); error.clear(); records.clear();
+        if (limit == 0 || limit > 1024) { error = "invalid search history limit"; return false; }
+        for (const auto & item : evaluations_) {
+            if (item.second.ruleset_id == id && item.second.ruleset_revision == revision &&
+                    !item.second.search_guidance_json.empty()) {
+                records.push_back({item.first, item.second.search_guidance_json});
+                if (records.size() == limit) break;
+            }
+        }
+        return true;
+    }
     bool put_interaction(const common_semi_oracle_interaction & value,
             std::string & error) override {
         if (!common_semi_oracle_interaction_validate(value, error)) return false;

@@ -27,6 +27,8 @@ struct common_semi_oracle_search_problem {
     // predicate, transition validator, or heuristic.
     std::function<size_t(const common_semi_oracle_search_transition &)> guidance_rank;
     bool heuristic_admissible = false;
+    common_semi_oracle_transition_adviser transition_adviser;
+    bool record_history = false;
 };
 
 struct common_semi_oracle_search_step {
@@ -44,6 +46,15 @@ struct common_semi_oracle_search_result {
     size_t depth_reached = 0;
     std::vector<common_semi_oracle_search_step> path;
     std::string error;
+    struct observation {
+        std::string action;
+        // goal_reached means a verified suffix exists; dead_end requires an
+        // expanded state with no legal outgoing edges. All else is unknown.
+        std::string outcome;
+    };
+    std::vector<observation> observations;
+    size_t guidance_fallbacks = 0;
+    std::string guidance_error;
 };
 
 bool common_semi_oracle_search_astar(

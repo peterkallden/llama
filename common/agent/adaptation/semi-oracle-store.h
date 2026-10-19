@@ -6,6 +6,11 @@
 #include <string>
 #include <vector>
 
+struct common_semi_oracle_search_history_record {
+    std::string evaluation_id;
+    std::string guidance_json;
+};
+
 class common_semi_oracle_store {
 public:
     virtual ~common_semi_oracle_store() = default;
@@ -58,6 +63,15 @@ public:
         payload_json.clear();
         found = false;
         error = "semi-oracle evaluation reads are unsupported by this store";
+        return false;
+    }
+    // Bounded deterministic view of the existing evaluation relation. Order
+    // is by evaluation ID, not claimed to be chronology or recency.
+    virtual bool list_search_history(const std::string & ruleset_id, uint64_t revision,
+            size_t limit, std::vector<common_semi_oracle_search_history_record> & records,
+            std::string & error) const {
+        (void) ruleset_id; (void) revision; (void) limit;
+        records.clear(); error = "semi-oracle search history is unsupported by this store";
         return false;
     }
     virtual bool put_interaction(const common_semi_oracle_interaction & interaction,

@@ -200,6 +200,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/semi-oracle-search.h adaptation/semi-oracle-store.h
     adaptation/semi-oracle-sft-candidate.cpp adaptation/semi-oracle-sft-candidate.h
     adaptation/semi-oracle-tool.cpp adaptation/semi-oracle-tool.h
+    adaptation/semi-oracle-outcome-guidance.cpp adaptation/semi-oracle-outcome-guidance.h
     adaptation/flydelta/oracles/suite.cpp adaptation/flydelta/oracles/suite.h
     adaptation/flydelta/oracles/astar-proposer.cpp adaptation/flydelta/oracles/astar-proposer.h
     adaptation/flydelta/oracles/dataset-operation.cpp adaptation/flydelta/oracles/dataset-operation.h

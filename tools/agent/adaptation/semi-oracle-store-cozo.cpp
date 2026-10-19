@@ -200,8 +200,38 @@ bool agent_semi_oracle_cozo_store::put_session_game_state(
 }
 bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,const common_semi_oracle_result & result,std::string & error){
     if(eid.empty()||result.ruleset_id.empty()){error="semi-oracle evaluation requires ids";return false;}
-    const json payload={{"ruleset_id",result.ruleset_id},{"ruleset_revision",result.ruleset_revision},{"verdict",common_semi_oracle_verdict_name(result.verdict)},{"level",common_semi_oracle_level_name(result.level)},{"evaluator_ref",result.evaluator_ref},{"evaluator_revision",result.evaluator_revision},{"expansions",result.expansions},{"depth_reached",result.depth_reached},{"proof_json",result.proof_json},{"counterexample_json",result.counterexample_json},{"reason",result.reason},{"guidance_ref",result.guidance_ref}};
+    const json payload={{"ruleset_id",result.ruleset_id},{"ruleset_revision",result.ruleset_revision},{"verdict",common_semi_oracle_verdict_name(result.verdict)},{"level",common_semi_oracle_level_name(result.level)},{"evaluator_ref",result.evaluator_ref},{"evaluator_revision",result.evaluator_revision},{"expansions",result.expansions},{"depth_reached",result.depth_reached},{"proof_json",result.proof_json},{"counterexample_json",result.counterexample_json},{"reason",result.reason},{"guidance_ref",result.guidance_ref},{"search_guidance_json",result.search_guidance_json}};
     std::string raw;return run("?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]] :put agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }",json{{"eid",eid},{"id",result.ruleset_id},{"rev",result.ruleset_revision},{"payload",payload.dump()}}.dump(),raw,error);
+}
+bool agent_semi_oracle_cozo_store::list_search_history(const std::string & id, uint64_t revision,
+        size_t limit, std::vector<common_semi_oracle_search_history_record> & records,
+        std::string & error) const {
+    records.clear(); error.clear();
+    if (id.empty() || revision > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+            limit == 0 || limit > 1024) { error = "invalid search history scope or limit"; return false; }
+    std::string raw;
+    // Filter the optional additive field before limiting; legacy evaluations
+    // must not fill the bounded view with rows that contain no search history.
+    if (!run("?[evaluation_id, payload] := *agent_semi_oracle_evaluations[evaluation_id, $id, $rev, payload], "
+             "data = parse_json(payload), guidance = json_to_scalar(get(data, 'search_guidance_json', '')), guidance != '' "
+             ":sort evaluation_id :limit $limit",
+            json{{"id", id}, {"rev", revision}, {"limit", limit}}.dump(), raw, error)) return false;
+    const auto value = json::parse(raw, nullptr, false);
+    if (!value.is_object() || !value.contains("rows") || !value["rows"].is_array()) {
+        error = "semi-oracle search history query returned invalid rows"; return false;
+    }
+    for (const auto & row : value["rows"]) {
+        if (!row.is_array() || row.size() != 2 || !row[0].is_string() || !row[1].is_string()) {
+            records.clear(); error = "semi-oracle search history row is invalid"; return false;
+        }
+        const auto payload = json::parse(row[1].get<std::string>(), nullptr, false);
+        if (!payload.is_object() || !payload.contains("search_guidance_json") ||
+                !payload["search_guidance_json"].is_string()) {
+            records.clear(); error = "semi-oracle search history payload is invalid"; return false;
+        }
+        records.push_back({row[0].get<std::string>(), payload["search_guidance_json"].get<std::string>()});
+    }
+    return true;
 }
 bool agent_semi_oracle_cozo_store::get_evaluation_payload(const std::string & eid,std::string & payload,bool & found,std::string & error) const {
     found=false;payload.clear();std::string raw;
