@@ -54,6 +54,13 @@
       "max_evidence": 32,
       "backend": "cozo",
       "transaction_path": "var/agent/adaptation.cozo",
+      "outcome_guidance": {
+        "generalization": {
+          "tool_family_backoff": false,
+          "project_history": false,
+          "tool_families": {}
+        }
+      },
       "stable_model_facing_tools": [
         "dataset.inspect",
         "data.query",

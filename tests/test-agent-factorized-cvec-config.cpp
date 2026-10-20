@@ -18,7 +18,9 @@ int main() {
             config.adaptation_flydelta_teacher_scoring_backend != "auto" ||
             config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "exact" ||
             config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.0 ||
-            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_sampling") {
+            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_sampling" ||
+            config.adaptation_outcome_guidance_generalization.tool_family_backoff ||
+            config.adaptation_outcome_guidance_generalization.project_history) {
         std::cerr << "factorized cvec must not be disabled by default: " << error << '\n';
         return 1;
     }
@@ -58,6 +60,29 @@ int main() {
         {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"},
             {"projection_cache_bytes", 2097152}}}
     };
+    compatible["runtime"]["adaptation"]["outcome_guidance"]["generalization"] = {
+        {"tool_family_backoff", true}, {"project_history", true},
+        {"tool_families", {{"data-analysis", {"dataset.aggregate", "dataset.join"}}}}
+    };
+    if (!parse_agent_host_config_json(compatible, config, error) ||
+            !config.adaptation_outcome_guidance_generalization.tool_family_backoff ||
+            !config.adaptation_outcome_guidance_generalization.project_history ||
+            config.adaptation_outcome_guidance_generalization.tool_families["data-analysis"].size() != 2) {
+        std::cerr << "outcome guidance opt-ins did not parse: " << error << '\n';
+        return 1;
+    }
+    const auto generalization_roundtrip = agent_host_config_to_json(config);
+    agent_host_config parsed_generalization;
+    if (!parse_agent_host_config_json(generalization_roundtrip, parsed_generalization, error) ||
+            parsed_generalization.adaptation_outcome_guidance_generalization.tool_families !=
+                config.adaptation_outcome_guidance_generalization.tool_families) return __LINE__;
+    auto invalid_family = compatible;
+    invalid_family["runtime"]["adaptation"]["outcome_guidance"]["generalization"]["tool_families"]["duplicate"] =
+        {"dataset.join", "repository.search"};
+    if (parse_agent_host_config_json(invalid_family, parsed_generalization, error)) return __LINE__;
+    auto invalid_opt_in = compatible;
+    invalid_opt_in["runtime"]["adaptation"]["outcome_guidance"]["generalization"]["project_history"] = "yes";
+    if (parse_agent_host_config_json(invalid_opt_in, parsed_generalization, error)) return __LINE__;
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
             config.adaptation_flydelta_teacher_scoring_backend != "backend" ||

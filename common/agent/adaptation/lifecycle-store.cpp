@@ -210,6 +210,32 @@ bool common_learning_lifecycle_store::list_scope_with_watermark(
     return true;
 }
 
+bool common_learning_lifecycle_store::list_project_with_watermark(
+        const std::string & namespace_id,
+        const std::string & project_id,
+        std::vector<common_learning_lifecycle_record> & records,
+        uint64_t & watermark,
+        std::string & error) const {
+    records.clear();
+    watermark = 0;
+    if (namespace_id.empty() || project_id.empty()) {
+        error = "project-scoped lifecycle history requires namespace and project identity";
+        return false;
+    }
+    const auto all = list(error);
+    if (!error.empty()) return false;
+    for (const auto & record : all) {
+        if (record.namespace_id != namespace_id || record.project_id != project_id ||
+                record.registration_order == 0) continue;
+        records.push_back(record);
+        watermark = std::max(watermark, record.registration_order);
+    }
+    std::stable_sort(records.begin(), records.end(), [](const auto & a, const auto & b) {
+        return a.registration_order < b.registration_order;
+    });
+    return true;
+}
+
 bool common_learning_in_memory_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;

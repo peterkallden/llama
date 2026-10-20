@@ -4613,18 +4613,26 @@ partition; scoped providers share its retained cache. Its
 and zero disables retention. Guidance adds no stop rule or guaranteed probe saving. See
 [the configuration, trace schemas and verification status](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite).
 
-The read-only MCP tool `outcome.predict` exposes retrospective predictions for
-host-issued FlyDelta observation references in the current session. It is
-available through the `analysis`, `research` and dynamic `all-configured`
-profiles only when the daemon lifecycle journal is bound. Candidate features
-come from that journal; session-bound observation handles and scope fingerprints
-avoid exposing raw lifecycle/session IDs. Callers cannot provide training
-observations or raw features. MCP `tools/list` derives the success-payload schema
-from its canonical result schema; successful calls provide matching structured
-content with `{ok, result, ...}`. Internal dataflow still uses the canonical
-result contract. The tool is not a source
-of truth or learning credit. It uses the same FlyDelta guidance settings and
-does not read history when that mode is `off`. See
+The read-only MCP tool `outcome.predict` uses typed adapters over shared
+posterior/projection math. `family="flydelta"` inspects verified intervention
+outcomes; `family="target_hunt"` inspects host-verified Target Hunt branch
+quality under the active session RuleSet. Their vocabularies remain separate
+(`HELPED/NEUTRAL/HARMED/UNKNOWN` versus `optimal/detour/unreachable`); they do
+not share observations or comparable utility. Candidate references and features
+are host-resolved. The tool cannot append observations or grant learning credit.
+MCP `tools/list` advertises the family-discriminated result contract and
+successful calls return it under `structuredContent.result` in the shared
+`{ok,result,...}` envelope.
+
+The two history-broadening controls live at
+`runtime.adaptation.outcome_guidance.generalization` and default to `false`:
+`tool_family_backoff` enables only explicit host-configured FlyDelta behavior-key
+families; `project_history` permits other sessions in the same namespace/project.
+Candidate references remain limited to the caller's session, and Target Hunt
+remains session/RuleSet scoped in this version. These are inspection scopes,
+not operator activation controls: automatic search selection still requires
+separate qualification and operator mode. See the explicit example
+`docs/examples/agent-host-config-outcome-generalization.json` and
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
 
 SemiOracle algebra and Target Hunt search use that same posterior math with independent

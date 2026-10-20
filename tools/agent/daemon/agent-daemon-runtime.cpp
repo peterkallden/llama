@@ -1,6 +1,8 @@
 #include "agent-daemon-adapter.h"
 #include "../adaptation/semi-oracle-store-factory.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/semi-oracle-target.h"
+#include "agent/prediction/outcome-guidance.h"
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
@@ -647,14 +649,223 @@ make_daemon_semi_oracle_relation_provider(
     };
 }
 
-common_tool_execution_result daemon_outcome_predict(
-        common_learning_lifecycle_store & store,
-        common_flydelta_outcome_guidance_config config,
+common_tool_execution_result daemon_outcome_predict_target_hunt(
+        common_semi_oracle_store & store,
         const std::string & namespace_id,
         const std::string & project_id,
         const std::string & session_id,
         const std::string & input) {
     using json = nlohmann::ordered_json;
+    const auto args = json::parse(input, nullptr, false);
+    if (!args.is_object()) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
+        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
+    if (args.contains("max_candidates") && (!args["max_candidates"].is_number_integer() ||
+            args["max_candidates"].get<int64_t>() < 1 || args["max_candidates"].get<int64_t>() > 16))
+        return common_tool_execution_result::failure("tool.outcome.invalid_limit",
+            common_tool_failure_class::validation, false,
+            "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
+    const size_t limit = args.value("max_candidates", size_t{8});
+    if (!limit || limit > 16) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
+    std::string ruleset_id, error;
+    uint64_t revision = 0;
+    bool bound = false;
+    if (!store.get_session_binding(session_id, ruleset_id, revision, bound, error))
+        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+            common_tool_failure_class::execution, true,
+            "Target Hunt history is temporarily unavailable.", std::move(error));
+    if (!bound) return common_tool_execution_result::failure("tool.outcome.no_active_target_hunt",
+        common_tool_failure_class::policy, false,
+        "There is no active Target Hunt RuleSet in this session.", "missing session RuleSet binding");
+    common_semi_oracle_ruleset ruleset;
+    bool found = false;
+    if (!store.get_revision(ruleset_id, revision, ruleset, found, error))
+        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+            common_tool_failure_class::execution, true,
+            "Target Hunt history is temporarily unavailable.", std::move(error));
+    if (!found || ruleset.domain != common_semi_oracle_domain::target_hunt)
+        return common_tool_execution_result::failure("tool.outcome.wrong_family",
+            common_tool_failure_class::policy, false,
+            "The active Oracle problem is not Target Hunt.", "active RuleSet is not target_hunt");
+
+    std::vector<common_semi_oracle_search_history_record> stored;
+    uint64_t watermark = 0;
+    bool watermark_supported = false;
+    if (!store.read_search_history_snapshot(ruleset_id, revision, 1024, stored,
+            watermark, watermark_supported, error))
+        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+            common_tool_failure_class::execution, true,
+            "Target Hunt history is temporarily unavailable.", std::move(error));
+
+    const std::string scope_material = json::array({namespace_id, project_id, session_id}).dump();
+    const std::string scope = "sha256:" + hash_sha256_hex(scope_material.data(), scope_material.size());
+    struct target_row {
+        std::string ref;
+        std::string evaluation_id;
+        std::string fixture;
+        std::string fine;
+        std::string coarse;
+        std::string outcome;
+    };
+    std::vector<target_row> candidates;
+    std::vector<common_outcome_guidance_projection_observation> fine_rows, coarse_rows;
+    json canonical_rows = json::array();
+    std::set<std::string> seen;
+    for (const auto & entry : stored) {
+        const auto guidance = json::parse(entry.guidance_json, nullptr, false);
+        if (!guidance.is_object() || !guidance.contains("context") || !guidance["context"].is_object() ||
+                guidance["context"].value("scope", std::string{}) != scope ||
+                !guidance.contains("branch_quality") || !guidance["branch_quality"].is_object()) continue;
+        const auto & branch = guidance["branch_quality"];
+        if (branch.value("family", std::string{}) != "target_hunt_branch_quality_v1" ||
+                branch.value("ruleset_id", std::string{}) != ruleset_id ||
+                branch.value("ruleset_revision", uint64_t{0}) != revision ||
+                branch.value("ruleset_fingerprint", std::string{}) != ruleset.semantic_fingerprint ||
+                branch.value("fixture_group", std::string{}).empty() ||
+                branch.value("feature_version", std::string{}) != "target_hunt_features_v3" ||
+                branch.value("truth_pass_version", std::string{}) != "reverse_bfs_regret_v1" ||
+                !branch.contains("observations") || !branch["observations"].is_array()) continue;
+        const auto fixture = branch["fixture_group"].get<std::string>();
+        for (const auto & row : branch["observations"]) {
+            if (!row.is_object() || !row.contains("fine_category") || !row["fine_category"].is_string() ||
+                    !row.contains("coarse_category") || !row["coarse_category"].is_string() ||
+                    !row.contains("outcome") || !row["outcome"].is_string() ||
+                    !row.contains("state_before") || !row["state_before"].is_string() ||
+                    !row.contains("action") || !row["action"].is_string()) continue;
+            const auto outcome = row["outcome"].get<std::string>();
+            const size_t outcome_index = outcome == "optimal" ? 0 : outcome == "detour" ? 1 :
+                outcome == "unreachable" ? 2 : 3;
+            if (outcome_index > 2) continue;
+            canonical_rows.push_back({{"evaluation_id",entry.evaluation_id},{"fixture_group",fixture},
+                {"fine_category",row["fine_category"]},{"coarse_category",row["coarse_category"]},
+                {"state_before",row["state_before"]},{"action",row["action"]},{"outcome",outcome}});
+            auto weights = std::vector<double>(3, 0.0);
+            weights[outcome_index] = 1.0;
+            fine_rows.push_back({fixture, row["fine_category"].get<std::string>(), weights});
+            coarse_rows.push_back({fixture, row["coarse_category"].get<std::string>(), weights});
+            const std::string identity = json::array({entry.evaluation_id,
+                row["state_before"], row["action"]}).dump();
+            if (!seen.insert(identity).second) continue;
+            const std::string ref_material = json::array({namespace_id, project_id, session_id,
+                ruleset_id, revision, entry.evaluation_id, row["state_before"], row["action"]}).dump();
+            target_row candidate;
+            candidate.ref = "outcome:target-hunt:sha256:" +
+                hash_sha256_hex(ref_material.data(), ref_material.size());
+            candidate.evaluation_id = entry.evaluation_id;
+            candidate.fixture = fixture;
+            candidate.fine = row["fine_category"].get<std::string>();
+            candidate.coarse = row["coarse_category"].get<std::string>();
+            candidate.outcome = outcome;
+            candidates.push_back(std::move(candidate));
+        }
+    }
+    const std::string fingerprint_material = json{{"family","target_hunt_branch_quality_v1"},
+        {"ruleset",ruleset.semantic_fingerprint},{"scope",scope},{"watermark",watermark},
+        {"rows",canonical_rows}}.dump();
+    const std::string history_fingerprint = "sha256:" + hash_sha256_hex(
+        fingerprint_material.data(), fingerprint_material.size());
+    std::vector<std::string> requested;
+    if (args.contains("candidate_refs")) {
+        const auto & refs = args["candidate_refs"];
+        if (!refs.is_array() || refs.size() > 16) return common_tool_execution_result::failure(
+            "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+            "candidate_refs must contain at most 16 opaque references.", "invalid candidate_refs array");
+        for (const auto & ref : refs) {
+            if (!ref.is_string() || ref.get<std::string>().empty() || ref.get<std::string>().size() > 256)
+                return common_tool_execution_result::failure(
+                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "candidate_refs must contain opaque string references.", "non-string candidate ref");
+            requested.push_back(ref.get<std::string>());
+        }
+    } else {
+        for (auto it = candidates.rbegin(); it != candidates.rend() && requested.size() < limit; ++it)
+            requested.push_back(it->ref);
+    }
+    std::set<std::string> handled;
+    json predictions = json::array(), unresolved = json::array();
+    size_t evidence_groups = 0;
+    const auto project = [&](const auto & rows, common_outcome_guidance_projection & out,
+            std::string & projection_error) {
+        return common_outcome_guidance_build_projection(rows,
+            "target-hunt-retrospective-v1", history_fingerprint, watermark, out, projection_error);
+    };
+    common_outcome_guidance_projection fine_projection, coarse_projection;
+    if (!project(fine_rows, fine_projection, error) ||
+            !project(coarse_rows, coarse_projection, error))
+        return common_tool_execution_result::failure("tool.outcome.history_invalid",
+            common_tool_failure_class::execution, false,
+            "Target Hunt history did not satisfy its prediction contract.", std::move(error));
+    for (const auto & ref : requested) {
+        if (!handled.insert(ref).second) continue;
+        const auto target = std::find_if(candidates.begin(), candidates.end(),
+            [&](const auto & candidate) { return candidate.ref == ref; });
+        if (target == candidates.end()) { unresolved.push_back(ref); continue; }
+        std::map<std::string, std::vector<double>> fine_weights, coarse_weights;
+        std::map<std::string, size_t> fine_groups, coarse_groups;
+        fine_projection.aggregate_excluding(target->fixture, fine_weights, fine_groups);
+        coarse_projection.aggregate_excluding(target->fixture, coarse_weights, coarse_groups);
+        const bool use_fine = fine_groups[target->fine] >= 8;
+        const auto & selected = use_fine ? fine_weights : coarse_weights;
+        const auto & selected_groups = use_fine ? fine_groups : coarse_groups;
+        const auto key = use_fine ? target->fine : target->coarse;
+        const auto group_count = selected_groups.find(key);
+        const size_t candidate_groups = group_count == selected_groups.end() ? 0 : group_count->second;
+        evidence_groups += candidate_groups;
+        const auto found_weights = selected.find(key);
+        std::vector<double> weights = found_weights == selected.end()
+            ? std::vector<double>{0.0,0.0,0.0} : found_weights->second;
+        const double known = weights[0] + weights[1] + weights[2];
+        common_outcome_guidance_posterior posterior;
+        if (!common_outcome_guidance_make_posterior(known, 0.0, 1.0,
+                weights, {1.0/3.0,1.0/3.0,1.0/3.0}, 0.0, 0.0, posterior)) {
+            unresolved.push_back(ref); continue;
+        }
+        predictions.push_back({{"candidate_ref",ref},{"family","target_hunt_branch_quality_v1"},
+            {"prediction_kind","retrospective_leave_fixture_group_out"},
+            {"p_known",posterior.p_known},{"p_optimal_given_known",posterior.category_probabilities[0]},
+            {"p_detour_given_known",posterior.category_probabilities[1]},
+            {"p_unreachable_given_known",posterior.category_probabilities[2]},
+            {"expected_utility",posterior.category_probabilities[0]-posterior.category_probabilities[2]},
+            {"evidence_groups",candidate_groups},{"backoff_level",use_fine?"fine_feature":"coarse_feature"},
+            {"history_fingerprint",history_fingerprint},{"observed_outcome",target->outcome}});
+    }
+    return common_tool_execution_result::success(json{{"family","target_hunt_branch_quality_v1"},
+        {"status",evidence_groups?"available":"insufficient_history"},
+        {"scope_mode","session"},{"scope_fingerprint",scope},{"history_watermark",watermark},
+        {"history_fingerprint",history_fingerprint},{"predictions",std::move(predictions)},
+        {"unresolved_refs",std::move(unresolved)}}.dump());
+}
+
+common_tool_execution_result daemon_outcome_predict(
+        common_learning_lifecycle_store * store,
+        common_semi_oracle_store * semi_oracle_store,
+        common_flydelta_outcome_guidance_config config,
+        const common_outcome_guidance_generalization_config & generalization,
+        const std::string & namespace_id,
+        const std::string & project_id,
+        const std::string & session_id,
+        const std::string & input) {
+    using json = nlohmann::ordered_json;
+    const auto args = json::parse(input, nullptr, false);
+    if (!args.is_object()) return common_tool_execution_result::failure(
+        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
+        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
+    const auto family = args.value("family", std::string("flydelta"));
+    if (family == "target_hunt") {
+        if (semi_oracle_store == nullptr) return common_tool_execution_result::failure(
+            "tool.outcome.family_unavailable", common_tool_failure_class::policy, false,
+            "Target Hunt outcome history is unavailable in this runtime.", "no SemiOracle store is bound");
+        return daemon_outcome_predict_target_hunt(*semi_oracle_store, namespace_id,
+            project_id, session_id, input);
+    }
+    if (family != "flydelta") return common_tool_execution_result::failure(
+        "tool.outcome.invalid_family", common_tool_failure_class::validation, false,
+            "family must be flydelta or target_hunt.", "unsupported outcome family");
+    if (store == nullptr) return common_tool_execution_result::failure(
+        "tool.outcome.family_unavailable", common_tool_failure_class::policy, false,
+        "FlyDelta outcome history is unavailable in this runtime.", "no lifecycle store is bound");
     if (config.mode == common_flydelta_outcome_guidance_mode::off) {
         return common_tool_execution_result::failure(
             "tool.outcome.guidance_disabled", common_tool_failure_class::policy, false,
@@ -662,10 +873,6 @@ common_tool_execution_result daemon_outcome_predict(
             "runtime.adaptation.flydelta.outcome_guidance.mode is off");
     }
     config.mode = common_flydelta_outcome_guidance_mode::shadow;
-    const auto args = json::parse(input, nullptr, false);
-    if (!args.is_object()) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
-        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
     if (args.contains("max_candidates") && !args["max_candidates"].is_number_unsigned() &&
             !args["max_candidates"].is_number_integer()) return common_tool_execution_result::failure(
         "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
@@ -677,8 +884,13 @@ common_tool_execution_result daemon_outcome_predict(
     std::vector<common_learning_lifecycle_record> records;
     uint64_t watermark = 0;
     std::string error;
-    if (!store.list_scope_with_watermark(namespace_id, project_id, session_id,
-            records, watermark, error)) return common_tool_execution_result::failure(
+    if (generalization.project_history && project_id.empty()) return common_tool_execution_result::failure(
+        "tool.outcome.project_scope_required", common_tool_failure_class::policy, false,
+        "Project history is enabled but this request has no project scope.", "project_history requires project_id");
+    if (!(generalization.project_history
+            ? store->list_project_with_watermark(namespace_id, project_id, records, watermark, error)
+            : store->list_scope_with_watermark(namespace_id, project_id, session_id, records, watermark, error)))
+        return common_tool_execution_result::failure(
         "tool.outcome.history_unavailable", common_tool_failure_class::execution, true,
         "Historical outcome guidance is temporarily unavailable.", std::move(error));
 
@@ -686,6 +898,7 @@ common_tool_execution_result daemon_outcome_predict(
         common_flydelta_outcome_guidance_observation observation;
         std::string opaque_ref;
         uint64_t registration_order = 0;
+        std::string source_session;
     };
     std::vector<row_entry> rows;
     for (const auto & record : records) {
@@ -711,10 +924,19 @@ common_tool_execution_result daemon_outcome_predict(
                     !payload.contains("verifier_known") || !payload["verifier_known"].is_boolean()) continue;
             row_entry entry;
             entry.registration_order = record.registration_order;
+            entry.source_session = record.session_id;
             auto & o = entry.observation;
             o.stable_observation_id = g.value("observation_id", std::string{});
             o.fixture_group_id = g.value("fixture_group_id", std::string{});
             o.context.scope_fingerprint = g.value("scope_fingerprint", std::string{});
+            // The lifecycle envelope, not payload text, authorizes the
+            // namespace/project/session read. Older payloads do not persist
+            // all scope-policy bits needed to reconstruct their scope hash.
+            if (generalization.project_history) {
+                const std::string project_scope_material = json::array({namespace_id, project_id}).dump();
+                o.context.scope_fingerprint = "sha256:" + hash_sha256_hex(
+                    project_scope_material.data(), project_scope_material.size());
+            }
             o.context.model_profile_fingerprint = g.value("model_profile_fingerprint", std::string{});
             o.context.tokenizer_fingerprint = g.value("tokenizer_fingerprint", std::string{});
             o.context.template_fingerprint = g.value("template_fingerprint", std::string{});
@@ -762,7 +984,7 @@ common_tool_execution_result daemon_outcome_predict(
                     (o.basis_identity.empty() && !(o.context.strategy == "whirlpool" &&
                         o.context.estimator == "layer-region-prior-v2"))) continue;
             const std::string ref_material = json::array({
-                namespace_id, project_id, session_id, o.stable_observation_id}).dump();
+                record.namespace_id, record.project_id, record.session_id, o.stable_observation_id}).dump();
             entry.opaque_ref = "outcome:sha256:" + hash_sha256_hex(
                 ref_material.data(), ref_material.size());
             rows.push_back(std::move(entry));
@@ -789,7 +1011,7 @@ common_tool_execution_result daemon_outcome_predict(
     } else {
         std::set<std::string> seen;
         for (auto it = rows.rbegin(); it != rows.rend() && requested.size() < limit; ++it)
-            if (seen.insert(it->opaque_ref).second)
+            if (it->source_session == session_id && seen.insert(it->opaque_ref).second)
                 requested.push_back(it->opaque_ref);
     }
 
@@ -867,20 +1089,63 @@ common_tool_execution_result daemon_outcome_predict(
             unresolved_refs.push_back(ref);
             continue;
         }
-        const auto & p = decision.predictions.front();
+        auto prediction = decision.predictions.front();
+        std::string backoff_level = prediction.level;
+        std::string family_id;
+        std::vector<std::string> family_domains;
+        if (generalization.tool_family_backoff) {
+            for (const auto & family : generalization.tool_families) {
+                if (std::find(family.second.begin(), family.second.end(),
+                        target->observation.context.semantic_domain) != family.second.end()) {
+                    family_id = family.first;
+                    family_domains = family.second;
+                    break;
+                }
+            }
+        }
+        if (!family_id.empty() && std::max(prediction.fixture_groups,
+                prediction.backoff_fixture_groups) < config.min_backoff_groups) {
+            auto family_context = target->observation.context;
+            family_context.semantic_domain = "tool-family:" + family_id;
+            std::vector<common_flydelta_outcome_guidance_observation> family_history;
+            for (auto row : history) {
+                if (std::find(family_domains.begin(), family_domains.end(),
+                        row.context.semantic_domain) == family_domains.end()) continue;
+                row.context.semantic_domain = family_context.semantic_domain;
+                family_history.push_back(std::move(row));
+            }
+            common_flydelta_outcome_guidance_projection_ptr family_projection;
+            common_flydelta_outcome_guidance_decision family_decision;
+            if (common_flydelta_outcome_guidance_build_projection(family_context, family_history,
+                    family_projection, predict_error, target->observation.fixture_group_id) &&
+                    common_flydelta_outcome_guidance_decide_from_projection(config, family_context,
+                        family_projection, {candidate}, 1, 0, family_decision, predict_error) &&
+                    family_decision.predictions.size() == 1 &&
+                    std::max(family_decision.predictions.front().fixture_groups,
+                        family_decision.predictions.front().backoff_fixture_groups) >= config.min_backoff_groups) {
+                prediction = family_decision.predictions.front();
+                decision.history_fingerprint = family_decision.history_fingerprint;
+                backoff_level = "tool_family_backoff";
+            }
+        }
+        const auto & p = prediction;
         effective_groups += p.fixture_groups;
         fingerprints += ref;
         fingerprints.push_back('\0');
         fingerprints += decision.history_fingerprint;
         fingerprints.push_back('\n');
         predictions.push_back({
-            {"observation_ref", ref}, {"p_known", p.p_known},
+            {"observation_ref", ref}, {"family", "flydelta_intervention_v1"},
+            {"p_known", p.p_known},
             {"p_known_interval", {p.p_known_low, p.p_known_high}},
             {"p_helped_given_known", p.p_helped_given_known},
             {"p_neutral_given_known", p.p_neutral_given_known},
             {"p_harmed_given_known", p.p_harmed_given_known},
-            {"expected_utility", p.expected_utility}, {"evidence_groups", p.fixture_groups},
-            {"backoff_level", p.level}, {"history_fingerprint", decision.history_fingerprint},
+            {"expected_utility", p.expected_utility},
+            {"evidence_groups", backoff_level == "tool_family_backoff"
+                ? p.backoff_fixture_groups : p.fixture_groups},
+            {"backoff_level", backoff_level}, {"tool_family", family_id},
+            {"history_fingerprint", decision.history_fingerprint},
             {"prediction_kind", "chronological_leave_fixture_group_out"},
             {"domain", target->observation.context.semantic_domain},
             {"strategy", target->observation.context.strategy},
@@ -891,10 +1156,14 @@ common_tool_execution_result daemon_outcome_predict(
         });
     }
     const std::string fingerprint = hash_sha256_hex(fingerprints.data(), fingerprints.size());
-    const std::string scope_material = json::array({namespace_id, project_id, session_id}).dump();
+    const std::string scope_material = generalization.project_history
+        ? json::array({namespace_id, project_id}).dump()
+        : json::array({namespace_id, project_id, session_id}).dump();
     const std::string scope_fingerprint = "sha256:" + hash_sha256_hex(
         scope_material.data(), scope_material.size());
     return common_tool_execution_result::success(json{
+        {"family", "flydelta_intervention_v1"},
+        {"scope_mode", generalization.project_history ? "project" : "session"},
         {"status", effective_groups ? "available" : "insufficient_history"},
         {"scope_fingerprint", scope_fingerprint}, {"history_watermark", watermark},
         {"history_fingerprint", "sha256:" + fingerprint}, {"predictions", std::move(predictions)},
@@ -1199,13 +1468,14 @@ bool resolve_agent_daemon_tooling(
     } else {
         tool_request.semi_oracle_tool_call = {};
     }
-    if (learning_lifecycle_store != nullptr && !request.session_id.empty()) {
-        tool_request.outcome_predict_tool_call = [learning_lifecycle_store,
+    if (!request.session_id.empty() && (learning_lifecycle_store != nullptr || semi_oracle_store != nullptr)) {
+        tool_request.outcome_predict_tool_call = [learning_lifecycle_store, semi_oracle_store,
                 guidance_config = options.adaptation_flydelta_outcome_guidance,
+                generalization = options.adaptation_outcome_guidance_generalization,
                 namespace_id = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
                 project_id = request.project_id, session_id = request.session_id](const std::string & input) {
-            return daemon_outcome_predict(*learning_lifecycle_store, guidance_config,
-                namespace_id, project_id, session_id, input);
+            return daemon_outcome_predict(learning_lifecycle_store, semi_oracle_store,
+                guidance_config, generalization, namespace_id, project_id, session_id, input);
         };
     } else {
         tool_request.outcome_predict_tool_call = {};

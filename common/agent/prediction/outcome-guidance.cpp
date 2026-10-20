@@ -7,6 +7,34 @@
 #include <nlohmann/json.hpp>
 #include <random>
 #include <utility>
+#include <set>
+
+bool common_outcome_guidance_generalization_config_validate(
+        const common_outcome_guidance_generalization_config & config,
+        std::string & error) {
+    error.clear();
+    if (config.tool_families.size() > 64) {
+        error = "outcome guidance supports at most 64 configured tool families";
+        return false;
+    }
+    std::set<std::string> domains;
+    for (const auto & family : config.tool_families) {
+        if (family.first.empty() || family.first.size() > 128 ||
+                family.second.size() < 2 || family.second.size() > 64) {
+            error = "each outcome tool family requires an id and 2..64 behavior domains";
+            return false;
+        }
+        std::set<std::string> local;
+        for (const auto & domain : family.second) {
+            if (domain.empty() || domain.size() > 128 || !local.insert(domain).second ||
+                    !domains.insert(domain).second) {
+                error = "outcome tool-family behavior domains must be unique non-empty strings";
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 namespace {
 

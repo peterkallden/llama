@@ -379,6 +379,14 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_capture_layout_revision != options.adaptation_flydelta_capture_layout_revision ||
             candidate.adaptation_flydelta_max_capture_candidates != options.adaptation_flydelta_max_capture_candidates,
             "runtime.adaptation.flydelta");
+        require_restart(
+            candidate.adaptation_outcome_guidance_generalization.tool_family_backoff !=
+                options.adaptation_outcome_guidance_generalization.tool_family_backoff ||
+            candidate.adaptation_outcome_guidance_generalization.project_history !=
+                options.adaptation_outcome_guidance_generalization.project_history ||
+            candidate.adaptation_outcome_guidance_generalization.tool_families !=
+                options.adaptation_outcome_guidance_generalization.tool_families,
+            "runtime.adaptation.outcome_guidance.generalization");
         require_restart(candidate.inference_max_active != options.inference_max_active, "limits.inference_max_active");
         require_restart(candidate.http_enabled != options.http_enabled, "mcp.inbound.enabled");
         require_restart(candidate.http_listen_address != options.http_listen_address, "mcp.inbound.listen");

@@ -15,6 +15,7 @@
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 #include "agent/adaptation/semi-oracle-outcome-guidance.h"
+#include "agent/prediction/outcome-guidance.h"
 #include "agent/runtime/model-catalog.h"
 #include "agent/context/context-management.h"
 
@@ -100,6 +101,7 @@ struct agent_host_config {
     common_flydelta_canary_policy adaptation_flydelta_canary_policy;
     common_flydelta_outcome_guidance_config adaptation_flydelta_outcome_guidance;
     common_semi_oracle_outcome_guidance_config adaptation_semi_oracle_outcome_guidance;
+    common_outcome_guidance_generalization_config adaptation_outcome_guidance_generalization;
     std::string adaptation_flydelta_teacher_scoring_backend = "auto";
 
     std::string memory_backend = "auto";

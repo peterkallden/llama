@@ -48,6 +48,18 @@ static common_flydelta_outcome_guidance_observation observation(
 
 int main() {
     std::string error;
+    common_outcome_guidance_generalization_config generalization;
+    CHECK(!generalization.tool_family_backoff && !generalization.project_history &&
+        generalization.tool_families.empty());
+    CHECK(common_outcome_guidance_generalization_config_validate(generalization,error));
+    generalization.tool_families["data-analysis"]={"dataset.aggregate","dataset.join"};
+    CHECK(common_outcome_guidance_generalization_config_validate(generalization,error));
+    generalization.tool_family_backoff=true;
+    generalization.project_history=true;
+    CHECK(common_outcome_guidance_generalization_config_validate(generalization,error));
+    generalization.tool_families["duplicate"]={"dataset.join","repository.search"};
+    CHECK(!common_outcome_guidance_generalization_config_validate(generalization,error));
+    generalization.tool_families.erase("duplicate");
     common_outcome_guidance_posterior shared_posterior;
     CHECK(common_outcome_guidance_make_posterior(
         3.0, 1.0, .75, {2.0, 1.0, 0.0}, {2.0/3.0, 1.0/3.0, 0.0},
@@ -104,6 +116,12 @@ int main() {
     common_tool_bootstrap_result bootstrap;
     CHECK(catalog.bootstrap("analysis", bootstrap, error));
     const auto * predict_definition = catalog.find_definition("outcome.predict");
+    CHECK(predict_definition != nullptr);
+    const auto input_schema = nlohmann::json::parse(predict_definition->input_schema_json);
+    CHECK(input_schema["properties"]["family"]["enum"] ==
+        nlohmann::json({"flydelta","target_hunt"}));
+    const auto output_schema = nlohmann::json::parse(predict_definition->result_schema_json);
+    CHECK(output_schema["properties"]["family"]["enum"].size() == 2);
     CHECK(predict_definition != nullptr && predict_definition->risk_class == common_tool_risk_class::local_read);
     const auto all_configured = catalog.load_profile("all-configured", error);
     CHECK(error.empty() && std::any_of(all_configured.begin(), all_configured.end(),
@@ -114,10 +132,12 @@ int main() {
         result_schema["properties"].contains("unresolved_refs") &&
         result_schema["properties"].contains("scope_fingerprint"));
     const std::string sample_result = nlohmann::ordered_json{
-        {"status", "available"}, {"scope_fingerprint", "sha256:scope"},
+        {"family", "flydelta_intervention_v1"}, {"status", "available"},
+        {"scope_fingerprint", "sha256:scope"},
         {"history_watermark", 12}, {"history_fingerprint", "sha256:history"},
         {"unresolved_refs", nlohmann::ordered_json::array()},
         {"predictions", nlohmann::ordered_json::array({nlohmann::ordered_json{
+            {"family", "flydelta_intervention_v1"},
             {"observation_ref", "obs-1"},
             {"prediction_kind", "chronological_leave_fixture_group_out"},
             {"p_known", 0.8}, {"p_known_interval", {0.5, 1.0}},
@@ -132,6 +152,24 @@ int main() {
     std::string normalized_result;
     CHECK(common_schema_normalize_and_validate_object(
         sample_result, predict_definition->result_schema_json, normalized_result, error));
+    const std::string target_hunt_result = nlohmann::ordered_json{
+        {"family", "target_hunt_branch_quality_v1"}, {"status", "available"},
+        {"scope_mode", "session"}, {"scope_fingerprint", "sha256:scope"},
+        {"history_watermark", 12}, {"history_fingerprint", "sha256:history"},
+        {"unresolved_refs", nlohmann::ordered_json::array()},
+        {"predictions", nlohmann::ordered_json::array({nlohmann::ordered_json{
+            {"candidate_ref", "target-hunt:opaque"},
+            {"family", "target_hunt_branch_quality_v1"},
+            {"prediction_kind", "retrospective_leave_fixture_group_out"},
+            {"p_known", 0.9}, {"p_optimal_given_known", 0.7},
+            {"p_detour_given_known", 0.2}, {"p_unreachable_given_known", 0.1},
+            {"expected_utility", 0.6}, {"evidence_groups", 8},
+            {"backoff_level", "fine_feature"},
+            {"history_fingerprint", "sha256:history"}, {"observed_outcome", "optimal"},
+        }})},
+    }.dump();
+    CHECK(common_schema_normalize_and_validate_object(
+        target_hunt_result, predict_definition->result_schema_json, normalized_result, error));
     common_native_tool_bindings bindings;
     bool prediction_called = false;
     bindings.outcome_predict = [&prediction_called](const std::string & input) {

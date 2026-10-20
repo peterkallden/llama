@@ -94,6 +94,15 @@ public:
             std::vector<common_learning_lifecycle_record> & records,
             uint64_t & watermark,
             std::string & error) const;
+
+    // Explicit project-history reads retain namespace/project isolation and
+    // use the same stable registration-order snapshot as the session view.
+    bool list_project_with_watermark(
+            const std::string & namespace_id,
+            const std::string & project_id,
+            std::vector<common_learning_lifecycle_record> & records,
+            uint64_t & watermark,
+            std::string & error) const;
 };
 
 class common_learning_in_memory_lifecycle_store final : public common_learning_lifecycle_store {

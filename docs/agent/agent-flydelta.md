@@ -2579,12 +2579,15 @@ the search-specific backoff projection. This keeps the reusable math separate
 without making the generic layer an authority over FlyDelta evidence.
 
 The read-only `outcome.predict` MCP tool is available in `analysis`, `research`
-and `all-configured` when the daemon has its FlyDelta lifecycle journal bound.
-With no arguments it returns up to eight recent host-issued
-`observation_ref` values and their retrospective predictions. Pass those opaque
-values in `candidate_refs` to query specific rows, or set `max_candidates` to
-bound the default listing. The host reads only the current namespace/project/
-session journal and resolves all arm features from stored lifecycle records.
+and dynamic `all-configured` when the daemon has the required history store.
+Its default `family` is `flydelta`; `family="target_hunt"` selects the
+host-verified Target Hunt branch-quality adapter for the active session RuleSet.
+The shared posterior math does not combine their distinct outcome vocabularies.
+With no references it returns up to eight recent host-issued references for the
+selected family. Pass them in `candidate_refs`, or use `max_candidates` to bound
+the default list. The FlyDelta adapter reads the current namespace/project/
+session unless explicit project-history opt-in is enabled; Target Hunt remains
+bound to the active session RuleSet.
 It includes both observed outcomes and host-rejected `HARMED` candidates;
 rejection is a search disposition, not a reason to erase negative evidence.
 Returned observation handles are stable hashes scoped to that session; raw
@@ -2596,21 +2599,33 @@ path derives `outputSchema` from the canonical result schema and the native
 success payload. Successful `tools/call` responses return that payload as
 `structuredContent`: predictions live under `result` alongside `ok`, an
 optional `summary` and resource/dataset references. The
-daemon status/capability projection uses the same lifecycle-backed native
-tool view. Runtime guidance settings are shared with the predictor; with
-`runtime.adaptation.flydelta.outcome_guidance.mode="off"`, it returns a clear
-disabled error without reading lifecycle history.
+daemon status/capability projection uses the same history-backed native tool
+view. With `runtime.adaptation.flydelta.outcome_guidance.mode="off"`, FlyDelta
+inspection returns a clear disabled error without reading lifecycle history.
 
-These are chronological leave-one-fixture-group-out estimates for already
-observed arms: only earlier compatible outcomes are used, and the candidate's
-own fixture group is excluded. They are not predictions for arbitrary new
-arms and do not create verifier evidence, learning credit, lifecycle changes,
-or promotion. A response with `status="insufficient_history"` is not a negative
-outcome. SemiOracle now consumes the same posterior math through its own
-[algebra search-history adapter](agent-semi-oracle.md#historical-ordering-for-algebra-search).
-Its goal/dead-end/unknown vocabulary, history partition and configuration are
-independent of FlyDelta. The MCP `outcome.predict` inspector still reads only
-FlyDelta intervention records; search diagnostics are exposed by `oracle.goal.search`.
+FlyDelta results are chronological leave-one-fixture-group-out estimates for
+already observed arms: only earlier compatible outcomes are used, and the
+candidate's own fixture group is excluded. Target Hunt results are retrospective
+leave-one-fixture-group-out estimates from its separately versioned,
+host-verified branch-quality history; they are not chronological forecasts.
+Neither family predicts arbitrary new arms or creates verifier evidence,
+learning credit, lifecycle changes, or promotion. A response with
+`status="insufficient_history"` is not a negative outcome. SemiOracle search
+consumes the same posterior math through its own
+[search-history adapters](agent-semi-oracle.md#historical-ordering-for-algebra-search).
+Its search-suffix and Target Hunt branch-quality vocabularies, history partitions
+and runtime guidance remain independent of FlyDelta.
+
+FlyDelta cross-behavior backoff and project history are separate prediction-
+inspection opt-ins at `runtime.adaptation.outcome_guidance.generalization`.
+`tool_family_backoff` requires an explicit mapping of related behavior keys to
+one family. The checked-in mapping is illustrative only; enable it for a real
+family only after held-out compatibility and calibration review.
+`project_history` permits same-project records from other sessions,
+but only current-session candidates are returned and raw external-session IDs
+are not exposed. Neither option pools FlyDelta with SemiOracle or activates
+selection. Both default to false. See
+`docs/examples/agent-host-config-outcome-generalization.json`.
 
 #### Verification status after the 2026-10-19 corrections
 

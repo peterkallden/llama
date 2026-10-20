@@ -9,6 +9,7 @@
 #endif
 
 #include <cassert>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -91,6 +92,28 @@ static void assert_lifecycle_round_trip(common_learning_lifecycle_store & store)
         scoped, watermark, error));
     require(error.empty() && scoped.size() == 2);
     require(watermark == scoped.back().registration_order);
+    auto shared = lifecycle_record();
+    shared.event_id += "-same-project-session";
+    shared.subject_id += "/same-project-session";
+    shared.idempotency_key += "-same-project-session";
+    shared.session_id = "session-2";
+    require(store.append(shared, error));
+    auto foreign = lifecycle_record();
+    foreign.event_id += "-other-project";
+    foreign.subject_id += "/other-project";
+    foreign.idempotency_key += "-other-project";
+    foreign.project_id = "project-2";
+    require(store.append(foreign, error));
+    std::vector<common_learning_lifecycle_record> project_records;
+    uint64_t project_watermark = 0;
+    require(store.list_project_with_watermark("local", "project-1",
+        project_records, project_watermark, error));
+    require(error.empty() && project_records.size() == 3);
+    require(project_watermark == project_records.back().registration_order);
+    require(std::any_of(project_records.begin(), project_records.end(),
+        [](const auto & row) { return row.session_id == "session-2"; }));
+    require(std::none_of(project_records.begin(), project_records.end(),
+        [](const auto & row) { return row.project_id != "project-1"; }));
     bool contains = false;
     require(store.contains_idempotency(value.idempotency_key, contains, error));
     require(contains);

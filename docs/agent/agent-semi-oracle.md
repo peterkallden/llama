@@ -526,9 +526,13 @@ history fingerprint and source evaluation references, accepted/rejected records,
 duplicate/conflict counts, group counts, predictions and approximate marginal intervals,
 proposed order, executed order and fallback. Up to 128 expansion decisions
 are retained per call; further decisions are explicitly counted as omitted.
-The standalone `outcome.predict` tool continues to inspect FlyDelta history;
-it does not reinterpret search outcomes as HELPED/NEUTRAL/HARMED. Placement
-minimax still computes exact adversarial values without this A* ordering adapter.
+The shared read-only `outcome.predict` tool has an explicit
+`family="target_hunt"` adapter for host-verified Target Hunt branch-quality
+records under the active session RuleSet; `family="flydelta"` remains a
+separate intervention-history adapter. The posterior core is shared, but the
+outcome vocabularies and stores are not mixed. The tool accepts neither model-
+supplied features nor training rows. Placement minimax still computes exact
+adversarial values without this A* ordering adapter.
 
 On 2026-10-19 the existing Vulkan/Cozo build and daemon executable built
 successfully, and all 14 focused model-free CTests passed. They cover shadow/off

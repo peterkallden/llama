@@ -556,6 +556,53 @@ bool parse_agent_host_config_json(
             read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
             read_optional(adaptation, "backend", config.adaptation_transaction_backend);
             read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
+            if (adaptation.contains("outcome_guidance")) {
+                const auto & guidance = adaptation["outcome_guidance"];
+                if (!guidance.is_object()) {
+                    error = "runtime.adaptation.outcome_guidance must be an object";
+                    return false;
+                }
+                if (guidance.contains("generalization")) {
+                    const auto & generalization = guidance["generalization"];
+                    if (!generalization.is_object()) {
+                        error = "runtime.adaptation.outcome_guidance.generalization must be an object";
+                        return false;
+                    }
+                    for (const auto * key : {"tool_family_backoff", "project_history"}) {
+                        if (generalization.contains(key) && !generalization[key].is_boolean()) {
+                            error = std::string("runtime.adaptation.outcome_guidance.generalization.") + key +
+                                " must be boolean";
+                            return false;
+                        }
+                    }
+                    read_optional(generalization, "tool_family_backoff",
+                        config.adaptation_outcome_guidance_generalization.tool_family_backoff);
+                    read_optional(generalization, "project_history",
+                        config.adaptation_outcome_guidance_generalization.project_history);
+                    if (generalization.contains("tool_families")) {
+                        const auto & families = generalization["tool_families"];
+                        if (!families.is_object()) {
+                            error = "runtime.adaptation.outcome_guidance.generalization.tool_families must be an object";
+                            return false;
+                        }
+                        config.adaptation_outcome_guidance_generalization.tool_families.clear();
+                        for (auto it = families.begin(); it != families.end(); ++it) {
+                            if (!it.value().is_array()) {
+                                error = "each outcome tool family must contain an array of behavior domains";
+                                return false;
+                            }
+                            auto & domains = config.adaptation_outcome_guidance_generalization.tool_families[it.key()];
+                            for (const auto & domain : it.value()) {
+                                if (!domain.is_string()) {
+                                    error = "outcome tool-family domains must be strings";
+                                    return false;
+                                }
+                                domains.push_back(domain.get<std::string>());
+                            }
+                        }
+                    }
+                }
+            }
             if (adaptation.contains("semi_oracle")) {
                 const auto & oracle = adaptation["semi_oracle"];
                 if (!oracle.is_object()) { error = "runtime.adaptation.semi_oracle must be an object"; return false; }
@@ -1477,6 +1524,11 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"max_evidence", config.adaptation_max_evidence},
                 {"backend", config.adaptation_transaction_backend},
                 {"transaction_path", config.adaptation_transaction_path},
+                {"outcome_guidance", {{"generalization", {
+                    {"tool_family_backoff", config.adaptation_outcome_guidance_generalization.tool_family_backoff},
+                    {"project_history", config.adaptation_outcome_guidance_generalization.project_history},
+                    {"tool_families", config.adaptation_outcome_guidance_generalization.tool_families},
+                }}}},
                 {"semi_oracle", {{"search", {
                     {"algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm},
                     {"suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound},
@@ -1808,6 +1860,11 @@ bool validate_agent_host_config(
     if (!common_flydelta_outcome_guidance_config_validate(
             config.adaptation_flydelta_outcome_guidance, error)) {
         error = "runtime.adaptation.flydelta.outcome_guidance: " + error;
+        return false;
+    }
+    if (!common_outcome_guidance_generalization_config_validate(
+            config.adaptation_outcome_guidance_generalization, error)) {
+        error = "runtime.adaptation.outcome_guidance.generalization: " + error;
         return false;
     }
     if (config.adaptation_flydelta_teacher_scoring_backend != "auto" &&
@@ -2339,6 +2396,7 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
     options.adaptation_flydelta_outcome_guidance = config.adaptation_flydelta_outcome_guidance;
     options.adaptation_semi_oracle_outcome_guidance = config.adaptation_semi_oracle_outcome_guidance;
+    options.adaptation_outcome_guidance_generalization = config.adaptation_outcome_guidance_generalization;
     options.adaptation_flydelta_teacher_scoring_backend =
         config.adaptation_flydelta_teacher_scoring_backend;
     options.max_tool_rounds = config.max_tool_rounds;

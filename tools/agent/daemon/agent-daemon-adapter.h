@@ -111,6 +111,7 @@ struct daemon_options {
     common_flydelta_canary_policy adaptation_flydelta_canary_policy;
     common_flydelta_outcome_guidance_config adaptation_flydelta_outcome_guidance;
     common_semi_oracle_outcome_guidance_config adaptation_semi_oracle_outcome_guidance;
+    common_outcome_guidance_generalization_config adaptation_outcome_guidance_generalization;
     std::string adaptation_flydelta_teacher_scoring_backend = "auto";
     size_t max_tool_rounds = 0;
     size_t queue_capacity = 8;

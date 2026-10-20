@@ -7,6 +7,19 @@
 #include <string>
 #include <vector>
 
+// Explicit opt-ins for retrospective guidance to reuse evidence beyond one
+// behavior or session. Family membership is host configuration, never a model
+// supplied feature. Project history remains within the same namespace/project.
+struct common_outcome_guidance_generalization_config {
+    bool tool_family_backoff = false;
+    bool project_history = false;
+    std::map<std::string, std::vector<std::string>> tool_families;
+};
+
+bool common_outcome_guidance_generalization_config_validate(
+        const common_outcome_guidance_generalization_config & config,
+        std::string & error);
+
 struct common_outcome_guidance_projection_observation {
     std::string fixture_group;
     std::string category;
