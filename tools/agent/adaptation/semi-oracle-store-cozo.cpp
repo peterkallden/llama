@@ -124,7 +124,10 @@ bool agent_semi_oracle_cozo_store::open(const std::string & path,std::string & e
     }
     return true;
 }
-void agent_semi_oracle_cozo_store::close(){if(db_id_>=0){cozo_close_db(db_id_);db_id_=-1;}}
+void agent_semi_oracle_cozo_store::close(){
+    clear_history_projection_cache();
+    if(db_id_>=0){cozo_close_db(db_id_);db_id_=-1;}
+}
 
 bool agent_semi_oracle_cozo_store::put_revision(const common_semi_oracle_ruleset & r,std::string & error){
     error.clear();if(!common_semi_oracle_validate_ruleset(r,error))return false;
@@ -199,17 +202,50 @@ bool agent_semi_oracle_cozo_store::put_session_game_state(
         json{{"session", session}, {"id", id}, {"rev", rev}, {"payload", state}}.dump(), raw, error);
 }
 bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,const common_semi_oracle_result & result,std::string & error){
+    std::lock_guard<std::mutex> lock(evaluation_append_mutex_);
     if(eid.empty()||result.ruleset_id.empty()){error="semi-oracle evaluation requires ids";return false;}
     const json payload={{"ruleset_id",result.ruleset_id},{"ruleset_revision",result.ruleset_revision},{"verdict",common_semi_oracle_verdict_name(result.verdict)},{"level",common_semi_oracle_level_name(result.level)},{"evaluator_ref",result.evaluator_ref},{"evaluator_revision",result.evaluator_revision},{"expansions",result.expansions},{"depth_reached",result.depth_reached},{"proof_json",result.proof_json},{"counterexample_json",result.counterexample_json},{"reason",result.reason},{"guidance_ref",result.guidance_ref},{"search_guidance_json",result.search_guidance_json}};
+    json complete_payload = payload;
+    complete_payload["search_branch_quality_json"] = result.search_branch_quality_json;
+    complete_payload["algorithm"] = result.applied_search_policy.algorithm ==
+        common_semi_oracle_search_algorithm::focal ? "focal" : "exact";
+    complete_payload["suboptimality_bound"] = result.applied_search_policy.suboptimality_bound;
     std::string existing; bool found = false;
     if (!get_evaluation_payload(eid, existing, found, error)) return false;
     if (found) {
-        const auto prior = json::parse(existing, nullptr, false);
-        if (prior == payload) { error.clear(); return true; }
+        auto prior = json::parse(existing, nullptr, false);
+        // Additive payload fields must not break an identical legacy retry.
+        // Recover them only from stored provenance, never from the retry.
+        if (prior.is_object()) {
+            const auto trace = json::parse(prior.value("search_guidance_json", std::string{}), nullptr, false);
+            const auto proof = json::parse(prior.value("proof_json", std::string{}), nullptr, false);
+            if (!prior.contains("search_branch_quality_json"))
+                prior["search_branch_quality_json"] = trace.is_object() && trace.contains("branch_quality")
+                    ? trace["branch_quality"].dump() : std::string{};
+            if (!prior.contains("algorithm") || !prior.contains("suboptimality_bound")) {
+                json policy;
+                if (trace.is_object() && trace.contains("diagnostics") && trace["diagnostics"].is_object() &&
+                        trace["diagnostics"].contains("search_algorithm")) {
+                    policy = {{"algorithm", trace["diagnostics"]["search_algorithm"]},
+                        {"bound", trace["diagnostics"].value("suboptimality_bound", json(1.0))}};
+                } else if (proof.is_object() && proof.contains("algorithm")) {
+                    policy = {{"algorithm", proof["algorithm"] == "focal_astar_v1" ? "focal" : "exact"},
+                        {"bound", proof.value("suboptimality_bound", json(1.0))}};
+                } else if (prior.value("evaluator_revision", std::string{}) != "target_hunt_astar_v3" ||
+                        prior.value("level", std::string{}) == "local") {
+                    policy = {{"algorithm", "exact"}, {"bound", 1.0}};
+                }
+                if (policy.is_object()) {
+                    if (!prior.contains("algorithm")) prior["algorithm"] = policy["algorithm"];
+                    if (!prior.contains("suboptimality_bound")) prior["suboptimality_bound"] = policy["bound"];
+                }
+            }
+        }
+        if (prior == complete_payload) { error.clear(); return true; }
         error = "SemiOracle evaluation identities are immutable";
         return false;
     }
-    std::string raw;return run("?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]] :put agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }",json{{"eid",eid},{"id",result.ruleset_id},{"rev",result.ruleset_revision},{"payload",payload.dump()}}.dump(),raw,error);
+    std::string raw;return run("?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]] :put agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }",json{{"eid",eid},{"id",result.ruleset_id},{"rev",result.ruleset_revision},{"payload",complete_payload.dump()}}.dump(),raw,error);
 }
 bool agent_semi_oracle_cozo_store::list_search_history(const std::string & id, uint64_t revision,
         size_t limit, std::vector<common_semi_oracle_search_history_record> & records,

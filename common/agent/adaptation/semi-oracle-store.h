@@ -39,6 +39,14 @@ public:
     common_semi_oracle_store(const common_semi_oracle_store &) = delete;
     common_semi_oracle_store & operator=(const common_semi_oracle_store &) = delete;
     uint64_t cache_identity() const { return cache_identity_; }
+    // A store object can be reopened against another backing database. Never
+    // let an equal watermark in that database reuse the previous projection.
+    void clear_history_projection_cache() {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        projection_cache_index_.clear();
+        projection_cache_lru_.clear();
+        projection_cache_bytes_ = 0;
+    }
     bool get_history_projection_cache(const std::string & key,
             std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> & entry) const {
         std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -57,7 +65,12 @@ public:
         auto value = std::make_shared<const common_semi_oracle_history_projection_cache_entry>(
             std::move(entry));
         projection_cache_lru_.push_front(value);
-        projection_cache_index_[value->key] = projection_cache_lru_.begin();
+        try {
+            projection_cache_index_.emplace(value->key, projection_cache_lru_.begin());
+        } catch (...) {
+            projection_cache_lru_.pop_front();
+            throw;
+        }
         projection_cache_bytes_ += value->bytes;
         while (projection_cache_lru_.size() > entry_limit || projection_cache_bytes_ > byte_limit) {
             projection_cache_bytes_ -= projection_cache_lru_.back()->bytes;

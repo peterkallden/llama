@@ -217,13 +217,38 @@ these production-persisted records, in addition to its independent full-map
 BFS comparison.
 
 Search-history projection caching is owned by each SemiOracle store instance,
-not a process-global cache. It is bounded to 16 entries and 16 MiB. Stores with
+not a process-global cache. It is bounded to 16 entries and an estimated 16 MiB
+including string/vector capacities and map-node overhead. Stores with
 a monotonic history watermark can look up before reading history; Cozo derives
 that watermark from the immutable evaluation IDs in the scoped relation. Stores
 without watermark support still read and fingerprint rows before reuse, while
 preserving the current call's duplicate/conflict counters. Target state/action
 feature pairs are cached during an evaluation so scoring, trace generation and
 label validation do not repeatedly parse the same state/action pair.
+The per-evaluation feature cache retains at most 4,096 state/action pairs and
+clears on reaching that limit, preventing history spanning many maps from
+retaining an unbounded collection of serialized states.
+
+The 2026-10-20 source review additionally separates the store-local cache key
+from the canonical validated-content fingerprint. Closing/reopening Cozo clears
+its cache, and optional cache insertion failures retain the already built
+projection. Complete history records are validated before either family is
+aggregated, including branch state validity, legal action features and matching
+fixture group. An invalid late branch cannot leave an earlier partial
+contribution behind. Active-family counts and builder identity now describe the
+projection actually used, and decision lineage includes the branch projection.
+Cozo also retains the separate branch payload and applied exact/Focal policy,
+matching the in-memory payload; evaluation appends on one store instance are
+serialized. Legacy retry comparisons recover additive fields from stored
+proof/diagnostic data where possible; unavailable policy provenance is not
+invented. Concurrent writers using separate store instances still require a
+database-transaction-level immutability guard. These source corrections and
+their added regression cases have **not been built or executed yet**.
+
+Cozo's current revision query still enumerates scoped evaluation IDs (up to
+100,001) instead of reading a constant-size persistent revision counter. This
+remains a cost and snapshot-consistency limitation; cache reuse alone does not
+make history access constant-time.
 
 The following parts of the broader implementation plan remain:
 
@@ -244,7 +269,7 @@ The following parts of the broader implementation plan remain:
   Whirlpool, Deep, TFO, MCP inspection and resume. The SemiOracle store cache
   improvements do not provide that cross-consumer FlyDelta projection.
 
-The focused SemiOracle, Cozo, teaching, tool-adapter and FlyDelta guidance
+For the code delivered in `ac58eaeeb`, the focused SemiOracle, Cozo, teaching, tool-adapter and FlyDelta guidance
 CTests passed after the store/projection changes. The updated Target Hunt CTest
 then passed on 2026-10-19 in 567.43 seconds on the existing Vulkan/Cozo build
 tree. The smoke used 64 training and 32 held-out maps, three budget-specific

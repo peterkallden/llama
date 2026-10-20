@@ -1,6 +1,7 @@
 #include "agent/adaptation/semi-oracle.h"
 #include "agent/adaptation/semi-oracle-search.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/semi-oracle-target.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -312,6 +313,13 @@ int main() {
         managed_algebra, history_query, shadow_result, error));
     const auto first_projection_trace = nlohmann::ordered_json::parse(shadow_result.search_guidance_json);
     CHECK(first_projection_trace["diagnostics"].contains("projection_cache_hit"));
+    memory_store rebuilt_store;
+    rebuilt_store.evaluations = store.evaluations;
+    common_semi_oracle_result rebuilt_result;
+    CHECK(common_semi_oracle_evaluate_with_history(rebuilt_store, guidance_config,
+        "host-test", "session-algebra", managed_algebra, history_query, rebuilt_result, error));
+    CHECK(nlohmann::ordered_json::parse(rebuilt_result.search_guidance_json)["diagnostics"]["history_fingerprint"] ==
+        first_projection_trace["diagnostics"]["history_fingerprint"]);
     const auto reads_before_projection_hit = store.history_reads;
     CHECK(common_semi_oracle_evaluate_with_history(store, guidance_config, "host-test", "session-algebra",
         managed_algebra, history_query, shadow_result, error));
@@ -402,6 +410,52 @@ int main() {
     CHECK(nlohmann::ordered_json::parse(experimental_result.search_guidance_json)["diagnostics"]["fallback_reason"] ==
         "search_history_unavailable");
     store.fail_history = false;
+    // Invalid late branch data must not leave a partly accepted fixture behind.
+    common_semi_oracle_ruleset target_rules;
+    CHECK(common_semi_oracle_parse_ruleset_dsl(
+        "name: Atomic history\ndescription: branch validation\ndomain: target_hunt\nmovement: orthogonal\nmax_rows: 32\nmax_columns: 32",
+        "ruleset://target/atomic", "session-target", target_rules, error,
+        common_semi_oracle_rule_authority::declared));
+    memory_store target_store;
+    common_semi_oracle_query target_query;
+    target_query.ruleset_id = target_rules.id;
+    target_query.ruleset_revision = target_rules.revision;
+    target_query.level = common_semi_oracle_level::bounded;
+    target_query.goal = "reach:target";
+    target_query.budget = {64, 64};
+    CHECK(common_semi_oracle_target_problem(target_rules,
+        "grid: .../.../...\nstart: 0,0\ntarget: 2,2", target_query.state_json, error));
+    guidance_config.mode = "shadow";
+    common_semi_oracle_result target_result;
+    CHECK(common_semi_oracle_evaluate_with_history(target_store, guidance_config,
+        "host-test", "session-target", target_rules, target_query, target_result, error));
+    auto corrupt_branch = nlohmann::ordered_json::parse(target_result.search_guidance_json);
+    const auto valid_branch = corrupt_branch;
+    CHECK(corrupt_branch["branch_quality"]["observations"].size() > 1);
+    corrupt_branch["branch_quality"]["observations"].back()["outcome"] = "invented";
+    target_store.override_history = true;
+    target_store.history_rows = {{"invalid-branch", corrupt_branch.dump()}};
+    CHECK(common_semi_oracle_target_problem(target_rules,
+        "grid: ..../..../....\nstart: 0,0\ntarget: 2,3", target_query.state_json, error));
+    CHECK(common_semi_oracle_evaluate_with_history(target_store, guidance_config,
+        "host-test", "session-target", target_rules, target_query, target_result, error));
+    const auto rejected_branch = nlohmann::ordered_json::parse(target_result.search_guidance_json);
+    CHECK(rejected_branch["diagnostics"]["accepted_records"] == 0);
+    CHECK(rejected_branch["diagnostics"]["rejected_records"] == 1);
+    CHECK(rejected_branch["diagnostics"]["fixture_groups"] == 0);
+    CHECK(rejected_branch["diagnostics"]["branch_quality_labels_used"] == false);
+    auto wrong_fixture = valid_branch;
+    auto & foreign_row = wrong_fixture["branch_quality"]["observations"].front();
+    foreign_row["state_before"] = target_query.state_json;
+    foreign_row["action"] = "east";
+    foreign_row["fine_category"] = common_semi_oracle_target_category(target_query.state_json, "east");
+    foreign_row["coarse_category"] = common_semi_oracle_target_coarse_category(target_query.state_json, "east");
+    target_store.history_rows = {{"foreign-fixture", wrong_fixture.dump()}};
+    CHECK(common_semi_oracle_evaluate_with_history(target_store, guidance_config,
+        "host-test", "session-target", target_rules, target_query, target_result, error));
+    const auto foreign_trace = nlohmann::ordered_json::parse(target_result.search_guidance_json);
+    CHECK(foreign_trace["diagnostics"]["accepted_records"] == 0);
+    CHECK(foreign_trace["diagnostics"]["rejected_records"] == 1);
     std::string state_before,state_after;
     CHECK(algebra_service.verify_active_action("open! algebra.rewrite_equation\nlhs: 2x+6\n",result,state_before,state_after,error));
     CHECK(result.verdict==common_semi_oracle_verdict::satisfied&&

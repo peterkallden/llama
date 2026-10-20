@@ -3,6 +3,7 @@
 #include "agent/adaptation/semi-oracle-store.h"
 
 #include <cstdint>
+#include <mutex>
 
 class agent_semi_oracle_cozo_store final : public common_semi_oracle_store {
 public:
@@ -28,6 +29,7 @@ public:
     bool get_interaction(const std::string &, common_semi_oracle_interaction &, bool &, std::string &) const override;
     std::vector<std::string> list_host_rulesets(std::string &) const override;
 private:
+    std::mutex evaluation_append_mutex_;
     bool run(const std::string &, const std::string &, std::string &, std::string &) const;
     int32_t db_id_ = -1;
 };

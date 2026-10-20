@@ -27,10 +27,13 @@ const std::set<std::string> actions = {"simplify lhs", "simplify rhs",
     "divide both sides by the non-zero coefficient"};
 size_t projection_bytes(const common_outcome_guidance_projection & projection) {
     size_t bytes = sizeof(projection);
+    bytes += projection.builder_revision.capacity() + projection.source_fingerprint.capacity() +
+        projection.fingerprint.capacity();
     for (const auto & fixture : projection.fixture_categories) {
-        bytes += fixture.first.size();
+        bytes += sizeof(fixture) + 4 * sizeof(void *) + fixture.first.capacity();
         for (const auto & category : fixture.second)
-            bytes += category.first.size() + category.second.size() * sizeof(double);
+            bytes += sizeof(category) + 4 * sizeof(void *) + category.first.capacity() +
+                category.second.capacity() * sizeof(double);
     }
     return bytes;
 }
@@ -67,6 +70,9 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         const auto key = std::make_pair(state, action);
         const auto found = target_feature_cache.find(key);
         if (found != target_feature_cache.end()) return found->second;
+        // History can span many maps; retaining every serialized state here
+        // would bypass the projection cache's memory limit.
+        if (target_feature_cache.size() >= 4096) target_feature_cache.clear();
         return target_feature_cache.emplace(key, std::make_pair(
             common_semi_oracle_target_category(state, action),
             common_semi_oracle_target_coarse_category(state, action))).first->second;
@@ -115,6 +121,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     size_t rejected = 0, duplicates = 0, conflicting_records = 0, read_rows = 0;
     json accepted = json::array();
     std::string source_fingerprint;
+    std::string cache_key;
     const auto store_identity = std::to_string(store.cache_identity());
     std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> cached_projection;
     try {
@@ -123,10 +130,11 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             history_error = "search_history_revision_unavailable";
     } catch (...) { history_error = "search_history_revision_exception"; }
     if (watermark_supported && history_error.empty()) {
-        source_fingerprint = fingerprint(json{{"store",store_identity},{"context",context},
+        cache_key = fingerprint(json{{"store",store_identity},{"context",context},
             {"watermark",source_watermark},{"limit",config.max_history_evaluations}}.dump());
-        if (store.get_history_projection_cache(source_fingerprint, cached_projection)) {
+        if (store.get_history_projection_cache(cache_key, cached_projection)) {
             projection = cached_projection->suffix_projection;
+            source_fingerprint = projection.source_fingerprint;
             read_rows = cached_projection->read_rows;
             rejected = cached_projection->rejected_rows;
             duplicates = cached_projection->duplicate_rows;
@@ -178,10 +186,11 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
                     }
                     parsed.emplace(it.key(), values);
                 }
-                for (const auto & item : parsed) for (size_t i = 0; i < 3; ++i)
-                    grouped[group][item.first][i] += item.second[i];
-                accepted.push_back({{"evaluation_id", record.first},
-                    {"fixture_group", group}, {"observations", row.at("observations")}});
+                // Stage a complete record before changing either projection.
+                // A malformed later branch must not leave partial contributions.
+                std::map<std::string, counts> parsed_branch;
+                json accepted_record = {{"evaluation_id", record.first},
+                    {"fixture_group", group}, {"observations", row.at("observations")}};
                 if (target && row.contains("branch_quality")) {
                     const auto & branch = row.at("branch_quality");
                     if (branch.is_object() && branch.value("schema_version", 0) == 1 &&
@@ -201,27 +210,36 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
                                     !branch_row.contains("action") || !branch_row["action"].is_string() ||
                                     !branch_row.contains("fine_category") || !branch_row["fine_category"].is_string() ||
                                     !branch_row.contains("coarse_category") || !branch_row["coarse_category"].is_string())
-                                continue;
+                                throw std::invalid_argument("invalid branch observation");
                             const auto state_before = branch_row["state_before"].get<std::string>();
                             const auto action = branch_row["action"].get<std::string>();
-                            if (branch_row["fine_category"] != category(state_before, action) ||
+                            std::string state_error;
+                            if (!common_semi_oracle_target_state(ruleset, state_before, state_error) ||
+                                    common_semi_oracle_target_group(state_before) != group ||
+                                    category(state_before, action).empty() ||
+                                    branch_row["fine_category"] != category(state_before, action) ||
                                     branch_row["coarse_category"] != coarse_category(state_before, action))
-                                continue;
+                                throw std::invalid_argument("branch fixture or category mismatch");
                             const auto outcome = branch_row["outcome"].get<std::string>();
                             const size_t ix = outcome == "optimal" ? 0 : outcome == "detour" ? 1 :
                                 outcome == "unreachable" ? 2 : 3;
-                            if (ix > 2) continue;
+                            if (ix > 2) throw std::invalid_argument("invalid branch outcome");
                             for (const auto * feature : {"fine_category", "coarse_category"}) {
                                 if (!branch_row.contains(feature) || !branch_row[feature].is_string()) continue;
                                 const auto category_key = branch_row[feature].get<std::string>();
-                                if (allowed(category_key)) branch_grouped[group][category_key][ix] += 1.0;
+                                if (allowed(category_key)) parsed_branch[category_key][ix] += 1.0;
                             }
                         }
-                        accepted.back()["branch_quality"] = branch;
+                        accepted_record["branch_quality"] = branch;
                     } else {
-                        ++rejected;
+                        throw std::invalid_argument("branch provenance mismatch");
                     }
                 }
+                for (const auto & item : parsed) for (size_t i = 0; i < 3; ++i)
+                    grouped[group][item.first][i] += item.second[i];
+                for (const auto & item : parsed_branch) for (size_t i = 0; i < 3; ++i)
+                    branch_grouped[group][item.first][i] += item.second[i];
+                accepted.push_back(std::move(accepted_record));
             } catch (...) { ++rejected; }
         }
         conflicting_records = conflicts.size();
@@ -233,10 +251,13 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         for (const auto & group : branch_grouped) for (const auto & item : group.second)
             branch_rows.push_back({group.first,item.first,
                 {item.second[0],item.second[1],item.second[2]}});
-        if (source_fingerprint.empty())
-            source_fingerprint = fingerprint(json{{"context",context},{"records",accepted}}.dump());
+        // Cache lookup identity is local to a live store; provenance is a
+        // reproducible digest of validated content across close/reopen.
+        const nlohmann::json canonical_source = json{{"context",context},{"records",accepted}};
+        source_fingerprint = fingerprint(canonical_source.dump());
+        if (cache_key.empty()) cache_key = source_fingerprint;
         if (!watermark_supported && fallback.empty()) {
-            if (store.get_history_projection_cache(source_fingerprint, cached_projection)) {
+            if (store.get_history_projection_cache(cache_key, cached_projection)) {
                 projection = cached_projection->suffix_projection;
                 branch_projection = cached_projection->branch_projection;
                 projection_hit = true;
@@ -261,35 +282,34 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             }
         }
         if (!projection_hit && fallback.empty()) {
-            const size_t bytes = projection_bytes(projection) + projection_bytes(branch_projection);
-            common_semi_oracle_history_projection_cache_entry entry;
-            entry.key = source_fingerprint;
-            entry.suffix_projection = projection;
-            entry.branch_projection = branch_projection;
-            entry.bytes = bytes;
-            entry.read_rows = read_rows;
-            entry.rejected_rows = rejected;
-            entry.duplicate_rows = duplicates;
-            entry.conflicting_rows = conflicting_records;
-            for (const auto & row : accepted)
-                if (row.is_object() && row.contains("evaluation_id") && row["evaluation_id"].is_string()) {
-                    entry.evaluation_refs.push_back(row["evaluation_id"].get<std::string>());
-                    entry.bytes += sizeof(std::string) + entry.evaluation_refs.back().size();
-                }
-            store.put_history_projection_cache(std::move(entry));
+            try {
+                const size_t bytes = projection_bytes(projection) + projection_bytes(branch_projection);
+                common_semi_oracle_history_projection_cache_entry entry;
+                entry.key = cache_key;
+                entry.suffix_projection = projection;
+                entry.branch_projection = branch_projection;
+                entry.bytes = bytes + sizeof(entry) + entry.key.capacity();
+                entry.read_rows = read_rows;
+                entry.rejected_rows = rejected;
+                entry.duplicate_rows = duplicates;
+                entry.conflicting_rows = conflicting_records;
+                for (const auto & row : accepted)
+                    if (row.is_object() && row.contains("evaluation_id") && row["evaluation_id"].is_string()) {
+                        entry.evaluation_refs.push_back(row["evaluation_id"].get<std::string>());
+                        entry.bytes += entry.evaluation_refs.back().capacity();
+                    }
+                entry.bytes += entry.evaluation_refs.capacity() * sizeof(std::string);
+                store.put_history_projection_cache(std::move(entry));
+            } catch (...) {
+                // Caching is optional: keep the valid projection and actual policy
+                // even if retaining it fails. No second search is needed.
+                history_error = "projection_cache_write_exception";
+            }
         }
     }
     std::map<std::string,std::vector<double>> projected_weights;
     std::map<std::string,size_t> group_counts;
     projection.aggregate_excluding(fixture,projected_weights,group_counts);
-    size_t eligible_fixture_groups=0;
-    for(const auto & group:projection.fixture_categories) {
-        if(group.first==fixture)continue;
-        const bool contributes=std::any_of(group.second.begin(),group.second.end(),[](const auto & item){
-            return std::any_of(item.second.begin(),item.second.end(),[](double value){return value>0.0;});
-        });
-        if(contributes)++eligible_fixture_groups;
-    }
     std::map<std::string,counts> weights;
     for(const auto & item:projected_weights)if(item.second.size()==3)
         weights[item.first]={item.second[0],item.second[1],item.second[2]};
@@ -307,7 +327,18 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         }
         group_counts = branch_group_counts;
     }
-    const std::string history_fingerprint=projection.fingerprint;
+    const auto & active_projection = branch_labels_used ? branch_projection : projection;
+    size_t eligible_fixture_groups = 0;
+    for (const auto & group : active_projection.fixture_categories) {
+        if (group.first == fixture) continue;
+        const bool contributes = std::any_of(group.second.begin(), group.second.end(), [](const auto & item) {
+            return std::any_of(item.second.begin(), item.second.end(), [](double value) { return value > 0.0; });
+        });
+        if (contributes) ++eligible_fixture_groups;
+    }
+    const std::string history_fingerprint = branch_labels_used
+        ? fingerprint(json::array({projection.fingerprint, branch_projection.fingerprint}).dump())
+        : projection.fingerprint;
     json decisions = json::array();
     size_t omitted_decisions = 0;
     double adviser_ms=0.0;
@@ -454,7 +485,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             {"branch_quality_labels_used",branch_labels_used},
             {"branch_quality_projection_fingerprint",branch_projection.fingerprint},
             {"projection_ms",std::chrono::duration<double,std::milli>(search_started-started).count()},
-            {"projection_cache_hit",projection_hit},{"projection_builder_revision",projection.builder_revision},
+            {"projection_cache_hit",projection_hit},{"projection_builder_revision",active_projection.builder_revision},
             {"search_with_adviser_ms",search_ms},
             {"adviser_ms",adviser_ms},{"search_ms",std::max(0.0,search_ms-adviser_ms)},
             {"history_diagnostic", history_error},

@@ -214,6 +214,15 @@ int main() {
     common_semi_oracle_tool_service resumed_maze(store,"host","session-maze");
     CHECK(resumed_maze.search_active_goal(goal_result,error));
     CHECK(goal_result.verdict==common_semi_oracle_verdict::satisfied);
+    common_semi_oracle_history_projection_cache_entry cached_entry;
+    cached_entry.key = "reopen-regression";
+    cached_entry.bytes = 1;
+    store.put_history_projection_cache(std::move(cached_entry));
+    std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> cached_value;
+    CHECK(store.get_history_projection_cache("reopen-regression", cached_value));
+    store.close();
+    CHECK(store.open(db,error));
+    CHECK(!store.get_history_projection_cache("reopen-regression", cached_value));
     store.close();
     std::filesystem::remove_all(dir,ec);
     return 0;
