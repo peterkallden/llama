@@ -2,6 +2,7 @@
 #include "tools/agent/data/agent-investigation-dataset-source.h"
 
 #include <iostream>
+#include <cstdlib>
 
 int main() {
     using json = nlohmann::ordered_json;
@@ -50,6 +51,54 @@ int main() {
             true, response, error) || error.find("not authorized for this namespace") == std::string::npos) {
         std::cerr << "virtual dataset adapter did not enforce the configured namespace: " << error << '\n';
         return 6;
+    }
+
+    // Optional real-service smoke. The regular CTest contract remains offline;
+    // setting this endpoint exercises the same virtual-dataset adapter against
+    // a running Elasticsearch/OpenSearch instance populated by the smoke runner.
+    const char * real_endpoint = std::getenv("LLAMA_AGENT_INVESTIGATION_REAL_ENDPOINT");
+    if (real_endpoint && *real_endpoint) {
+        agent_host_investigation_source_config real_source;
+        real_source.id = "real";
+        real_source.dialect = std::getenv("LLAMA_AGENT_INVESTIGATION_REAL_DIALECT")
+            ? std::getenv("LLAMA_AGENT_INVESTIGATION_REAL_DIALECT") : "elasticsearch";
+        real_source.base_url = real_endpoint;
+        real_source.allowed_indices = {"llama-agent-investigation-smoke"};
+        real_source.allowed_namespaces = {"tenant-a"};
+        real_source.allow_private_network = true;
+        real_source.max_page_size = 2;
+        real_source.fields = {
+            {"event.id", "event.id"}, {"event.kind", "event.kind"},
+            {"host.name", "host.name"}, {"@timestamp", "@timestamp"},
+        };
+        agent_host_investigation_config real_config;
+        real_config.enabled = true;
+        real_config.max_materialized_rows = 8;
+        real_config.sources.push_back(real_source);
+        agent_investigation_virtual_dataset_source real_virtual_source(real_config);
+        common_agent_dataset_descriptor real_descriptor;
+        real_descriptor.ref.uri = "dataset://investigation/real/llama-agent-investigation-smoke";
+        real_descriptor.ref.source_provider = "real";
+        real_descriptor.ref.source_request_json = R"({"index":"llama-agent-investigation-smoke"})";
+        context.scope.namespace_id = "tenant-a";
+        const auto request = json{{"dataset", real_descriptor.ref.uri},
+            {"select", {"event.id", "host.name"}}, {"where", json::array({
+                {{"field", "event.kind"}, {"operator", "="}, {"value", "auth"}}})},
+            {"order_by", json::array({{{"field", "event.id"}, {"direction", "asc"}}})},
+            {"limit", 2}, {"offset", 0}}.dump();
+        if (!real_virtual_source.execute(real_descriptor, "data.query", request,
+                context.scope, true, response, error)) {
+            std::cerr << "real search provider smoke failed: " << error << '\n';
+            return 7;
+        }
+        const auto page = json::parse(response, nullptr, false);
+        if (!page.is_object() || !page.contains("rows") || !page["rows"].is_array() ||
+                page["rows"].size() != 2 || page.value("complete", true) ||
+                !page.value("result_truncated", false) ||
+                page["rows"][0] != json::array({"evt-001", "SRV-APP-07"})) {
+            std::cerr << "real search provider returned an unexpected filtered/paged result: " << response << '\n';
+            return 8;
+        }
     }
     return 0;
 }
