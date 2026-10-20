@@ -76,7 +76,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-report-composition@v1",
-      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis", "investigation.report"],
       "optional_capabilities": ["artifact.export", "document.open", "document.save"],
       "required_context": []
     }

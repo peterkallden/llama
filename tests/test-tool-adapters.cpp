@@ -1212,6 +1212,13 @@ int main() {
     assert(result.ok && result.output.find("hypothesis") != std::string::npos &&
         investigation_store.cases.at("graph-case").revision == 3 &&
         investigation_store.cases.at("graph-case").claims[0].state == common_investigation_claim_state::hypothesis);
+    result = investigation_registry.execute({"investigation.report.compose",
+        R"({"case_id":"graph-case","expected_revision":3})"});
+    assert(result.ok && result.output.find("report_uri") != std::string::npos &&
+        investigation_resources.requests.size() == 3 &&
+        investigation_resources.requests.back().text.find("## Timeline") != std::string::npos &&
+        investigation_resources.requests.back().text.find("Hypothesis:") != std::string::npos &&
+        investigation_resources.requests.back().text.find("event:1") != std::string::npos);
     auto foreign_scope = investigation_bindings;
     foreign_scope.tool_scope.namespace_id = "tenant-b";
     common_tool_registry foreign_investigation_registry;

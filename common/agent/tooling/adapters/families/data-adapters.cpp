@@ -643,6 +643,113 @@ common_tool_execution_result execute_investigation_tool(
     if (operation == "investigation.case.open") {
         return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
     }
+    if (operation == "investigation.report.compose") {
+        if (arguments.value("expected_revision", uint64_t(0)) != value.revision) return
+            common_adapter_execution_failure("tool.investigation.revision_conflict",
+                "case revision changed before report composition", "Reload the case before composing a report.");
+        if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
+            "tool.investigation.report_store_unavailable", "resource store is unavailable",
+            "A durable report resource cannot be created.");
+        const auto safe_text = [](std::string text) {
+            for (auto & c : text) {
+                if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+                else if (static_cast<unsigned char>(c) < 0x20) c = '?';
+            }
+            std::string out;
+            out.reserve(text.size());
+            for (const char c : text) {
+                if (c == '`') out += "'";
+                else if (c == '<') out += "&lt;";
+                else if (c == '>') out += "&gt;";
+                else out += c;
+            }
+            return out;
+        };
+        std::string markdown = "# Investigation report: " + safe_text(value.title) + "\n\n";
+        markdown += "- Case: `" + safe_text(value.case_id) + "`\n- Frozen revision: `" + std::to_string(value.revision) + "`\n";
+        markdown += "- Source: `" + safe_text(value.source_id) + "`\n- Time window (epoch ms): `" +
+            std::to_string(value.window_start_ms) + "` to `" + std::to_string(value.window_end_ms) + "`\n\n";
+        markdown += "## Investigation question\n\n" + safe_text(value.question) + "\n\n";
+        markdown += "## Scope and coverage\n\n";
+        markdown += value.gaps.empty() ? "No recorded collection or analysis gaps. This does not establish exhaustive source coverage.\n\n"
+            : "Coverage is partial or qualified; see the listed gaps.\n\n";
+        std::vector<const common_investigation_event *> ordered_events;
+        ordered_events.reserve(value.events.size());
+        for (const auto & event : value.events) ordered_events.push_back(&event);
+        std::stable_sort(ordered_events.begin(), ordered_events.end(), [](const auto * a, const auto * b) {
+            if (a->time.has_event_time != b->time.has_event_time) return a->time.has_event_time;
+            if (!a->time.has_event_time) return a->id < b->id;
+            if (a->time.event_time_ms != b->time.event_time_ms) return a->time.event_time_ms < b->time.event_time_ms;
+            return a->id < b->id;
+        });
+        markdown += "## Timeline\n\n";
+        if (ordered_events.empty()) markdown += "No source events are retained in this revision.\n\n";
+        for (const auto * event : ordered_events) {
+            markdown += "- " + (event->time.has_event_time ? std::to_string(event->time.event_time_ms) : std::string("time unknown")) +
+                " — " + safe_text(event->event_type) + " (`" + safe_text(event->id) + "`; document `" +
+                safe_text(event->source_document_id) + "`) [raw: " + safe_text(event->raw_resource_uri) + "]\n";
+        }
+        markdown += "\n## Relations\n\n";
+        if (value.relations.empty()) markdown += "No relations are derived in this revision.\n\n";
+        for (const auto & relation : value.relations) {
+            markdown += "- `" + safe_text(relation.from_entity_id) + "` → `" + safe_text(relation.to_entity_id) +
+                "` (type " + std::to_string(static_cast<int>(relation.kind)) + ", " + safe_text(relation.confidence_label) +
+                ", rule `" + safe_text(relation.rule_id) + "`); events: ";
+            for (size_t i = 0; i < relation.evidence_event_ids.size(); ++i) {
+                if (i) markdown += ", ";
+                markdown += "`" + safe_text(relation.evidence_event_ids[i]) + "`";
+            }
+            markdown += "\n";
+        }
+        markdown += "\n## Claims\n\n";
+        if (value.claims.empty()) markdown += "No claims are recorded.\n\n";
+        for (const auto & claim : value.claims) {
+            const char * state = claim.state == common_investigation_claim_state::hypothesis ? "Hypothesis" :
+                claim.state == common_investigation_claim_state::reviewed_conclusion ? "Reviewed conclusion" :
+                claim.state == common_investigation_claim_state::correlation ? "Correlation" : "Observation";
+            markdown += "### " + std::string(state) + ": " + safe_text(claim.text) + "\n\n";
+            for (const auto & id : claim.supporting_event_ids) markdown += "- Supports: `" + safe_text(id) + "`\n";
+            for (const auto & id : claim.contradicting_event_ids) markdown += "- Contradicts: `" + safe_text(id) + "`\n";
+            for (const auto & limitation : claim.limitations) markdown += "- Limitation: " + safe_text(limitation) + "\n";
+            markdown += "\n";
+        }
+        markdown += "## Gaps and limitations\n\n";
+        if (value.gaps.empty()) markdown += "No explicit gaps are recorded.\n";
+        for (const auto & gap : value.gaps) markdown += "- " + safe_text(gap) + "\n";
+        markdown += "\n## Evidence references\n\n";
+        for (const auto & event : value.events) {
+            markdown += "- Event `" + safe_text(event.id) + "`: raw `" + safe_text(event.raw_resource_uri) +
+                "`; normalized `" + safe_text(event.normalized_resource_uri) + "`\n";
+        }
+        if (markdown.size() > 2 * 1024 * 1024) return common_adapter_validation_failure(
+            "tool.investigation.report_too_large", "frozen report exceeds the 2 MiB resource limit");
+        const std::string fingerprint = "sha256:" + hash_sha256_hex(markdown.data(), markdown.size());
+        agent_resource_put_request put;
+        put.name = value.case_id + "-report-r" + std::to_string(value.revision) + ".md";
+        put.description = "Frozen investigation report for case revision " + std::to_string(value.revision);
+        put.mime_type = "text/markdown"; put.text = markdown;
+        put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+        put.source_provider = value.source_id; put.source_tool = "investigation.report.compose";
+        apply_agent_resource_runtime(bindings.resource_runtime, put);
+        put.metadata.purpose = "Frozen investigation report";
+        put.metadata.content_summary = "Case " + value.case_id + " revision " + std::to_string(value.revision);
+        put.metadata.source_provider = value.source_id;
+        put.metadata.source_operation = "investigation.report.compose";
+        put.metadata.source_request_json = json{{"case_id", value.case_id},
+            {"case_revision", value.revision}, {"content_fingerprint", fingerprint}}.dump();
+        put.metadata.content_hash = fingerprint;
+        put.metadata.keywords = {"investigation", "report", value.case_id};
+        put.metadata.limitations = value.gaps.empty() ?
+            "No recorded gaps; this does not establish exhaustive source coverage." :
+            [&]() { std::string text; for (const auto & gap : value.gaps) { if (!text.empty()) text += "; "; text += gap; } return text; }();
+        agent_resource_descriptor report;
+        if (!bindings.resource_runtime.store->put_text(put, report, error)) return common_adapter_execution_failure(
+            "tool.investigation.report_store_failed", std::move(error), "The frozen report could not be persisted.");
+        const bool complete = value.gaps.empty();
+        return common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
+            {"report_uri", report.uri}, {"content_fingerprint", fingerprint}, {"complete", complete},
+            {"limitations", value.gaps}});
+    }
     if (operation == "investigation.collect") {
         if (arguments.value("expected_revision", uint64_t(0)) != value.revision) {
             return common_adapter_execution_failure("tool.investigation.revision_conflict",
@@ -1077,6 +1184,7 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.dataset.sample" ||
         definition.executor_id == "builtin.investigation.case.create" ||
         definition.executor_id == "builtin.investigation.case.open" ||
+        definition.executor_id == "builtin.investigation.report.compose" ||
         definition.executor_id == "builtin.investigation.collect" ||
         definition.executor_id == "builtin.investigation.graph.expand" ||
         definition.executor_id == "builtin.investigation.analyze" ||

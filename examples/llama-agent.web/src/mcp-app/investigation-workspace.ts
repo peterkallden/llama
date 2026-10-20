@@ -16,6 +16,7 @@ if (!window.__investigationWorkspace) {
   let selectedRelation = "";
   let selectedEvent = "";
   let graph: Core | null = null;
+  let lastAppCallAt = 0;
 
   function rpc(method: string, params: Json = {}) {
     const id = seq++;
@@ -37,8 +38,12 @@ if (!window.__investigationWorkspace) {
     return value && typeof value === "object" ? value : {};
   }
   async function call(tool: string, args: Json, token = generation): Promise<Json | null> {
-    const result = content(await rpc("tools/call", { name: tool, arguments: args }));
-    return token === generation ? result : null;
+    lastAppCallAt = Date.now();
+    try {
+      const result = content(await rpc("tools/call", { name: tool, arguments: args }));
+      lastAppCallAt = Date.now();
+      return token === generation ? result : null;
+    } catch (error) { lastAppCallAt = Date.now(); throw error; }
   }
   function msValue(selector: string) {
     const value = q<HTMLInputElement>(selector).value;
@@ -59,6 +64,8 @@ if (!window.__investigationWorkspace) {
     q<HTMLInputElement>("#source-id").value = value.source_id;
     setDate("#filter-start", value.window_start_ms); setDate("#filter-end", value.window_end_ms);
     q<HTMLButtonElement>("#save-hypothesis").disabled = false;
+    q<HTMLButtonElement>("#compose-report").disabled = false;
+    q("#report-result").textContent = "No report created for this revision.";
     renderClaims(value.claims ?? []);
     renderGraph({ nodes: [], edges: [], case_revision: revision, truncated: false, limitations: [] });
     setStatus(`Case ${value.case_id} opened at revision ${revision}.`);
@@ -179,6 +186,18 @@ if (!window.__investigationWorkspace) {
       await openCase(currentCase.case_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
+  async function composeReport() {
+    if (!currentCase) return;
+    const token = generation;
+    try {
+      const result = await call("investigation.report.compose", {
+        case_id: currentCase.case_id, expected_revision: currentCase.revision,
+      }, token);
+      if (!result) return;
+      q("#report-result").textContent = `${result.complete ? "No recorded gaps" : "Partial / qualified"} · frozen revision ${result.case_revision}\n${result.report_uri}\n${result.content_fingerprint}`;
+      setStatus(`Report frozen from case revision ${result.case_revision}. The resource can be opened through the existing document workflow.`);
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+  }
   async function createOrOpen() {
     const caseId = q<HTMLInputElement>("#case-id").value.trim();
     if (caseId) { q("#case-form").setAttribute("hidden", ""); await openCase(caseId); return; }
@@ -201,6 +220,7 @@ if (!window.__investigationWorkspace) {
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));
   q("#apply-filter").addEventListener("click", () => void expand());
   q("#save-hypothesis").addEventListener("click", () => void saveHypothesis());
+  q("#compose-report").addEventListener("click", () => void composeReport());
   q<HTMLTextAreaElement>("#hypothesis").addEventListener("input", (event) => {
     q<HTMLButtonElement>("#save-hypothesis").disabled = !currentCase || !(event.target as HTMLTextAreaElement).value.trim();
   });
@@ -219,7 +239,7 @@ if (!window.__investigationWorkspace) {
       if (typeof args.case_id === "string") { q<HTMLInputElement>("#case-id").value = args.case_id; void openCase(args.case_id); }
     }
     if (message.method === "ui/notifications/tool-result" && message.params?.structuredContent?.case_id) {
-      void openCase(message.params.structuredContent.case_id);
+      if (Date.now() - lastAppCallAt > 1000) void openCase(message.params.structuredContent.case_id);
     }
   });
   void rpc("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "llama-agent-investigation-workspace", version: "0.1" }, appCapabilities: { tools: {} } })
