@@ -2280,9 +2280,66 @@ K, policy, model or scope does not authorize this selector. The evaluation
 qualifies measured per-arm outcome utility, not a compute-saving claim, and
 grants no Oracle, learning-credit or promotion authority.
 
-Implementation verification for this integration is pending: the current
-correction sweep added regression cases but deliberately did not compile or
-execute CTests/model smokes.
+#### Opt-in three-mode model smoke
+
+The dataset-question repair model smoke can exercise the production WHERE
+guidance seam in each operator mode, or run all three modes against the same
+selected scenario:
+
+```bash
+LLAMA_AGENT_BUILD_DIR=build-agent-vulkan-cozo \
+LLAMA_AGENT_GPU_LAYERS=99 GGML_VK_VISIBLE_DEVICES=0 \
+scripts/test-agent-flydelta-dataset-question-repair-model-smoke.sh \
+  --guidance-mode all --scenario-id regional-sales-summary \
+  --n-parallel 2 --n-ctx-per-sequence 2048 \
+  --model /path/to/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
+```
+
+`--guidance-mode off|shadow|experimental` runs one mode; `all` runs three
+separate model-backed passes and saves a log for each. The comparison is for
+the production WHERE/Whirlpool decision path. This smoke provider uses a fresh
+in-memory lifecycle store per pass, so it starts with no learned outcome
+history and cannot qualify Deep full-generation selection. Consequently its
+`experimental` result is a prior-only Whirlpool probe-order experiment, not
+evidence that learned history improves FlyDelta or that Deep is qualified.
+The 2026-10-20 Qwen/Vulkan run completed all three modes on the same
+`regional-sales-summary` scenario (`n_parallel=2`, 2,048 tokens/sequence):
+
+| Mode | Adviser decisions | Compatible history rows | Executed probe layers | Process wall time |
+| --- | ---: | ---: | --- | ---: |
+| `off` | 0 | n/a | 14, 12 | 8m 45s |
+| `shadow` | 2 | 0 | 14, 12 | 8m 42s |
+| `experimental` | 2 | 0 | 14, 12 | 9m 30s |
+
+Shadow recorded a different posterior ranking (`14,16,15,12,13`) from the
+original probe order (`14,12,16,13,15`) but left the selected/executed probes
+at `14,12`. Experimental selected the same probes because this fresh store
+had no compatible learned outcomes; its posterior was effectively the
+uninformative prior. This verifies the mode wiring and shadow invariant, but
+does not demonstrate a learned preference or a benefit from experimental
+guidance. Runtime totals are not a controlled speed comparison: scoring work
+varied between passes, and the selected layers did not change.
+
+The fixture's original model call failed canonical argument ordering and the
+host repair echo succeeded. That `HELPED`/learning-credit record belongs to
+host repair, not a FlyDelta intervention. The guided WHERE arms had no known
+counterfactual verdict, and Deep was explicitly unavailable because this
+fixture yielded only one independent repair sample. Device teacher-scoring
+was confirmed (`device_scoring=yes`). Logs and full traces are in
+`/tmp/llama-agent-flydelta-dataset-question-repair-model.jj2hrZ/` on the test
+host. The smoke never enables matched-union evaluation or changes production
+defaults.
+
+This run compiled the smoke target and exercised the three model-backed
+guidance modes. It did not run the broader CTest suite or qualify Deep
+full-generation selection. A useful impact evaluation still requires
+compatible host-verified intervention history and enough independent arms;
+do not infer one from the host repair result above.
+
+The focused FlyDelta CTest pass after rebuilding its test binaries passed
+`whirlpool-search`, `search-pipeline`, `deep-search`, and
+`outcome-guidance`. `daemon-seams` still fails its existing assertion that the
+Deep coefficient search selected a helped arm (`tests/test-agent-flydelta-daemon-seams.cpp:196`); the test output has no further diagnostic. This is separate from the model smoke, whose fixture did not provide enough independent arms to enter Deep.
 
 The eight-group default applies to **backoff**, not to direct arm-category
 evidence. A category with fewer observations can still have a posterior, with
@@ -2301,8 +2358,10 @@ The legacy raw-history API delegates to the same builder and decision code.
 The `outcome.predict` inspector likewise builds this typed projection from its
 host-authorized chronological, leave-one-fixture-out view. Retention failures
 do not invalidate a built projection, and `off` skips history projection.
-These integration changes await compilation and tests; the earlier smoke
-results are not a measurement of their performance.
+The measured three-mode smoke above verifies the production Whirlpool adviser
+seam, not the performance of projection reuse across Whirlpool, Deep and TFO.
+The latter still requires a separate matched run with compatible persisted
+history and enough independent evidence to reach Deep.
 Predictions require exact scope, model, tokenizer, template,
 baseline-deployment and verifier identity. V1 does not transfer observations
 across those boundaries. Each fixture group contributes at most one total

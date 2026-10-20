@@ -64,6 +64,7 @@ struct options {
     int n_parallel = 2;
     int n_ctx_per_sequence = 6144;
     std::string backend = "server";
+    std::string outcome_guidance_mode;
     std::string scenario_id;
     std::string behavior_key;
     size_t max_scenarios = 0;
@@ -127,6 +128,16 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
         else if (argument == "--production-bindings") value.production_bindings = true;
         else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
+        else if (argument == "--outcome-guidance-mode") {
+            const auto v = next("--outcome-guidance-mode"); if (!v) return false;
+            common_flydelta_outcome_guidance_mode parsed;
+            std::string mode_error;
+            if (!common_flydelta_parse_outcome_guidance_mode(v, parsed, mode_error)) {
+                std::cerr << mode_error << '\n'; return false;
+            }
+            value.outcome_guidance_mode = v;
+            value.production_bindings = value.production_where = value.force_deep = true;
+        }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-parallel") { const auto v = next("--n-parallel"); if (!v) return false; value.n_parallel = std::stoi(v); }
@@ -443,6 +454,7 @@ int main(int argc, char ** argv) {
                   << " [--behavior-key KEY]"
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
+                  << " [--outcome-guidance-mode off|shadow|experimental]"
                   << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep] [--adaptive-alpha-search]"
                   << " [--threads N] [--n-gpu-layers N] [--n-parallel N]"
                   << " [--n-ctx-per-sequence N]\n";
@@ -1147,9 +1159,16 @@ int main(int argc, char ** argv) {
         // must still execute when the fixture naturally reaches Deep; the
         // normal worker/orchestrator gate remains unchanged because this is
         // only the model-facing smoke path.
-        if (value.force_deep && entry.second.size() >= 2 && directions.size() >= 2) {
+        const bool guidance_smoke_requested = !value.outcome_guidance_mode.empty() &&
+            value.production_where;
+        if ((value.force_deep && entry.second.size() >= 2 && directions.size() >= 2) ||
+                (guidance_smoke_requested && !entry.second.empty() && !directions.empty())) {
             const auto aggregation_snapshot_for_deep = aggregation.snapshot();
-            if (aggregation_snapshot_for_deep.retained_samples.size() < 2) {
+            const bool guidance_only_smoke = guidance_smoke_requested &&
+                aggregation_snapshot_for_deep.retained_samples.size() < 2;
+            if (aggregation_snapshot_for_deep.retained_samples.empty() ||
+                    (aggregation_snapshot_for_deep.retained_samples.size() < 2 &&
+                     !guidance_only_smoke)) {
                 std::cerr << "forced Deep requires two retained samples for " << entry.first << '\n';
                 host.close();
                 return 1;
@@ -1218,9 +1237,20 @@ int main(int argc, char ** argv) {
                 daemon_config.n_threads = value.n_threads;
                 daemon_config.adaptation_flydelta_model_profile_fingerprint = capture->model_profile_fingerprint;
                 daemon_config.adaptation_flydelta_capture_layout_revision = capture->capture_layout_revision;
+                if (!value.outcome_guidance_mode.empty()) {
+                    common_flydelta_parse_outcome_guidance_mode(value.outcome_guidance_mode,
+                        daemon_config.adaptation_flydelta_outcome_guidance.mode, error);
+                    daemon_config.adaptation_flydelta_outcome_guidance.matched_evaluation = false;
+                }
                 production_provider = daemon_flydelta_make_resource_provider(daemon_config, server_host,
                     &production_resources, {}, std::make_shared<common_learning_in_memory_lifecycle_store>(), error);
                 if (!production_provider) { host.close(); std::cerr << error << '\n'; return 1; }
+                if (!value.outcome_guidance_mode.empty()) {
+                    std::cout << "flydelta_guidance_smoke requested_mode=" << value.outcome_guidance_mode
+                              << " provider_mode=" << common_flydelta_outcome_guidance_mode_name(
+                                    production_provider->outcome_guidance_config.mode)
+                              << " matched_evaluation=off qualification=production_gate_preserved\n";
+                }
                 const auto put = [&](const ordered_json & data, std::string & uri) {
                     agent_resource_put_request request;
                     request.name = "flydelta-production-smoke.json";
@@ -1237,6 +1267,8 @@ int main(int argc, char ** argv) {
                 production_job.id = "flydelta-production-smoke:" + deep_case.id;
                 production_job.seed.candidate_ref = "flydelta://experimental/repair-replay";
                 production_job.seed.behavior_key = entry.first;
+                production_job.seed.fixture_group_id = "dataset-question-guidance:" + deep_case.id;
+                production_job.seed.verifier_contract_revision = "dataset-question-verifier:v1";
                 production_job.seed.evidence_ref = deep_case_deltas.front().host_evidence_ref;
                 production_job.capture_manifest_ids = {deep_case.capture_manifest_id};
                 production_job.seed.model_profile_fingerprint = capture->model_profile_fingerprint;
@@ -1282,10 +1314,55 @@ int main(int argc, char ** argv) {
                     where_config.max_directions = 1;
                     where_config.whirlpool_max_rounds = 1;
                     where_config.whirlpool_max_trials = where_config.region_max_trials = 4;
-                    where_config.whirlpool_probes_per_round = 4;
+                    // Guidance-mode evaluation deliberately gives the adviser
+                    // a bounded selection choice. The production default is
+                    // untouched; all four layer candidates remain legal, but
+                    // only two are executed in this smoke round.
+                    where_config.whirlpool_probes_per_round = guidance_smoke_requested ? 2 : 4;
                     common_flydelta_search_pipeline_result where_result;
                     if (!daemon_flydelta_run_search_pipeline(production_provider, production_job,
                             where_config, where_result, error)) { host.close(); std::cerr << error << '\n'; return 1; }
+                    if (guidance_smoke_requested) {
+                        for (const auto & where_direction : where_result.directions) {
+                            const auto & whirlpool = where_direction.whirlpool_trace;
+                            ordered_json whirlpool_json = {
+                                {"initial_centre_source", whirlpool.initial_centre_source},
+                                {"initial_centre_decision_id",
+                                    whirlpool.initial_centre_guidance_decision_id},
+                                {"initial_centre_original_layers",
+                                    whirlpool.initial_centre_guidance_original_layers},
+                                {"initial_centre_posterior_layers",
+                                    whirlpool.initial_centre_guidance_posterior_layers},
+                                {"initial_centre_hypothetical_layers",
+                                    whirlpool.initial_centre_guidance_hypothetical_layers},
+                                {"rounds", ordered_json::array()},
+                            };
+                            for (const auto & round : whirlpool.rounds) {
+                                whirlpool_json["rounds"].push_back({
+                                    {"decision_id", round.guidance_decision_id},
+                                    {"original_layers", round.guidance_original_layers},
+                                    {"posterior_layers", round.guidance_posterior_layers},
+                                    {"hypothetical_layers", round.guidance_hypothetical_layers},
+                                    {"selected_layers", round.guidance_selected_layers},
+                                    {"executed_layers", round.probed_layers},
+                                    {"history_fingerprint", round.guidance_history_fingerprint},
+                                    {"fallback_reason", round.guidance_fallback_reason},
+                                });
+                            }
+                            std::cout << "flydelta_guidance_smoke_whirlpool_trace mode="
+                                      << common_flydelta_outcome_guidance_mode_name(
+                                          production_provider->outcome_guidance_config.mode)
+                                      << " group=" << entry.first
+                                      << " json=" << whirlpool_json.dump() << '\n';
+                        }
+                    }
+                    if (guidance_only_smoke) {
+                        std::cout << "flydelta_guidance_smoke_deep=unavailable"
+                                  << " reason=insufficient_independent_repair_samples"
+                                  << " whirlpool_probe_limit="
+                                  << where_config.whirlpool_probes_per_round << '\n';
+                        continue;
+                    }
                     common_flydelta_search_continuation continuation;
                     if (!common_flydelta_select_search_continuation(where_result, continuation, error) ||
                             continuation.region.layer_indices.empty()) {
