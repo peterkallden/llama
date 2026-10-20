@@ -8,10 +8,12 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:document-editor": "vite build --config vite.document-editor.config.ts && node scripts/embed-document-editor.mjs",
     "test": "vitest run",
+    "build:investigation-workspace": "vite build --config vite.investigation.config.ts && node scripts/embed-investigation-workspace.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@toast-ui/editor": "3.2.2",
+    "cytoscape": "3.33.1",
     "dompurify": "2.5.9",
     "vue": "^3.5.18"
   },

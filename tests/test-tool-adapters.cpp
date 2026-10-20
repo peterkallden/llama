@@ -86,6 +86,42 @@ public:
     std::map<std::string,std::string> contents;
 };
 
+class test_investigation_store final : public common_agent_data_store {
+public:
+    common_agent_dataset_descriptor source;
+    std::map<std::string, common_investigation_case_revision> cases;
+
+    bool execute(const std::string &, const std::string &, std::string &, std::string & error) override {
+        error = "not used by investigation adapter contract";
+        return false;
+    }
+    bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & out,
+            std::string & error) override {
+        out = {source}; error.clear(); return true;
+    }
+    bool get_investigation_case(const std::string & id, const common_agent_scope & scope,
+            common_investigation_case_revision & out, std::string & error) override {
+        const auto found = cases.find(id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "case is unavailable in this scope"; return false;
+        }
+        out = found->second; error.clear(); return true;
+    }
+    bool publish_investigation_case(const common_investigation_case_revision & input,
+            uint64_t expected, const std::string &, common_investigation_case_revision & out,
+            std::string & error) override {
+        const auto found = cases.find(input.case_id);
+        const uint64_t current = found == cases.end() ? 0 : found->second.revision;
+        if (current != expected || input.revision != expected + 1) {
+            error = "investigation case revision conflict"; return false;
+        }
+        out = input; cases[input.case_id] = out; error.clear(); return true;
+    }
+    void seed(common_investigation_case_revision value) { cases[value.case_id] = std::move(value); }
+};
+
 class test_docx_processing_provider final : public agent_resource_processing_provider {
 public:
     test_docx_processing_provider(
@@ -1086,6 +1122,63 @@ int main() {
     result = native_network_registry.execute({"web.fetch", R"({"url":"https://example.org/data","accept":"application/json\r\nX-Injected: true"})"});
     assert(!result.ok && result.failure_code == "tool.web_fetch.out_of_bounds" &&
            result.failure_class == common_tool_failure_class::validation);
+
+    test_investigation_store investigation_store;
+    investigation_store.source.ref.uri = "dataset://investigation/logs/security";
+    investigation_store.source.ref.name = "security";
+    investigation_store.source.ref.source_provider = "logs";
+    investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    common_investigation_case_revision investigation_case;
+    investigation_case.case_id = "graph-case";
+    investigation_case.title = "Authentication chain";
+    investigation_case.question = "Which host received the login?";
+    investigation_case.source_id = "logs";
+    investigation_case.window_start_ms = 100;
+    investigation_case.window_end_ms = 1000;
+    investigation_case.scope.namespace_id = "tenant-a";
+    investigation_case.scope.project_id = "project-a";
+    investigation_case.scope.session_id = "session-a";
+    investigation_case.entities = {
+        {"user:logs:alice", "logs", common_investigation_entity_kind::user, "alice", "alice", "", 0, 0},
+        {"host:logs:app1", "logs", common_investigation_entity_kind::host, "app1", "app1", "", 0, 0},
+    };
+    investigation_case.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
+        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1"}};
+    investigation_case.relations = {{"rel:1", "logs", "user:logs:alice", "host:logs:app1",
+        common_investigation_relation_kind::authenticated_to, 200, 200, true, 1,
+        "auth-v1", "1", "observed", {"event:1"}}};
+    investigation_store.seed(investigation_case);
+    common_tool_catalog investigation_catalog;
+    assert(investigation_catalog.bootstrap("investigation", bootstrap, error));
+    common_native_tool_bindings investigation_bindings;
+    investigation_bindings.data_store = &investigation_store;
+    investigation_bindings.tool_scope = investigation_case.scope;
+    common_tool_registry investigation_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
+        investigation_bindings, investigation_registry, adapters, error));
+    result = investigation_registry.execute({"investigation.case.create",
+        R"({"title":"New case","question":"What happened?","source_id":"logs","window_start_ms":100,"window_end_ms":1000})"});
+    assert(result.ok && result.output.find("case-") != std::string::npos);
+    result = investigation_registry.execute({"investigation.graph.expand",
+        R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
+    assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
+        result.output.find("event:1") != std::string::npos);
+    result = investigation_registry.execute({"investigation.events",
+        R"({"case_id":"graph-case","relation_id":"rel:1"})"});
+    assert(result.ok && result.output.find("doc-1") != std::string::npos);
+    result = investigation_registry.execute({"investigation.claim.hypothesize",
+        R"({"case_id":"graph-case","expected_revision":1,"claim_id":"h-1","text":"The login may be unusual.","supporting_event_ids":["event:1"]})"});
+    assert(result.ok && result.output.find("hypothesis") != std::string::npos &&
+        investigation_store.cases.at("graph-case").revision == 2 &&
+        investigation_store.cases.at("graph-case").claims[0].state == common_investigation_claim_state::hypothesis);
+    auto foreign_scope = investigation_bindings;
+    foreign_scope.tool_scope.namespace_id = "tenant-b";
+    common_tool_registry foreign_investigation_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
+        foreign_scope, foreign_investigation_registry, adapters, error));
+    result = foreign_investigation_registry.execute({"investigation.case.open",
+        R"({"case_id":"graph-case"})"});
+    assert(!result.ok && result.failure_code == "tool.investigation.case_unavailable");
     std::filesystem::remove_all(repository);
     return 0;
 }

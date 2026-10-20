@@ -8,6 +8,9 @@
 
 #include <exception>
 
+#ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+#include "agent-investigation-workspace-html.h"
+#endif
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
 #include "agent-document-editor-html.h"
 #endif
@@ -45,6 +48,11 @@ agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name)
     if (tool_name == "plan.get") {
         return {{"resourceUri", "ui://llama-agent/apps/workflow-inspector"}, {"visibility", {"model", "app"}}};
     }
+#ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+    if (tool_name.rfind("investigation.", 0) == 0) {
+        return {{"resourceUri", "ui://llama-agent/apps/investigation-workspace"}, {"visibility", {"model", "app"}}};
+    }
+#endif
     if (tool_name == "document.open" || tool_name == "document.import" || tool_name == "document.save" ||
             tool_name == "document.propose_patch" || tool_name == "document.apply_patch") {
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
@@ -75,6 +83,10 @@ agent_mcp_json agent_mcp_first_party_app_resources() {
         make_resource("ui://llama-agent/apps/data-explorer", "Data Explorer", "Read-only dataset schema and sample viewer."),
         make_resource("ui://llama-agent/apps/workflow-inspector", "Workflow Inspector", "Read-only view of the active plan."),
     });
+#ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+    resources.push_back(make_resource("ui://llama-agent/apps/investigation-workspace",
+        "Investigation Workspace", "Explore a scoped case graph, timeline and source evidence."));
+#endif
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
     resources.push_back(make_resource("ui://llama-agent/apps/document-editor", "Document Editor", "Edit a saved report revision and request an agent review."));
 #endif
@@ -161,6 +173,9 @@ send('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'llama-agent-da
     else if (uri == "ui://llama-agent/apps/workflow-inspector") text = workflow_app.c_str();
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
     else if (uri == "ui://llama-agent/apps/document-editor") text = LLAMA_AGENT_DOCUMENT_EDITOR_HTML;
+#endif
+#ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+    else if (uri == "ui://llama-agent/apps/investigation-workspace") text = LLAMA_AGENT_INVESTIGATION_WORKSPACE_HTML;
 #endif
     else {
         error = "unknown first-party MCP App resource URI";

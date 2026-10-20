@@ -89,10 +89,16 @@ int main() {
     assert(listed["tools"][0]["_meta"]["ui"]["visibility"] == agent_mcp_json::array({"model", "app"}));
 
     const auto resources = agent_mcp_first_party_app_resources();
-    assert(resources["resources"].size() == 2 || resources["resources"].size() == 3);
+    assert(resources["resources"].size() >= 2);
     bool has_document_editor=false;
-    for(const auto & resource:resources["resources"])if(resource.value("uri",std::string{})=="ui://llama-agent/apps/document-editor")has_document_editor=true;
-    assert(has_document_editor==(resources["resources"].size()==3));
+    bool has_investigation_workspace=false;
+    for(const auto & resource:resources["resources"]) {
+        const auto uri=resource.value("uri",std::string{});
+        has_document_editor=has_document_editor||uri=="ui://llama-agent/apps/document-editor";
+        has_investigation_workspace=has_investigation_workspace||uri=="ui://llama-agent/apps/investigation-workspace";
+    }
+    assert(has_document_editor==(resources["resources"].size()>=3 && resources["resources"].back().value("uri",std::string{})=="ui://llama-agent/apps/document-editor"));
+    assert(has_investigation_workspace==(agent_mcp_first_party_app_metadata("investigation.case.open").value("resourceUri","")=="ui://llama-agent/apps/investigation-workspace"));
     assert(resources["resources"][0]["mimeType"] == "text/html;profile=mcp-app");
     assert(agent_mcp_first_party_app_metadata("dataset.schema").value("resourceUri", "") ==
         "ui://llama-agent/apps/data-explorer");
@@ -101,6 +107,10 @@ int main() {
     agent_mcp_json app_resource;
     assert(agent_mcp_read_first_party_app_resource("ui://llama-agent/apps/data-explorer", app_resource, error));
     assert(app_resource["contents"][0]["text"].get<std::string>().find("dataset.schema") != std::string::npos);
+    if (has_investigation_workspace) {
+        assert(agent_mcp_read_first_party_app_resource("ui://llama-agent/apps/investigation-workspace", app_resource, error));
+        assert(app_resource["contents"][0]["text"].get<std::string>().find("Investigation workspace") != std::string::npos);
+    }
     assert(!agent_mcp_read_first_party_app_resource("ui://llama-agent/apps/unknown", app_resource, error));
 
     fake_mcp_client client;

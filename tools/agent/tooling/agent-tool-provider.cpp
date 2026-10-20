@@ -1469,6 +1469,10 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/data-explorer","visibility":["model","app"]})";
         } else if (definition.name == "plan.get") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/workflow-inspector","visibility":["model","app"]})";
+#ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+        } else if (definition.name.rfind("investigation.", 0) == 0) {
+            chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["model","app"]})";
+#endif
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
         } else if (definition.name == "document.import" || definition.name == "document.open" || definition.name == "document.save" ||
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch") {

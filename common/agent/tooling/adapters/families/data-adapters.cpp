@@ -3,7 +3,9 @@
 #include "agent/tooling/adapters/support/adapter-support.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -545,6 +547,141 @@ common_tool_execution_result execute_data_backend(
     return common_adapter_success_json(parsed);
 }
 
+common_tool_execution_result execute_investigation_tool(
+        const common_native_tool_bindings & bindings, const std::string & operation,
+        const json & arguments) {
+    if (!bindings.data_store) return common_adapter_execution_failure(
+        "tool.investigation.store_unavailable", "investigation persistence is unavailable",
+        "Investigation storage is unavailable.");
+    std::string error;
+    if (operation == "investigation.case.create") {
+        std::vector<common_agent_dataset_descriptor> datasets;
+        if (!bindings.data_store->list_dataset_descriptors(datasets, error)) {
+            return common_adapter_execution_failure("tool.investigation.sources_unavailable",
+                std::move(error), "Configured investigation sources are unavailable.");
+        }
+        const auto source_id = arguments.value("source_id", std::string());
+        const bool source_exists = std::any_of(datasets.begin(), datasets.end(), [&](const auto & descriptor) {
+            return descriptor.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
+                descriptor.ref.source_provider == source_id;
+        });
+        if (!source_exists) return common_adapter_not_found_failure(
+            "tool.investigation.source_unavailable", "case source is not configured",
+            "Choose a source available to the host.");
+        common_investigation_case_revision value;
+        static std::atomic<uint64_t> sequence{1};
+        value.case_id = "case-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) +
+            "-" + std::to_string(sequence.fetch_add(1));
+        value.title = arguments.value("title", std::string());
+        value.question = arguments.value("question", std::string());
+        value.source_id = source_id;
+        value.window_start_ms = arguments.value("window_start_ms", int64_t(0));
+        value.window_end_ms = arguments.value("window_end_ms", int64_t(0));
+        value.scope = bindings.tool_scope;
+        value.revision = 1;
+        common_investigation_case_revision published;
+        const auto revision_uri = "investigation-case://" + value.case_id + "/revision/1";
+        if (!bindings.data_store->publish_investigation_case(value, 0, revision_uri, published, error)) {
+            return common_adapter_execution_failure("tool.investigation.case_create_failed",
+                std::move(error), "The investigation case could not be created.");
+        }
+        return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
+            {"scope", {{"namespace_id", published.scope.namespace_id},
+                {"project_id", published.scope.project_id}, {"session_id", published.scope.session_id}}}});
+    }
+    const auto case_id = arguments.value("case_id", std::string());
+    common_investigation_case_revision value;
+    if (!bindings.data_store->get_investigation_case(case_id, bindings.tool_scope, value, error)) {
+        return common_adapter_not_found_failure("tool.investigation.case_unavailable",
+            std::move(error), "The case is unavailable in the current scope.");
+    }
+    if (operation == "investigation.case.open") {
+        return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
+    }
+    if (operation == "investigation.graph.expand") {
+        common_investigation_graph_query query;
+        query.case_id = case_id;
+        query.case_revision = arguments.value("case_revision", uint64_t(0));
+        query.center_entity_id = arguments.value("center_entity_id", std::string());
+        query.max_depth = arguments.value("max_depth", size_t(1));
+        query.max_nodes = arguments.value("max_nodes", size_t(100));
+        query.max_edges = arguments.value("max_edges", size_t(200));
+        query.window_start_ms = arguments.value("window_start_ms", value.window_start_ms);
+        query.window_end_ms = arguments.value("window_end_ms", value.window_end_ms);
+        common_investigation_graph_result graph;
+        if (!common_investigation_graph_expand(value, query, graph, error)) {
+            return common_adapter_validation_failure("tool.investigation.graph_invalid", std::move(error));
+        }
+        json nodes = json::array(), edges = json::array();
+        for (const auto & entity : graph.nodes) nodes.push_back({{"id", entity.id},
+            {"type", static_cast<int>(entity.kind)}, {"label", entity.display_name.empty() ? entity.value : entity.display_name}});
+        for (const auto & relation : graph.edges) edges.push_back({{"id", relation.id},
+            {"source", relation.from_entity_id}, {"target", relation.to_entity_id},
+            {"type", static_cast<int>(relation.kind)}, {"first_seen_ms", relation.first_seen_ms},
+            {"last_seen_ms", relation.last_seen_ms}, {"event_count", relation.event_count},
+            {"evidence_refs", relation.evidence_event_ids}, {"classification", relation.confidence_label}});
+        return common_adapter_success_json({{"case_revision", graph.case_revision}, {"nodes", nodes},
+            {"edges", edges}, {"truncated", graph.truncated}, {"limitations", graph.limitations}});
+    }
+    if (operation == "investigation.events") {
+        const auto entity_id = arguments.value("entity_id", std::string());
+        const auto relation_id = arguments.value("relation_id", std::string());
+        if (entity_id.empty() == relation_id.empty()) return common_adapter_validation_failure(
+            "tool.investigation.events_invalid", "events requires exactly one entity_id or relation_id");
+        std::set<std::string> evidence_ids;
+        if (!relation_id.empty()) {
+            const auto relation = std::find_if(value.relations.begin(), value.relations.end(),
+                [&](const auto & item) { return item.id == relation_id; });
+            if (relation == value.relations.end()) return common_adapter_not_found_failure(
+                "tool.investigation.relation_unavailable", "relation is not in this case",
+                "The selected relation is unavailable in this case.");
+            evidence_ids.insert(relation->evidence_event_ids.begin(), relation->evidence_event_ids.end());
+        }
+        json events = json::array();
+        const size_t limit = arguments.value("limit", size_t(100));
+        bool truncated = false;
+        for (const auto & event : value.events) {
+            if (!entity_id.empty() && std::find(event.entity_ids.begin(), event.entity_ids.end(), entity_id) == event.entity_ids.end()) continue;
+            if (!relation_id.empty() && !evidence_ids.count(event.id)) continue;
+            if (event.time.has_event_time && ((arguments.contains("window_start_ms") && event.time.event_time_ms < arguments["window_start_ms"].get<int64_t>()) ||
+                    (arguments.contains("window_end_ms") && event.time.event_time_ms >= arguments["window_end_ms"].get<int64_t>()))) continue;
+            if (events.size() >= limit) { truncated = true; break; }
+            events.push_back({{"id", event.id}, {"source_document_id", event.source_document_id},
+                {"event_type", event.event_type}, {"time", {{"event_time_ms", event.time.event_time_ms},
+                    {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
+                    {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},
+                {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}});
+        }
+        return common_adapter_success_json({{"events", events}, {"truncated", truncated},
+            {"limitations", value.gaps}});
+    }
+    if (operation == "investigation.claim.hypothesize") {
+        const auto claim_id = arguments.value("claim_id", std::string());
+        if (std::any_of(value.claims.begin(), value.claims.end(),
+                [&](const auto & claim) { return claim.id == claim_id; })) {
+            return common_adapter_validation_failure("tool.investigation.claim_duplicate", "claim_id already exists");
+        }
+        common_investigation_claim claim;
+        claim.id = claim_id;
+        claim.text = arguments.value("text", std::string());
+        claim.state = common_investigation_claim_state::hypothesis;
+        claim.supporting_event_ids = arguments.value("supporting_event_ids", std::vector<std::string>{});
+        claim.contradicting_event_ids = arguments.value("contradicting_event_ids", std::vector<std::string>{});
+        claim.limitations = arguments.value("limitations", std::vector<std::string>{});
+        value.claims.push_back(std::move(claim));
+        const uint64_t expected = value.revision++;
+        common_investigation_case_revision published;
+        const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
+        if (!bindings.data_store->publish_investigation_case(value, expected, revision_uri, published, error)) {
+            return common_adapter_execution_failure("tool.investigation.revision_conflict",
+                std::move(error), "The case changed; reload it before recording the hypothesis.");
+        }
+        return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
+            {"claim_state", "hypothesis"}});
+    }
+    return common_adapter_validation_failure("tool.investigation.operation_unknown", "unknown investigation operation");
+}
+
 bool select_dataset_reference(const json & arguments, std::string & dataset, std::string & error) {
     const bool has_dataset = arguments.contains("dataset") && arguments["dataset"].is_string();
     const bool has_path = arguments.contains("path") && arguments["path"].is_string();
@@ -632,6 +769,11 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.dataset.inspect" ||
         definition.executor_id == "builtin.dataset.schema" ||
         definition.executor_id == "builtin.dataset.sample" ||
+        definition.executor_id == "builtin.investigation.case.create" ||
+        definition.executor_id == "builtin.investigation.case.open" ||
+        definition.executor_id == "builtin.investigation.graph.expand" ||
+        definition.executor_id == "builtin.investigation.events" ||
+        definition.executor_id == "builtin.investigation.claim.hypothesize" ||
         definition.executor_id == "builtin.data.query" ||
         definition.executor_id == "builtin.data.filter" ||
         definition.executor_id == "builtin.data.aggregate" ||
@@ -642,7 +784,18 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.statistics.value_counts";
     if (!is_data_tool) return false;
 
-    if (definition.executor_id == "builtin.dataset.validate" &&
+    if (definition.executor_id.rfind("builtin.investigation.", 0) == 0) {
+        installed = common_adapter_register_definition(definition, registry,
+            [bindings, operation = definition.name](const std::string & input) {
+                std::string error;
+                json arguments;
+                if (!common_adapter_parse_object(input, arguments, error)) {
+                    return common_adapter_validation_failure(
+                        "tool.investigation.invalid_arguments", std::move(error));
+                }
+                return execute_investigation_tool(bindings, operation, arguments);
+            }, error);
+    } else if (definition.executor_id == "builtin.dataset.validate" &&
             (!bindings.repository_root.empty() || bindings.data_store != nullptr)) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             std::string error;

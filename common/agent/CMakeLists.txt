@@ -84,7 +84,9 @@ if (LLAMA_AGENT_SANDBOX)
     endif()
 endif()
 
-add_library(llama-agent-dataset-contracts dataset-contracts.cpp dataset-contracts.h)
+add_library(llama-agent-dataset-contracts
+    dataset-contracts.cpp dataset-contracts.h
+    investigation-contracts.cpp investigation-contracts.h)
 target_include_directories(llama-agent-dataset-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-dataset-contracts PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-dataset-contracts PUBLIC llama-common)
@@ -186,7 +188,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/experiment/flydelta-outcome-guidance.cpp adaptation/flydelta/experiment/flydelta-outcome-guidance.h
     adaptation/flydelta/experiment/flydelta-guidance-qualification.cpp adaptation/flydelta/experiment/flydelta-guidance-qualification.h
     prediction/outcome-guidance.cpp prediction/outcome-guidance.h
-    investigation-contracts.cpp investigation-contracts.h
+    investigation-prioritization.cpp investigation-contracts.h
     adaptation/flydelta/flydelta-decision-margin.cpp adaptation/flydelta/flydelta-decision-margin.h
     adaptation/flydelta/flydelta-deep-search.cpp adaptation/flydelta/flydelta-deep-search.h
     adaptation/flydelta/flydelta-evidence-depth.cpp adaptation/flydelta/flydelta-evidence-depth.h

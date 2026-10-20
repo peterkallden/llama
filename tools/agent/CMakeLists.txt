@@ -824,6 +824,35 @@ set(AGENT_MCP_SERVER_SOURCES
 
 add_library(llama-agent-mcp-server ${AGENT_MCP_SERVER_SOURCES})
 find_program(LLAMA_AGENT_NPM_EXECUTABLE npm)
+set(LLAMA_AGENT_INVESTIGATION_WORKSPACE_DEPS
+    ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/cytoscape/package.json)
+if(LLAMA_AGENT_NPM_EXECUTABLE AND EXISTS ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_DEPS})
+    set(LLAMA_AGENT_INVESTIGATION_WORKSPACE_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/agent-investigation-workspace-html.h)
+    add_custom_command(
+        OUTPUT ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_HEADER}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+        COMMAND ${LLAMA_AGENT_NPM_EXECUTABLE} run build:investigation-workspace
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/dist/investigation-workspace-html.h
+            ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_HEADER}
+        DEPENDS
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/package.json
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/package-lock.json
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/vite.investigation.config.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.css
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.html
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/scripts/embed-investigation-workspace.mjs
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/cytoscape/LICENSE
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/examples/llama-agent.web
+        VERBATIM)
+    add_custom_target(llama-agent-investigation-workspace-bundle DEPENDS ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_HEADER})
+    add_dependencies(llama-agent-mcp-server llama-agent-investigation-workspace-bundle)
+    target_sources(llama-agent-mcp-server PRIVATE ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_HEADER})
+    target_include_directories(llama-agent-mcp-server PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    target_compile_definitions(llama-agent-mcp-server PRIVATE LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE=1)
+    target_compile_definitions(llama-agent-tool-provider PRIVATE LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE=1)
+endif()
 set(LLAMA_AGENT_DOCUMENT_EDITOR_DEPS
     ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/@toast-ui/editor/package.json)
 if(LLAMA_AGENT_NPM_EXECUTABLE AND EXISTS ${LLAMA_AGENT_DOCUMENT_EDITOR_DEPS})
