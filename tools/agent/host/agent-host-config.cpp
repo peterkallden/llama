@@ -582,7 +582,7 @@ bool parse_agent_host_config_json(
                     if (guidance.contains("sampling_policy") && !guidance["sampling_policy"].is_string()) {
                         error = "runtime.adaptation.semi_oracle.outcome_guidance.sampling_policy must be a string"; return false;
                     }
-                    for (const auto * key : {"seed", "max_history_evaluations"}) {
+                    for (const auto * key : {"seed", "max_history_evaluations", "projection_cache_bytes"}) {
                         if (guidance.contains(key) && !guidance[key].is_number_unsigned() &&
                                 (!guidance[key].is_number_integer() || guidance[key].get<int64_t>() < 0)) {
                             error = std::string("runtime.adaptation.semi_oracle.outcome_guidance.") + key +
@@ -600,6 +600,13 @@ bool parse_agent_host_config_json(
                     }
                     read_optional(guidance, "max_history_evaluations",
                         config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations);
+                    if (guidance.contains("projection_cache_bytes") &&
+                            guidance["projection_cache_bytes"].get<uint64_t>() > 256 * 1024 * 1024) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.projection_cache_bytes must be 0..268435456";
+                        return false;
+                    }
+                    read_optional(guidance, "projection_cache_bytes",
+                        config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes);
                 }
             }
             if (adaptation.contains("flydelta")) {
@@ -646,6 +653,15 @@ bool parse_agent_host_config_json(
                     read_optional(guidance, "harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty);
                     read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
                     read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
+                    if (guidance.contains("projection_cache_bytes") &&
+                            (!guidance["projection_cache_bytes"].is_number_integer() ||
+                             guidance["projection_cache_bytes"] < 0 ||
+                             guidance["projection_cache_bytes"] > 256 * 1024 * 1024)) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.projection_cache_bytes must be 0..268435456";
+                        return false;
+                    }
+                    read_optional(guidance, "projection_cache_bytes",
+                        config.adaptation_flydelta_outcome_guidance.projection_cache_bytes);
                 }
                 read_optional(flydelta, "teacher_scoring_backend",
                     config.adaptation_flydelta_teacher_scoring_backend);
@@ -1446,6 +1462,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"seed", config.adaptation_semi_oracle_outcome_guidance.seed},
                     {"max_history_evaluations", config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations},
                     {"sampling_policy", config.adaptation_semi_oracle_outcome_guidance.sampling_policy},
+                    {"projection_cache_bytes", config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes},
                 }}}},
                 {"flydelta", {
                     {"enabled", config.adaptation_flydelta_enabled},
@@ -1468,6 +1485,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty},
                         {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
                         {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
+                        {"projection_cache_bytes", config.adaptation_flydelta_outcome_guidance.projection_cache_bytes},
                     }},
                     {"teacher_scoring_backend", config.adaptation_flydelta_teacher_scoring_backend},
                     {"canary", {

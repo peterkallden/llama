@@ -481,6 +481,49 @@ int main() {
         config, wrong_ruleset, history, {candidates[0]}, 1, 2, wrong_ruleset_decision, error));
     CHECK(wrong_ruleset_decision.predictions[0].fixture_groups == 0);
 
+    // A frozen projection has identical decisions to the compatibility path,
+    // survives caller history changes, and is shared across algorithmic stages.
+    common_flydelta_outcome_guidance_projection_ptr frozen_projection;
+    CHECK(common_flydelta_outcome_guidance_build_projection(c, chronological, frozen_projection, error));
+    common_flydelta_outcome_guidance_decision projected_decision, raw_decision;
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, frozen_projection,
+        candidates, 2, 17, projected_decision, error));
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, chronological,
+        candidates, 2, 17, raw_decision, error));
+    CHECK(projected_decision.history_fingerprint == raw_decision.history_fingerprint);
+    CHECK(projected_decision.selected_order == raw_decision.selected_order);
+    CHECK(projected_decision.predictions.size() == raw_decision.predictions.size());
+    for (size_t i = 0; i < raw_decision.predictions.size(); ++i) {
+        CHECK(projected_decision.predictions[i].sampled_utility == raw_decision.predictions[i].sampled_utility);
+        CHECK(projected_decision.predictions[i].known_weight == raw_decision.predictions[i].known_weight);
+    }
+    CHECK(!common_flydelta_outcome_guidance_decide_from_projection(config, incompatible,
+        frozen_projection, candidates, 2, 17, projected_decision, error));
+    common_flydelta_outcome_guidance_projection_cache projection_cache;
+    common_flydelta_outcome_guidance_projection_ptr cached_projection, next_projection;
+    CHECK(projection_cache.get_or_build("job:frozen:1", c, chronological, {}, cached_projection, error));
+    auto where_context = c;
+    where_context.strategy = "whirlpool";
+    where_context.estimator = "layer-region-prior-v2";
+    CHECK(projection_cache.get_or_build("job:frozen:1", where_context, chronological, {}, next_projection, error));
+    CHECK(cached_projection == next_projection);
+    CHECK(projection_cache.get_or_build("job:frozen:1", c, chronological,
+        "train-fixture-0", next_projection, error));
+    CHECK(cached_projection != next_projection);
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, next_projection,
+        candidates, 2, 17, projected_decision, error));
+    CHECK(projected_decision.compatible_history_rows + 1 == raw_decision.compatible_history_rows);
+    auto updated_history = chronological;
+    updated_history.push_back(observation("next-job", "next-group", common_flydelta_counterfactual_outcome::harmed));
+    CHECK(projection_cache.get_or_build("job:frozen:2", c, updated_history, {}, next_projection, error));
+    CHECK(cached_projection != next_projection);
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, cached_projection,
+        candidates, 2, 17, projected_decision, error));
+    CHECK(projected_decision.history_fingerprint == raw_decision.history_fingerprint);
+    projection_cache.set_budget(0);
+    CHECK(projection_cache.get_or_build("job:frozen:1", c, chronological, {}, cached_projection, error));
+    CHECK(projection_cache.get_or_build("job:frozen:1", c, chronological, {}, next_projection, error));
+    CHECK(cached_projection != next_projection);
     config.harm_penalty = -1;
     CHECK(!common_flydelta_outcome_guidance_config_validate(config, error));
     std::cout << "FlyDelta outcome guidance checks passed\n";

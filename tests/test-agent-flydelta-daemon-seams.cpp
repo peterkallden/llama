@@ -31,6 +31,11 @@ int main() {
     provider->authority.namespace_id = "seams";
     provider->authority.session_id = "test";
     provider->oracle_registry = common_flydelta_make_default_oracle_registry();
+    common_agent_scope job_scope;
+    job_scope.namespace_id = "seams";
+    job_scope.session_id = "test";
+    const auto scoped_provider = daemon_flydelta_provider_for_scope(provider, job_scope);
+    CHECK(scoped_provider && scoped_provider->outcome_projection_cache == provider->outcome_projection_cache);
     common_flydelta_search_pipeline_result incomplete_result;
     CHECK(!daemon_flydelta_run_search_pipeline(provider, {}, {}, incomplete_result, error));
     CHECK(error.find("source evidence reference") != std::string::npos);

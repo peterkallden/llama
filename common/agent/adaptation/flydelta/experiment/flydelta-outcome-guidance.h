@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,7 @@ struct common_flydelta_outcome_guidance_config {
     double harm_penalty = 5.0;
     size_t min_backoff_groups = 8;
     double max_prior_strength = 4.0;
+    size_t projection_cache_bytes = 16 * 1024 * 1024;
 };
 
 bool common_flydelta_outcome_guidance_config_validate(
@@ -173,6 +175,44 @@ common_flydelta_outcome_guidance_candidate common_flydelta_outcome_guidance_laye
         uint32_t layer, uint32_t model_n_layers, double scale);
 std::string common_flydelta_outcome_guidance_pool_fingerprint(
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates);
+
+// Validated, immutable history and precomputed group-weighted category/backoff
+// aggregates. A job can share this across WHERE, Deep and TFO decisions.
+struct common_flydelta_outcome_guidance_projection;
+using common_flydelta_outcome_guidance_projection_ptr =
+    std::shared_ptr<const common_flydelta_outcome_guidance_projection>;
+bool common_flydelta_outcome_guidance_build_projection(
+        const common_flydelta_outcome_guidance_context & context,
+        const std::vector<common_flydelta_outcome_guidance_observation> & history,
+        common_flydelta_outcome_guidance_projection_ptr & projection,
+        std::string & error, const std::string & excluded_fixture_group = {});
+
+class common_flydelta_outcome_guidance_projection_cache {
+public:
+    common_flydelta_outcome_guidance_projection_cache();
+    ~common_flydelta_outcome_guidance_projection_cache();
+    void set_budget(size_t bytes);
+    bool get_or_build(const std::string & frozen_snapshot_identity,
+        const common_flydelta_outcome_guidance_context & context,
+        const std::vector<common_flydelta_outcome_guidance_observation> & history,
+        const std::string & excluded_fixture_group,
+        common_flydelta_outcome_guidance_projection_ptr & projection, std::string & error,
+        bool * cache_hit = nullptr);
+private:
+    struct impl;
+    std::unique_ptr<impl> impl_;
+};
+
+bool common_flydelta_outcome_guidance_decide_from_projection(
+        const common_flydelta_outcome_guidance_config & config,
+        const common_flydelta_outcome_guidance_context & context,
+        const common_flydelta_outcome_guidance_projection_ptr & projection,
+        const std::vector<common_flydelta_outcome_guidance_candidate> & candidates,
+        size_t selection_limit, uint64_t job_seed,
+        common_flydelta_outcome_guidance_decision & decision, std::string & error,
+        common_flydelta_outcome_guidance_policy policy =
+            common_flydelta_outcome_guidance_policy::posterior_sampling,
+        size_t policy_sequence_start = 0);
 
 bool common_flydelta_outcome_guidance_build_decision(
         const common_flydelta_outcome_guidance_config & config,

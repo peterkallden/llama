@@ -2203,11 +2203,27 @@ The configurable fields and their defaults are:
 | `harm_penalty` | `5.0` | Finite, non-negative penalty in sampled/expected utility |
 | `min_backoff_groups` | `8` | Positive group count required for a coarser prior |
 | `max_prior_strength` | `4.0` | Finite value in `[0, 4]`; zero disables coarser pseudo-observations |
+| `projection_cache_bytes` | `16777216` | Retained immutable projection budget, `0..268435456`; zero disables retention |
 
 The eight-group default applies to **backoff**, not to direct arm-category
 evidence. A category with fewer observations can still have a posterior, with
 correspondingly little evidence. When FlyDelta is disabled no adviser runs.
 History is frozen for an eligible search job and reused by its waves.
+The immutable projection precomputes validated group-weighted leaf, strategy
+and domain aggregates once; per-decision sampling and the four-slot selection
+policy consume it without refiltering history. The provider's bounded LRU is
+shared through scoped views, so Whirlpool, Deep and TFO reuse one projection
+for the same frozen job/scope/model/verifier snapshot. The current fixture
+group is excluded before aggregation; a missing host-owned current fixture
+group gives `fixture_group_identity_unavailable` and the existing search order.
+Resume verifies the existing durable
+history snapshot before rebuilding; no new projection store is introduced.
+The legacy raw-history API delegates to the same builder and decision code.
+The `outcome.predict` inspector likewise builds this typed projection from its
+host-authorized chronological, leave-one-fixture-out view. Retention failures
+do not invalidate a built projection, and `off` skips history projection.
+These integration changes await compilation and tests; the earlier smoke
+results are not a measurement of their performance.
 Predictions require exact scope, model, tokenizer, template,
 baseline-deployment and verifier identity. V1 does not transfer observations
 across those boundaries. Each fixture group contributes at most one total
@@ -2273,7 +2289,7 @@ The policy origin stays fixed within the job/stage while the sampling seed
 may vary between decisions. Whirlpool reloads saved cursor positions by the
 same canonical candidate-pool fingerprint used for lifecycle writes; Deep/TFO
 use that shared fingerprint as well. History readers preserve duplicate rows
-until the common projection can distinguish identical retries from conflicting
+so the common projection can distinguish identical retries from conflicting
 observations and exclude conflicting identities completely.
 
 `off`, `shadow` and failure fallback retain legacy probe truncation before
@@ -2327,11 +2343,12 @@ continue the two-existing / one-guided / one-uniform schedule. If the decision
 cannot be durably recorded before execution, the current wave falls back to the
 original order. `shadow` separately logs posterior-only rank, hypothetical
 mixed-policy order and unchanged executed order. A later result-log write
-failure does not rewrite which arms actually ran. History aggregation is
-cached per category within each decision, so identical candidate categories
-reuse their aggregation. The frozen raw history is reused between decisions;
-the current implementation rebuilds the category cache on each decision call.
-It does not yet retain preaggregated posteriors across every wave of a job.
+failure does not rewrite which arms actually ran. Projection builder
+`flydelta-outcome-projection-v4` validates/deduplicates the frozen history once
+and retains group-weighted category/backoff aggregates across decisions. It
+does not retain posterior draws across decisions: shared-category draws are
+still derived from each decision's seed. This preserves exploration while
+avoiding repeated history scans and aggregation per coefficient wave.
 
 Daemon logs contain `[flydelta] outcome_guidance` JSON events with
 `event: "flydelta_outcome_guidance"`. These describe a decision before model
@@ -2345,6 +2362,7 @@ execution. The two event schemas currently expose different fields:
 | Prediction detail | Conditional probability means, approximate intervals, effective counts, backoff strength | `p_known`, conditional means named `p_helped`/`p_neutral`/`p_harmed`, expected utility, fixture/backoff group counts |
 | Decision accounting | Pool fingerprint, cursor, per-arm selection reasons | Policy start, history snapshot identity; no explicit per-arm selection-reason or pool-fingerprint field in this event |
 | History preparation time | `projection_ms` | `history_projection_ms` |
+| Retained projection reused | `projection_cache_hit` | `history_projection_cache_hit` |
 
 Both schemas include job/phase identity, seed, history fingerprint/watermark,
 candidate IDs and categories, row counts, timings and fallback reason. Schema

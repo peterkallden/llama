@@ -858,8 +858,11 @@ common_tool_execution_result daemon_outcome_predict(
         candidate.basis_identity = target->observation.basis_identity;
         common_flydelta_outcome_guidance_decision decision;
         std::string predict_error;
-        if (!common_flydelta_outcome_guidance_build_decision(config,
-                target->observation.context, history, {candidate}, 1, 0, decision, predict_error) ||
+        common_flydelta_outcome_guidance_projection_ptr projection;
+        if (!common_flydelta_outcome_guidance_build_projection(target->observation.context,
+                history, projection, predict_error, target->observation.fixture_group_id) ||
+                !common_flydelta_outcome_guidance_decide_from_projection(config,
+                target->observation.context, projection, {candidate}, 1, 0, decision, predict_error) ||
                 decision.predictions.size() != 1) {
             unresolved_refs.push_back(ref);
             continue;
@@ -1694,6 +1697,8 @@ bool initialize_agent_daemon_environment(
         error = "SemiOracle adaptation store initialization failed: " + error;
         return false;
     }
+    runtime.semi_oracle_store->set_history_projection_cache_budget(
+        options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes);
     // SemiOracle uses the ordinary host-relation ingress.  The provider only
     // materializes already verified interactions; it does not evaluate moves,
     // create activations or activate an overlay.

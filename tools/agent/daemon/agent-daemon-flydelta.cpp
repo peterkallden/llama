@@ -977,6 +977,19 @@ bool daemon_flydelta_run_search_pipeline(
                 }
             }
         }
+        common_flydelta_outcome_guidance_projection_ptr history_projection;
+        bool history_projection_cache_hit = false;
+        if (history_failure.empty() && job.seed.fixture_group_id.empty())
+            history_failure = "fixture_group_identity_unavailable";
+        if (history_failure.empty()) {
+            try {
+                if (!provider->outcome_projection_cache->get_or_build(
+                        job.id + ":" + std::to_string(history_watermark),
+                        base_context, whirlpool_history, job.seed.fixture_group_id,
+                        history_projection, error, &history_projection_cache_hit)) history_failure = "history_projection_invalid:" + error;
+            } catch (...) { history_failure = "history_projection_exception"; }
+            error.clear();
+        }
         const double projection_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - history_projection_started).count();
         auto whirlpool_policy_cursor = std::make_shared<size_t>(0);
@@ -1002,11 +1015,11 @@ bool daemon_flydelta_run_search_pipeline(
             whirlpool_policy_origin ^= ch;
             whirlpool_policy_origin *= 1099511628211ULL;
         }
-        whirlpool_adviser = [provider, job, base_context, history = std::move(whirlpool_history),
+        whirlpool_adviser = [provider, job, base_context, history_projection,
                 guidance_config, context_fingerprint, history_watermark, history_rows_read,
                 history_rows_rejected, whirlpool_policy_cursor, whirlpool_persisted_policy,
                 whirlpool_policy_origin,
-                history_failure, projection_ms](const common_flydelta_outcome_guidance_request & request,
+                history_failure, projection_ms, history_projection_cache_hit](const common_flydelta_outcome_guidance_request & request,
                 common_flydelta_outcome_guidance_decision & decision, std::string & adviser_error) {
             if (request.schema_version != 1 || request.stage.empty() || request.decision_id.empty() ||
                     request.selection_limit > request.candidates.size()) {
@@ -1043,8 +1056,8 @@ bool daemon_flydelta_run_search_pipeline(
             }
             if (!history_failure.empty()) adviser_error = history_failure;
             const auto started = std::chrono::steady_clock::now();
-            const bool built = history_failure.empty() && common_flydelta_outcome_guidance_build_decision(
-                guidance_config, context, history, request.candidates, request.selection_limit,
+            const bool built = history_failure.empty() && common_flydelta_outcome_guidance_decide_from_projection(
+                guidance_config, context, history_projection, request.candidates, request.selection_limit,
                 seed, decision, adviser_error,
                 common_flydelta_outcome_guidance_policy::posterior_sampling, policy_start);
             if (!built) {
@@ -1125,6 +1138,7 @@ bool daemon_flydelta_run_search_pipeline(
                 {"rejected_history_rows", history_rows_rejected +
                     decision.rejected_history_rows},
                 {"history_projection_ms", projection_ms},
+                {"history_projection_cache_hit", history_projection_cache_hit},
                 {"history_fallback_reason", history_failure},
                 {"selection_limit", request.selection_limit}, {"candidate_count", request.candidates.size()},
                 {"seed", seed}, {"policy_sequence_start", policy_start},
@@ -1891,6 +1905,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     uint64_t guidance_history_watermark = 0;
     std::string guidance_history_failure_reason;
     double guidance_projection_ms = 0.0;
+    const auto guidance_preparation_started = std::chrono::steady_clock::now();
     auto persisted_guidance_sequence_by_pool = std::make_shared<std::map<std::string, size_t>>();
     auto persisted_guidance_policy_start_by_pool = std::make_shared<std::map<std::string, size_t>>();
     auto persisted_guidance_policy_cursor_before_by_pool =
@@ -1903,7 +1918,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         plan.phase == common_flydelta_experiment_phase::deep_controls ||
         plan.run_tfo_lite || coefficient_config.strategy ==
             common_flydelta_coefficient_search_strategy::tfo_lite;
-    const bool guidance_identity_available = !guidance_context.scope_fingerprint.empty() &&
+    const bool guidance_identity_available = !job.seed.fixture_group_id.empty() &&
+        !guidance_context.scope_fingerprint.empty() &&
         !guidance_context.model_profile_fingerprint.empty() &&
         !guidance_context.tokenizer_fingerprint.empty() &&
         !guidance_context.template_fingerprint.empty() &&
@@ -1916,7 +1932,6 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
             guidance_runtime_eligible && guidance_identity_available &&
             provider->lifecycle_store) {
-        const auto projection_started = std::chrono::steady_clock::now();
         std::string history_error;
         std::vector<common_learning_lifecycle_record> records;
         if (!provider->lifecycle_store->list_scope_with_watermark(
@@ -1926,8 +1941,6 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             records.clear();
         }
         guidance_read_history_rows = records.size();
-        guidance_projection_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - projection_started).count();
         if (history_error.empty()) {
             for (const auto & record : records) {
                 if (record.kind != common_learning_lifecycle_kind::flydelta_experiment) continue;
@@ -2153,14 +2166,35 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     } else if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
             guidance_runtime_eligible && !guidance_identity_available) {
         guidance_history_load_failed = true;
-        guidance_history_failure_reason = "authoritative_guidance_identity_unavailable";
+        guidance_history_failure_reason = job.seed.fixture_group_id.empty()
+            ? "fixture_group_identity_unavailable" : "authoritative_guidance_identity_unavailable";
     }
+    common_flydelta_outcome_guidance_projection_ptr guidance_projection;
+    bool guidance_projection_cache_hit = false;
+    if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+            guidance_runtime_eligible && !guidance_history_load_failed) {
+        const auto frozen_identity = job.id + ":" + std::to_string(guidance_history_watermark);
+        try {
+            if (!provider->outcome_projection_cache->get_or_build(frozen_identity, guidance_context,
+                    guidance_history, job.seed.fixture_group_id, guidance_projection, error, &guidance_projection_cache_hit)) {
+                guidance_history_load_failed = true;
+                guidance_history_failure_reason = "history_projection_invalid:" + error;
+            }
+        } catch (...) {
+            guidance_history_load_failed = true;
+            guidance_history_failure_reason = "history_projection_exception";
+        }
+        error.clear();
+    }
+    if (guidance_config.mode != common_flydelta_outcome_guidance_mode::off && guidance_runtime_eligible)
+        guidance_projection_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - guidance_preparation_started).count();
     const common_flydelta_outcome_guidance_adviser outcome_adviser =
         guidance_config.mode == common_flydelta_outcome_guidance_mode::off ||
             !guidance_runtime_eligible
             ? common_flydelta_outcome_guidance_adviser{}
             : common_flydelta_outcome_guidance_adviser(
-            [guidance_context, guidance_history, guidance_config,
+            [guidance_context, guidance_projection, guidance_config, guidance_projection_cache_hit,
             persisted_guidance_sequence_by_pool, persisted_guidance_policy_start_by_pool,
             persisted_guidance_policy_cursor_before_by_pool,
             policy_cursor_committed_pools,
@@ -2239,8 +2273,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                     ? "lifecycle_history_read_failed" : history_failure_reason;
             }
             const auto prediction_started = std::chrono::steady_clock::now();
-            if (history_load_failed || !common_flydelta_outcome_guidance_build_decision(
-                    guidance_config, guidance_context, guidance_history, pool, limit,
+            if (history_load_failed || !common_flydelta_outcome_guidance_decide_from_projection(
+                    guidance_config, guidance_context, guidance_projection, pool, limit,
                     wave_seed, decision, adviser_error,
                     common_flydelta_outcome_guidance_policy::posterior_sampling,
                     policy_sequence_start)) {
@@ -2322,6 +2356,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 {"decision_sequence", wave_index},
                 {"candidate_pool_fingerprint", pool_fingerprint},
                 {"projection_ms", projection_ms},
+                {"projection_cache_hit", guidance_projection_cache_hit},
                 {"prediction_and_ordering_ms", prediction_ms},
                 {"read_history_rows", read_history_rows},
                 {"history_watermark", history_watermark},

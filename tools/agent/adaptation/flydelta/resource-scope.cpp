@@ -40,6 +40,7 @@ daemon_flydelta_provider_for_scope(
     // Preserve them when narrowing the provider to a job so `off` and
     // experimental settings cannot silently revert to provider defaults.
     scoped->outcome_guidance_config = source->outcome_guidance_config;
+    scoped->outcome_projection_cache = source->outcome_projection_cache;
     // Semantic verification is host-owned configuration, just like the
     // model profile and capture layout. Preserve it when narrowing resource
     // authority to a job scope.

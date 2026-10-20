@@ -86,6 +86,7 @@ bool relation_exists(const json & value, const char * name) {
 
 agent_semi_oracle_cozo_store::~agent_semi_oracle_cozo_store(){close();}
 bool agent_semi_oracle_cozo_store::run(const std::string & q,const std::string & p,std::string & out,std::string & error) const {
+    error.clear();
     if(db_id_<0){error="semi-oracle Cozo store is not open";return false;}
     char * raw=cozo_run_query(db_id_,q.c_str(),p.empty()?"{}":p.c_str(),false);
     if(!raw){error="semi-oracle Cozo query failed without diagnostic output";return false;}
@@ -109,6 +110,18 @@ bool agent_semi_oracle_cozo_store::open(const std::string & path,std::string & e
     }
     if (!run("::relations", "{}", raw, error)) { close(); return false; }
     rel = json::parse(raw, nullptr, false);
+    if (!relation_exists(rel, "agent_semi_oracle_history_revisions")) {
+        // Creation and backfill share one transaction. Existing evaluations
+        // retain their identities; later inserts advance the counter atomically.
+        if (!run(R"COZO(
+            counts[ruleset_id, revision, count(eid)] :=
+                *agent_semi_oracle_evaluations[eid, ruleset_id, revision, _]
+            ?[ruleset_id, revision, watermark] := counts[ruleset_id, revision, watermark]
+            :create agent_semi_oracle_history_revisions {
+                ruleset_id: String, revision: Int => watermark: Int
+            }
+        )COZO", "{}", raw, error)) { close(); return false; }
+    }
     if (!relation_exists(rel, "agent_semi_oracle_game_states")) {
         const char * game_state_schema = R"COZO(
 {
@@ -245,7 +258,55 @@ bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,con
         error = "SemiOracle evaluation identities are immutable";
         return false;
     }
-    std::string raw;return run("?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]] :put agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }",json{{"eid",eid},{"id",result.ruleset_id},{"rev",result.ruleset_revision},{"payload",complete_payload.dump()}}.dump(),raw,error);
+    const char * insert_script = R"COZO(
+    {
+        ?[evaluation_id] <- [[$eid]]
+        :ensure_not agent_semi_oracle_evaluations { evaluation_id }
+    }
+    {
+        ?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]]
+        :insert agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }
+    }
+    %if { ?[watermark] := *agent_semi_oracle_history_revisions[$id, $rev, watermark] }
+    %then
+        {
+            ?[ruleset_id, revision, watermark] :=
+                *agent_semi_oracle_history_revisions[$id, $rev, watermark],
+                ruleset_id = $id, revision = $rev
+            :ensure agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
+        }
+        {
+            ?[ruleset_id, revision, watermark] :=
+                *agent_semi_oracle_history_revisions[$id, $rev, old],
+                ruleset_id = $id, revision = $rev, watermark = old + 1
+            :put agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
+        }
+    %else
+        {
+            ?[ruleset_id, revision] <- [[$id, $rev]]
+            :ensure_not agent_semi_oracle_history_revisions { ruleset_id, revision }
+        }
+        {
+            ?[ruleset_id, revision, watermark] <- [[$id, $rev, 1]]
+            :insert agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
+        }
+    %end
+    )COZO";
+    const auto params = json{{"eid",eid},{"id",result.ruleset_id},
+        {"rev",result.ruleset_revision},{"payload",complete_payload.dump()}}.dump();
+    for (size_t attempt = 0; attempt < 3; ++attempt) {
+        std::string raw;
+        if (run(insert_script, params, raw, error)) return true;
+        const std::string transaction_error = error;
+        if (!get_evaluation_payload(eid, existing, found, error)) return false;
+        if (found) {
+            if (json::parse(existing, nullptr, false) == complete_payload) { error.clear(); return true; }
+            error = "SemiOracle evaluation identities are immutable";
+            return false;
+        }
+        error = transaction_error;
+    }
+    return false;
 }
 bool agent_semi_oracle_cozo_store::list_search_history(const std::string & id, uint64_t revision,
         size_t limit, std::vector<common_semi_oracle_search_history_record> & records,
@@ -288,24 +349,63 @@ bool agent_semi_oracle_cozo_store::get_search_history_revision(const std::string
         return false;
     }
     std::string raw;
-    if (!run("?[evaluation_id] := *agent_semi_oracle_evaluations[evaluation_id, $id, $rev, _] "
-             ":sort evaluation_id :limit 100001",
+    if (!run("?[watermark] := *agent_semi_oracle_history_revisions[$id, $rev, watermark]",
             json{{"id", id}, {"rev", revision}}.dump(), raw, error)) return false;
     const auto value = json::parse(raw, nullptr, false);
     if (!value.is_object() || !value.contains("rows") || !value["rows"].is_array()) {
         error = "semi-oracle search history revision query returned invalid rows";
         return false;
     }
-    if (value["rows"].size() > 100000) {
-        supported = false;
-        return true;
-    }
+    if (value["rows"].size() > 1) { error = "duplicate search history revision"; return false; }
     for (const auto & row : value["rows"])
-        if (!row.is_array() || row.size() != 1 || !row[0].is_string()) {
+        if (!row.is_array() || row.size() != 1 || !row[0].is_number_integer() || row[0] < 0) {
             error = "semi-oracle search history revision row is invalid";
             return false;
         }
-    watermark = static_cast<uint64_t>(value["rows"].size());
+    if (!value["rows"].empty()) watermark = value["rows"][0][0].get<uint64_t>();
+    return true;
+}
+bool agent_semi_oracle_cozo_store::read_search_history_snapshot(const std::string & id,
+        uint64_t revision, size_t limit,
+        std::vector<common_semi_oracle_search_history_record> & records,
+        uint64_t & watermark, bool & supported, std::string & error) const {
+    records.clear(); watermark = 0; supported = true; error.clear();
+    if (id.empty() || revision > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+            limit == 0 || limit > 1024) { error = "invalid search history snapshot scope or limit"; return false; }
+    // One query/transaction: the revision row sorts before bounded payload rows.
+    std::string raw;
+    if (!run(R"COZO(
+        ?[kind, eid, payload, watermark] := kind = 'revision', eid = '', payload = '',
+            *agent_semi_oracle_history_revisions[$id, $rev, watermark]
+        ?[kind, eid, payload, watermark] := kind = 'revision', eid = '', payload = '',
+            not *agent_semi_oracle_history_revisions[$id, $rev, _], watermark = 0
+        ?[kind, eid, payload, watermark] := kind = 'row', watermark = 0,
+            *agent_semi_oracle_evaluations[eid, $id, $rev, payload],
+            data = parse_json(payload), guidance = json_to_scalar(get(data, 'search_guidance_json', '')),
+            guidance != ''
+        :sort kind, eid :limit $limit
+    )COZO", json{{"id",id},{"rev",revision},{"limit",limit + 1}}.dump(), raw, error)) return false;
+    const auto result = json::parse(raw, nullptr, false);
+    if (!result.is_object() || !result.contains("rows") || !result["rows"].is_array() ||
+            result["rows"].empty()) { error = "invalid history snapshot rows"; return false; }
+    bool have_revision = false;
+    for (const auto & row : result["rows"]) {
+        if (!row.is_array() || row.size() != 4 || !row[0].is_string() ||
+                !row[1].is_string() || !row[2].is_string() || !row[3].is_number_integer() || row[3] < 0) {
+            error = "invalid history snapshot row"; records.clear(); return false;
+        }
+        if (row[0] == "revision" && !have_revision) {
+            watermark = row[3].get<uint64_t>(); have_revision = true;
+        } else if (row[0] == "row") {
+            const auto payload = json::parse(row[2].get<std::string>(), nullptr, false);
+            if (!payload.is_object() || !payload.contains("search_guidance_json") ||
+                    !payload["search_guidance_json"].is_string()) {
+                error = "invalid history snapshot payload"; records.clear(); return false;
+            }
+            records.push_back({row[1].get<std::string>(), payload["search_guidance_json"].get<std::string>()});
+        } else { error = "invalid history snapshot revision"; records.clear(); return false; }
+    }
+    if (!have_revision) { error = "missing history snapshot revision"; records.clear(); return false; }
     return true;
 }
 bool agent_semi_oracle_cozo_store::get_evaluation_payload(const std::string & eid,std::string & payload,bool & found,std::string & error) const {

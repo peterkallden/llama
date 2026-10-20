@@ -258,7 +258,8 @@ int main(int argc, char ** argv) {
     {
         auto guidance_json = agent_host_config_to_json(loaded_config);
         guidance_json["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"] = {
-            {"mode", "experimental"}, {"seed", 42}, {"max_history_evaluations", 17}};
+            {"mode", "experimental"}, {"seed", 42}, {"max_history_evaluations", 17},
+            {"sampling_policy", "posterior_sampling"}, {"projection_cache_bytes", 1048576}};
         agent_host_config guidance_config;
         daemon_options guidance_options;
         if (!parse_agent_host_config_json(guidance_json, guidance_config, error)) return __LINE__;
@@ -266,6 +267,7 @@ int main(int argc, char ** argv) {
         if (guidance_options.adaptation_semi_oracle_outcome_guidance.mode != "experimental" ||
                 guidance_options.adaptation_semi_oracle_outcome_guidance.seed != 42 ||
                 guidance_options.adaptation_semi_oracle_outcome_guidance.max_history_evaluations != 17 ||
+                guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 1048576 ||
                 agent_host_config_to_json(guidance_config)["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"] !=
                     guidance_json["runtime"]["adaptation"]["semi_oracle"]["outcome_guidance"]) return __LINE__;
         guidance_config.adaptation_semi_oracle_outcome_guidance.mode = "invalid";
@@ -812,6 +814,8 @@ int main(int argc, char ** argv) {
         oracle_options.tool_profile = "semi-oracle";
         oracle_options.max_tool_rounds = 16;
         oracle_options.adaptation_semi_oracle_outcome_guidance = {"experimental", 42, 17};
+        oracle_options.adaptation_semi_oracle_outcome_guidance.search_algorithm = "focal";
+        oracle_options.adaptation_semi_oracle_outcome_guidance.suboptimality_bound = 1.1;
         common_agent_runtime_session_host_turn_request request;
         request.session_id = "guidance-native";
         request.namespace_id = "guidance-native";
@@ -835,6 +839,7 @@ int main(int argc, char ** argv) {
         if (!payload.value("ok", false) || !payload.contains("result")) return __LINE__;
         const auto & result = payload["result"];
         if (result["verdict"] != "SATISFIED" || result["guidance"]["mode"] != "experimental" ||
+                result["search_policy"]["algorithm"] != "exact_astar_v1" ||
                 result["guidance"]["seed"] != 42 || result["guidance"].contains("decisions")) return __LINE__;
         const auto tool = std::find_if(oracle_tooling.tools.begin(), oracle_tooling.tools.end(),
             [](const common_chat_tool & value) { return value.name == "oracle.goal.search"; });
@@ -883,8 +888,18 @@ int main(int argc, char ** argv) {
                     std::fprintf(stderr,"Target Hunt output schema: %s\n",error.c_str());return 1;}
                 if(definition.read_only!=(call.first=="oracle.goal.search"))return __LINE__;
             }
-            if(call.first=="oracle.goal.search"&&(value["result"]["verdict"]!="SATISFIED"||value["result"]["proof"]["total_cost"]!=3))return __LINE__;
+            if(call.first=="oracle.goal.search"&&(value["result"]["verdict"]!="SATISFIED"||value["result"]["proof"]["total_cost"]!=3||
+                value["result"]["search_policy"]["algorithm"]!="focal_astar_v1"||
+                value["result"]["search_policy"]["suboptimality_bound"]!=1.1))return __LINE__;
         }
+        const auto next_problem = oracle_tooling.tool_view->call({"native-target-next", "oracle.problem.define",
+            json{{"problem_dsl", "grid: ..../.#../....\nstart: 0,0\ntarget: 2,3"}}.dump()}, error);
+        if (!next_problem.ok) return __LINE__;
+        const auto next_search = oracle_tooling.tool_view->call({"native-target-guided", "oracle.goal.search", "{}"}, error);
+        if (!next_search.ok) return __LINE__;
+        const auto next_result = json::parse(next_search.content_json)["result"];
+        if (next_result["guidance"]["branch_quality_labels_used"] != true ||
+                next_result["guidance"]["fixture_groups"].get<size_t>() == 0) return __LINE__;
         common_agent_tool_call dsl_call;
         if(!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
                 "open! oracle.action.verify\naction_dsl: \"open! target_hunt.move\\ndirection: south\"",
@@ -925,7 +940,12 @@ int main(int argc, char ** argv) {
                         if(entry["name"]=="oracle.problem.define")problem_advertised=entry["annotations"]["readOnlyHint"]==false&&entry.contains("outputSchema");
                 }
                 http_ok=problem_advertised;
-                for(const auto & call:calls){
+                auto http_calls = calls;
+                http_calls.emplace_back("oracle.problem.define", json{{"problem_dsl",
+                    "grid: ..../.#../....\nstart: 0,0\ntarget: 2,3"}});
+                http_calls.emplace_back("oracle.goal.search", json::object());
+                size_t http_searches = 0;
+                for(const auto & call:http_calls){
                     const auto reply=client.Post("/mcp",headers,json{{"jsonrpc","2.0"},{"id",2},{"method","tools/call"},
                         {"params",{{"name",call.first},{"arguments",call.second}}}}.dump(),"application/json");
                     if(!reply||reply->status!=200){http_ok=false;break;}
@@ -933,6 +953,13 @@ int main(int argc, char ** argv) {
                     if(!payload.contains("result")||payload["result"].value("isError",false)||
                             !payload["result"]["structuredContent"].value("ok",false)){
                         std::fprintf(stderr,"Target MCP HTTP failure: %s\n",reply->body.c_str());http_ok=false;break;}
+                    if (call.first == "oracle.goal.search") {
+                        ++http_searches;
+                        const auto & searched = payload["result"]["structuredContent"]["result"];
+                        if (searched["search_policy"]["algorithm"] != "focal_astar_v1" ||
+                                searched["search_policy"]["suboptimality_bound"] != 1.1 ||
+                                (http_searches == 2 && searched["guidance"]["branch_quality_labels_used"] != true)) { http_ok=false; break; }
+                    }
                 }
             }
         }catch(const std::exception & e){std::fprintf(stderr,"Target HTTP exception: %s\n",e.what());http_ok=false;}

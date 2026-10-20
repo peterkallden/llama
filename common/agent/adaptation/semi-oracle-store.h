@@ -47,6 +47,15 @@ public:
         projection_cache_lru_.clear();
         projection_cache_bytes_ = 0;
     }
+    void set_history_projection_cache_budget(size_t bytes) {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        projection_cache_budget_ = bytes;
+        while (!projection_cache_lru_.empty() && projection_cache_bytes_ > bytes) {
+            projection_cache_bytes_ -= projection_cache_lru_.back()->bytes;
+            projection_cache_index_.erase(projection_cache_lru_.back()->key);
+            projection_cache_lru_.pop_back();
+        }
+    }
     bool get_history_projection_cache(const std::string & key,
             std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> & entry) const {
         std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -58,9 +67,9 @@ public:
     }
     void put_history_projection_cache(common_semi_oracle_history_projection_cache_entry entry) {
         constexpr size_t entry_limit = 16;
-        constexpr size_t byte_limit = 16 * 1024 * 1024;
-        if (entry.bytes > byte_limit || entry.key.empty()) return;
         std::lock_guard<std::mutex> lock(cache_mutex_);
+        const size_t byte_limit = projection_cache_budget_;
+        if (byte_limit == 0 || entry.bytes > byte_limit || entry.key.empty()) return;
         if (projection_cache_index_.count(entry.key)) return;
         auto value = std::make_shared<const common_semi_oracle_history_projection_cache_entry>(
             std::move(entry));
@@ -148,6 +157,24 @@ public:
         watermark = 0; supported = false; error.clear();
         return true;
     }
+    // A bounded history and its watermark must describe the same snapshot.
+    // Legacy stores without revision support still supply a fingerprinted view.
+    virtual bool read_search_history_snapshot(const std::string & ruleset_id,
+            uint64_t revision, size_t limit,
+            std::vector<common_semi_oracle_search_history_record> & records,
+            uint64_t & watermark, bool & supported, std::string & error) const {
+        for (size_t attempt = 0; attempt < 3; ++attempt) {
+            uint64_t before = 0;
+            if (!get_search_history_revision(ruleset_id, revision, before, supported, error) ||
+                    !list_search_history(ruleset_id, revision, limit, records, error)) return false;
+            if (!supported) { watermark = 0; return true; }
+            bool after_supported = false;
+            if (!get_search_history_revision(ruleset_id, revision, watermark, after_supported, error)) return false;
+            if (after_supported && before == watermark) return true;
+        }
+        records.clear(); error = "search history changed while reading snapshot";
+        return false;
+    }
     virtual bool put_interaction(const common_semi_oracle_interaction & interaction,
             std::string & error) {
         (void) interaction;
@@ -170,4 +197,5 @@ private:
     mutable std::list<std::shared_ptr<const common_semi_oracle_history_projection_cache_entry>> projection_cache_lru_;
     mutable std::map<std::string, decltype(projection_cache_lru_)::iterator> projection_cache_index_;
     mutable size_t projection_cache_bytes_ = 0;
+    size_t projection_cache_budget_ = 16 * 1024 * 1024;
 };

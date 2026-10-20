@@ -7,11 +7,45 @@
 #include <string>
 #include <chrono>
 #include <cstdio>
+#include <thread>
+#include <cstdlib>
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <nlohmann/json.hpp>
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
 
-int main() {
+int main(int argc, char ** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--crash-after-append") {
+        agent_semi_oracle_cozo_store child_store;
+        std::string child_error, source_payload;
+        bool source_found = false;
+        if (!child_store.open(argv[2], child_error) ||
+                !child_store.get_evaluation_payload("evaluation://race", source_payload, source_found, child_error) ||
+                !source_found) std::_Exit(71);
+        const auto source = nlohmann::json::parse(source_payload, nullptr, false);
+        if (!source.is_object()) std::_Exit(72);
+        common_semi_oracle_result committed;
+        committed.ruleset_id = source.at("ruleset_id").get<std::string>();
+        committed.ruleset_revision = source.at("ruleset_revision").get<uint64_t>();
+        committed.verdict = source.at("verdict") == "SATISFIED" ? common_semi_oracle_verdict::satisfied :
+            source.at("verdict") == "VIOLATED" ? common_semi_oracle_verdict::violated : common_semi_oracle_verdict::unknown;
+        committed.level = common_semi_oracle_level::bounded;
+        committed.evaluator_ref = source.at("evaluator_ref").get<std::string>();
+        committed.evaluator_revision = source.at("evaluator_revision").get<std::string>();
+        committed.proof_json = source.at("proof_json").get<std::string>();
+        committed.counterexample_json = source.at("counterexample_json").get<std::string>();
+        committed.expansions = source.at("expansions").get<size_t>();
+        committed.depth_reached = source.at("depth_reached").get<size_t>();
+        committed.search_guidance_json = source.at("search_guidance_json").get<std::string>();
+        committed.search_branch_quality_json = source.at("search_branch_quality_json").get<std::string>();
+        committed.reason = "committed before abrupt process exit";
+        if (!child_store.append_evaluation("evaluation://crash-commit", committed, child_error)) std::_Exit(73);
+        // Deliberately bypass store close/destructors after the DB transaction.
+        std::_Exit(0);
+    }
     const auto nonce=std::chrono::steady_clock::now().time_since_epoch().count();
     const auto dir=std::filesystem::temp_directory_path()/("llama-agent-semi-oracle-cozo-test-"+std::to_string(nonce));
     std::error_code ec;std::filesystem::create_directories(dir,ec);
@@ -223,7 +257,77 @@ int main() {
     store.close();
     CHECK(store.open(db,error));
     CHECK(!store.get_history_projection_cache("reopen-regression", cached_value));
+    std::vector<common_semi_oracle_search_history_record> snapshot_rows;
+    uint64_t snapshot_watermark = 0;
+    CHECK(store.read_search_history_snapshot(maze_rules.id, maze_rules.revision, 128,
+        snapshot_rows, snapshot_watermark, watermark_supported, error) && watermark_supported);
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && snapshot_watermark == history_watermark);
+    CHECK(!snapshot_rows.empty());
+    // Losing the transient projection between read/build and publication must
+    // rebuild the same content and decisions from the persistent snapshot.
+    common_semi_oracle_query resumed_query;
+    resumed_query.ruleset_id = maze_rules.id;
+    resumed_query.ruleset_revision = maze_rules.revision;
+    resumed_query.level = common_semi_oracle_level::bounded;
+    resumed_query.goal = "reach:target";
+    resumed_query.budget = {2048, 1024};
+    CHECK(store.get_session_state("session-maze", maze_rules.id, maze_rules.revision,
+        resumed_query.state_json, found, error) && found);
+    common_semi_oracle_result pre_reopen, post_reopen;
+    CHECK(common_semi_oracle_evaluate_with_history(store, {"experimental", 7, 128},
+        "host", "session-maze", maze_rules, resumed_query, pre_reopen, error));
+    store.close(); CHECK(store.open(db, error));
+    CHECK(common_semi_oracle_evaluate_with_history(store, {"experimental", 7, 128},
+        "host", "session-maze", maze_rules, resumed_query, post_reopen, error));
+    CHECK(pre_reopen.proof_json == post_reopen.proof_json && pre_reopen.expansions == post_reopen.expansions);
+    CHECK(nlohmann::json::parse(pre_reopen.search_guidance_json)["diagnostics"]["history_fingerprint"] ==
+        nlohmann::json::parse(post_reopen.search_guidance_json)["diagnostics"]["history_fingerprint"]);
+    CHECK(nlohmann::json::parse(post_reopen.search_guidance_json)["diagnostics"]["branch_quality_labels_used"] == true);
+    store.set_history_projection_cache_budget(0);
+    common_semi_oracle_history_projection_cache_entry disabled_cache;
+    disabled_cache.key = "disabled"; disabled_cache.bytes = 1;
+    store.put_history_projection_cache(std::move(disabled_cache));
+    CHECK(!store.get_history_projection_cache("disabled", cached_value));
+    // Two independent stores race on one immutable identity. Exactly one
+    // payload commits, with exactly one counter increment in that transaction.
+    agent_semi_oracle_cozo_store peer;
+    CHECK(peer.open(db, error));
+    auto competing_result = goal_result;
+    competing_result.reason += " competing payload";
+    bool first_written = false, second_written = false;
+    std::string first_error, second_error;
+    std::thread first_writer([&] { first_written = store.append_evaluation(
+        "evaluation://race", goal_result, first_error); });
+    std::thread second_writer([&] { second_written = peer.append_evaluation(
+        "evaluation://race", competing_result, second_error); });
+    first_writer.join(); second_writer.join();
+    CHECK(first_written != second_written);
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 1);
+    CHECK(store.append_evaluation("evaluation://race", first_written ? goal_result : competing_result, error));
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 1);
+    peer.close();
     store.close();
+#ifndef _WIN32
+    const auto executable = std::filesystem::absolute(argv[0]).string();
+    const auto child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        execl(executable.c_str(), executable.c_str(), "--crash-after-append", db.c_str(), static_cast<char *>(nullptr));
+        _exit(127);
+    }
+    int child_status = 0;
+    CHECK(waitpid(child, &child_status, 0) == child && WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    CHECK(store.open(db, error));
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 2);
+    std::string committed_payload;
+    CHECK(store.get_evaluation_payload("evaluation://crash-commit", committed_payload, found, error) && found);
+    CHECK(nlohmann::json::parse(committed_payload)["search_branch_quality_json"] == goal_result.search_branch_quality_json);
+    store.close();
+#endif
     std::filesystem::remove_all(dir,ec);
     return 0;
 }

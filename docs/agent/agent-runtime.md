@@ -4592,7 +4592,11 @@ the search order. `off` avoids history reads and guidance logs;
 full-generation frontier and TFO-lite's pending arm order. The job freezes
 eligible scope/model/verifier-compatible history; current observations still
 control Whirlpool's objective and host verification determines outcomes and
-learning credit. Guidance adds no stop rule or guaranteed probe saving. See
+learning credit. Whirlpool, Deep and TFO share a precomputed immutable
+projection keyed by the job's frozen lifecycle snapshot and exact compatibility
+partition; scoped providers share its retained cache. Its
+`outcome_guidance.projection_cache_bytes` defaults to 16 MiB, permits 0..256 MiB,
+and zero disables retention. Guidance adds no stop rule or guaranteed probe saving. See
 [the configuration, trace schemas and verification status](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite).
 
 The read-only MCP tool `outcome.predict` exposes retrospective predictions for
@@ -4613,7 +4617,10 @@ SemiOracle algebra and Target Hunt search use that same posterior math with inde
 `runtime.adaptation.semi_oracle.outcome_guidance` settings: `mode` defaults to
 `shadow` (`off` and `experimental` are also supported), `sampling_policy` is
 `posterior_sampling` or `posterior_mean`, `seed` defaults to `0`, and
-`max_history_evaluations` defaults to `128` (range `1..1024`). The separate
+`max_history_evaluations` defaults to `128` (range `1..1024`). Its
+`projection_cache_bytes` defaults to `16777216` (range `0..268435456`, zero
+disables retention). These are CPU cache budgets, distinct from model device
+workspace. The separate
 host-owned `runtime.adaptation.semi_oracle.search` policy defaults to exact A*
 and bound `1.0`; Focal A* is available only when explicitly configured for
 Target Hunt with a finite bound through `2.0`. These settings are copied into
@@ -4621,7 +4628,9 @@ the daemon's native tool service and require restart when changed. They operate
 even when FlyDelta is disabled. `shadow` records hypothetical orders without
 changing execution; `experimental` can order eligible equal-`f` frontier nodes
 in exact A*, or nodes inside Focal's `f <= w*f_min` set. The process keeps a
-bounded projection LRU keyed by the returned history rows and full context;
+bounded store-owned projection LRU keyed by history revision and full context;
+Cozo atomically writes immutable evaluations and persistent revision counters,
+and reads a bounded history plus its counter from one snapshot. Other
 stores without revision watermarks invalidate by row fingerprint. The current
 fixture group and incompatible scopes, rule/verifier revisions or budgets are
 excluded. History failure retains deterministic ordering. MCP

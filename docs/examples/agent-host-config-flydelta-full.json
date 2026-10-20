@@ -92,7 +92,8 @@
           "seed": 5065521830640243777,
           "harm_penalty": 5.0,
           "min_backoff_groups": 8,
-          "max_prior_strength": 4.0
+          "max_prior_strength": 4.0,
+          "projection_cache_bytes": 16777216
         },
         "canary": {
           "mode": "manual",

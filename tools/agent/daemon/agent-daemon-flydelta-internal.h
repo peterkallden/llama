@@ -92,6 +92,8 @@ struct daemon_flydelta_resource_provider {
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
     common_flydelta_outcome_guidance_config outcome_guidance_config;
+    std::shared_ptr<common_flydelta_outcome_guidance_projection_cache> outcome_projection_cache =
+        std::make_shared<common_flydelta_outcome_guidance_projection_cache>();
     // Host-owned semantic dispatch for the existing verification seam. It is
     // built from the same configured provider contracts as runtime tools; it
     // is not a second evaluator store or an execution path.

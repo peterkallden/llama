@@ -15,11 +15,16 @@
           "mode": "shadow",
           "seed": 0,
           "max_history_evaluations": 128,
-          "sampling_policy": "posterior_sampling"
+          "sampling_policy": "posterior_sampling",
+          "projection_cache_bytes": 16777216
         }
       },
       "flydelta": {
         "enabled": true,
+        "outcome_guidance": {
+          "mode": "shadow",
+          "projection_cache_bytes": 16777216
+        },
         "worker_count": 1,
         "queue_path": "var/agent/flydelta/jobs",
         "batch_mode": "auto",

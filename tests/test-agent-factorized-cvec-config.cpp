@@ -53,7 +53,8 @@ int main() {
     };
     compatible["runtime"]["adaptation"]["semi_oracle"] = {
         {"search", {{"algorithm", "focal"}, {"suboptimality_bound", 1.1}}},
-        {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"}}}
+        {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"},
+            {"projection_cache_bytes", 2097152}}}
     };
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
@@ -66,7 +67,8 @@ int main() {
     }
     compatible["runtime"]["adaptation"]["flydelta"]["outcome_guidance"] = {
         {"mode", "experimental"}, {"seed", uint64_t{71}},
-        {"harm_penalty", 6.0}, {"min_backoff_groups", 9}, {"max_prior_strength", 3.0}
+        {"harm_penalty", 6.0}, {"min_backoff_groups", 9}, {"max_prior_strength", 3.0},
+        {"projection_cache_bytes", 1048576}
     };
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_outcome_guidance.mode !=
@@ -83,7 +85,9 @@ int main() {
     if (guidance_options.adaptation_flydelta_outcome_guidance.mode !=
             common_flydelta_outcome_guidance_mode::experimental ||
             guidance_options.adaptation_flydelta_outcome_guidance.seed != 71 ||
-            guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend") {
+            guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            guidance_options.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
+            guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152) {
         std::cerr << "outcome guidance config did not reach daemon options\n";
         return 1;
     }
@@ -101,9 +105,21 @@ int main() {
             roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
-            roundtrip_config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean") {
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean" ||
+            roundtrip_config.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152) {
         std::cerr << "factorized cvec config did not round-trip: " << error << '\n';
         return 1;
+    }
+    for (const auto * family : {"semi_oracle", "flydelta"}) {
+        auto zero_cache = compatible;
+        zero_cache["runtime"]["adaptation"][family]["outcome_guidance"]["projection_cache_bytes"] = 0;
+        if (!parse_agent_host_config_json(zero_cache, config, error)) return __LINE__;
+        for (const auto & invalid : {nlohmann::ordered_json(-1), nlohmann::ordered_json(268435457),
+                nlohmann::ordered_json("unbounded")}) {
+            zero_cache["runtime"]["adaptation"][family]["outcome_guidance"]["projection_cache_bytes"] = invalid;
+            if (parse_agent_host_config_json(zero_cache, config, error)) return __LINE__;
+        }
     }
 
     auto disabled = compatible;

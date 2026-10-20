@@ -217,10 +217,13 @@ these production-persisted records, in addition to its independent full-map
 BFS comparison.
 
 Search-history projection caching is owned by each SemiOracle store instance,
-not a process-global cache. It is bounded to 16 entries and an estimated 16 MiB
-including string/vector capacities and map-node overhead. Stores with
-a monotonic history watermark can look up before reading history; Cozo derives
-that watermark from the immutable evaluation IDs in the scoped relation. Stores
+not a process-global cache. It is bounded to 16 entries and a default estimated 16 MiB
+including string/vector capacities and map-node overhead. The configurable
+`runtime.adaptation.semi_oracle.outcome_guidance.projection_cache_bytes` defaults
+to 16,777,216, accepts `0..268435456`, and zero disables retention. Active
+searches can still hold their immutable projection outside the retained LRU.
+Stores with a monotonic history watermark can look up before reading history;
+Cozo reads a scope/RuleSet-specific persistent revision counter. Stores
 without watermark support still read and fingerprint rows before reuse, while
 preserving the current call's duplicate/conflict counters. Target state/action
 feature pairs are cached during an evaluation so scoring, trace generation and
@@ -241,33 +244,57 @@ Cozo also retains the separate branch payload and applied exact/Focal policy,
 matching the in-memory payload; evaluation appends on one store instance are
 serialized. Legacy retry comparisons recover additive fields from stored
 proof/diagnostic data where possible; unavailable policy provenance is not
-invented. Concurrent writers using separate store instances still require a
-database-transaction-level immutability guard. These source corrections and
-their added regression cases have **not been built or executed yet**.
+invented. These source corrections and their added regression cases have
+**not been built or executed yet**.
 
-Cozo's current revision query still enumerates scoped evaluation IDs (up to
-100,001) instead of reading a constant-size persistent revision counter. This
-remains a cost and snapshot-consistency limitation; cache reuse alone does not
-make history access constant-time.
+The subsequent integration correction adds the persistent
+`agent_semi_oracle_history_revisions` relation with an atomic initial backfill.
+Each new evaluation uses `ensure_not`/`insert` and advances its RuleSet counter
+in the same Cozo transaction; retries cannot replace an existing payload or
+increment its counter twice. The counter is read by its composite key rather
+than enumerating evaluation IDs. A bounded snapshot query returns the revision
+and matching history rows in one transaction. Stores without that query use a
+bounded revision-before/after retry; unstable snapshots fall back explicitly.
+See [Cozo transaction semantics](https://docs.cozodb.org/en/latest/stored.html).
 
-The following parts of the broader implementation plan remain:
+FlyDelta now builds an immutable domain adapter projection once from the
+job's validated frozen lifecycle snapshot. Group-weighted leaf and backoff
+aggregates are shared by Whirlpool, Deep and TFO, including scoped-provider
+views. Resume validates the persisted snapshot and can rebuild the same
+projection. The current fixture group is excluded at construction. The MCP
+FlyDelta inspector uses that same projection/decision API with its existing
+chronological and leave-one-fixture-group-out contract.
 
-- Extract the common immutable projection/decision interface through FlyDelta's
-  frozen job history and MCP inspection, including reuse across Whirlpool,
-  Deep and TFO and their resume paths. They currently share posterior math;
-  FlyDelta retains its own per-decision history projection.
+Integration regression sources now cover shared projection reuse, unchanged
+raw/projected decisions, scope isolation, current-fixture exclusion, cache
+budgets, concurrent Cozo writers and cold reconstruction after closing/reopening
+the store. On POSIX, the Cozo CTest also starts a new process that commits an
+evaluation and calls `_Exit` without closing the store; the parent then reopens
+the DB and checks the branch payload and counter. This covers an abrupt exit
+after a completed transaction, not an injected failure inside an in-flight
+transaction. The existing `llama-agent-daemon-mcp-config-smoke` now additionally
+checks Focal policy and branch-family use through the real native provider,
+MCP schema registration, HTTP transport and dispatcher. These cases are added
+source coverage, **not executed verification** of the current changes.
+
+The following evaluation extensions of the broader plan remain:
+
 - Complete the independent map families (64 training and 32 held-out maps per
   family), exact posterior-mean comparison, per-map calibration/confidence
   reporting, explicit frontier-selection traces and cold/warm/trace-disabled
   cost measurements. The current smoke keeps the existing mixed 64/32 map set;
   it is not yet split into two independently trained/held-out map families.
-- Add direct daemon/provider/MCP contract coverage and an interruption/resume
-  test for the new branch-label data. The Cozo test currently verifies
-  persistence, reopen, a second-fixture prediction, and idempotent evaluation
-  append; it does not simulate a process interruption during projection build.
-- FlyDelta still needs an immutable job-level projection shared across
-  Whirlpool, Deep, TFO, MCP inspection and resume. The SemiOracle store cache
-  improvements do not provide that cross-consumer FlyDelta projection.
+- Inject failures while transactions are in flight if stronger crash-coverage
+  evidence is required; the prepared process-exit case is after commit.
+
+Focused verification for the corrected integration, when test runs are resumed:
+
+```sh
+cmake --build build-agent-vulkan-cozo --target test-agent-flydelta-outcome-guidance test-agent-flydelta-daemon-seams test-agent-semi-oracle-cozo test-agent-factorized-cvec-config llama-agent-daemon-mcp-config-smoke -j2
+ctest --test-dir build-agent-vulkan-cozo -R 'test-agent-(flydelta-outcome-guidance|flydelta-daemon-seams|semi-oracle-cozo|factorized-cvec-config)$|llama-agent-daemon-mcp-config-ctest' --output-on-failure
+```
+
+The targets use the existing Cozo/Vulkan tree and require no model smoke.
 
 For the code delivered in `ac58eaeeb`, the focused SemiOracle, Cozo, teaching, tool-adapter and FlyDelta guidance
 CTests passed after the store/projection changes. The updated Target Hunt CTest
@@ -323,11 +350,10 @@ output is in `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`.
 The additional full-sweep items still outstanding are the independent
 recurring-map families, grouped uncertainty/calibration reporting, explicit
 per-frontier selection summaries and cold/warm/trace-disabled cost comparison.
-There is also no direct daemon/provider/MCP or interruption/resume test for the
-new persisted branch labels yet. The projection cache currently has a fixed
-16 MiB cap rather than consuming the configured workspace budget. FlyDelta
-still needs one frozen job-level projection shared across Whirlpool, Deep, TFO,
-MCP inspection and resume; the work here improves SemiOracle store reuse only.
+The newly prepared integration cases must also be compiled and executed before
+the current storage/projection changes are considered verified. The retained
+CPU projection caches use their explicit runtime byte budgets; they do not
+consume the model backend's device-overlay workspace budget.
 
 ## Historical ordering for algebra search
 
@@ -335,7 +361,7 @@ MCP inspection and resume; the work here improves SemiOracle store reuse only.
 `common/agent/prediction/outcome-guidance.*` through the SemiOracle-specific
 `semi-oracle-outcome-guidance.*` adapter. The tool remains argument-free;
 the daemon supplies the policy and reads the existing evaluation store. A
-bounded process-local LRU reuses immutable grouped projections by their full
+bounded store-owned LRU reuses immutable grouped projections by their full
 source/context fingerprint (maximum 16 entries); current-fixture exclusion is
 applied after lookup. Stores without a revision watermark use the fingerprint
 of the rows returned by the store, so changed history invalidates the cache.

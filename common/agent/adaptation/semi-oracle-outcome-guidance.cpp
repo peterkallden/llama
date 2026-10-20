@@ -44,6 +44,7 @@ bool common_semi_oracle_outcome_guidance_config_validate(
     error.clear();
     if ((config.mode != "off" && config.mode != "shadow" && config.mode != "experimental") ||
             config.max_history_evaluations == 0 || config.max_history_evaluations > 1024 ||
+            config.projection_cache_bytes > 256 * 1024 * 1024 ||
             (config.search_algorithm != "exact" && config.search_algorithm != "focal") ||
             (config.sampling_policy != "posterior_sampling" && config.sampling_policy != "posterior_mean") ||
             !std::isfinite(config.suboptimality_bound) || config.suboptimality_bound < 1.0 ||
@@ -147,10 +148,15 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     }
     if (!projection_hit) {
         try {
-            if (!store.list_search_history(ruleset.id, ruleset.revision,
-                    config.max_history_evaluations, records, history_error))
+            if (!store.read_search_history_snapshot(ruleset.id, ruleset.revision,
+                    config.max_history_evaluations, records, source_watermark,
+                    watermark_supported, history_error))
                 fallback = "search_history_unavailable";
         } catch (...) { fallback = "search_history_exception"; }
+        if (fallback.empty()) {
+            cache_key = watermark_supported ? fingerprint(json{{"store",store_identity},{"context",context},
+                {"watermark",source_watermark},{"limit",config.max_history_evaluations}}.dump()) : std::string{};
+        }
         read_rows = records.size();
         std::map<std::string, std::map<std::string, counts>> grouped;
         std::map<std::string, std::string> unique;
