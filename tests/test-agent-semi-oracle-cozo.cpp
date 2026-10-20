@@ -69,9 +69,11 @@ int main(int argc, char ** argv) {
         common_semi_oracle_rule_authority::declared, active_game, error));
     common_semi_oracle_result turn_result;
     std::string before, after;
-    CHECK(play_service.verify_active_placement_action(
+    const bool first_action_ok = play_service.verify_active_placement_action(
         "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",
-        turn_result, before, after, error));
+        turn_result, before, after, error);
+    if (!first_action_ok) std::fprintf(stderr, "first placement action failed: %s\n", error.c_str());
+    CHECK(first_action_ok);
     CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
         before.find("\"turn\":\"X\"") != std::string::npos &&
         after.find("\"turn\":\"O\"") != std::string::npos);

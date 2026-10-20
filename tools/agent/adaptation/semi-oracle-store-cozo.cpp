@@ -260,8 +260,8 @@ bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,con
     }
     const char * insert_script = R"COZO(
     {
-        ?[evaluation_id] <- [[$eid]]
-        :ensure_not agent_semi_oracle_evaluations { evaluation_id }
+        ?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]]
+        :ensure_not agent_semi_oracle_evaluations { evaluation_id => ruleset_id, revision, payload }
     }
     {
         ?[evaluation_id, ruleset_id, revision, payload] <- [[$eid, $id, $rev, $payload]]
@@ -271,20 +271,20 @@ bool agent_semi_oracle_cozo_store::append_evaluation(const std::string & eid,con
     %then
         {
             ?[ruleset_id, revision, watermark] :=
-                *agent_semi_oracle_history_revisions[$id, $rev, watermark],
-                ruleset_id = $id, revision = $rev
+                *agent_semi_oracle_history_revisions[ruleset_id, revision, watermark],
+                ruleset_id == $id, revision == $rev
             :ensure agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
         }
         {
             ?[ruleset_id, revision, watermark] :=
-                *agent_semi_oracle_history_revisions[$id, $rev, old],
-                ruleset_id = $id, revision = $rev, watermark = old + 1
+                *agent_semi_oracle_history_revisions[ruleset_id, revision, old],
+                ruleset_id == $id, revision == $rev, watermark = old + 1
             :put agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
         }
     %else
         {
-            ?[ruleset_id, revision] <- [[$id, $rev]]
-            :ensure_not agent_semi_oracle_history_revisions { ruleset_id, revision }
+            ?[ruleset_id, revision, watermark] <- [[$id, $rev, 1]]
+            :ensure_not agent_semi_oracle_history_revisions { ruleset_id, revision => watermark }
         }
         {
             ?[ruleset_id, revision, watermark] <- [[$id, $rev, 1]]
