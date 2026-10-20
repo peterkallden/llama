@@ -567,8 +567,16 @@ bool common_semi_oracle_evaluate(const common_semi_oracle_ruleset & r, const com
             common_semi_oracle_search_result searched;
             problem.transition_adviser = q.transition_adviser;
             problem.transition_score = q.transition_score;
+            problem.historical_identity = q.historical_identity;
+            problem.frontier_observer = q.frontier_observer;
             problem.record_history = q.record_search_history;
-            if(!common_semi_oracle_search_run(problem,q.budget,{},q.use_historical_order,searched)) {
+            // Algebra remains exact, but its configured exact-frontier order
+            // and diagnostics must reach the same search seam as Target Hunt.
+            auto search_policy = q.search_policy;
+            search_policy.algorithm = common_semi_oracle_search_algorithm::exact;
+            search_policy.suboptimality_bound = 1.0;
+            out.applied_search_policy = search_policy;
+            if(!common_semi_oracle_search_run(problem,q.budget,search_policy,q.use_historical_order,searched)) {
                 out.verdict=common_semi_oracle_verdict::unknown;
                 out.reason=searched.error.empty()?"bounded algebra A* failed":searched.error;
                 return true;

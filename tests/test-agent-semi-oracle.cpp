@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <map>
+#include <limits>
 #include <string>
 #include <tuple>
 #include <stdexcept>
@@ -245,6 +246,15 @@ int main() {
     CHECK(algebra_proof["path"][2].value("action",std::string())=="move constants to the right");
     CHECK(algebra_proof["path"][3].value("action",std::string())=="divide both sides by the non-zero coefficient");
     CHECK(result.evaluator_revision=="linear_astar_v1");
+    auto traced_algebra=aq;
+    traced_algebra.search_policy.exact_history_order=common_semi_oracle_history_order::after_heuristic;
+    traced_algebra.use_historical_order=true;
+    traced_algebra.transition_score=[](const std::string &,const std::string &,const std::string &){return 0.0;};
+    size_t algebra_frontier_events=0;
+    traced_algebra.frontier_observer=[&](const common_semi_oracle_frontier_event &){++algebra_frontier_events;};
+    CHECK(common_semi_oracle_evaluate(algebra,traced_algebra,result,error));
+    CHECK(result.verdict==common_semi_oracle_verdict::satisfied && algebra_frontier_events>0 &&
+        result.applied_search_policy.exact_history_order==common_semi_oracle_history_order::after_heuristic);
     auto bounded_algebra=aq;bounded_algebra.budget.max_depth=1;
     CHECK(common_semi_oracle_evaluate(algebra,bounded_algebra,result,error));
     CHECK(result.verdict==common_semi_oracle_verdict::unknown);
@@ -501,6 +511,36 @@ int main() {
             std::vector<size_t> &, std::string &) -> bool { throw std::runtime_error("test adviser"); };
     CHECK(common_semi_oracle_search_astar(order_problem, {8, 4}, advised_order));
     CHECK(advised_order.found && advised_order.guidance_fallbacks == 1);
+    size_t score_calls_after_failed_advice=0;
+    order_problem.transition_score=[&](const std::string &,const std::string &,const std::string &){
+        ++score_calls_after_failed_advice;return -1.0;
+    };
+    CHECK(common_semi_oracle_search_run(order_problem,{8,4},{},true,advised_order));
+    CHECK(advised_order.found && advised_order.guidance_fallbacks==1 &&
+        score_calls_after_failed_advice==0 && advised_order.expansions==normal_order.expansions);
+    auto invalid_problem=order_problem;
+    invalid_problem.transition_adviser={};invalid_problem.transition_score={};
+    invalid_problem.expand=[](const std::string &,std::vector<common_semi_oracle_search_transition> & next,std::string &){
+        next={{"goal","invalid",0}};return true;
+    };
+    CHECK(!common_semi_oracle_search_astar(invalid_problem,{8,4},advised_order));
+    CHECK(advised_order.error.find("zero-cost transition")!=std::string::npos && !advised_order.exhausted);
+    invalid_problem.expand=[](const std::string &,std::vector<common_semi_oracle_search_transition> & next,std::string &){
+        next={{"goal","overflow",std::numeric_limits<size_t>::max()}};return true;
+    };
+    invalid_problem.heuristic=[](const std::string & state){return state=="goal"?size_t{1}:size_t{0};};
+    CHECK(!common_semi_oracle_search_astar(invalid_problem,{8,4},advised_order));
+    CHECK(advised_order.error=="search frontier cost overflow" && !advised_order.exhausted);
+    invalid_problem.heuristic={};
+    invalid_problem.expand=[](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & next,std::string &){
+        next.clear();
+        if(state=="root") next={{"first","first",std::numeric_limits<size_t>::max()}};
+        else if(state=="first") next={{"goal","finish",1}};
+        return true;
+    };
+    CHECK(!common_semi_oracle_search_astar(invalid_problem,{8,4},advised_order));
+    CHECK(advised_order.error=="search path cost overflow" && !advised_order.exhausted);
 
     // Focal A* may choose a more expensive goal only inside its host-selected
     // f-bound; the result must distinguish the bound proof from optimality.

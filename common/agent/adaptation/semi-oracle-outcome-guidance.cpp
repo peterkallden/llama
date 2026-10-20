@@ -353,29 +353,38 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     auto guided = query;
     guided.record_search_history = true;
     guided.use_historical_order = config.mode == "experimental";
-    std::map<std::pair<std::string,std::string>,double> transition_scores;
-    std::map<std::pair<std::string,std::string>,std::string> transition_identities;
+    std::map<std::string,std::map<std::string,double>> transition_scores;
+    std::map<std::string,std::map<std::string,std::string>> transition_identities;
     if (!query.transition_adviser && !query.transition_score && fallback.empty()) {
         guided.transition_score = [&](const std::string & before, const std::string &,
                 const std::string & action) {
-            const auto score=transition_scores.find({before,action});
-            if(score==transition_scores.end())throw std::runtime_error("missing transition posterior score");
-            return score->second;
+            const auto state=transition_scores.find(before);
+            if(state==transition_scores.end() || !state->second.count(action))
+                throw std::runtime_error("missing transition posterior score");
+            return state->second.at(action);
         };
         guided.historical_identity = [&](const std::string & before, const std::string &,
                 const std::string & action) {
-            const auto identity = transition_identities.find({before, action});
-            return identity == transition_identities.end() ? std::string{} : identity->second;
+            const auto state=transition_identities.find(before);
+            if(state==transition_identities.end()) return std::string{};
+            const auto identity=state->second.find(action);
+            return identity==state->second.end() ? std::string{} : identity->second;
         };
         guided.transition_adviser = [&](const std::string & current, const std::vector<std::string> & candidates,
                 std::vector<size_t> & order, std::string & advice_error) {
             const auto advice_started=std::chrono::steady_clock::now();
             advice_error.clear();
+            // A reopened state must not retain scores from its earlier
+            // decision if this invocation cannot produce a complete advice.
+            transition_scores.erase(current);
+            transition_identities.erase(current);
             order.resize(candidates.size()); std::iota(order.begin(), order.end(), size_t{0});
             auto proposed = order;
             std::vector<double> utilities;
             json predictions = json::array();
             bool matching_history = false;
+            std::map<std::string,double> current_scores;
+            std::map<std::string,std::string> current_identities;
             // Target sampling depends on canonical geometry/posterior counts,
             // not fresh problem/evaluation IDs. Provenance remains in the history fingerprint.
             const auto sampling_input=target
@@ -387,7 +396,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
                 const auto fine_key=category(current,action);
                 const auto coarse_key=target?coarse_category(current,action):fine_key;
                 const auto key=target&&group_counts[fine_key]<8?coarse_key:fine_key;
-                transition_identities[{current,action}]=key;
+                current_identities[action]=key;
                 const auto found = weights.find(key);
                 const counts w = found == weights.end() ? counts{} : found->second;
                 matching_history = matching_history || w[0] + w[1] + w[2] > 0.0;
@@ -450,7 +459,9 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
             // Absolute utilities are comparable across different parents.
             // Cold start preserves deterministic frontier order for all siblings.
             for(size_t i=0;i<candidates.size();++i)
-                transition_scores[{current,candidates[i]}]=matching_history?-utilities[i]:0.0;
+                current_scores[candidates[i]]=matching_history?-utilities[i]:0.0;
+            transition_scores.emplace(current,std::move(current_scores));
+            transition_identities.emplace(current,std::move(current_identities));
             if (config.mode == "experimental") order = proposed;
             if (decisions.size() < 128) decisions.push_back({{"state_fingerprint", fingerprint(current)},
                 {"selection_reason", matching_history ? config.sampling_policy : "cold_start_original_order"},

@@ -193,7 +193,12 @@ counts. Performance and budget success rates are measured results, not
 acceptance assumptions. Exact A* always keeps minimum-f priority. Its default
 historical order is `before_h` (`f → history score → h → ordinal`) among equal-f
 nodes; the conservative `after_h` order is `f → h → history score → ordinal`.
-Focal A* orders only entries inside its host-selected `f <= w*f_min` set. The
+The configured exact order and optional frontier observer reach both Target
+Hunt and algebra; algebra always uses exact A*. Focal A* orders only entries
+inside its host-selected `f <= w*f_min` set. Invalid host transitions and
+path/frontier cost overflow fail the search instead of silently omitting a
+branch and reporting exhaustive `VIOLATED`. A failed transition adviser leaves
+that expansion in deterministic order with no partial historical scores. The
 optional frontier observer performs its frontier scan only when enabled. No
 GPU/model is required.
 
@@ -266,8 +271,9 @@ Cozo also retains the separate branch payload and applied exact/Focal policy,
 matching the in-memory payload; evaluation appends on one store instance are
 serialized. Legacy retry comparisons recover additive fields from stored
 proof/diagnostic data where possible; unavailable policy provenance is not
-invented. These source corrections and their added regression cases have
-**not been built or executed yet**.
+invented. The focused Cozo and SemiOracle tests passed in the preceding
+verification sweep. The subsequent algebra-policy and fail-closed search
+corrections described above have not yet been built or run.
 
 The subsequent integration correction adds the persistent
 `agent_semi_oracle_history_revisions` relation with an atomic initial backfill.
@@ -297,15 +303,16 @@ after a completed transaction, not an injected failure inside an in-flight
 transaction. The existing `llama-agent-daemon-mcp-config-smoke` now additionally
 checks Focal policy and branch-family use through the real native provider,
 MCP schema registration, HTTP transport and dispatcher. These cases are added
-source coverage, **not executed verification** of the current changes.
+source coverage; the focused daemon/MCP CTest passed in the preceding sweep.
 
-The following evaluation extensions of the broader plan remain:
+The following verification and measurement work remains:
 
-- Complete the independent map families (64 training and 32 held-out maps per
-  family), exact posterior-mean comparison, per-map calibration/confidence
-  reporting, explicit frontier-selection traces and cold/warm/trace-disabled
-  cost measurements. The current smoke keeps the existing mixed 64/32 map set;
-  it is not yet split into two independently trained/held-out map families.
+- Run the complete 64-training/32-held-out per-family, eight-seed comparison
+  to completion. The bounded quick CTest covers a subset of held-out maps;
+  both attempted full runs reached the 1,800-second process limit. Complete
+  four-repeat warmed, trace-disabled cost measurements separately.
+- Build and run the new algebra-policy, adviser-fallback and invalid-transition
+  regression cases before treating these latest source corrections as verified.
 - Inject failures while transactions are in flight if stronger crash-coverage
   evidence is required; the prepared process-exit case is after commit.
 

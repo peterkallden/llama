@@ -120,7 +120,6 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
     query.use_historical_order = guidance_.mode == "experimental";
     if(!common_semi_oracle_evaluate_with_history(store_, guidance_, host_namespace_,
             session_id_, ruleset, query, result, error, project_id_))return false;
-    result.applied_search_policy = query.search_policy;
     const auto evaluation_id=opaque_id(host_namespace_,session_id_,"evaluation");
     if (!result.search_guidance_json.empty()) {
         auto metadata = json::parse(result.search_guidance_json, nullptr, false);
