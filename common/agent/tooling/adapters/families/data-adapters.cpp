@@ -634,6 +634,22 @@ common_tool_execution_result execute_investigation_tool(
             {"scope", {{"namespace_id", published.scope.namespace_id},
                 {"project_id", published.scope.project_id}, {"session_id", published.scope.session_id}}}});
     }
+    if (operation == "investigation.case.list") {
+        const size_t limit = arguments.value("limit", size_t(50));
+        std::vector<common_investigation_case_summary> cases;
+        std::string next_cursor;
+        if (!bindings.data_store->list_investigation_cases(bindings.tool_scope, limit,
+                arguments.value("after_case_id", std::string()), cases, next_cursor, error)) {
+            return common_adapter_execution_failure("tool.investigation.case_list_failed",
+                std::move(error), "Cases could not be listed in the current scope.");
+        }
+        json rows = json::array();
+        for (const auto & item : cases) rows.push_back({{"case_id", item.case_id},
+            {"revision", item.revision}, {"title", item.title}, {"question", item.question},
+            {"source_id", item.source_id}, {"window_start_ms", item.window_start_ms},
+            {"window_end_ms", item.window_end_ms}});
+        return common_adapter_success_json({{"cases", std::move(rows)}, {"next_cursor", next_cursor}});
+    }
     const auto case_id = arguments.value("case_id", std::string());
     common_investigation_case_revision value;
     if (!bindings.data_store->get_investigation_case(case_id, bindings.tool_scope, value, error)) {
@@ -1183,6 +1199,7 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.dataset.schema" ||
         definition.executor_id == "builtin.dataset.sample" ||
         definition.executor_id == "builtin.investigation.case.create" ||
+        definition.executor_id == "builtin.investigation.case.list" ||
         definition.executor_id == "builtin.investigation.case.open" ||
         definition.executor_id == "builtin.investigation.report.compose" ||
         definition.executor_id == "builtin.investigation.collect" ||

@@ -102,6 +102,20 @@ const char * investigation_schema = R"COZO(
         }
     }
     {
+        ?[scope_key, case_id, revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri] <- [['__probe__', '__probe__', 1, '', '', '', 0, 0, '']]
+        :create agent_investigation_scope_index {
+            scope_key: String,
+            case_id: String =>
+            revision: Int,
+            title: String,
+            question: String,
+            source_id: String,
+            window_start_ms: Int,
+            window_end_ms: Int,
+            revision_uri: String
+        }
+    }
+    {
         ?[case_key, revision, payload, revision_uri] <- [['__probe__', 1, '{}', '']]
         :create agent_investigation_revisions {
             case_key: String,
@@ -112,6 +126,21 @@ const char * investigation_schema = R"COZO(
     }
 )COZO";
 
+const char * investigation_scope_index_schema = R"COZO(
+    ?[scope_key, case_id, revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri] <- [['__probe__', '__probe__', 1, '', '', '', 0, 0, '']]
+    :create agent_investigation_scope_index {
+        scope_key: String,
+        case_id: String =>
+        revision: Int,
+        title: String,
+        question: String,
+        source_id: String,
+        window_start_ms: Int,
+        window_end_ms: Int,
+        revision_uri: String
+    }
+)COZO";
+
 } // namespace
 
 const char * agent_cozo_schema_script() { return schema; }
@@ -119,3 +148,4 @@ const char * agent_cozo_values_schema_script() { return values_schema; }
 const char * agent_cozo_order_schema_script() { return order_schema; }
 const char * agent_cozo_dataset_schema_script() { return dataset_schema; }
 const char * agent_cozo_investigation_schema_script() { return investigation_schema; }
+const char * agent_cozo_investigation_scope_index_schema_script() { return investigation_scope_index_schema; }

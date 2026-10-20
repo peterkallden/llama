@@ -136,6 +136,9 @@ Cozo, daemon or external sandbox backends.
 
 ## Quick start
 
+For scoped search sources, case storage, evidence handling, and the Investigation
+Workspace UI, see [Investigation Workspace](agent-investigation.md).
+
 For prerequisites, supported build profiles, environment setup, CMake options,
 and CTest labels, see [Agent Build](agent-build.md). A first daemon
 configuration can be generated with

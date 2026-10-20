@@ -120,6 +120,20 @@ public:
         }
         out = found->second; error.clear(); return true;
     }
+    bool list_investigation_cases(const common_agent_scope & scope, size_t limit,
+            const std::string & after, std::vector<common_investigation_case_summary> & out,
+            std::string & cursor, std::string & error) override {
+        out.clear(); cursor.clear();
+        for (const auto & item : cases) {
+            const auto & value = item.second;
+            if (value.scope.namespace_id != scope.namespace_id || value.scope.project_id != scope.project_id ||
+                    (scope.project_id.empty() && value.scope.session_id != scope.session_id) || item.first <= after) continue;
+            out.push_back({value.case_id, value.revision, value.title, value.question,
+                value.source_id, value.window_start_ms, value.window_end_ms});
+        }
+        if (out.size() > limit) { out.resize(limit); cursor = out.back().case_id; }
+        error.clear(); return true;
+    }
     bool publish_investigation_case(const common_investigation_case_revision & input,
             uint64_t expected, const std::string &, common_investigation_case_revision & out,
             std::string & error) override {
@@ -1174,6 +1188,8 @@ int main() {
     common_tool_registry investigation_registry;
     assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
         investigation_bindings, investigation_registry, adapters, error));
+    result = investigation_registry.execute({"investigation.case.list", R"({"limit":10})"});
+    assert(result.ok && result.output.find("graph-case") != std::string::npos);
     result = investigation_registry.execute({"investigation.case.create",
         R"({"title":"New case","question":"What happened?","source_id":"logs","window_start_ms":100,"window_end_ms":1000})"});
     assert(result.ok && result.output.find("case-") != std::string::npos);

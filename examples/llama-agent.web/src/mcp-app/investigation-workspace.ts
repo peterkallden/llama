@@ -17,6 +17,7 @@ if (!window.__investigationWorkspace) {
   let selectedEvent = "";
   let graph: Core | null = null;
   let lastAppCallAt = 0;
+  let caseListCursor = "";
 
   function rpc(method: string, params: Json = {}) {
     const id = seq++;
@@ -79,6 +80,28 @@ if (!window.__investigationWorkspace) {
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
       await expand();
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+  }
+  async function listCases(after = "") {
+    const token = ++generation;
+    try {
+      setStatus("Loading cases in this scope…");
+      const value = await call("investigation.case.list", { limit: 50, after_case_id: after }, token);
+      if (!value) return;
+      const target = q<HTMLDivElement>("#case-list-items");
+      if (!after) target.replaceChildren();
+      caseListCursor = String(value.next_cursor ?? "");
+      for (const item of value.cases ?? []) {
+        const button = document.createElement("button"); button.className = "case-item";
+        const title = document.createElement("strong"); title.textContent = String(item.title || item.case_id);
+        const meta = document.createElement("small"); meta.textContent = `${item.case_id} · r${item.revision} · ${item.source_id}`;
+        button.append(title, meta); button.addEventListener("click", () => {
+          q("#case-list").setAttribute("hidden", ""); void openCase(String(item.case_id));
+        }); target.append(button);
+      }
+      q("#case-list").removeAttribute("hidden");
+      q<HTMLButtonElement>("#case-list-more").hidden = !caseListCursor;
+      setStatus(`${target.children.length} cases visible in this scope.`);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   function renderGraph(value: Json) {
@@ -215,6 +238,8 @@ if (!window.__investigationWorkspace) {
   }
 
   q("#create-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").value = ""; });
+  q("#browse-cases").addEventListener("click", () => void listCases());
+  q("#case-list-more").addEventListener("click", () => { if (caseListCursor) void listCases(caseListCursor); });
   q("#open-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").focus(); });
   q("#case-submit").addEventListener("click", () => void createOrOpen());
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));

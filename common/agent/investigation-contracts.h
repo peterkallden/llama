@@ -104,6 +104,16 @@ struct common_investigation_case_revision {
     std::string fingerprint;
 };
 
+struct common_investigation_case_summary {
+    std::string case_id;
+    uint64_t revision = 0;
+    std::string title;
+    std::string question;
+    std::string source_id;
+    int64_t window_start_ms = 0;
+    int64_t window_end_ms = 0;
+};
+
 struct common_investigation_graph_query {
     std::string case_id;
     uint64_t case_revision = 0;

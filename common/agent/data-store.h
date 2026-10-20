@@ -160,6 +160,11 @@ public:
             common_investigation_case_revision &, std::string &) {
         return false;
     }
+    virtual bool list_investigation_cases(const common_agent_scope &, size_t,
+            const std::string &, std::vector<common_investigation_case_summary> &,
+            std::string &, std::string &) {
+        return false;
+    }
     virtual bool publish_investigation_case(const common_investigation_case_revision &,
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) {

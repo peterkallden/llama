@@ -66,9 +66,25 @@ int main() {
     TEST_ASSERT(store.publish_investigation_case(investigation, 0,
         "resource://investigation/case-persist-1/revision-1", published, error));
     TEST_ASSERT(published.revision == 1 && published.fingerprint.rfind("sha256:", 0) == 0);
+    const auto first_case_fingerprint = published.fingerprint;
+    auto second_case = investigation;
+    second_case.case_id = "case-persist-2";
+    second_case.title = "Second case";
+    TEST_ASSERT(store.publish_investigation_case(second_case, 0,
+        "resource://investigation/case-persist-2/revision-1", published, error));
+    std::vector<common_investigation_case_summary> listed_cases;
+    std::string case_cursor;
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].case_id == "case-persist-1" &&
+        listed_cases[0].title == "Persistence contract" && case_cursor == "case-persist-1");
+    const auto next_case_after = case_cursor;
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, next_case_after,
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].case_id == "case-persist-2" && case_cursor.empty());
     common_investigation_case_revision reloaded_case;
     TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
-    TEST_ASSERT(reloaded_case.revision == 1 && reloaded_case.fingerprint == published.fingerprint);
+    TEST_ASSERT(reloaded_case.revision == 1 && reloaded_case.fingerprint == first_case_fingerprint);
     TEST_ASSERT(!store.publish_investigation_case(investigation, 0,
         "resource://investigation/case-persist-1/conflict", published, error));
     TEST_ASSERT(error.find("revision conflict") != std::string::npos);
@@ -79,9 +95,15 @@ int main() {
         "resource://investigation/case-persist-1/revision-2", published, error));
     TEST_ASSERT(published.revision == 2 && published.previous_revision_uri ==
         "resource://investigation/case-persist-1/revision-1");
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].revision == 2 &&
+        listed_cases[0].title == "Persistence contract updated");
     auto other_scope = investigation.scope;
     other_scope.project_id = "project-b";
     TEST_ASSERT(!store.get_investigation_case("case-persist-1", other_scope, reloaded_case, error));
+    TEST_ASSERT(store.list_investigation_cases(other_scope, 10, "",
+        listed_cases, case_cursor, error) && listed_cases.empty());
 
     TEST_ASSERT(store.put_row("dataset://local/orders", "1", R"({"id":1,"customer_id":10,"region":"north","value":12})", error));
     TEST_ASSERT(store.put_row("dataset://local/orders", "2", R"({"id":2,"customer_id":11,"region":"south","value":8})", error));
@@ -280,6 +302,12 @@ int main() {
     TEST_ASSERT(!store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[],"max_scan_rows":1,"materialize":true,"result_dataset":"dataset://derived/truncated"})", output, error));
     TEST_ASSERT(error.find("truncated") != std::string::npos);
 
+    store.close();
+    TEST_ASSERT(store.open((root / "data.cozo").string(), error));
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 10, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 2 && listed_cases[0].case_id == "case-persist-1" &&
+        listed_cases[0].revision == 2 && listed_cases[1].case_id == "case-persist-2");
     store.close();
     fs::remove_all(root, ec);
     return 0;

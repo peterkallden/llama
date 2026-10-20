@@ -31,6 +31,9 @@ public:
             std::string & result_json, std::string & error) override;
     bool get_investigation_case(const std::string &, const common_agent_scope &,
             common_investigation_case_revision &, std::string &) override;
+    bool list_investigation_cases(const common_agent_scope &, size_t,
+            const std::string &, std::vector<common_investigation_case_summary> &,
+            std::string &, std::string &) override;
     bool publish_investigation_case(const common_investigation_case_revision &,
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) override;
