@@ -93,6 +93,8 @@
           "harm_penalty": 5.0,
           "min_backoff_groups": 8,
           "max_prior_strength": 4.0,
+          "matched_evaluation": false,
+          "matched_max_arms": 9,
           "projection_cache_bytes": 16777216
         },
         "canary": {

@@ -51,17 +51,19 @@ struct common_flydelta_guidance_qualification_context {
     // envelope can be checked against the authorized namespace/project/session.
     common_agent_scope authorized_scope;
     common_flydelta_outcome_guidance_context outcome_context;
-    std::string policy_revision = "deep-mixed-policy-v1";
+    std::string policy_revision;
+    size_t selection_limit = 0;
 };
 
 struct common_flydelta_guidance_arm_measurement {
     std::string arm_id;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
-    // Measured full-generation compute attributable to this arm. In a union
-    // run each arm executes once; each policy's cost is then summed over its
-    // own selected arms, not charged the union's shared wall time.
+    // Equal-share attribution of measured batch model time. This supports
+    // cost diagnostics, not a claim of measured standalone policy latency.
     double inference_ms = 0.0;
+    bool inference_cost_available = false;
+    std::string evidence_ref;
 };
 
 struct common_flydelta_guidance_fixture_evaluation {
@@ -70,6 +72,12 @@ struct common_flydelta_guidance_fixture_evaluation {
     std::vector<std::string> guided_selection;
     std::vector<std::string> random_ablation_selection;
     std::vector<common_flydelta_guidance_arm_measurement> union_arm_results;
+    std::string evaluation_id;
+    std::string history_fingerprint;
+    std::string candidate_pool_fingerprint;
+    double baseline_inference_ms = 0.0;
+    bool baseline_cost_available = false;
+    std::string baseline_evidence_ref;
 };
 
 using common_flydelta_guidance_union_runner = std::function<bool(
@@ -91,6 +99,10 @@ struct common_flydelta_guidance_qualification_result {
     size_t guided_harmed = 0;
     size_t random_helped = 0;
     size_t random_harmed = 0;
+    size_t baseline_unknown = 0;
+    size_t guided_unknown = 0;
+    size_t random_unknown = 0;
+    bool inference_costs_available = false;
     size_t baseline_selected_arms = 0;
     size_t guided_selected_arms = 0;
     size_t random_selected_arms = 0;
@@ -138,6 +150,26 @@ bool common_flydelta_guidance_append_qualification(
         const common_flydelta_lifecycle_event_context & event_context,
         const common_flydelta_guidance_qualification_result & result,
         std::string & error);
+
+// Persist a real Deep union evaluation and recompute the paired qualification
+// from earlier compatible, independent fixture groups. Duplicate executions
+// cannot add group weight; failed persistence never changes search results.
+bool common_flydelta_guidance_record_matched_evaluation(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & event_context,
+        const common_flydelta_guidance_qualification_context & context,
+        const common_flydelta_guidance_fixture_evaluation & fixture,
+        std::string & error,
+        common_flydelta_guidance_qualification_result * qualification = nullptr);
+
+// Rebuild from already registered union outcomes, including after an
+// evaluation append succeeded but qualification publication was interrupted.
+bool common_flydelta_guidance_refresh_qualification(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & event_context,
+        const common_flydelta_guidance_qualification_context & context,
+        std::string & error,
+        common_flydelta_guidance_qualification_result * qualification = nullptr);
 
 // Finds the latest compatible qualification. It is usable only before the
 // explicit revalidation watermark; expired/paused records never authorize

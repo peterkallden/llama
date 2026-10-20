@@ -29,6 +29,11 @@ struct common_flydelta_outcome_guidance_config {
     size_t min_backoff_groups = 8;
     double max_prior_strength = 4.0;
     size_t projection_cache_bytes = 16 * 1024 * 1024;
+    // Explicit host experiment: execute the union of ordinary, mixed-policy
+    // and random Top-K through Deep's existing full-generation runner.
+    // Ordinary shadow/off never incur these extra arms.
+    bool matched_evaluation = false;
+    size_t matched_max_arms = 9;
 };
 
 bool common_flydelta_outcome_guidance_config_validate(

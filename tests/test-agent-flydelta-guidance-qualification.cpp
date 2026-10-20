@@ -4,6 +4,23 @@
 
 #define CHECK(condition) do { if (!(condition)) { std::cerr << "failed line " << __LINE__ << '\n'; return __LINE__; } } while (false)
 
+struct interrupted_qualification_store : common_learning_lifecycle_store {
+    common_learning_in_memory_lifecycle_store backing;
+    bool fail_publication = true;
+    bool append(const common_learning_lifecycle_record & record, std::string & error) override {
+        if (fail_publication && record.event_id.find("flydelta:qualification:") == 0) {
+            fail_publication = false;
+            error = "simulated qualification publication interruption";
+            return false;
+        }
+        return backing.append(record, error);
+    }
+    bool contains_idempotency(const std::string & key, bool & contains, std::string & error) const override {
+        return backing.contains_idempotency(key, contains, error);
+    }
+    std::vector<common_learning_lifecycle_record> list(std::string & error) const override { return backing.list(error); }
+};
+
 static common_flydelta_guidance_qualification_context context() {
     common_flydelta_guidance_qualification_context c;
     c.authorized_scope.namespace_id = "ns";
@@ -21,6 +38,7 @@ static common_flydelta_guidance_qualification_context context() {
     c.outcome_context.estimator = "coefficient-margin-geometry-v1";
     c.policy_revision = common_flydelta_guidance_qualification_policy_revision(
         common_flydelta_outcome_guidance_config{});
+    c.selection_limit = 1;
     return c;
 }
 
@@ -29,6 +47,10 @@ static std::vector<common_flydelta_guidance_fixture_evaluation> cohort(bool guid
     for (size_t i = 0; i < 24; ++i) {
         common_flydelta_guidance_fixture_evaluation fixture;
         fixture.fixture_group_id = "fixture:" + std::to_string(i);
+        fixture.evaluation_id = "evaluation:" + std::to_string(i);
+        fixture.history_fingerprint = "history:fixture:" + std::to_string(i);
+        fixture.candidate_pool_fingerprint = "pool:fixture:" + std::to_string(i);
+        fixture.baseline_evidence_ref = "evidence:baseline:" + std::to_string(i);
         fixture.baseline_selection = {"base"};
         fixture.guided_selection = {"guide"};
         fixture.random_ablation_selection = {"random"};
@@ -39,6 +61,7 @@ static std::vector<common_flydelta_guidance_fixture_evaluation> cohort(bool guid
                                   : common_flydelta_counterfactual_outcome::neutral, 80.0},
             {"random", common_flydelta_counterfactual_outcome::neutral, 90.0},
         };
+        for (auto & arm : fixture.union_arm_results) arm.evidence_ref = "evidence:" + arm.arm_id;
         values.push_back(std::move(fixture));
     }
     return values;
@@ -105,7 +128,7 @@ int main() {
 
     common_flydelta_guidance_qualification_result result;
     CHECK(common_flydelta_guidance_qualify_deep_selection(
-        context(), cohort(true), 100, result, error));
+        context(), cohort(true), 0, result, error));
     CHECK(result.status == common_flydelta_guidance_qualification_status::qualified);
     CHECK(result.fixture_groups == 24);
     CHECK(result.guided_helped == 24 && result.baseline_helped == 0);
@@ -126,6 +149,9 @@ int main() {
     wrong_scope_event.scope.session_id = "another-session";
     CHECK(!common_flydelta_guidance_append_qualification(
         store, wrong_scope_event, result, error));
+    auto changed_summary = result;
+    ++changed_summary.guided_helped;
+    CHECK(!common_flydelta_guidance_append_qualification(store, event, changed_summary, error));
     CHECK(common_flydelta_guidance_append_qualification(store, event, result, error));
     std::vector<common_learning_lifecycle_record> records;
     uint64_t watermark = 0;
@@ -145,6 +171,14 @@ int main() {
     CHECK(common_flydelta_guidance_find_qualification(
         records, incompatible, watermark, restored, usable, reason, error));
     CHECK(!usable && reason == "qualification_not_found");
+    incompatible = context();
+    incompatible.selection_limit = 2;
+    CHECK(common_flydelta_guidance_find_qualification(
+        records, incompatible, watermark, restored, usable, reason, error));
+    CHECK(!usable && reason == "qualification_not_found");
+    CHECK(common_flydelta_guidance_find_qualification(
+        records, context(), 0, restored, usable, reason, error));
+    CHECK(!usable && reason == "qualification_not_found");
     auto tampered = records;
     const auto status_pos = tampered.front().payload_json.find("qualified");
     CHECK(status_pos != std::string::npos);
@@ -160,6 +194,46 @@ int main() {
     CHECK(common_flydelta_guidance_qualify_deep_selection(
         context(), too_small, 300, result, error));
     CHECK(result.status == common_flydelta_guidance_qualification_status::insufficient_evidence);
+
+    CHECK(!common_flydelta_guidance_union_selection({"a"}, {"b", "c"}, {"d"}, union_ids, error));
+    common_learning_in_memory_lifecycle_store matched_store;
+    const auto matched_cohort = cohort(true);
+    for (size_t i = 0; i < matched_cohort.size(); ++i) {
+        auto matched_event = event;
+        matched_event.event_id = "matched:" + std::to_string(i);
+        matched_event.idempotency_key = matched_event.event_id;
+        CHECK(common_flydelta_guidance_record_matched_evaluation(
+            matched_store, matched_event, context(), matched_cohort[i], error));
+    }
+    CHECK(matched_store.list_scope_with_watermark("ns", "project", "session", records, watermark, error));
+    CHECK(common_flydelta_guidance_find_qualification(records, context(), watermark, restored, usable, reason, error));
+    CHECK(usable && restored.fixture_groups == matched_cohort.size());
+    CHECK(!restored.inference_costs_available); // costs were not independently supplied
+    const auto count = records.size();
+    auto repeated_event = event;
+    repeated_event.event_id = "matched:23";
+    repeated_event.idempotency_key = repeated_event.event_id;
+    CHECK(common_flydelta_guidance_record_matched_evaluation(
+        matched_store, repeated_event, context(), matched_cohort.back(), error));
+    CHECK(matched_store.list_scope_with_watermark("ns", "project", "session", records, watermark, error));
+    CHECK(common_flydelta_guidance_find_qualification(records, context(), watermark, restored, usable, reason, error));
+    CHECK(restored.fixture_groups == matched_cohort.size());
+    // An idempotent retry must not add a new evaluation OR qualification.
+    CHECK(records.size() == count);
+    interrupted_qualification_store interrupted;
+    auto interrupted_event = event;
+    interrupted_event.event_id = "interrupted:matched";
+    interrupted_event.idempotency_key = interrupted_event.event_id;
+    CHECK(!common_flydelta_guidance_record_matched_evaluation(
+        interrupted, interrupted_event, context(), matched_cohort.front(), error));
+    CHECK(interrupted.list_scope_with_watermark("ns", "project", "session", records, watermark, error));
+    CHECK(records.size() == 1); // union evidence is durable; no qualification yet
+    CHECK(common_flydelta_guidance_refresh_qualification(
+        interrupted, interrupted_event, context(), error, &restored));
+    CHECK(restored.fixture_groups == 1 && restored.status ==
+        common_flydelta_guidance_qualification_status::insufficient_evidence);
+    CHECK(interrupted.list_scope_with_watermark("ns", "project", "session", records, watermark, error));
+    CHECK(records.size() == 2);
     std::cout << "Deep selection qualification contracts passed\n";
     return 0;
 }

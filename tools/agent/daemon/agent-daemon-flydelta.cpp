@@ -3,6 +3,7 @@
 #include "agent/agent-residual-patch.h"
 #include "agent/adaptation/flydelta/experiment/flydelta-guidance-qualification.h"
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -1909,8 +1910,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     size_t guidance_read_history_rows = 0;
     uint64_t guidance_history_watermark = 0;
     std::string guidance_history_failure_reason;
-    bool deep_selection_qualified = false;
-    std::string deep_selection_qualification_reason = "qualification_not_found";
+    std::vector<common_learning_lifecycle_record> frozen_qualification_records;
+    bool matched_evaluation_recorded = false;
     double guidance_projection_ms = 0.0;
     const auto guidance_preparation_started = std::chrono::steady_clock::now();
     auto persisted_guidance_sequence_by_pool = std::make_shared<std::map<std::string, size_t>>();
@@ -1946,19 +1947,6 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 job.seed.scope.session_id, records, guidance_history_watermark,
                 history_error)) {
             records.clear();
-        }
-        common_flydelta_guidance_qualification_context qualification_context;
-        qualification_context.authorized_scope = job.seed.scope;
-        qualification_context.outcome_context = guidance_context;
-        qualification_context.policy_revision =
-            common_flydelta_guidance_qualification_policy_revision(guidance_config);
-        common_flydelta_guidance_qualification_result qualification_result;
-        std::string qualification_error;
-        if (!common_flydelta_guidance_find_qualification(records, qualification_context,
-                guidance_history_watermark, qualification_result, deep_selection_qualified,
-                deep_selection_qualification_reason, qualification_error)) {
-            deep_selection_qualified = false;
-            deep_selection_qualification_reason = "qualification_record_invalid:" + qualification_error;
         }
         guidance_read_history_rows = records.size();
         if (history_error.empty()) {
@@ -2179,6 +2167,18 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                     guidance_history.clear();
                 }
             }
+            // Resume must not gain authority from qualifications appended
+            // after this job's frozen history watermark.
+            if (!guidance_history_load_failed) {
+                for (const auto & row : records) {
+                    if (row.event_id.find(job.id + ":deep-matched:") == 0) matched_evaluation_recorded = true;
+                    if (row.kind == common_learning_lifecycle_kind::flydelta_experiment &&
+                            row.subject_id == "deep_full_generation_selection" &&
+                            row.registration_order > 0 && row.registration_order <= guidance_history_watermark) {
+                        frozen_qualification_records.push_back(row);
+                    }
+                }
+            }
         } else {
             guidance_history_load_failed = true;
             guidance_history_failure_reason = "lifecycle_history_read_failed";
@@ -2225,7 +2225,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             phase_id = static_cast<int>(plan.phase),
             job_id = job.id, history_load_failed = guidance_history_load_failed,
             history_failure_reason = guidance_history_failure_reason,
-            deep_selection_qualified, deep_selection_qualification_reason,
+            frozen_qualification_records,
             read_history_rows = guidance_read_history_rows,
             ineligible_rows = guidance_ineligible_history_rows](
             const common_flydelta_outcome_guidance_request & request,
@@ -2283,6 +2283,23 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             }
             const size_t policy_slots_consumed = std::min(limit, pool.size());
             const bool deep_selection_point = stage == "deep_full_generation_frontier";
+            bool deep_selection_qualified = false;
+            std::string deep_selection_qualification_reason = "not_applicable";
+            if (deep_selection_point && !history_load_failed) {
+                common_flydelta_guidance_qualification_context context;
+                context.authorized_scope = scope;
+                context.outcome_context = guidance_context;
+                context.selection_limit = limit;
+                context.policy_revision = common_flydelta_guidance_qualification_policy_revision(guidance_config);
+                common_flydelta_guidance_qualification_result restored;
+                std::string qualification_error;
+                if (!common_flydelta_guidance_find_qualification(frozen_qualification_records, context,
+                        history_watermark, restored, deep_selection_qualified,
+                        deep_selection_qualification_reason, qualification_error)) {
+                    deep_selection_qualified = false;
+                    deep_selection_qualification_reason = "qualification_record_invalid:" + qualification_error;
+                }
+            }
             common_flydelta_outcome_guidance_config effective_guidance_config = guidance_config;
             effective_guidance_config.mode = common_flydelta_guidance_effective_mode(
                 guidance_config.mode,
@@ -2606,6 +2623,11 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         deep_config.full_generation_top_k = plan.budget.full_generation_top_k == 0
             ? 3 : std::min<size_t>(3, plan.budget.full_generation_top_k);
         deep_config.coefficients = coefficient_config;
+        deep_config.matched_evaluation = guidance_config.matched_evaluation &&
+            guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+            !guidance_history_load_failed && !matched_evaluation_recorded && provider->lifecycle_store;
+        deep_config.matched_max_arms = guidance_config.matched_max_arms;
+        deep_config.matched_seed = guidance_config.seed;
         std::vector<common_flydelta_deep_search_direction> deep_directions;
         for (const auto & candidate : candidates) {
             common_flydelta_deep_search_direction value;
@@ -2618,6 +2640,63 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         if (!common_flydelta_run_deep_search_batched(
                 fixture, deep_config, deep_directions, run_diagnostic, run_diagnostic_batch,
                 run_full, run_full_batch, deep_result, error, outcome_adviser)) return false;
+        if ((deep_result.matched_evaluation_complete || matched_evaluation_recorded) &&
+                guidance_config.matched_evaluation &&
+                guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
+                !guidance_history_load_failed && provider->lifecycle_store) {
+            common_flydelta_guidance_qualification_context context;
+            context.authorized_scope = job.seed.scope;
+            context.outcome_context = guidance_context;
+            context.selection_limit = deep_result.matched_evaluation_complete
+                ? deep_result.matched_evaluation.baseline_selection.size()
+                : static_cast<size_t>(std::count_if(deep_result.coefficient_trials.begin(),
+                    deep_result.coefficient_trials.end(), [](const auto & trial) {
+                        return trial.mutation_kind == "full_generation_top_arm";
+                    }));
+            context.policy_revision = common_flydelta_guidance_qualification_policy_revision(guidance_config);
+            common_flydelta_lifecycle_event_context event;
+            event.event_id = job.id + ":deep-matched:" + (deep_result.matched_evaluation_complete
+                ? deep_result.matched_evaluation.evaluation_id : "refresh");
+            event.idempotency_key = event.event_id;
+            event.source_id = "daemon-flydelta-deep-matched-evaluation";
+            event.scope = job.seed.scope;
+            const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            std::tm utc{};
+            gmtime_r(&now, &utc);
+            std::ostringstream timestamp;
+            timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+            event.created_at = timestamp.str();
+            std::string qualification_error;
+            common_flydelta_guidance_qualification_result qualification;
+            const bool stored = deep_result.matched_evaluation_complete
+                ? common_flydelta_guidance_record_matched_evaluation(*provider->lifecycle_store, event,
+                    context, deep_result.matched_evaluation, qualification_error, &qualification)
+                : common_flydelta_guidance_refresh_qualification(*provider->lifecycle_store, event,
+                    context, qualification_error, &qualification);
+            std::clog << "[flydelta] matched_evaluation " << nlohmann::ordered_json{
+                {"job_id", job.id}, {"complete", deep_result.matched_evaluation_complete},
+                {"restored_evaluation", matched_evaluation_recorded}, {"persisted", stored},
+                {"fixture_group_id", deep_result.matched_evaluation.fixture_group_id},
+                {"history_fingerprint", deep_result.matched_evaluation.history_fingerprint},
+                {"candidate_pool_fingerprint", deep_result.matched_evaluation.candidate_pool_fingerprint},
+                {"baseline_selection", deep_result.matched_evaluation.baseline_selection},
+                {"guided_selection", deep_result.matched_evaluation.guided_selection},
+                {"random_selection", deep_result.matched_evaluation.random_ablation_selection},
+                {"union_arm_count", deep_result.matched_evaluation.union_arm_results.size()},
+                {"qualification_status", stored
+                    ? common_flydelta_guidance_qualification_status_name(qualification.status) : "unavailable"},
+                {"fixture_groups", qualification.fixture_groups},
+                {"baseline_helped", qualification.baseline_helped}, {"guided_helped", qualification.guided_helped},
+                {"baseline_harmed", qualification.baseline_harmed}, {"guided_harmed", qualification.guided_harmed},
+                {"baseline_unknown", qualification.baseline_unknown}, {"guided_unknown", qualification.guided_unknown},
+                {"inference_costs_available", qualification.inference_costs_available},
+                {"error", qualification_error}}.dump() << '\n';
+        } else if (guidance_config.matched_evaluation) {
+            std::clog << "[flydelta] matched_evaluation job=" << job.id << " complete=false reason="
+                << (matched_evaluation_recorded ? "already_recorded" :
+                    deep_result.matched_evaluation_reason.empty() ? "not_eligible_or_disabled" :
+                    deep_result.matched_evaluation_reason) << '\n';
+        }
         basis = deep_result.basis;
         trials = deep_result.coefficient_trials;
         selection = deep_result.coefficient_selection;

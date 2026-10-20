@@ -227,6 +227,10 @@ bool common_flydelta_counterfactual_trial_validate(
         error = "FlyDelta counterfactual trial did not execute";
         return false;
     }
+    if (!std::isfinite(trial.attributed_inference_ms) || trial.attributed_inference_ms < 0.0) {
+        error = "FlyDelta trial attributed inference cost is invalid";
+        return false;
+    }
     if (!std::isfinite(trial.quality) || trial.quality < 0.0f || trial.quality > 1.0f) {
         error = "FlyDelta counterfactual trial quality is invalid";
         return false;

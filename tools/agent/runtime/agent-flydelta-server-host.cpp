@@ -1077,6 +1077,14 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         trial.expected_decision_summary = arm.expected_decision_summary;
         trial.verifier_reason = arm.verifier_reason;
         trial.evidence_ref = arm.generation_ref;
+        // The model timer covers this physical/logical batch once. Allocate
+        // it equally for policy cost diagnostics; never call this an
+        // independently measured per-arm latency or counterfactual saving.
+        trial.inference_cost_available = full_execution && arm.execution_metrics.available &&
+            std::isfinite(batch.execution_stats.model_ms) && batch.execution_stats.model_ms > 0.0f;
+        if (trial.inference_cost_available) {
+            trial.attributed_inference_ms = batch.execution_stats.model_ms / static_cast<double>(coefficients.size());
+        }
         trials.push_back(std::move(trial));
         margins.push_back(arm.margin);
         common_flydelta_representation_diagnostics geometry;

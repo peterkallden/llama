@@ -918,7 +918,9 @@ includes the current daemon settings. Within `runtime.adaptation.flydelta`:
     "seed": 5065521830640243777,
     "harm_penalty": 5.0,
     "min_backoff_groups": 8,
-    "max_prior_strength": 4.0
+    "max_prior_strength": 4.0,
+    "matched_evaluation": false,
+    "matched_max_arms": 9
   },
   "teacher_scoring_backend": "auto"
 }
@@ -932,6 +934,14 @@ pending execution order within existing budgets. An unqualified/stale Deep
 record makes the effective decision `shadow` even when the operator requested
 `experimental`; traces show both modes and the qualification reason. TFO order
 alone does not claim compute savings because the full population still runs.
+For an explicit Deep qualification run, set `matched_evaluation=true`. The
+daemon executes the union of ordinary/mixed-policy/random Top-K through its
+existing full-generation batch runner, up to `matched_max_arms` candidates plus
+one baseline. It persists paired outcomes and updates the lifecycle qualification.
+The default false incurs no extra arms; `off` ignores the experiment flag.
+An oversized union or incomplete verification reports why no evaluation was
+published. Batch model time allocations are labelled estimates, not standalone
+policy speedups. The current job retains its frozen qualification authority.
 Missing compatible history yields prior-only predictions; a random sampled
 ranking is not a learned preference. No automatic reduction in probe count
 follows from enabling guidance.

@@ -24,6 +24,8 @@
         "enabled": true,
         "outcome_guidance": {
           "mode": "shadow",
+          "matched_evaluation": false,
+          "matched_max_arms": 9,
           "projection_cache_bytes": 16777216
         },
         "worker_count": 1,

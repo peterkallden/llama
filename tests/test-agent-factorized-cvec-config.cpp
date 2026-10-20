@@ -13,6 +13,8 @@ int main() {
             config.adaptation_flydelta_disable_factorized_cvec_batch ||
             config.adaptation_flydelta_outcome_guidance.mode !=
                 common_flydelta_outcome_guidance_mode::shadow ||
+            config.adaptation_flydelta_outcome_guidance.matched_evaluation ||
+            config.adaptation_flydelta_outcome_guidance.matched_max_arms != 9 ||
             config.adaptation_flydelta_teacher_scoring_backend != "auto" ||
             config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "exact" ||
             config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.0 ||
@@ -69,7 +71,7 @@ int main() {
     compatible["runtime"]["adaptation"]["flydelta"]["outcome_guidance"] = {
         {"mode", "experimental"}, {"seed", uint64_t{71}},
         {"harm_penalty", 6.0}, {"min_backoff_groups", 9}, {"max_prior_strength", 3.0},
-        {"projection_cache_bytes", 1048576}
+        {"projection_cache_bytes", 1048576}, {"matched_evaluation", true}, {"matched_max_arms", 6}
     };
     if (!parse_agent_host_config_json(compatible, config, error) ||
             config.adaptation_flydelta_outcome_guidance.mode !=
@@ -88,12 +90,24 @@ int main() {
             guidance_options.adaptation_flydelta_outcome_guidance.seed != 71 ||
             guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend" ||
             guidance_options.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
+            !guidance_options.adaptation_flydelta_outcome_guidance.matched_evaluation ||
+            guidance_options.adaptation_flydelta_outcome_guidance.matched_max_arms != 6 ||
             guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152 ||
             guidance_options.adaptation_semi_oracle_outcome_guidance.exact_history_order !=
                 common_semi_oracle_history_order::after_heuristic) {
         std::cerr << "outcome guidance config did not reach daemon options\n";
         return 1;
     }
+    const auto guidance_roundtrip = agent_host_config_to_json(config);
+    if (guidance_roundtrip["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_evaluation"] != true ||
+            guidance_roundtrip["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_max_arms"] != 6) return 1;
+    auto bad_matched = compatible;
+    bad_matched["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_evaluation"] = "true";
+    agent_host_config rejected;
+    if (parse_agent_host_config_json(bad_matched, rejected, error)) return 1;
+    bad_matched = compatible;
+    bad_matched["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_max_arms"] = 0;
+    if (parse_agent_host_config_json(bad_matched, rejected, error)) return 1;
     daemon_options enabled_options;
     apply_agent_host_config_to_daemon_options(config, enabled_options);
     if (!enabled_options.adaptation_flydelta_factorized_cvec_batch) {

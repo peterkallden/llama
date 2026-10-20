@@ -2204,6 +2204,8 @@ The configurable fields and their defaults are:
 | `min_backoff_groups` | `8` | Positive group count required for a coarser prior |
 | `max_prior_strength` | `4.0` | Finite value in `[0, 4]`; zero disables coarser pseudo-observations |
 | `projection_cache_bytes` | `16777216` | Retained immutable projection budget, `0..268435456`; zero disables retention |
+| `matched_evaluation` | `false` | Explicit host experiment: run Deep's ordinary/mixed-policy/random Top-K union through the existing full-generation batch runner; ignored in `off` |
+| `matched_max_arms` | `9` | Maximum union candidate arms per Deep evaluation, `1..48`, excluding the shared baseline; if the complete union cannot fit, run ordinary selected K and record why evaluation was skipped |
 
 `experimental` is an operator ceiling, not proof that every decision point has
 earned selection authority. Deep's `deep_full_generation_frontier` is now
@@ -2220,18 +2222,22 @@ Whirlpool, TFO, staged coefficient search, ranking, selection or pruning.
 Qualification records are append-only `flydelta_experiment` lifecycle events,
 not promotion evidence. Their typed contract records the decision point,
 capability, model/tokenizer/template, baseline deployment, verifier/ruleset,
-action contract, stable session-level outcome scope and policy revision. A
+action contract, stable session-level outcome scope, exact Top-K budget and policy/projection-builder revision. A
 matched cohort contract stores baseline Top-K, the existing mixed Bayesian
 policy, and a random-selection ablation, plus each actually executed union
-arm's verified outcome and per-arm inference cost. The evaluator scores each
-policy from its own selected arms; shared union wall time is not reported as
-saved compute. Unknown outcomes contribute zero
-utility and are not treated as failures. Qualification requires at least 20
+arm's verified outcome, evidence reference and cost availability. Measured batch
+model time is divided equally between that batch's arms and labelled
+`equal_share_batch_model_ms`; it is an allocation, not measured standalone arm
+latency. The evaluator scores each policy from its selected arms and includes
+the shared baseline once per policy. Unavailable cost remains explicitly
+unavailable; allocated times do not establish a wall-clock speedup. Unknown outcomes contribute zero
+utility and are not treated as failures. Utility is `HELPED − 5 × HARMED` per
+selected arm. Qualification requires at least 20
 independent fixture groups, a positive paired approximate 95% lower bound on
 guided-minus-baseline utility per selected arm, and no increase in the guided
 harm rate. Results below the evidence floor remain `insufficient_evidence`;
 failed or regressed checks are `paused`. Revalidation becomes due at the saved
-lifecycle watermark, and new compatible evidence can produce a later
+lifecycle watermark (20 subsequent registrations), and new compatible evidence can produce a later
 qualification event. The normal operator mode still wins: `shadow` never
 changes selection, and `off` still skips history work.
 
@@ -2242,13 +2248,41 @@ turn-sensitive scope remains in place for artifact/experiment ownership.
 Qualification compatibility also fingerprints the selection policy and its
 utility parameters; changing them invalidates the old qualification.
 
-The qualification evaluator and lifecycle contract are model-free and consume
-matched union outcomes. The runtime does not yet launch this extra union cohort
-automatically: a trusted matched-run harness must produce it from real
-daemon/model/verifier executions. Synthetic outcomes or the Bayesian
-prediction itself cannot create a qualified record. Until such a cohort exists,
-`experimental` at the Deep selection point safely behaves as `shadow`. This
-qualification does not grant Oracle, learning-credit or promotion authority.
+With `matched_evaluation=true`, the daemon now uses Deep's actual diagnostic
+pool, freezes the ordinary, hypothetical mixed-policy and seeded random Top-K
+selections, and runs their duplicate-free union once through the existing batch
+transport. Full generation and host verification use the existing runner and
+its dose-adjusted coefficients. Deep recomputes its basis identity after its own
+direction selection. Zero/no-overlay arms and duplicate coefficients cannot
+occupy candidate slots. Qualification-only arms are saved as evaluation evidence;
+the current search returns only its selected K trials in policy order, preserving
+downstream selection and tie-breaks.
+
+The daemon writes `flydelta_guidance_matched_evaluation` lifecycle records with
+selection/union fingerprints, the frozen history fingerprint, fixture identity,
+actual outcomes and evidence references. It rebuilds the qualification from the
+latest 64 independent fixture groups, retaining the first registered evaluation
+per group. Repeated jobs/retries add no fixture weight. A retry after a recorded
+evaluation skips extra qualification arms. A persisted evaluation whose
+qualification write failed can be re-aggregated without rerunning the union.
+Incomplete verification, cancellation or missing overlay cannot publish a
+completed evaluation. Persistence failure is reported separately from a
+completed search. Status and metrics are recomputed from saved arm outcomes on
+qualification read/append, rather than trusting the stored summary.
+
+The default `matched_evaluation=false` preserves ordinary shadow model counts.
+Enabling it explicitly spends extra full-generation budget, bounded by
+`matched_max_arms`; it does not imply that the hypothetical policy is active.
+`off` does no history/evaluation work even when this flag is set. Only later
+jobs can consume a new qualification: eligibility is read at the same frozen
+watermark as job history, including after resume. A qualification for another
+K, policy, model or scope does not authorize this selector. The evaluation
+qualifies measured per-arm outcome utility, not a compute-saving claim, and
+grants no Oracle, learning-credit or promotion authority.
+
+Implementation verification for this integration is pending: the current
+correction sweep added regression cases but deliberately did not compile or
+execute CTests/model smokes.
 
 The eight-group default applies to **backoff**, not to direct arm-category
 evidence. A category with fewer observations can still have a posterior, with

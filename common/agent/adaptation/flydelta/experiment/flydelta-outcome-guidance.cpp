@@ -269,7 +269,8 @@ bool common_flydelta_outcome_guidance_config_validate(
     if (c.schema_version != 1 || !std::isfinite(c.harm_penalty) || c.harm_penalty < 0 ||
             c.min_backoff_groups == 0 || !std::isfinite(c.max_prior_strength) ||
             c.max_prior_strength < 0 || c.max_prior_strength > 4 ||
-            c.projection_cache_bytes > 256 * 1024 * 1024) {
+            c.projection_cache_bytes > 256 * 1024 * 1024 ||
+            c.matched_max_arms == 0 || c.matched_max_arms > 48) {
         error = "FlyDelta outcome guidance configuration is invalid"; return false;
     }
     return true;

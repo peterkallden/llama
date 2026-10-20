@@ -664,6 +664,18 @@ bool parse_agent_host_config_json(
                     read_optional(guidance, "harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty);
                     read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
                     read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
+                    if (guidance.contains("matched_evaluation") && !guidance["matched_evaluation"].is_boolean()) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.matched_evaluation must be boolean";
+                        return false;
+                    }
+                    if (guidance.contains("matched_max_arms") &&
+                            (!guidance["matched_max_arms"].is_number_integer() ||
+                             guidance["matched_max_arms"] < 1 || guidance["matched_max_arms"] > 48)) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.matched_max_arms must be 1..48";
+                        return false;
+                    }
+                    read_optional(guidance, "matched_evaluation", config.adaptation_flydelta_outcome_guidance.matched_evaluation);
+                    read_optional(guidance, "matched_max_arms", config.adaptation_flydelta_outcome_guidance.matched_max_arms);
                     if (guidance.contains("projection_cache_bytes") &&
                             (!guidance["projection_cache_bytes"].is_number_integer() ||
                              guidance["projection_cache_bytes"] < 0 ||
@@ -1498,6 +1510,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                         {"harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty},
                         {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
                         {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
+                        {"matched_evaluation", config.adaptation_flydelta_outcome_guidance.matched_evaluation},
+                        {"matched_max_arms", config.adaptation_flydelta_outcome_guidance.matched_max_arms},
                         {"projection_cache_bytes", config.adaptation_flydelta_outcome_guidance.projection_cache_bytes},
                     }},
                     {"teacher_scoring_backend", config.adaptation_flydelta_teacher_scoring_backend},

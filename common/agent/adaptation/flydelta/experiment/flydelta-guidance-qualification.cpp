@@ -16,6 +16,7 @@ using json = nlohmann::ordered_json;
 constexpr size_t kMinimumFixtureGroups = 20;
 constexpr double kHarmPenalty = 5.0;
 constexpr uint64_t kRevalidationWatermarkWindow = 20;
+constexpr size_t kMaxQualificationGroups = 64;
 
 bool bounded(const std::string & value, size_t limit = 512) {
     return !value.empty() && value.size() <= limit;
@@ -42,6 +43,7 @@ json qualification_context_json(const common_flydelta_guidance_qualification_con
         {"decision_point", common_flydelta_guidance_decision_point_name(c.decision_point)},
         {"capability", common_flydelta_guidance_capability_name(c.capability)},
         {"policy_revision", c.policy_revision},
+        {"selection_limit", c.selection_limit},
         {"authorized_scope", {
             {"memory_scope", static_cast<int>(c.authorized_scope.memory_scope)},
             {"plan_scope", static_cast<int>(c.authorized_scope.plan_scope)},
@@ -65,6 +67,7 @@ bool qualification_context_from_json(
     const auto & scope = j["authorized_scope"];
     c = {};
     c.policy_revision = j.value("policy_revision", std::string());
+    c.selection_limit = j.value("selection_limit", size_t{0});
     const int memory_scope = scope.value("memory_scope", -1);
     const int plan_scope = scope.value("plan_scope", -1);
     if (memory_scope < 0 || memory_scope > 3 || plan_scope < 0 || plan_scope > 3) return false;
@@ -93,6 +96,7 @@ bool context_valid(const common_flydelta_guidance_qualification_context & c) {
     return c.schema_version == 1 &&
         c.decision_point == common_flydelta_guidance_decision_point::deep_full_generation_selection &&
         c.capability == common_flydelta_guidance_capability::select_budgeted_subset &&
+        c.selection_limit > 0 && c.selection_limit <= 16 &&
         bounded(c.policy_revision) && bounded(x.scope_fingerprint) &&
         bounded(c.authorized_scope.namespace_id) && bounded(c.authorized_scope.session_id) &&
         x.scope_fingerprint == common_flydelta_outcome_guidance_scope_fingerprint(c.authorized_scope) &&
@@ -102,7 +106,68 @@ bool context_valid(const common_flydelta_guidance_qualification_context & c) {
         bounded(x.strategy) && bounded(x.estimator);
 }
 
+json result_json(const common_flydelta_guidance_qualification_result & r);
+
+json fixture_json(const common_flydelta_guidance_fixture_evaluation & f) {
+    const auto fingerprint = [](const std::vector<std::string> & ids) {
+        const auto bytes = json(ids).dump();
+        return "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+    };
+    std::vector<std::string> union_ids;
+    std::string error;
+    common_flydelta_guidance_union_selection(f.baseline_selection, f.guided_selection,
+        f.random_ablation_selection, union_ids, error);
+    json arms = json::array();
+    auto ordered = f.union_arm_results;
+    std::sort(ordered.begin(), ordered.end(), [](const auto & a, const auto & b) { return a.arm_id < b.arm_id; });
+    for (const auto & arm : ordered) arms.push_back({{"arm_id", arm.arm_id},
+        {"outcome", common_flydelta_counterfactual_outcome_name(arm.outcome)},
+        {"inference_ms", arm.inference_ms}, {"inference_cost_available", arm.inference_cost_available},
+        {"evidence_ref", arm.evidence_ref}});
+    return {{"fixture_group_id", f.fixture_group_id}, {"evaluation_id", f.evaluation_id},
+        {"history_fingerprint", f.history_fingerprint}, {"candidate_pool_fingerprint", f.candidate_pool_fingerprint},
+        {"baseline_selection", f.baseline_selection}, {"guided_selection", f.guided_selection},
+        {"baseline_selection_fingerprint", fingerprint(f.baseline_selection)},
+        {"guided_selection_fingerprint", fingerprint(f.guided_selection)},
+        {"random_selection_fingerprint", fingerprint(f.random_ablation_selection)},
+        {"union_selection", union_ids}, {"union_selection_fingerprint", fingerprint(union_ids)},
+        {"random_ablation_selection", f.random_ablation_selection}, {"union_arm_results", arms},
+        {"baseline_inference_ms", f.baseline_inference_ms}, {"baseline_cost_available", f.baseline_cost_available},
+        {"baseline_evidence_ref", f.baseline_evidence_ref},
+        {"inference_cost_basis", "equal_share_batch_model_ms"}};
+}
+
+bool fixture_from_json(const json & j, common_flydelta_guidance_fixture_evaluation & f) {
+    if (!j.is_object() || !j.contains("union_arm_results") || !j["union_arm_results"].is_array()) return false;
+    f = {};
+    f.fixture_group_id = j.at("fixture_group_id").get<std::string>();
+    f.evaluation_id = j.value("evaluation_id", std::string());
+    f.history_fingerprint = j.value("history_fingerprint", std::string());
+    f.candidate_pool_fingerprint = j.value("candidate_pool_fingerprint", std::string());
+    f.baseline_selection = j.at("baseline_selection").get<std::vector<std::string>>();
+    f.guided_selection = j.at("guided_selection").get<std::vector<std::string>>();
+    f.random_ablation_selection = j.at("random_ablation_selection").get<std::vector<std::string>>();
+    f.baseline_inference_ms = j.value("baseline_inference_ms", 0.0);
+    f.baseline_cost_available = j.value("baseline_cost_available", false);
+    f.baseline_evidence_ref = j.value("baseline_evidence_ref", std::string());
+    for (const auto & a : j["union_arm_results"]) {
+        common_flydelta_guidance_arm_measurement arm;
+        arm.arm_id = a.at("arm_id").get<std::string>();
+        const auto outcome = a.at("outcome").get<std::string>();
+        if (outcome == "helped") arm.outcome = common_flydelta_counterfactual_outcome::helped;
+        else if (outcome == "neutral") arm.outcome = common_flydelta_counterfactual_outcome::neutral;
+        else if (outcome == "harmed") arm.outcome = common_flydelta_counterfactual_outcome::harmed;
+        else if (outcome != "unknown") return false;
+        arm.inference_ms = a.at("inference_ms").get<double>();
+        arm.inference_cost_available = a.value("inference_cost_available", false);
+        arm.evidence_ref = a.value("evidence_ref", std::string());
+        f.union_arm_results.push_back(std::move(arm));
+    }
+    return true;
+}
+
 bool parse_result(const json & j, common_flydelta_guidance_qualification_result & r) {
+    try {
     if (!j.is_object() || j.value("record_type", std::string()) != "flydelta_guidance_qualification" ||
             j.value("schema_version", 0) != 1 || !j.contains("context")) return false;
     r = {};
@@ -120,6 +185,10 @@ bool parse_result(const json & j, common_flydelta_guidance_qualification_result 
     r.guided_harmed = j.value("guided_harmed", size_t{0});
     r.random_helped = j.value("random_helped", size_t{0});
     r.random_harmed = j.value("random_harmed", size_t{0});
+    r.baseline_unknown = j.value("baseline_unknown", size_t{0});
+    r.guided_unknown = j.value("guided_unknown", size_t{0});
+    r.random_unknown = j.value("random_unknown", size_t{0});
+    r.inference_costs_available = j.value("inference_costs_available", false);
     r.baseline_selected_arms = j.value("baseline_selected_arms", size_t{0});
     r.guided_selected_arms = j.value("guided_selected_arms", size_t{0});
     r.random_selected_arms = j.value("random_selected_arms", size_t{0});
@@ -154,7 +223,7 @@ bool parse_result(const json & j, common_flydelta_guidance_qualification_result 
              static_cast<double>(r.guided_harmed) / r.guided_selected_arms <=
                 static_cast<double>(r.baseline_harmed) / r.baseline_selected_arms);
     json evaluation = json::parse(r.evaluation_payload_json, nullptr, false);
-    return context_valid(r.context) && bounded(r.evaluation_fingerprint) &&
+    const bool valid = context_valid(r.context) && bounded(r.evaluation_fingerprint) &&
         !r.evaluation_payload_json.empty() && computed == r.evaluation_fingerprint &&
         r.fixture_groups <= 1000000 && r.minimum_fixture_groups == kMinimumFixtureGroups &&
         finite_metrics && status_valid && evaluation.is_object() &&
@@ -162,6 +231,20 @@ bool parse_result(const json & j, common_flydelta_guidance_qualification_result 
         evaluation.contains("context") && evaluation["context"] == qualification_context_json(r.context) &&
         evaluation.contains("cohort") && evaluation["cohort"].is_array() &&
         evaluation["cohort"].size() == r.fixture_groups;
+    if (!valid) return false;
+    // A self-consistent hash alone does not prove that a summary matches its
+    // arm evidence. Recompute every metric and the status on read/append.
+    std::vector<common_flydelta_guidance_fixture_evaluation> cohort;
+    for (const auto & row : evaluation["cohort"]) {
+        common_flydelta_guidance_fixture_evaluation fixture;
+        if (!fixture_from_json(row, fixture)) return false;
+        cohort.push_back(std::move(fixture));
+    }
+    common_flydelta_guidance_qualification_result recomputed;
+    std::string error;
+    return common_flydelta_guidance_qualify_deep_selection(r.context, cohort, r.evidence_watermark,
+        recomputed, error) && result_json(recomputed) == result_json(r);
+    } catch (const std::exception &) { return false; }
 }
 
 double utility(common_flydelta_counterfactual_outcome outcome) {
@@ -180,6 +263,8 @@ struct policy_summary {
     size_t arms = 0;
     size_t helped = 0;
     size_t harmed = 0;
+    size_t unknown = 0;
+    bool costs_available = true;
 };
 
 bool evaluate_selection(const std::vector<std::string> & selection,
@@ -203,6 +288,8 @@ bool evaluate_selection(const std::vector<std::string> & selection,
         ++summary.arms;
         summary.helped += arm.outcome == common_flydelta_counterfactual_outcome::helped;
         summary.harmed += arm.outcome == common_flydelta_counterfactual_outcome::harmed;
+        summary.unknown += arm.outcome == common_flydelta_counterfactual_outcome::unknown;
+        summary.costs_available = summary.costs_available && arm.inference_cost_available;
     }
     return true;
 }
@@ -216,6 +303,9 @@ json result_json(const common_flydelta_guidance_qualification_result & r) {
         {"baseline_helped", r.baseline_helped}, {"guided_helped", r.guided_helped},
         {"baseline_harmed", r.baseline_harmed}, {"guided_harmed", r.guided_harmed},
         {"random_helped", r.random_helped}, {"random_harmed", r.random_harmed},
+        {"baseline_unknown", r.baseline_unknown}, {"guided_unknown", r.guided_unknown},
+        {"random_unknown", r.random_unknown}, {"inference_costs_available", r.inference_costs_available},
+        {"inference_cost_basis", "equal_share_batch_model_ms"},
         {"baseline_selected_arms", r.baseline_selected_arms},
         {"guided_selected_arms", r.guided_selected_arms},
         {"random_selected_arms", r.random_selected_arms},
@@ -277,7 +367,8 @@ std::string common_flydelta_outcome_guidance_scope_fingerprint(
 std::string common_flydelta_guidance_qualification_policy_revision(
         const common_flydelta_outcome_guidance_config & config) {
     const json policy = {
-        {"algorithm", "deep-full-generation-mixed-selection-v1"},
+        {"algorithm", "deep-full-generation-mixed-selection-v2"},
+        {"projection_builder_revision", "flydelta-outcome-projection-v4"},
         {"seed", config.seed}, {"harm_penalty", config.harm_penalty},
         {"min_backoff_groups", config.min_backoff_groups},
         {"max_prior_strength", config.max_prior_strength},
@@ -304,6 +395,9 @@ bool common_flydelta_guidance_union_selection(
         std::vector<std::string> & union_ids, std::string & error) {
     error.clear(); union_ids.clear();
     std::set<std::string> seen;
+    if (baseline.size() != guided.size() || baseline.size() != random_ablation.size() || baseline.size() > 16) {
+        error = "matched policies must use the same bounded Top-K budget"; return false;
+    }
     for (const auto * selection : {&baseline, &guided, &random_ablation}) {
         if (selection->empty()) { error = "matched qualification selection must not be empty"; return false; }
         std::set<std::string> within;
@@ -366,6 +460,7 @@ bool common_flydelta_guidance_qualify_deep_selection(
         error = "Deep guidance qualification context/cohort is invalid"; return false;
     }
     result.context = context;
+    result.inference_costs_available = !cohort.empty();
     result.fixture_groups = cohort.size();
     result.evidence_watermark = evidence_watermark;
     result.revalidate_after_watermark = evidence_watermark >
@@ -380,6 +475,10 @@ bool common_flydelta_guidance_qualify_deep_selection(
     for (const auto & fixture : cohort) {
         if (!bounded(fixture.fixture_group_id) || !fixtures.insert(fixture.fixture_group_id).second) {
             error = "qualification cohort has an empty or repeated fixture group"; return false;
+        }
+        if (fixture.baseline_selection.size() != context.selection_limit ||
+                !std::isfinite(fixture.baseline_inference_ms) || fixture.baseline_inference_ms < 0.0) {
+            error = "qualification fixture has incompatible Top-K or baseline cost"; return false;
         }
         map<string, common_flydelta_guidance_arm_measurement> arms;
         for (const auto & arm : fixture.union_arm_results) {
@@ -419,21 +518,18 @@ bool common_flydelta_guidance_qualify_deep_selection(
         result.guided_harmed += guided.harmed;
         result.random_helped += random.helped;
         result.random_harmed += random.harmed;
-        result.baseline_inference_ms += baseline.cost_sum;
-        result.guided_inference_ms += guided.cost_sum;
-        result.random_inference_ms += random.cost_sum;
+        result.baseline_unknown += baseline.unknown;
+        result.guided_unknown += guided.unknown;
+        result.random_unknown += random.unknown;
+        result.inference_costs_available = result.inference_costs_available &&
+            baseline.costs_available && guided.costs_available && random.costs_available && fixture.baseline_cost_available;
+        result.baseline_inference_ms += baseline.cost_sum + fixture.baseline_inference_ms;
+        result.guided_inference_ms += guided.cost_sum + fixture.baseline_inference_ms;
+        result.random_inference_ms += random.cost_sum + fixture.baseline_inference_ms;
         result.baseline_selected_arms += baseline.arms;
         result.guided_selected_arms += guided.arms;
         result.random_selected_arms += random.arms;
-        json arm_json = json::array();
-        for (const auto & [id, arm] : arms) arm_json.push_back({
-            {"arm_id", id}, {"outcome", common_flydelta_counterfactual_outcome_name(arm.outcome)},
-            {"inference_ms", arm.inference_ms}});
-        canonical.push_back({{"fixture_group_id", fixture.fixture_group_id},
-            {"baseline_selection", fixture.baseline_selection},
-            {"guided_selection", fixture.guided_selection},
-            {"random_ablation_selection", fixture.random_ablation_selection},
-            {"union_arm_results", arm_json}});
+        canonical.push_back(fixture_json(fixture));
     }
     if (baseline_total_arms) result.baseline_utility_per_selected_arm = baseline_total_utility / baseline_total_arms;
     if (guided_total_arms) result.guided_utility_per_selected_arm = guided_total_utility / guided_total_arms;
@@ -525,6 +621,126 @@ bool common_flydelta_guidance_append_qualification(
     return store.append(record, error);
 }
 
+bool common_flydelta_guidance_record_matched_evaluation(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & event,
+        const common_flydelta_guidance_qualification_context & context,
+        const common_flydelta_guidance_fixture_evaluation & fixture,
+        std::string & error,
+        common_flydelta_guidance_qualification_result * qualification) {
+    error.clear();
+    if (qualification) *qualification = {};
+    try {
+        if (!context_valid(context) || event.event_id.empty() || event.idempotency_key.empty() ||
+                event.source_id.empty() || event.created_at.empty() ||
+                common_flydelta_outcome_guidance_scope_fingerprint(event.scope) != context.outcome_context.scope_fingerprint ||
+                !bounded(fixture.evaluation_id) || !bounded(fixture.history_fingerprint) ||
+                !bounded(fixture.candidate_pool_fingerprint) || !bounded(fixture.baseline_evidence_ref)) {
+            error = "matched evaluation identity, scope or baseline evidence is invalid"; return false;
+        }
+        for (const auto & arm : fixture.union_arm_results) {
+            if (!bounded(arm.evidence_ref)) { error = "matched arm has no host evidence reference"; return false; }
+        }
+        common_flydelta_guidance_qualification_result checked;
+        if (!common_flydelta_guidance_qualify_deep_selection(context, {fixture}, 0, checked, error)) return false;
+        const json payload = {{"record_type", "flydelta_guidance_matched_evaluation"},
+            {"schema_version", 1}, {"context", qualification_context_json(context)}, {"fixture", fixture_json(fixture)}};
+        common_learning_lifecycle_record record;
+        record.event_id = event.event_id;
+        record.idempotency_key = event.idempotency_key;
+        record.subject_id = "deep_full_generation_selection";
+        record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+        record.status = common_learning_lifecycle_status::observed;
+        record.source_id = event.source_id;
+        record.namespace_id = event.scope.namespace_id;
+        record.project_id = event.scope.project_id;
+        record.session_id = event.scope.session_id;
+        record.created_at = event.created_at;
+        record.payload_json = payload.dump();
+        record.content_hash = "sha256:" + hash_sha256_hex(record.payload_json.data(), record.payload_json.size());
+        if (!store.append(record, error)) return false;
+        return common_flydelta_guidance_refresh_qualification(store, event, context, error, qualification);
+    } catch (const std::exception & ex) {
+        error = std::string("matched evaluation persistence failed: ") + ex.what(); return false;
+    } catch (...) {
+        error = "matched evaluation persistence failed"; return false;
+    }
+}
+
+bool common_flydelta_guidance_refresh_qualification(
+        common_learning_lifecycle_store & store,
+        const common_flydelta_lifecycle_event_context & event,
+        const common_flydelta_guidance_qualification_context & context,
+        std::string & error,
+        common_flydelta_guidance_qualification_result * qualification) {
+    error.clear();
+    if (qualification) *qualification = {};
+    try {
+        if (!context_valid(context) ||
+                common_flydelta_outcome_guidance_scope_fingerprint(event.scope) != context.outcome_context.scope_fingerprint) {
+            error = "qualification refresh context or scope is invalid"; return false;
+        }
+        std::vector<common_learning_lifecycle_record> records;
+        uint64_t watermark = 0;
+        if (!store.list_scope_with_watermark(event.scope.namespace_id, event.scope.project_id, event.scope.session_id,
+                records, watermark, error)) return false;
+        std::sort(records.begin(), records.end(), [](const auto & a, const auto & b) {
+            return a.registration_order < b.registration_order;
+        });
+        std::map<std::string, std::string> attempts;
+        std::set<std::string> fixture_groups;
+        std::vector<common_flydelta_guidance_fixture_evaluation> cohort;
+        uint64_t evidence_watermark = 0;
+        for (const auto & row : records) {
+            if (row.kind != common_learning_lifecycle_kind::flydelta_experiment ||
+                    row.registration_order == 0 || row.registration_order > watermark ||
+                    row.namespace_id != event.scope.namespace_id || row.project_id != event.scope.project_id ||
+                    row.session_id != event.scope.session_id) continue;
+            const auto j = json::parse(row.payload_json, nullptr, false);
+            if (!j.is_object() || j.value("record_type", std::string()) != "flydelta_guidance_matched_evaluation" ||
+                    !j.contains("context") || j["context"] != qualification_context_json(context)) continue;
+            if (j.value("schema_version", 0) != 1 || row.content_hash !=
+                    "sha256:" + hash_sha256_hex(row.payload_json.data(), row.payload_json.size())) {
+                error = "matched evaluation record failed integrity validation"; return false;
+            }
+            const auto inserted = attempts.emplace(row.idempotency_key, row.content_hash);
+            if (!inserted.second) {
+                if (inserted.first->second != row.content_hash) {
+                    error = "conflicting matched evaluation retry"; return false;
+                }
+                continue;
+            }
+            common_flydelta_guidance_fixture_evaluation restored;
+            if (!fixture_from_json(j.at("fixture"), restored) || fixture_json(restored) != j["fixture"]) {
+                error = "invalid matched evaluation fixture"; return false;
+            }
+            // Keep the first registered experiment for each fixture group.
+            // Retries/repeated decisions cannot become extra independent data.
+            if (fixture_groups.insert(restored.fixture_group_id).second) {
+                cohort.push_back(std::move(restored));
+                evidence_watermark = row.registration_order;
+            }
+        }
+        common_flydelta_guidance_qualification_result result;
+        if (cohort.empty()) { error = "no compatible matched evaluation to refresh"; return false; }
+        if (cohort.size() > kMaxQualificationGroups) {
+            cohort.erase(cohort.begin(), cohort.end() - kMaxQualificationGroups);
+        }
+        if (!common_flydelta_guidance_qualify_deep_selection(context, cohort, evidence_watermark, result, error)) return false;
+        auto qualification_event = event;
+        qualification_event.event_id = "flydelta:qualification:" + result.evaluation_fingerprint;
+        qualification_event.idempotency_key = qualification_event.event_id;
+        if (!common_flydelta_guidance_append_qualification(store, qualification_event, result, error)) return false;
+        if (qualification) *qualification = std::move(result);
+        return true;
+    } catch (const std::exception & ex) {
+        error = std::string("matched evaluation persistence failed: ") + ex.what();
+        return false;
+    } catch (...) {
+        error = "matched evaluation persistence failed"; return false;
+    }
+}
+
 bool common_flydelta_guidance_find_qualification(
         const std::vector<common_learning_lifecycle_record> & records,
         const common_flydelta_guidance_qualification_context & context,
@@ -536,17 +752,27 @@ bool common_flydelta_guidance_find_qualification(
     error.clear(); reason.clear(); usable = false; result = {};
     if (!context_valid(context)) { error = "requested qualification context is invalid"; return false; }
     bool found = false;
-    uint64_t latest_order = 0;
+    std::vector<const common_learning_lifecycle_record *> ordered;
     for (const auto & record : records) {
         if (record.kind != common_learning_lifecycle_kind::flydelta_experiment ||
                 record.namespace_id != context.authorized_scope.namespace_id ||
                 record.project_id != context.authorized_scope.project_id ||
                 record.session_id != context.authorized_scope.session_id ||
-                record.registration_order == 0 || record.registration_order < latest_order) continue;
+                record.registration_order == 0 || record.registration_order > current_watermark) continue;
+        ordered.push_back(&record);
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const auto * a, const auto * b) {
+        return a->registration_order > b->registration_order;
+    });
+    for (const auto * candidate : ordered) {
+        const auto & record = *candidate;
         try {
             const json payload = json::parse(record.payload_json, nullptr, false);
             if (payload.is_object() && payload.value("record_type", std::string()) ==
                     "flydelta_guidance_qualification") {
+                // Ignore other selector budgets/policies before validating
+                // their detailed result. They cannot authorize this request.
+                if (!payload.contains("context") || payload["context"] != qualification_context_json(context)) continue;
                 common_flydelta_guidance_qualification_result parsed;
                 if (!parse_result(payload, parsed)) {
                     error = "qualification record schema/fingerprint is invalid";
@@ -558,20 +784,19 @@ bool common_flydelta_guidance_find_qualification(
                 if (record.content_hash != record_fingerprint) {
                     error = "qualification content fingerprint mismatch"; return false;
                 }
-                latest_order = record.registration_order;
                 result = std::move(parsed);
                 found = true;
-                continue;
+                break;
             }
         } catch (const std::exception &) {
-            // Unrelated or old lifecycle rows are not qualification evidence.
+            error = "malformed qualification record"; return false;
         }
     }
     if (!found) { reason = "qualification_not_found"; return true; }
     if (result.status != common_flydelta_guidance_qualification_status::qualified) {
         reason = common_flydelta_guidance_qualification_status_name(result.status); return true;
     }
-    if (current_watermark >= result.revalidate_after_watermark) {
+    if (result.evidence_watermark > current_watermark || current_watermark >= result.revalidate_after_watermark) {
         reason = "qualification_revalidation_due"; return true;
     }
     usable = true;

@@ -4595,7 +4595,15 @@ compute). Without a current Deep qualification, the effective mode at that
 selection point is `shadow`; the requested operator mode remains visible in
 trace. Qualification is specific to the typed decision point and capability,
 uses matched baseline/mixed-policy/random selections from the same executed
-union, and cannot grant Oracle, learning-credit or promotion authority. The job freezes
+union, and cannot grant Oracle, learning-credit or promotion authority.
+An explicit `outcome_guidance.matched_evaluation=true` connects that evaluation
+to Deep's existing diagnostic/full-generation runners and lifecycle store;
+`matched_max_arms` (default 9, maximum 48) bounds the complete candidate union.
+The default false adds no inference. Evaluation-only arms do not enter the
+current search selection; verified cohorts update qualifications for later
+jobs. Qualification reads use the job's frozen history watermark and exact K.
+Allocated batch times remain separate from verified outcome utility and do not
+prove standalone cost savings. The job freezes
 eligible scope/model/verifier-compatible history; current observations still
 control Whirlpool's objective and host verification determines outcomes and
 learning credit. Whirlpool, Deep and TFO share a precomputed immutable

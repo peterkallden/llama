@@ -3,6 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <numeric>
+#include <random>
+#include <set>
 
 namespace {
 
@@ -54,6 +58,7 @@ bool common_flydelta_deep_search_config_validate(
     if (config.schema_version != 1 || config.max_rank == 0 || config.max_rank > 4 ||
             config.max_directions == 0 || config.max_directions > 16 ||
             config.full_generation_top_k == 0 || config.full_generation_top_k > 16 ||
+            config.matched_max_arms == 0 || config.matched_max_arms > 48 ||
             config.max_rank > config.max_directions ||
             !common_flydelta_coefficient_search_config_validate(
                 config.coefficients, config.max_rank, error)) {
@@ -127,10 +132,16 @@ bool common_flydelta_run_deep_search_batched(
             candidates.front().values.size(), config.max_rank, candidates,
             result.basis, error)) return false;
     result.layer_index = result.basis.layer_index;
+    // Deep chooses/rebuilds its own basis. Do not reuse the caller's earlier
+    // basis fingerprint for the forecast, full execution or history.
+    auto coefficient_config = config.coefficients;
+    coefficient_config.guidance_basis_identity =
+        common_flydelta_coefficient_detail::guidance_basis_identity(result.basis);
+    coefficient_config.guidance_layer_index = result.basis.layer_index;
     std::vector<common_flydelta_coefficient_trial> diagnostic_trials;
     common_flydelta_coefficient_selection diagnostic_selection;
     if (!common_flydelta_run_low_rank_coefficient_search_batched(
-            fixture, result.basis, config.coefficients, diagnostic_runner,
+            fixture, result.basis, coefficient_config, diagnostic_runner,
             diagnostic_batch_runner,
             diagnostic_trials, diagnostic_selection, error, adviser)) return false;
     result.coefficient_trials = diagnostic_trials;
@@ -148,7 +159,9 @@ bool common_flydelta_run_deep_search_batched(
 
     std::vector<size_t> ranking;
     for (size_t index = 0; index < diagnostic_trials.size(); ++index) {
-        if (diagnostic_trials[index].executed) ranking.push_back(index);
+        const auto & trial = diagnostic_trials[index];
+        if (trial.executed && trial.overlay_applied &&
+                common_flydelta_coefficient_detail::norm(trial.coefficients) > 0.0f) ranking.push_back(index);
     }
     std::stable_sort(ranking.begin(), ranking.end(), [&](size_t left, size_t right) {
         if (diagnostic_trials[left].search_fitness != diagnostic_trials[right].search_fitness) {
@@ -157,17 +170,23 @@ bool common_flydelta_run_deep_search_batched(
         return diagnostic_trials[left].coefficients.size() <
             diagnostic_trials[right].coefficients.size();
     });
+    std::set<std::vector<float>> unique_coefficients;
+    ranking.erase(std::remove_if(ranking.begin(), ranking.end(), [&](size_t index) {
+        return !unique_coefficients.insert(diagnostic_trials[index].coefficients).second;
+    }), ranking.end());
     const size_t top_k = std::min(config.full_generation_top_k, ranking.size());
+    const auto baseline_ranking = ranking;
+    std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
+    common_flydelta_outcome_guidance_decision guidance;
+    bool valid_guidance = false;
     if (adviser && top_k > 0) {
-        std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
         guidance_candidates.reserve(ranking.size());
         for (const size_t index : ranking) {
             const auto & trial = diagnostic_trials[index];
             guidance_candidates.push_back(common_flydelta_coefficient_detail::guidance_candidate(
-                trial.coefficients, result.basis, config.coefficients,
+                trial.coefficients, result.basis, coefficient_config,
                 &trial.margin_comparison));
         }
-        common_flydelta_outcome_guidance_decision guidance;
         std::string guidance_error;
         common_flydelta_outcome_guidance_request request;
         request.stage = "deep_full_generation_frontier";
@@ -183,13 +202,66 @@ bool common_flydelta_run_deep_search_batched(
                 used[local_index] = true;
                 reordered.push_back(ranking[local_index]);
             }
-            if (reordered.size() == ranking.size()) ranking = std::move(reordered);
+            const bool actual_order_valid = reordered.size() == ranking.size();
+            if (actual_order_valid) ranking = std::move(reordered);
+            std::set<size_t> hypothetical(guidance.mixed_policy_order.begin(),
+                guidance.mixed_policy_order.end());
+            valid_guidance = actual_order_valid && guidance.fallback_reason.empty() &&
+                guidance.mixed_policy_order.size() == baseline_ranking.size() &&
+                hypothetical.size() == baseline_ranking.size() &&
+                !hypothetical.empty() && *hypothetical.rbegin() < baseline_ranking.size();
         }
     }
+    std::vector<size_t> execution_indices(ranking.begin(), ranking.begin() + top_k);
+    const std::set<size_t> selected_indices(execution_indices.begin(), execution_indices.end());
+    if (config.matched_evaluation) {
+        result.matched_evaluation_reason = "guidance_or_fixture_unavailable";
+        if (valid_guidance && !fixture.guidance_fixture_group_id.empty()) {
+            auto & evaluation = result.matched_evaluation;
+            evaluation.fixture_group_id = fixture.guidance_fixture_group_id;
+            evaluation.history_fingerprint = guidance.history_fingerprint;
+            evaluation.candidate_pool_fingerprint =
+                common_flydelta_outcome_guidance_pool_fingerprint(guidance_candidates);
+            evaluation.evaluation_id = evaluation.candidate_pool_fingerprint;
+            evaluation.baseline_cost_available = baseline.inference_cost_available;
+            evaluation.baseline_inference_ms = baseline.attributed_inference_ms;
+            evaluation.baseline_evidence_ref = baseline.evidence_ref;
+            std::vector<size_t> random_order(baseline_ranking.size());
+            std::iota(random_order.begin(), random_order.end(), 0);
+            uint64_t random_seed = config.matched_seed;
+            for (const unsigned char ch : fixture.task_fingerprint + evaluation.candidate_pool_fingerprint) {
+                random_seed = (random_seed ^ ch) * 1099511628211ULL;
+            }
+            std::mt19937_64 random(random_seed);
+            std::shuffle(random_order.begin(), random_order.end(), random);
+            for (size_t i = 0; i < top_k; ++i) {
+                evaluation.baseline_selection.push_back(guidance_candidates[i].arm_id);
+                evaluation.guided_selection.push_back(
+                    guidance_candidates[guidance.mixed_policy_order[i]].arm_id);
+                evaluation.random_ablation_selection.push_back(guidance_candidates[random_order[i]].arm_id);
+            }
+            std::vector<std::string> union_ids;
+            std::string union_error;
+            if (common_flydelta_guidance_union_selection(evaluation.baseline_selection,
+                    evaluation.guided_selection, evaluation.random_ablation_selection, union_ids, union_error) &&
+                    union_ids.size() <= config.matched_max_arms) {
+                execution_indices.clear();
+                for (const auto & id : union_ids) {
+                    const auto it = std::find_if(guidance_candidates.begin(), guidance_candidates.end(),
+                        [&](const auto & candidate) { return candidate.arm_id == id; });
+                    execution_indices.push_back(baseline_ranking[std::distance(guidance_candidates.begin(), it)]);
+                }
+                result.matched_evaluation_reason = "pending_full_verification";
+            } else {
+                result.matched_evaluation_reason = "matched_union_arm_budget_exceeded";
+            }
+        }
+    }
+    if (execution_indices.empty()) return true;
     std::vector<std::vector<float>> top_coefficients;
-    top_coefficients.reserve(top_k);
-    for (size_t rank = 0; rank < top_k; ++rank) {
-        top_coefficients.push_back(diagnostic_trials[ranking[rank]].coefficients);
+    top_coefficients.reserve(execution_indices.size());
+    for (const size_t index : execution_indices) {
+        top_coefficients.push_back(diagnostic_trials[index].coefficients);
     }
     std::vector<common_flydelta_counterfactual_trial> full_trials;
     std::vector<common_flydelta_decision_margin> full_margins;
@@ -198,13 +270,16 @@ bool common_flydelta_run_deep_search_batched(
     if (!full_generation_batch_runner(
             fixture, result.basis, top_coefficients, full_trials, full_margins,
             full_geometries, full_geometry_available, error) ||
-            full_trials.size() != top_k || full_margins.size() != top_k ||
-            full_geometries.size() != top_k || full_geometry_available.size() != top_k) {
+            full_trials.size() != execution_indices.size() || full_margins.size() != execution_indices.size() ||
+            full_geometries.size() != execution_indices.size() || full_geometry_available.size() != execution_indices.size()) {
         if (error.empty()) error = "FlyDelta deep full-generation batch result is invalid";
         return false;
     }
-    for (size_t rank = 0; rank < top_k; ++rank) {
-        const size_t diagnostic_index = ranking[rank];
+    bool comparable_union = baseline.executed && baseline.host_evaluated && !baseline.overlay_applied &&
+        !baseline.evidence_ref.empty();
+    std::vector<common_flydelta_coefficient_trial> executed_trials;
+    for (size_t rank = 0; rank < execution_indices.size(); ++rank) {
+        const size_t diagnostic_index = execution_indices[rank];
         const auto & diagnostic = diagnostic_trials[diagnostic_index];
         const auto & candidate = full_trials[rank];
         const auto & margin = full_margins[rank];
@@ -226,8 +301,30 @@ bool common_flydelta_run_deep_search_batched(
         trial.geometry = geometry;
         trial.iteration = diagnostic.iteration;
         trial.parent_trial_index = diagnostic_index;
-        trial.mutation_kind = "full_generation_top_arm";
+        trial.mutation_kind = selected_indices.count(diagnostic_index)
+            ? "full_generation_top_arm" : "qualification_only_full_generation";
+        const auto forecast = common_flydelta_coefficient_detail::guidance_candidate(
+            diagnostic.coefficients, result.basis, coefficient_config, &diagnostic.margin_comparison);
+        trial.guidance_arm_id = forecast.arm_id;
+        trial.guidance_basis_id = forecast.basis_identity;
+        trial.guidance_margin_sign = forecast.diagnostic_margin_sign;
         trial.search_fitness = diagnostic.search_fitness;
+        executed_trials.push_back(std::move(trial));
+        const auto & full_trial = executed_trials.back();
+        if (result.matched_evaluation_reason == "pending_full_verification") {
+            comparable_union = comparable_union && candidate.executed && candidate.host_evaluated &&
+                candidate.overlay_applied && !candidate.evidence_ref.empty();
+            result.matched_evaluation.union_arm_results.push_back({forecast.arm_id,
+                full_trial.outcome, candidate.attributed_inference_ms, candidate.inference_cost_available,
+                candidate.evidence_ref});
+        }
+    }
+    // Return exactly the selected K arms, in policy order. Qualification-only
+    // arms remain evaluation evidence and cannot enter downstream learning,
+    // candidate selection or change equal-score tie-breaks in this job.
+    for (size_t rank = 0; rank < top_k; ++rank) {
+        const auto it = std::find(execution_indices.begin(), execution_indices.end(), ranking[rank]);
+        auto & trial = executed_trials[std::distance(execution_indices.begin(), it)];
         const size_t result_index = result.coefficient_trials.size();
         result.coefficient_trials.push_back(std::move(trial));
         const auto & full_trial = result.coefficient_trials.back();
@@ -239,6 +336,11 @@ bool common_flydelta_run_deep_search_batched(
             result.coefficient_selection.trial_index = result_index;
             result.coefficient_selection.score = full_trial.quality_delta;
         }
+    }
+    if (result.matched_evaluation_reason == "pending_full_verification") {
+        result.matched_evaluation_complete = comparable_union;
+        result.matched_evaluation_reason = comparable_union
+            ? "matched_union_verified" : "matched_union_incomplete_verification_or_overlay";
     }
     return true;
 }

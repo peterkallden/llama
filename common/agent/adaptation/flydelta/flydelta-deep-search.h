@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-guidance-qualification.h"
 
 #include <cstddef>
 #include <string>
@@ -14,6 +15,9 @@ struct common_flydelta_deep_search_config {
     size_t max_rank = 2;
     size_t max_directions = 4;
     size_t full_generation_top_k = 3;
+    bool matched_evaluation = false;
+    size_t matched_max_arms = 9;
+    uint64_t matched_seed = 0;
     common_flydelta_coefficient_search_config coefficients;
 };
 
@@ -32,6 +36,9 @@ struct common_flydelta_deep_search_result {
     common_flydelta_low_rank_basis basis;
     std::vector<common_flydelta_coefficient_trial> coefficient_trials;
     common_flydelta_coefficient_selection coefficient_selection;
+    bool matched_evaluation_complete = false;
+    std::string matched_evaluation_reason;
+    common_flydelta_guidance_fixture_evaluation matched_evaluation;
 };
 
 bool common_flydelta_deep_search_config_validate(

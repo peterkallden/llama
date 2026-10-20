@@ -84,6 +84,10 @@ struct common_flydelta_counterfactual_trial {
     std::vector<std::string> verifier_violation_dimensions;
     common_flydelta_semantic_progress_observation semantic_progress_observation;
     std::string evidence_ref;
+    // Attribution of shared batch model time, not an independently measured
+    // arm latency. Unavailable costs remain explicitly unavailable.
+    bool inference_cost_available = false;
+    double attributed_inference_ms = 0.0;
 };
 
 enum class common_flydelta_canary_observation_status {

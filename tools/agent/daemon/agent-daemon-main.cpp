@@ -371,6 +371,9 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_outcome_guidance.harm_penalty != options.adaptation_flydelta_outcome_guidance.harm_penalty ||
             candidate.adaptation_flydelta_outcome_guidance.min_backoff_groups != options.adaptation_flydelta_outcome_guidance.min_backoff_groups ||
             candidate.adaptation_flydelta_outcome_guidance.max_prior_strength != options.adaptation_flydelta_outcome_guidance.max_prior_strength ||
+            candidate.adaptation_flydelta_outcome_guidance.projection_cache_bytes != options.adaptation_flydelta_outcome_guidance.projection_cache_bytes ||
+            candidate.adaptation_flydelta_outcome_guidance.matched_evaluation != options.adaptation_flydelta_outcome_guidance.matched_evaluation ||
+            candidate.adaptation_flydelta_outcome_guidance.matched_max_arms != options.adaptation_flydelta_outcome_guidance.matched_max_arms ||
             candidate.adaptation_flydelta_teacher_scoring_backend != options.adaptation_flydelta_teacher_scoring_backend ||
             candidate.adaptation_flydelta_model_profile_fingerprint != options.adaptation_flydelta_model_profile_fingerprint ||
             candidate.adaptation_flydelta_capture_layout_revision != options.adaptation_flydelta_capture_layout_revision ||

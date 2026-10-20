@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <iostream>
+#include <algorithm>
+#include <numeric>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -203,6 +205,50 @@ int main() {
     CHECK(diagnostic_batch_calls == 1);
     CHECK(full_batch_calls == 1);
     CHECK(batched_result.coefficient_trials.size() == result.coefficient_trials.size());
+
+    auto matched_fixture = fixture();
+    matched_fixture.guidance_fixture_group_id = "fixture-group:deep-matched";
+    auto matched_config = config;
+    matched_config.matched_evaluation = true;
+    matched_config.matched_max_arms = 9;
+    matched_config.coefficients.guidance_basis_identity = "stale-before-deep-basis-selection";
+    const common_flydelta_outcome_guidance_adviser matched_adviser =
+        [](const common_flydelta_outcome_guidance_request & request,
+                common_flydelta_outcome_guidance_decision & decision, std::string &) {
+            if (request.stage != "deep_full_generation_frontier") return false;
+            decision = {};
+            decision.history_fingerprint = "history:frozen-deep-fixture";
+            decision.original_order.resize(request.candidates.size());
+            std::iota(decision.original_order.begin(), decision.original_order.end(), 0);
+            decision.selected_order = decision.original_order; // shadow actually runs ordinary K
+            decision.mixed_policy_order = decision.original_order;
+            std::reverse(decision.mixed_policy_order.begin(), decision.mixed_policy_order.end());
+            return true;
+        };
+    common_flydelta_deep_search_result matched_result;
+    CHECK(common_flydelta_run_deep_search_batched(matched_fixture, matched_config, input,
+        batch_probe, batch_probe_runner(&diagnostic_batch_calls, batch_probe),
+        batch_probe, batch_probe_runner(&full_batch_calls, batch_probe),
+        matched_result, error, matched_adviser));
+    CHECK(matched_result.matched_evaluation_complete);
+    CHECK(full_batch_calls == 2); // one additional union batch, not three separate policy runs
+    CHECK(matched_result.matched_evaluation.union_arm_results.size() == 4);
+    CHECK(matched_result.coefficient_trials.size() == batched_result.coefficient_trials.size());
+    CHECK(matched_result.matched_evaluation.baseline_selection.size() == config.full_generation_top_k);
+    for (size_t i = 4; i < matched_result.coefficient_trials.size(); ++i) {
+        const auto & trial = matched_result.coefficient_trials[i];
+        CHECK(trial.coefficients == batched_result.coefficient_trials[i].coefficients);
+        CHECK(trial.mutation_kind == "full_generation_top_arm");
+        CHECK(trial.guidance_basis_id.find("stale-before") == std::string::npos);
+    }
+    matched_config.matched_max_arms = 2;
+    CHECK(common_flydelta_run_deep_search_batched(matched_fixture, matched_config, input,
+        batch_probe, batch_probe_runner(&diagnostic_batch_calls, batch_probe),
+        batch_probe, batch_probe_runner(&full_batch_calls, batch_probe),
+        matched_result, error, matched_adviser));
+    CHECK(!matched_result.matched_evaluation_complete);
+    CHECK(matched_result.matched_evaluation_reason == "matched_union_arm_budget_exceeded");
+    CHECK(matched_result.coefficient_trials.size() == batched_result.coefficient_trials.size());
 
     common_learning_in_memory_lifecycle_store lifecycle;
     common_flydelta_lifecycle_event_context context;
