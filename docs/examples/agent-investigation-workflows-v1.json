@@ -16,6 +16,48 @@
       "content": "Use only sources configured by the host and available in the current namespace or project scope. Keep collection within the case time window and declared budgets. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur.",
       "importance": 1.0,
       "confidence": 1.0
+    },
+    {
+      "id": "investigation-identity-analysis-v1",
+      "summary": "Trace an identity through authenticated destinations and nearby events.",
+      "content": "Start with an exact user identifier, collect within the case window, then inspect authenticated_to relations and the source events behind each relation. Compare event times and host identity domains. Treat account-name matches across sources as separate unless the source supplies a stable shared identity.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-communication-analysis-v1",
+      "summary": "Trace observed communication while retaining direction and source evidence.",
+      "content": "Start from a host or address, expand observed communication relations, inspect the supporting flow events, and compare source/destination fields and time coverage. A network edge establishes recorded communication only; it does not establish propagation, control or causality.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-event-chain-v1",
+      "summary": "Construct a time-ordered event chain with explicit clock limits.",
+      "content": "Use the bounded temporal_path analysis for a candidate start and target. The host requires relation intervals to be time-compatible. Preserve unknown timestamps, uncertainty and clock limitations; a missing edge is not proof that the event did not occur.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-integration-trace-v1",
+      "summary": "Follow trace and message identifiers across integration events.",
+      "content": "Use exact trace, span, correlation or message identifiers as the join key. Inspect the source event for each step and keep service-to-service ordering bounded by observed timestamps. Do not merge different identifiers based only on similar names or proximity in time.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-hypothesis-testing-v1",
+      "summary": "Test a proposed explanation against supporting and contradicting events.",
+      "content": "State the claim as a hypothesis. Search for evidence that supports it and evidence that would contradict it, record limitations and alternative explanations, and leave the claim unreviewed. Only an analyst can decide whether a conclusion is accepted.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-report-composition-v1",
+      "summary": "Freeze a source-linked report from one exact case revision.",
+      "content": "Confirm the case revision, then use investigation.report.compose. Preserve event ordering, rule IDs, evidence references, hypothesis state and gaps. The report is a frozen resource; further analysis creates a later case revision and a separately composed report.",
+      "importance": 0.95,
+      "confidence": 1.0
     }
   ],
   "workflows": [
@@ -79,6 +121,87 @@
       "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis", "investigation.report"],
       "optional_capabilities": ["artifact.export", "document.open", "document.save"],
       "required_context": []
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "investigation-identity-analysis-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Trace an identity through hosts and authentication events.",
+      "purpose": "Establish which configured sources record authentication activity for the selected identity.",
+      "goal": "Produce a source-linked account of observed authentication destinations and related events.",
+      "success_criteria": "Every stated destination is supported by retained source events; uncertain identity bindings and coverage gaps remain explicit.",
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-source-boundaries-v1", "investigation-identity-analysis-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/identity-analysis", "workflow_revision": "v1"}],
+      "steps": [{"id":"select-scope","title":"Select scope","objective":"Confirm the identity, source and case time window."},{"id":"collect-events","title":"Collect events","objective":"Collect a bounded page matching the exact identity."},{"id":"inspect-relations","title":"Inspect relations","objective":"Expand authentication relations and read their source events."},{"id":"report-findings","title":"Report findings","objective":"Separate observed destinations from hypotheses and gaps."}]
+    },
+    {
+      "id": "investigation-communication-analysis-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Trace observed network communication from a host or address.",
+      "purpose": "Describe source-linked communication paths and their time coverage.",
+      "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
+      "success_criteria": "Relations retain their derivation rule and event evidence; communication is not presented as causation.",
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-source-boundaries-v1", "investigation-communication-analysis-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/communication-analysis", "workflow_revision": "v1"}],
+      "steps": [{"id":"select-scope","title":"Select scope","objective":"Confirm the host/address, network source and time range."},{"id":"collect-flows","title":"Collect flow events","objective":"Collect bounded source/destination records."},{"id":"expand-peers","title":"Expand peers","objective":"Inspect graph peers and the evidence records behind each relation."},{"id":"qualify","title":"Qualify coverage","objective":"Report direction, time coverage, truncation and non-causal limits."}]
+    },
+    {
+      "id": "investigation-event-chain-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Find a bounded time-compatible chain between two entities.",
+      "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
+      "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
+      "success_criteria": "Every path edge has source events and compatible event times; incomplete searches are marked partial.",
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-event-chain-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/event-chain", "workflow_revision": "v1"}],
+      "steps": [{"id":"define-endpoints","title":"Define endpoints","objective":"Select start, target and earliest allowed event time."},{"id":"collect-relations","title":"Collect relations","objective":"Collect only source records needed to build candidate edges."},{"id":"search-chain","title":"Search chain","objective":"Run bounded temporal path analysis."},{"id":"inspect-proof","title":"Inspect proof","objective":"Read supporting events and state optimality and clock limitations."}]
+    },
+    {
+      "id": "investigation-integration-trace-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Follow an exact trace, correlation or message identifier across services.",
+      "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
+      "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
+      "success_criteria": "The path uses exact identifier matches, preserves missing spans and does not invent unobserved service transitions.",
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-integration-trace-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/integration-trace", "workflow_revision": "v1"}],
+      "steps": [{"id":"select-trace","title":"Select identifier","objective":"Confirm exact trace/correlation/message ID and source."},{"id":"collect-spans","title":"Collect spans","objective":"Collect a bounded page of exact identifier matches."},{"id":"order-events","title":"Order events","objective":"Build and inspect the observed time-ordered service path."},{"id":"state-gaps","title":"State gaps","objective":"Identify missing spans, clocks and unsupported transitions."}]
+    },
+    {
+      "id": "investigation-hypothesis-testing-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
+      "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
+      "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
+      "success_criteria": "The claim remains a hypothesis; model output never records an analyst review decision.",
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-hypothesis-testing-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/hypothesis-testing", "workflow_revision": "v1"}],
+      "steps": [{"id":"state-claim","title":"State claim","objective":"Write a testable explanation and identify alternatives."},{"id":"seek-support","title":"Seek support","objective":"Collect events that would support the claim."},{"id":"seek-contradiction","title":"Seek contradictions","objective":"Collect events that would challenge the claim."},{"id":"record-hypothesis","title":"Record hypothesis","objective":"Store evidence references and limitations without reviewing the claim."}]
+    },
+    {
+      "id": "investigation-report-composition-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "selection_description": "Freeze a report from a selected investigation case revision.",
+      "purpose": "Create an auditable report resource tied to one immutable case revision.",
+      "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
+      "success_criteria": "The report URI and content fingerprint identify a frozen case revision; later analysis does not rewrite it.",
+      "required_capabilities": ["investigation.case", "investigation.report"],
+      "optional_capabilities": ["artifact.export", "document.open", "document.save"],
+      "workflow_policy": "preferred",
+      "procedure_refs": ["investigation-evidence-discipline-v1", "investigation-report-composition-v1"],
+      "workflow_bindings": [{"workflow_ref": "workflow://investigation/report-composition", "workflow_revision": "v1"}],
+      "steps": [{"id":"confirm-revision","title":"Confirm revision","objective":"Open the exact case revision to freeze."},{"id":"compose-report","title":"Compose report","objective":"Create the frozen source-linked report resource."},{"id":"review-report","title":"Review report","objective":"Check evidence references, claim states and gaps."}]
     }
   ],
   "artifact_profiles": [

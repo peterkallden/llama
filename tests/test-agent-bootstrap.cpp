@@ -300,6 +300,7 @@ int main() {
         "workflow://investigation/report-composition",
     };
     assert(investigation_package.workflows.size() == investigation_workflows.size());
+    assert(investigation_package.blueprints.size() == investigation_workflows.size());
     for (const auto & workflow_ref : investigation_workflows) {
         assert(std::any_of(investigation_package.workflows.begin(), investigation_package.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == workflow_ref; }));
@@ -310,6 +311,12 @@ int main() {
         });
     assert(investigation_report != investigation_package.artifact_profiles.end());
     assert(investigation_report->sections.size() == 5);
+    for (const auto & blueprint : investigation_package.blueprints) {
+        assert(blueprint.workflow_bindings.size() == 1);
+        assert(std::find(investigation_workflows.begin(), investigation_workflows.end(),
+            blueprint.workflow_bindings.front().workflow_ref) != investigation_workflows.end());
+        assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
+    }
     common_memory_in_memory_store investigation_memory;
     common_plan_in_memory_store investigation_plans;
     assert(investigation_memory.open("", error) && investigation_plans.open("", error));
@@ -320,6 +327,7 @@ int main() {
             embedding = {1.0f, 0.0f}; e.clear(); return true;
         }, investigation_installed, error));
     assert(investigation_installed.installed_workflow_ids.size() == investigation_workflows.size());
+    assert(investigation_installed.installed_blueprint_ids.size() == investigation_workflows.size());
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));
