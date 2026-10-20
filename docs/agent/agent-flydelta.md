@@ -2619,7 +2619,10 @@ and runtime guidance remain independent of FlyDelta.
 FlyDelta cross-behavior backoff and project history are separate prediction-
 inspection opt-ins at `runtime.adaptation.outcome_guidance.generalization`.
 `tool_family_backoff` requires an explicit mapping of related behavior keys to
-one family. The checked-in mapping is illustrative only; enable it for a real
+one family and prior observations from another mapped behavior key. The
+reported `evidence_groups` and overall availability include an applied
+backoff prior, even when the exact arm category has no observations. The
+checked-in mapping is illustrative only; enable it for a real
 family only after held-out compatibility and calibration review.
 `project_history` permits same-project records from other sessions,
 but only current-session candidates are returned and raw external-session IDs

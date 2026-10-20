@@ -708,11 +708,13 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
         std::string fine;
         std::string coarse;
         std::string outcome;
+        std::string identity;
     };
     std::vector<target_row> candidates;
     std::vector<common_outcome_guidance_projection_observation> fine_rows, coarse_rows;
     json canonical_rows = json::array();
-    std::set<std::string> seen;
+    std::map<std::string, std::string> signatures;
+    std::set<std::string> conflicted;
     for (const auto & entry : stored) {
         const auto guidance = json::parse(entry.guidance_json, nullptr, false);
         if (!guidance.is_object() || !guidance.contains("context") || !guidance["context"].is_object() ||
@@ -738,16 +740,15 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
             const size_t outcome_index = outcome == "optimal" ? 0 : outcome == "detour" ? 1 :
                 outcome == "unreachable" ? 2 : 3;
             if (outcome_index > 2) continue;
-            canonical_rows.push_back({{"evaluation_id",entry.evaluation_id},{"fixture_group",fixture},
-                {"fine_category",row["fine_category"]},{"coarse_category",row["coarse_category"]},
-                {"state_before",row["state_before"]},{"action",row["action"]},{"outcome",outcome}});
-            auto weights = std::vector<double>(3, 0.0);
-            weights[outcome_index] = 1.0;
-            fine_rows.push_back({fixture, row["fine_category"].get<std::string>(), weights});
-            coarse_rows.push_back({fixture, row["coarse_category"].get<std::string>(), weights});
             const std::string identity = json::array({entry.evaluation_id,
                 row["state_before"], row["action"]}).dump();
-            if (!seen.insert(identity).second) continue;
+            const std::string signature = json::array({fixture, row["fine_category"],
+                row["coarse_category"], outcome}).dump();
+            const auto inserted = signatures.emplace(identity, signature);
+            if (!inserted.second) {
+                if (inserted.first->second != signature) conflicted.insert(identity);
+                continue;
+            }
             const std::string ref_material = json::array({namespace_id, project_id, session_id,
                 ruleset_id, revision, entry.evaluation_id, row["state_before"], row["action"]}).dump();
             target_row candidate;
@@ -758,8 +759,22 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
             candidate.fine = row["fine_category"].get<std::string>();
             candidate.coarse = row["coarse_category"].get<std::string>();
             candidate.outcome = outcome;
+            candidate.identity = identity;
             candidates.push_back(std::move(candidate));
         }
+    }
+    candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+        [&](const auto & candidate) { return conflicted.count(candidate.identity) != 0; }),
+        candidates.end());
+    for (const auto & candidate : candidates) {
+        canonical_rows.push_back({{"evaluation_id",candidate.evaluation_id},
+            {"fixture_group",candidate.fixture},{"fine_category",candidate.fine},
+            {"coarse_category",candidate.coarse},{"outcome",candidate.outcome},
+            {"identity",candidate.identity}});
+        std::vector<double> weights(3, 0.0);
+        weights[candidate.outcome == "optimal" ? 0 : candidate.outcome == "detour" ? 1 : 2] = 1.0;
+        fine_rows.push_back({candidate.fixture, candidate.fine, weights});
+        coarse_rows.push_back({candidate.fixture, candidate.coarse, weights});
     }
     const std::string fingerprint_material = json{{"family","target_hunt_branch_quality_v1"},
         {"ruleset",ruleset.semantic_fingerprint},{"scope",scope},{"watermark",watermark},
@@ -1043,7 +1058,7 @@ common_tool_execution_result daemon_outcome_predict(
         if (!handled.insert(ref).second) continue;
         const row_entry * target = nullptr;
         bool conflict = false;
-        for (const auto & row : rows) if (row.opaque_ref == ref) {
+        for (const auto & row : rows) if (row.opaque_ref == ref && row.source_session == session_id) {
             if (target && !same_observation(target->observation, row.observation)) {
                 conflict = true;
                 break;
@@ -1108,15 +1123,19 @@ common_tool_execution_result daemon_outcome_predict(
             auto family_context = target->observation.context;
             family_context.semantic_domain = "tool-family:" + family_id;
             std::vector<common_flydelta_outcome_guidance_observation> family_history;
+            std::set<std::string> other_domain_groups;
             for (auto row : history) {
                 if (std::find(family_domains.begin(), family_domains.end(),
                         row.context.semantic_domain) == family_domains.end()) continue;
+                if (row.context.semantic_domain != target->observation.context.semantic_domain)
+                    other_domain_groups.insert(row.fixture_group_id);
                 row.context.semantic_domain = family_context.semantic_domain;
                 family_history.push_back(std::move(row));
             }
             common_flydelta_outcome_guidance_projection_ptr family_projection;
             common_flydelta_outcome_guidance_decision family_decision;
-            if (common_flydelta_outcome_guidance_build_projection(family_context, family_history,
+            if (!other_domain_groups.empty() &&
+                    common_flydelta_outcome_guidance_build_projection(family_context, family_history,
                     family_projection, predict_error, target->observation.fixture_group_id) &&
                     common_flydelta_outcome_guidance_decide_from_projection(config, family_context,
                         family_projection, {candidate}, 1, 0, family_decision, predict_error) &&
@@ -1129,7 +1148,10 @@ common_tool_execution_result daemon_outcome_predict(
             }
         }
         const auto & p = prediction;
-        effective_groups += p.fixture_groups;
+        const size_t reported_groups = std::max(p.fixture_groups,
+            (p.backoff_prior_strength > 0 || p.backoff_categorical_prior_strength > 0)
+                ? p.backoff_fixture_groups : size_t{0});
+        effective_groups += reported_groups;
         fingerprints += ref;
         fingerprints.push_back('\0');
         fingerprints += decision.history_fingerprint;
@@ -1142,8 +1164,7 @@ common_tool_execution_result daemon_outcome_predict(
             {"p_neutral_given_known", p.p_neutral_given_known},
             {"p_harmed_given_known", p.p_harmed_given_known},
             {"expected_utility", p.expected_utility},
-            {"evidence_groups", backoff_level == "tool_family_backoff"
-                ? p.backoff_fixture_groups : p.fixture_groups},
+            {"evidence_groups", reported_groups},
             {"backoff_level", backoff_level}, {"tool_family", family_id},
             {"history_fingerprint", decision.history_fingerprint},
             {"prediction_kind", "chronological_leave_fixture_group_out"},
