@@ -52,6 +52,32 @@ int main() {
           "bounded shortest path should execute");
     check(path.size() == 2 && complete, "shortest path should return its evidence relations");
 
+    std::vector<common_investigation_relation> rebuilt;
+    std::vector<std::string> limitations;
+    const std::vector<common_investigation_relation_rule> relation_rules = {
+        {"auth-v1", "auth", common_investigation_entity_kind::user,
+            common_investigation_entity_kind::host,
+            common_investigation_relation_kind::authenticated_to},
+    };
+    check(common_investigation_build_relations("elastic-a", value.entities, value.events,
+            relation_rules, rebuilt, limitations, error),
+          "deterministic relation builder should process normalized events");
+    check(rebuilt.size() == 2 && rebuilt[0].event_count == 1 &&
+            rebuilt[0].confidence_label == "observed" &&
+            rebuilt[0].evidence_event_ids.size() == 1,
+          "derived edges must retain their rule and concrete event evidence");
+    auto rebuilt_again = std::vector<common_investigation_relation>{};
+    check(common_investigation_build_relations("elastic-a", value.entities, value.events,
+            relation_rules, rebuilt_again, limitations, error) &&
+            rebuilt_again.size() == rebuilt.size() && rebuilt_again[0].id == rebuilt[0].id,
+          "relation IDs and ordering must be reproducible");
+    auto unknown_time_events = value.events;
+    unknown_time_events[0].time.has_event_time = false;
+    check(common_investigation_build_relations("elastic-a", value.entities, unknown_time_events,
+            relation_rules, rebuilt_again, limitations, error) &&
+            !limitations.empty(),
+          "unknown event time must remain an explicit relation limitation");
+
     value.relations[0].evidence_event_ids = {"missing"};
     check(!common_investigation_case_validate(value, error), "unknown evidence must invalidate a relation");
     value = sample();

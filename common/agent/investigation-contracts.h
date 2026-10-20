@@ -68,6 +68,14 @@ struct common_investigation_relation {
     std::vector<std::string> evidence_event_ids;
 };
 
+struct common_investigation_relation_rule {
+    std::string id;
+    std::string event_type;
+    common_investigation_entity_kind from_kind = common_investigation_entity_kind::unknown;
+    common_investigation_entity_kind to_kind = common_investigation_entity_kind::unknown;
+    common_investigation_relation_kind relation_kind = common_investigation_relation_kind::unknown;
+};
+
 struct common_investigation_claim {
     std::string id;
     std::string text;
@@ -149,6 +157,14 @@ bool common_investigation_graph_shortest_path(
     const std::string & start_id, const std::string & goal_id,
     const common_investigation_analysis_budget &,
     std::vector<std::string> & relation_ids, bool & complete,
+    std::string & error);
+bool common_investigation_build_relations(
+    const std::string & source_id,
+    const std::vector<common_investigation_entity> & entities,
+    const std::vector<common_investigation_event> & events,
+    const std::vector<common_investigation_relation_rule> & rules,
+    std::vector<common_investigation_relation> & relations,
+    std::vector<std::string> & limitations,
     std::string & error);
 std::vector<common_investigation_candidate> common_investigation_rank_candidates(
     std::vector<common_investigation_candidate>, size_t max_candidates);

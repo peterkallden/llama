@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -210,6 +212,126 @@ bool common_investigation_graph_shortest_path(
         std::reverse(relation_ids.begin(), relation_ids.end());
     }
     error.clear();
+    return true;
+}
+
+bool common_investigation_build_relations(
+        const std::string & source_id,
+        const std::vector<common_investigation_entity> & entities,
+        const std::vector<common_investigation_event> & events,
+        const std::vector<common_investigation_relation_rule> & rules,
+        std::vector<common_investigation_relation> & relations,
+        std::vector<std::string> & limitations,
+        std::string & error) {
+    using key_type = std::tuple<std::string, std::string, std::string,
+        common_investigation_relation_kind, std::string>;
+    relations.clear();
+    limitations.clear();
+    error.clear();
+    if (source_id.empty() || source_id.size() > 256 || entities.size() > 100000 ||
+            events.size() > 500000 || rules.size() > 256) {
+        error = "relation build input exceeds supported identity or size bounds";
+        return false;
+    }
+    std::unordered_map<std::string, const common_investigation_entity *> by_id;
+    for (const auto & entity : entities) {
+        if (!valid_id(entity.id) || entity.source_id != source_id ||
+                entity.kind == common_investigation_entity_kind::unknown ||
+                !by_id.emplace(entity.id, &entity).second) {
+            error = "relation build contains duplicate or invalid source-scoped entities";
+            return false;
+        }
+    }
+    std::unordered_set<std::string> event_ids;
+    for (const auto & event : events) {
+        if (!valid_id(event.id) || event.source_id != source_id ||
+                event.event_type.empty() || event.event_type.size() > 256 ||
+                !event_ids.insert(event.id).second) {
+            error = "relation build contains duplicate or invalid source-scoped events";
+            return false;
+        }
+        for (const auto & id : event.entity_ids) if (!by_id.count(id)) {
+            error = "relation build event references an unknown entity";
+            return false;
+        }
+    }
+    std::unordered_set<std::string> rule_ids;
+    for (const auto & rule : rules) {
+        if (!valid_id(rule.id) || rule.event_type.empty() || rule.event_type.size() > 256 ||
+                rule.from_kind == common_investigation_entity_kind::unknown ||
+                rule.to_kind == common_investigation_entity_kind::unknown ||
+                rule.relation_kind == common_investigation_relation_kind::unknown ||
+                !rule_ids.insert(rule.id).second) {
+            error = "relation build rule is invalid or duplicated";
+            return false;
+        }
+    }
+    std::map<key_type, common_investigation_relation> aggregated;
+    bool missing_time = false;
+    for (const auto & event : events) {
+        for (const auto & rule : rules) {
+            if (rule.event_type != event.event_type) continue;
+            std::vector<const common_investigation_entity *> from, to;
+            for (const auto & id : event.entity_ids) {
+                const auto * entity = by_id.at(id);
+                if (entity->kind == rule.from_kind) from.push_back(entity);
+                if (entity->kind == rule.to_kind) to.push_back(entity);
+            }
+            for (const auto * left : from) for (const auto * right : to) {
+                if (left->id == right->id) continue;
+                const key_type key{source_id, rule.id, left->id, rule.relation_kind, right->id};
+                auto [it, inserted] = aggregated.emplace(key, common_investigation_relation{});
+                auto & relation = it->second;
+                if (inserted) {
+                    relation.source_id = source_id;
+                    relation.from_entity_id = left->id;
+                    relation.to_entity_id = right->id;
+                    relation.kind = rule.relation_kind;
+                    relation.rule_id = rule.id;
+                    relation.rule_revision = "1";
+                    relation.confidence_label = "observed";
+                }
+                if (std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), event.id) == relation.evidence_event_ids.end()) {
+                    relation.evidence_event_ids.push_back(event.id);
+                    ++relation.event_count;
+                }
+                if (event.time.has_event_time) {
+                    if (!relation.has_time) {
+                        relation.first_seen_ms = event.time.event_time_ms;
+                        relation.last_seen_ms = event.time.event_time_ms;
+                        relation.has_time = true;
+                    } else {
+                        relation.first_seen_ms = std::min(relation.first_seen_ms, event.time.event_time_ms);
+                        relation.last_seen_ms = std::max(relation.last_seen_ms, event.time.event_time_ms);
+                    }
+                } else {
+                    missing_time = true;
+                }
+            }
+        }
+    }
+    std::unordered_set<std::string> relation_ids;
+    for (auto & [key, relation] : aggregated) {
+        std::string identity;
+        for (const auto & part : {std::get<0>(key), std::get<1>(key), std::get<2>(key),
+                std::string(relation_kind(std::get<3>(key))), std::get<4>(key)}) {
+            identity += std::to_string(part.size()) + ":" + part + ";";
+        }
+        uint64_t hash = 1469598103934665603ULL;
+        for (unsigned char byte : identity) { hash ^= byte; hash *= 1099511628211ULL; }
+        static const char hex[] = "0123456789abcdef";
+        std::string suffix(16, '0');
+        for (int i = 15; i >= 0; --i) { suffix[static_cast<size_t>(i)] = hex[hash & 0xf]; hash >>= 4; }
+        relation.id = "rel:" + suffix;
+        if (!relation_ids.insert(relation.id).second) {
+            error = "stable relation identifier collision";
+            relations.clear();
+            return false;
+        }
+        std::sort(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end());
+        relations.push_back(std::move(relation));
+    }
+    if (missing_time) limitations.push_back("one_or_more_relation_events_have_unknown_event_time");
     return true;
 }
 
