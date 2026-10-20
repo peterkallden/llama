@@ -411,7 +411,7 @@ bool resolve_agent_host_tool_selection(
 
         common_native_tool_bindings bindings;
         bindings.semi_oracle = request.semi_oracle_tool_call;
-        bindings.outcome_predict = request.outcome_predict_tool_call;
+        bindings.prediction_predict = request.prediction_predict_tool_call;
         if (!request.repository_root.empty()) {
             bindings.repository_root = request.repository_root;
         }

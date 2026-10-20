@@ -4,7 +4,9 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#include <algorithm>
 #include <cassert>
+#include <nlohmann/json.hpp>
 
 int main() {
     const std::vector<common_chat_tool> tools = {
@@ -19,10 +21,11 @@ int main() {
         {"statistics.describe", "describe", "{}", "{}"},
         {"document.tables", "list document tables", "{}", "{}"},
         {"openapi.connect", "admit fetched OpenAPI spec", "{}", "{}"},
+        {"prediction.predict", "inspect historical predictions", "{}", "{}"},
     };
 
     const auto families = common_generate_tool_family_index(tools);
-    assert(families.size() == 10);
+    assert(families.size() == 11);
     const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
         for (const auto & family : families) if (family.id == id) return &family;
         return nullptr;
@@ -43,6 +46,10 @@ int main() {
         "Search and fetch public web content, including API specifications");
     assert(openapi_family && openapi_family->description ==
         "Load a fetched OpenAPI spec and expose its permitted API operations");
+    const auto * prediction_family = find_family("prediction");
+    assert(prediction_family && prediction_family->tool_names ==
+        std::vector<std::string>{"prediction.predict"});
+    assert(prediction_family->description.find("predictions from verified history") != std::string::npos);
     const auto configured = common_generate_tool_family_index(
         tools, {{"data", "Query approved datasets from the configured API"}});
     const auto configured_data = [&configured]() -> const common_tool_family_index * {
@@ -57,6 +64,7 @@ int main() {
     assert(rendered.find("diagnostics: Analyze compiler and test failures, native crashes and debugger dumps") != std::string::npos);
     assert(rendered.find("web: Search and fetch public web content, including API specifications") != std::string::npos);
     assert(rendered.find("openapi: Load a fetched OpenAPI spec and expose its permitted API operations") != std::string::npos);
+    assert(rendered.find("prediction: Inspect predictions from verified history") != std::string::npos);
     assert(rendered.find("time: Read current time and date information") != std::string::npos);
     assert(rendered.find("math: Perform bounded arithmetic calculations") != std::string::npos);
     assert(rendered.find("memory: Search and manage scoped runtime memory") != std::string::npos);
@@ -68,6 +76,8 @@ int main() {
     assert(selected.size() == 3);
     assert(selected[0].name == "data.join");
     assert(selected[2].name == "dataset.list");
+    const auto prediction_tools = common_filter_tools_by_families(tools, {"prediction"});
+    assert(prediction_tools.size() == 1 && prediction_tools.front().name == "prediction.predict");
 
     const auto bounded = common_render_tool_family_index(families, 32);
     assert(bounded.size() <= 32);
@@ -84,6 +94,15 @@ int main() {
         selection,
         error));
     assert(!selection.needs_tools && selection.family_ids.empty());
+    const auto optional_schema = nlohmann::json::parse(common_tool_family_selection_schema(families));
+    assert(optional_schema["properties"]["families"]["items"]["enum"].get<std::vector<std::string>>().size()
+        == families.size());
+    assert(std::find(optional_schema["properties"]["families"]["items"]["enum"].begin(),
+        optional_schema["properties"]["families"]["items"]["enum"].end(),
+        "prediction") != optional_schema["properties"]["families"]["items"]["enum"].end());
+    const auto empty_schema = nlohmann::json::parse(common_tool_family_selection_schema({}));
+    assert(empty_schema["properties"]["families"]["maxItems"] == 0);
+    assert(!empty_schema["properties"]["families"]["items"].contains("enum"));
     const auto required_schema = common_tool_family_required_selection_schema(families);
     const auto required_prompt = common_tool_family_required_selection_prompt(families);
     assert(required_prompt.find("Tool execution is required for this request") == 0);
@@ -94,7 +113,7 @@ int main() {
     assert(required_repair_prompt.find("previous family selection was invalid") != std::string::npos);
     assert(required_repair_prompt.find("non-empty families array") != std::string::npos);
     assert(required_schema.find("\"minItems\":1") != std::string::npos);
-    assert(required_schema.find("\"maxItems\":10") != std::string::npos);
+    assert(required_schema.find("\"maxItems\":11") != std::string::npos);
     assert(required_schema.find("\"needs_tools\"") == std::string::npos);
     assert(required_schema.find("\"enum\"") != std::string::npos);
     assert(common_parse_tool_family_required_selection(
@@ -129,6 +148,11 @@ int main() {
         "TOOLS: dataset.list, data.join", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2 &&
         selection.family_ids[0] == "dataset" && selection.family_ids[1] == "data");
+    assert(common_parse_tool_family_selection_text(
+        "TOOLS: prediction.predict", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids == std::vector<std::string>{"prediction"});
+    assert(!common_parse_tool_family_selection_text(
+        "TOOLS: prediction.predict, artifact.inspect", families, selection, error));
     assert(common_parse_tool_family_selection_text("TOOLS: data, data, dataset", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2 &&
         selection.family_ids[0] == "data" && selection.family_ids[1] == "dataset");

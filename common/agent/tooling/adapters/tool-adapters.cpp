@@ -1266,10 +1266,10 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_oracle_tool_adapter(
                 definition,bindings,registry,installed,error)) {
             // The Oracle facade owns RuleSet/session binding and evaluation provenance.
-        } else if (definition.executor_id == "builtin.outcome_predict") {
-            if (bindings.outcome_predict) {
+        } else if (definition.executor_id == "builtin.prediction_predict") {
+            if (bindings.prediction_predict) {
                 installed = register_definition(definition, registry,
-                    [predict = bindings.outcome_predict](const std::string & input) {
+                    [predict = bindings.prediction_predict](const std::string & input) {
                         return predict(input);
                     }, error);
             }

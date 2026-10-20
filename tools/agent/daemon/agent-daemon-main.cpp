@@ -247,8 +247,11 @@ int main(int argc, char ** argv) {
     common_memory_store * catalog_memory_store = runtime.memory_store.get();
     common_plan_store * catalog_plan_store = runtime.plan_store.get();
     agent_resource_store * catalog_resource_store = runtime.resource_store.get();
+    common_agent_data_store * catalog_data_store = runtime.data_store.get();
+    common_semi_oracle_store * catalog_semi_oracle_store = runtime.semi_oracle_store.get();
     common_learning_lifecycle_store * catalog_lifecycle_store = runtime.flydelta_review_lifecycle_store.get();
-    auto build_http_tool_catalog = [catalog_memory_store, catalog_plan_store, catalog_resource_store, catalog_lifecycle_store](
+    auto build_http_tool_catalog = [catalog_memory_store, catalog_plan_store, catalog_resource_store,
+            catalog_data_store, catalog_semi_oracle_store, catalog_lifecycle_store](
             const daemon_options & catalog_options,
             agent_mcp_server_tool_registry & registry,
             std::string & catalog_error) {
@@ -270,9 +273,9 @@ int main(int argc, char ** argv) {
                 catalog_resource_store,
                 catalog_tooling,
                 catalog_error,
-                nullptr,
+                catalog_data_store,
                 std::nullopt,
-                nullptr,
+                catalog_semi_oracle_store,
                 catalog_lifecycle_store)) {
             return false;
         }

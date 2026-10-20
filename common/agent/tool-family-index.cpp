@@ -36,6 +36,7 @@ std::string family_description_for_id(const std::string & id) {
         {"math",       "Perform bounded arithmetic calculations"},
         {"memory",     "Search and manage scoped runtime memory"},
         {"openapi",    "Load a fetched OpenAPI spec and expose its permitted API operations"},
+        {"prediction", "Inspect predictions from verified history, including probabilities, uncertainty and evidence coverage"},
         {"oracle",     "When a user states rules for a small placement game or one-variable linear equations: define/correct session rules, then verify proposed moves or rewrites. Not general game search or general math"},
         {"resource",   "Inspect and read host-owned resources"},
         {"statistics", "Describe datasets and compute summaries"},
@@ -152,8 +153,26 @@ std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
     return result;
 }
 
-std::string common_tool_family_selection_schema() {
-    return R"({"type":"object","additionalProperties":false,"required":["needs_tools","families"],"properties":{"needs_tools":{"type":"boolean"},"families":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":64}},"reason":{"type":"string","maxLength":256}}})";
+std::string common_tool_family_selection_schema(
+        const std::vector<common_tool_family_index> & families) {
+    json schema = {
+        {"type", "object"}, {"additionalProperties", false},
+        {"required", json::array({"needs_tools", "families"})},
+        {"properties", {
+            {"needs_tools", {{"type", "boolean"}}},
+            {"families", {{"type", "array"}, {"maxItems", std::min<size_t>(8, families.size())}, {"uniqueItems", true},
+                {"items", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}}}},
+            {"reason", {{"type", "string"}, {"maxLength", 256}}},
+        }},
+    };
+    json family_ids = json::array();
+    for (const auto & family : families) {
+        if (!family.id.empty()) family_ids.push_back(family.id);
+    }
+    if (!family_ids.empty()) {
+        schema["properties"]["families"]["items"]["enum"] = std::move(family_ids);
+    }
+    return schema.dump();
 }
 
 std::string common_tool_family_required_selection_schema(

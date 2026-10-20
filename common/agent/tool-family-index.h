@@ -48,7 +48,8 @@ std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
     const std::vector<common_chat_tool> & tools,
     const std::vector<std::string> & family_ids);
 
-std::string common_tool_family_selection_schema();
+std::string common_tool_family_selection_schema(
+    const std::vector<common_tool_family_index> & families);
 
 // Required-mode family selection has no NO_TOOLS branch: the model must
 // choose one or more ids from the host-filtered family index.

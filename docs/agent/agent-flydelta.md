@@ -2355,7 +2355,7 @@ group gives `fixture_group_identity_unavailable` and the existing search order.
 Resume verifies the existing durable
 history snapshot before rebuilding; no new projection store is introduced.
 The legacy raw-history API delegates to the same builder and decision code.
-The `outcome.predict` inspector likewise builds this typed projection from its
+The `prediction.predict` inspector likewise builds this typed projection from its
 host-authorized chronological, leave-one-fixture-out view. Retention failures
 do not invalidate a built projection, and `off` skips history projection.
 The measured three-mode smoke above verifies the production Whirlpool adviser
@@ -2578,7 +2578,7 @@ owns outcome categories, compatibility partitions, fixture weighting, and
 the search-specific backoff projection. This keeps the reusable math separate
 without making the generic layer an authority over FlyDelta evidence.
 
-The read-only `outcome.predict` MCP tool is available in `analysis`, `research`
+The read-only `prediction.predict` MCP tool is available in `analysis`, `research`
 and dynamic `all-configured` when the daemon has the required history store.
 Its default `family` is `flydelta`; `family="target_hunt"` selects the
 host-verified Target Hunt branch-quality adapter for the active session RuleSet.
@@ -2600,8 +2600,13 @@ success payload. Successful `tools/call` responses return that payload as
 `structuredContent`: predictions live under `result` alongside `ok`, an
 optional `summary` and resource/dataset references. The
 daemon status/capability projection uses the same history-backed native tool
-view. With `runtime.adaptation.flydelta.outcome_guidance.mode="off"`, FlyDelta
-inspection returns a clear disabled error without reading lifecycle history.
+view. The public routing family is `prediction`, with capability
+`prediction.read`; `outcome.predict` is no longer registered. FlyDelta's
+`outcome_guidance.mode` controls its automatic search adviser. Explicit
+authorized calls to `prediction.predict` remain available when that adviser
+is `off` and have no history-write or search side effects. Daemon callbacks
+retain shared ownership of the history store across runtime moves, including
+the move into the dispatcher.
 
 FlyDelta results are chronological leave-one-fixture-group-out estimates for
 already observed arms: only earlier compatible outcomes are used, and the

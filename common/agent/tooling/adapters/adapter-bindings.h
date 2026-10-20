@@ -30,7 +30,7 @@ struct common_native_tool_bindings {
     std::function<common_tool_execution_result(const std::string &, const std::string &)> semi_oracle;
     // Read-only, host-resolved prediction over verified FlyDelta lifecycle
     // observations. The callback accepts opaque observation references only.
-    std::function<common_tool_execution_result(const std::string &)> outcome_predict;
+    std::function<common_tool_execution_result(const std::string &)> prediction_predict;
     agent_resource_runtime resource_runtime;
     agent_resource_processing_provider * resource_processing_service = nullptr;
     agent_resource_processing_provider_factory resource_processing_provider_factory;

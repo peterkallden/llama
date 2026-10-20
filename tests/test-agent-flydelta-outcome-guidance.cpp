@@ -115,8 +115,9 @@ int main() {
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
     CHECK(catalog.bootstrap("analysis", bootstrap, error));
-    const auto * predict_definition = catalog.find_definition("outcome.predict");
+    const auto * predict_definition = catalog.find_definition("prediction.predict");
     CHECK(predict_definition != nullptr);
+    CHECK(catalog.find_definition("outcome.predict") == nullptr);
     const auto input_schema = nlohmann::json::parse(predict_definition->input_schema_json);
     CHECK(input_schema["properties"]["family"]["enum"] ==
         nlohmann::json({"flydelta","target_hunt"}));
@@ -125,7 +126,7 @@ int main() {
     CHECK(predict_definition != nullptr && predict_definition->risk_class == common_tool_risk_class::local_read);
     const auto all_configured = catalog.load_profile("all-configured", error);
     CHECK(error.empty() && std::any_of(all_configured.begin(), all_configured.end(),
-        [](const auto & definition) { return definition.name == "outcome.predict"; }));
+        [](const auto & definition) { return definition.name == "prediction.predict"; }));
     const auto result_schema = nlohmann::json::parse(predict_definition->result_schema_json, nullptr, false);
     CHECK(result_schema.is_object() && result_schema.contains("properties") &&
         result_schema["properties"].contains("predictions") &&
@@ -172,17 +173,17 @@ int main() {
         target_hunt_result, predict_definition->result_schema_json, normalized_result, error));
     common_native_tool_bindings bindings;
     bool prediction_called = false;
-    bindings.outcome_predict = [&prediction_called](const std::string & input) {
+    bindings.prediction_predict = [&prediction_called, &sample_result](const std::string & input) {
         prediction_called = input == R"({"candidate_refs":["obs-1"]})";
-        return common_tool_execution_result::success(
-            R"({"status":"insufficient_history","scope":"local/p/s","history_watermark":1,"history_fingerprint":"sha256:test","predictions":[]})");
+        return common_tool_execution_result::success(sample_result);
     };
     common_tool_registry registry;
     common_tool_adapter_result adapter_result;
     CHECK(common_register_native_tool_adapters(catalog, "analysis", bindings,
         registry, adapter_result, error));
-    CHECK(registry.contains("outcome.predict") && registry.is_read_only("outcome.predict"));
-    CHECK(registry.execute({"outcome.predict", R"({"candidate_refs":["obs-1"]})"}).ok);
+    CHECK(registry.contains("prediction.predict") && registry.is_read_only("prediction.predict"));
+    CHECK(!registry.contains("outcome.predict"));
+    CHECK(registry.execute({"prediction.predict", R"({"candidate_refs":["obs-1"]})"}).ok);
     CHECK(prediction_called);
     common_flydelta_outcome_guidance_config config;
     CHECK(config.mode == common_flydelta_outcome_guidance_mode::shadow);

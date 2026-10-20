@@ -4,6 +4,8 @@
 #include "tools/agent/mcp/agent-mcp-auth.h"
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
 #include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
+#include "agent/tool-family-index.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "tools/agent/mcp/agent-mcp-http-server.h"
@@ -16,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <stdexcept>
 
 using json = nlohmann::ordered_json;
 
@@ -42,6 +45,189 @@ std::filesystem::path get_fake_server_path(const char * argv0) {
 #else
     return argv_path.parent_path() / "llama-agent-mcp-stdio-fake-server";
 #endif
+}
+
+bool check_prediction_mcp(const daemon_options & base_options, std::string & error) {
+    // Synthetic contract fixture, published through the real lifecycle writer.
+    // It tests plumbing/backoff, not predictive quality on real model outcomes.
+    auto history = std::make_shared<common_learning_in_memory_lifecycle_store>();
+    common_flydelta_lifecycle_event_context event;
+    event.scope.namespace_id = "prediction-smoke";
+    event.scope.project_id = "prediction-project";
+    event.scope.session_id = "prediction-session";
+    event.source_id = "prediction-contract-fixture";
+    event.created_at = "2026-10-20T00:00:00Z";
+    for (size_t i = 0; i < 9; ++i) {
+        const auto id = "prediction-fixture-" + std::to_string(i);
+        event.event_id = event.idempotency_key = event.content_hash = id;
+        common_flydelta_search_observation observation;
+        observation.experiment_id = "prediction-contract-fixture";
+        observation.candidate_id = observation.guidance_observation_id = id;
+        observation.guidance_fixture_group_id = "fixture-group-" + std::to_string(i);
+        observation.host_evaluated = observation.verifier_known = true;
+        observation.outcome = common_flydelta_counterfactual_outcome::helped;
+        observation.guidance_scope_fingerprint = "scope:prediction-contract-fixture";
+        observation.guidance_model_profile_fingerprint = "model:fixture";
+        observation.guidance_tokenizer_fingerprint = "tokenizer:fixture";
+        observation.guidance_template_fingerprint = "template:fixture";
+        observation.guidance_baseline_deployment_fingerprint = "deployment:fixture";
+        observation.guidance_verifier_revision = "verifier:fixture-v1";
+        observation.guidance_domain = i < 8 ? "dataset.query" : "dataset.aggregate";
+        observation.guidance_strategy = "deep";
+        observation.guidance_estimator = "coefficient-search";
+        observation.guidance_basis_id = "basis:fixture";
+        observation.guidance_rank = 1;
+        observation.guidance_relative_layer = observation.guidance_relative_dose = 0.5;
+        observation.guidance_comparison_completed = observation.guidance_overlay_applied =
+            observation.guidance_outcome_known = true;
+        common_flydelta_search_decision decision;
+        if (!common_flydelta_decide_search_disposition(observation, decision, error) ||
+                !common_flydelta_append_search_lifecycle(*history, event, observation,
+                    decision, nullptr, error)) return false;
+    }
+    json results = json::array();
+    for (const bool family_backoff : {false, true}) {
+        auto options = base_options;
+        options.mcp_providers.clear();
+        options.tool_profile = "analysis";
+        options.adaptation_flydelta_enabled = false;
+        options.adaptation_flydelta_outcome_guidance.mode = common_flydelta_outcome_guidance_mode::off;
+        options.adaptation_outcome_guidance_generalization = {};
+        options.adaptation_outcome_guidance_generalization.tool_family_backoff = family_backoff;
+        options.adaptation_outcome_guidance_generalization.tool_families = {
+            {"dataset-analysis", {"dataset.query", "dataset.aggregate"}},
+        };
+        common_agent_daemon_runtime runtime;
+        runtime.flydelta_review_lifecycle_store = history;
+        if (!initialize_agent_daemon_environment(options, runtime, error)) return false;
+        common_agent_runtime_session_host_turn_request request;
+        request.namespace_id = event.scope.namespace_id;
+        request.project_id = event.scope.project_id;
+        request.session_id = event.scope.session_id;
+        request.turn_id = "prediction-turn";
+        common_agent_runtime_tooling tooling;
+        if (!resolve_agent_daemon_tooling(options, nullptr, request,
+                *runtime.memory_store, *runtime.plan_store, runtime.resource_store.get(),
+                tooling, error, runtime.data_store.get(), std::nullopt,
+                runtime.semi_oracle_store.get(), history.get())) return false;
+        if (!tooling.tool_view || !has_tool(tooling.tools, "prediction.predict") ||
+                has_tool(tooling.tools, "outcome.predict")) {
+            error = "prediction tool did not resolve through the ordinary daemon provider";
+            return false;
+        }
+        const auto metadata = tooling.tool_view->learning_metadata("prediction.predict");
+        if (metadata.tool_family != "prediction" || metadata.provider_kind != "native") {
+            error = "prediction tool lost ordinary learning metadata";
+            return false;
+        }
+        common_tool_family_selection selection;
+        const auto families = common_generate_tool_family_index(tooling.tools);
+        if (!common_parse_tool_family_selection_text("TOOLS: prediction", families,
+                selection, error)) return false;
+        const auto selected = common_filter_tools_by_families(tooling.tools, selection.family_ids);
+        common_agent_tool_call parsed;
+        if (selected.size() != 1 || !common_parse_model_tool_call(
+                common_agent_tool_output_format::compact_dsl,
+                "open! prediction.predict\nfamily: flydelta\nmax_candidates: 1",
+                selected, parsed, error) || parsed.name != "prediction.predict" ||
+                json::parse(parsed.arguments_json) != json{{"family", "flydelta"}, {"max_candidates", 1}}) {
+            error = "prediction tool did not survive ordinary family selection and DSL parsing: " + error;
+            return false;
+        }
+        agent_mcp_server_tool_registry registry;
+        if (!agent_mcp_register_native_tool_view(tooling.tools,
+                [&](const std::string & name) { return tooling.tool_view->is_read_only(name); },
+                [&](const std::string & name) { return tooling.tool_view->is_policy_gated(name); },
+                registry, error)) return false;
+        // The real tool executor and resolver must survive the same ownership
+        // transfer used by daemon main; no test prediction handler is supplied.
+        common_agent_daemon_dispatcher dispatcher(std::move(runtime), 8, 1);
+        agent_mcp_http_server_options http_options;
+        http_options.bearer_token = "prediction-test";
+        http_options.default_policy = {"prediction-test", "llama-agent", request.namespace_id,
+            request.project_id, "analysis", {"prediction.predict"}, false};
+        http_options.execute_tool = [&](const agent_mcp_caller_policy & policy,
+                const std::string & name, const agent_mcp_json & args,
+                agent_mcp_server_tool_result & output, std::string & callback_error) {
+            common_agent_daemon_command command;
+            command.request_id = "prediction-mcp";
+            command.type = common_agent_daemon_command_type::execute_tool;
+            command.tool = common_agent_daemon_tool_payload{
+                {policy.namespace_id, request.session_id}, policy.project_id, policy.tool_profile,
+                name, args.dump(), policy.allow_writes};
+            common_agent_daemon_command_result response;
+            const bool ok = dispatcher.execute(command, response, callback_error);
+            const auto & value = response.tool_result;
+            agent_mcp_set_tool_call_result(output, ok && value.ok,
+                json::parse(value.content_json, nullptr, false), value.content_summary,
+                value.failure_code, common_tool_failure_class_name(value.failure_class),
+                value.retryable, value.raw_diagnostic);
+            return output.ok;
+        };
+        agent_mcp_http_server server(std::move(registry), std::move(http_options));
+        if (!server.bind(error)) return false;
+        std::string listen_error;
+        std::thread thread([&] { server.listen(listen_error); });
+        bool passed = true;
+        try {
+            const auto require = [](bool condition, const std::string & detail) {
+                if (!condition) throw std::runtime_error(detail);
+            };
+            httplib::Client client("127.0.0.1", server.port());
+            client.set_read_timeout(10, 0);
+            httplib::Headers headers = {{"Authorization", "Bearer prediction-test"}};
+            const auto init = client.Post("/mcp", headers,
+                R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"prediction-test","version":"1"}}})", "application/json");
+            require(init && init->status == 200, "prediction MCP initialize failed");
+            headers.emplace("Mcp-Session-Id", init->get_header_value("Mcp-Session-Id"));
+            headers.emplace("MCP-Protocol-Version", init->get_header_value("MCP-Protocol-Version"));
+            const auto listed = client.Post("/mcp", headers,
+                R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})", "application/json");
+            require(listed && listed->status == 200, "prediction MCP tools/list failed");
+            const auto definitions = json::parse(listed->body).at("result").at("tools");
+            require(definitions.size() == 1 && definitions[0]["name"] == "prediction.predict" &&
+                definitions[0]["annotations"]["readOnlyHint"] == true &&
+                definitions[0].contains("outputSchema"), "prediction MCP advertisement is incomplete");
+            const auto call = [&](const json & args) {
+                const auto reply = client.Post("/mcp", headers, json{
+                    {"jsonrpc", "2.0"}, {"id", 3}, {"method", "tools/call"},
+                    {"params", {{"name", parsed.name}, {"arguments", args}}}}.dump(), "application/json");
+                require(reply && reply->status == 200, "prediction MCP call failed");
+                const auto value = json::parse(reply->body).at("result");
+                require(!value.value("isError", false), "prediction MCP tool error: " + value.dump());
+                std::string normalized;
+                require(common_schema_normalize_and_validate_object(
+                    value.at("structuredContent").dump(), definitions[0]["outputSchema"].dump(),
+                    normalized, error), "prediction MCP result schema mismatch: " + error);
+                return value.at("structuredContent").at("result");
+            };
+            const auto first = call(json::parse(parsed.arguments_json));
+            require(first["predictions"].size() == 1 && first["unresolved_refs"].empty(),
+                "prediction MCP did not resolve the current-session observation after runtime move");
+            const auto ref = first["predictions"][0]["observation_ref"];
+            require(call(json{{"family", "flydelta"}, {"candidate_refs", json::array({ref})}})
+                ["predictions"] == first["predictions"], "prediction reference retry changed the prediction");
+            results.push_back(first);
+        } catch (const std::exception & exception) {
+            error = exception.what();
+            passed = false;
+        }
+        server.stop();
+        thread.join();
+        if (!passed) return false;
+    }
+    if (results[0]["status"] != "insufficient_history" || results[1]["status"] != "available" ||
+            results[0]["predictions"][0]["evidence_groups"] != 0 ||
+            results[1]["predictions"][0]["evidence_groups"] != 8 ||
+            results[1]["predictions"][0]["backoff_level"] != "tool_family_backoff" ||
+            results[1]["predictions"][0]["p_helped_given_known"].get<double>() <=
+                results[0]["predictions"][0]["p_helped_given_known"].get<double>() ||
+            history->list(error).size() != 9) {
+        error = "prediction family opt-in did not change the expected posterior, or a read mutated history";
+        return false;
+    }
+    std::printf("prediction_mcp_runtime_move=ok\nprediction_mcp_family_backoff=off,on\nprediction_mcp_history_writes=0\n");
+    return true;
 }
 
 } // namespace
@@ -986,7 +1172,11 @@ int main(int argc, char ** argv) {
             *runtime.plan_store,
             runtime.resource_store.get(),
             tooling,
-            error)) {
+            error,
+            runtime.data_store.get(),
+            std::nullopt,
+            runtime.semi_oracle_store.get(),
+            runtime.flydelta_review_lifecycle_store.get())) {
         std::fprintf(stderr, "daemon tooling resolve failed: %s\n", error.c_str());
         return 1;
     }
@@ -995,6 +1185,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
     if (!has_tool(tooling.tools, "math.calculate") ||
+            !has_tool(tooling.tools, "prediction.predict") ||
+            has_tool(tooling.tools, "outcome.predict") ||
             !has_tool(tooling.tools, "github_search_issues") ||
             !has_tool(tooling.tools, "github_alt_search_issues")) {
         std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
@@ -1199,5 +1391,9 @@ int main(int argc, char ** argv) {
     std::printf("daemon_mcp_ready=%s\n", status.status.ready ? "true" : "false");
     std::printf("daemon_mcp_status=%s\n", common_agent_daemon_state_name(status.status.state));
     std::printf("daemon_tooling_tools=%zu\n", resolved_tool_count);
+    if (!check_prediction_mcp(options, error)) {
+        std::fprintf(stderr, "prediction MCP production-path check failed: %s\n", error.c_str());
+        return 1;
+    }
     return 0;
 }

@@ -187,7 +187,7 @@ remote MCP providers, status/readiness, and Docker usage.
   contracts do not by themselves establish learned behavioral benefit or
   fewer probes. Configuration, trace fields and current verification limits
   are documented in [FlyDelta sideband learning](agent-flydelta.md). The
-  read-only `outcome.predict` MCP tool can inspect retrospective predictions
+  read-only `prediction.predict` MCP tool can inspect retrospective predictions
   for host-issued FlyDelta observations; it cannot submit or verify outcomes.
   New development sessions
   should begin with the [FlyDelta session bootstrap](agent-flydelta-session-bootstrap.md),

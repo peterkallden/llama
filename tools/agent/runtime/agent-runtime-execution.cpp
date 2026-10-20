@@ -388,7 +388,7 @@ bool select_model_tool_families(
             ":tool-family-selection-repair", {system, repair, user},
             required_family_selection
                 ? common_tool_family_required_selection_schema(families)
-                : common_tool_family_selection_schema());
+                : common_tool_family_selection_schema(families));
         const bool repaired_ok = common_agent_generation_succeeded(repaired) &&
             (required_family_selection
                 ? common_parse_tool_family_required_selection(

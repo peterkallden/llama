@@ -649,7 +649,7 @@ make_daemon_semi_oracle_relation_provider(
     };
 }
 
-common_tool_execution_result daemon_outcome_predict_target_hunt(
+common_tool_execution_result daemon_prediction_predict_target_hunt(
         common_semi_oracle_store & store,
         const std::string & namespace_id,
         const std::string & project_id,
@@ -658,35 +658,35 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
     using json = nlohmann::ordered_json;
     const auto args = json::parse(input, nullptr, false);
     if (!args.is_object()) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
-        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
+        "tool.prediction.invalid_arguments", common_tool_failure_class::validation, false,
+        "Prediction arguments must be an object.", "arguments are not a JSON object");
     if (args.contains("max_candidates") && (!args["max_candidates"].is_number_integer() ||
             args["max_candidates"].get<int64_t>() < 1 || args["max_candidates"].get<int64_t>() > 16))
-        return common_tool_execution_result::failure("tool.outcome.invalid_limit",
+        return common_tool_execution_result::failure("tool.prediction.invalid_limit",
             common_tool_failure_class::validation, false,
             "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
     const size_t limit = args.value("max_candidates", size_t{8});
     if (!limit || limit > 16) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "tool.prediction.invalid_limit", common_tool_failure_class::validation, false,
         "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
     std::string ruleset_id, error;
     uint64_t revision = 0;
     bool bound = false;
     if (!store.get_session_binding(session_id, ruleset_id, revision, bound, error))
-        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+        return common_tool_execution_result::failure("tool.prediction.history_unavailable",
             common_tool_failure_class::execution, true,
             "Target Hunt history is temporarily unavailable.", std::move(error));
-    if (!bound) return common_tool_execution_result::failure("tool.outcome.no_active_target_hunt",
+    if (!bound) return common_tool_execution_result::failure("tool.prediction.no_active_target_hunt",
         common_tool_failure_class::policy, false,
         "There is no active Target Hunt RuleSet in this session.", "missing session RuleSet binding");
     common_semi_oracle_ruleset ruleset;
     bool found = false;
     if (!store.get_revision(ruleset_id, revision, ruleset, found, error))
-        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+        return common_tool_execution_result::failure("tool.prediction.history_unavailable",
             common_tool_failure_class::execution, true,
             "Target Hunt history is temporarily unavailable.", std::move(error));
     if (!found || ruleset.domain != common_semi_oracle_domain::target_hunt)
-        return common_tool_execution_result::failure("tool.outcome.wrong_family",
+        return common_tool_execution_result::failure("tool.prediction.wrong_family",
             common_tool_failure_class::policy, false,
             "The active Oracle problem is not Target Hunt.", "active RuleSet is not target_hunt");
 
@@ -695,7 +695,7 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
     bool watermark_supported = false;
     if (!store.read_search_history_snapshot(ruleset_id, revision, 1024, stored,
             watermark, watermark_supported, error))
-        return common_tool_execution_result::failure("tool.outcome.history_unavailable",
+        return common_tool_execution_result::failure("tool.prediction.history_unavailable",
             common_tool_failure_class::execution, true,
             "Target Hunt history is temporarily unavailable.", std::move(error));
 
@@ -785,12 +785,12 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
     if (args.contains("candidate_refs")) {
         const auto & refs = args["candidate_refs"];
         if (!refs.is_array() || refs.size() > 16) return common_tool_execution_result::failure(
-            "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+            "tool.prediction.invalid_refs", common_tool_failure_class::validation, false,
             "candidate_refs must contain at most 16 opaque references.", "invalid candidate_refs array");
         for (const auto & ref : refs) {
             if (!ref.is_string() || ref.get<std::string>().empty() || ref.get<std::string>().size() > 256)
                 return common_tool_execution_result::failure(
-                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "tool.prediction.invalid_refs", common_tool_failure_class::validation, false,
                 "candidate_refs must contain opaque string references.", "non-string candidate ref");
             requested.push_back(ref.get<std::string>());
         }
@@ -809,7 +809,7 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
     common_outcome_guidance_projection fine_projection, coarse_projection;
     if (!project(fine_rows, fine_projection, error) ||
             !project(coarse_rows, coarse_projection, error))
-        return common_tool_execution_result::failure("tool.outcome.history_invalid",
+        return common_tool_execution_result::failure("tool.prediction.history_invalid",
             common_tool_failure_class::execution, false,
             "Target Hunt history did not satisfy its prediction contract.", std::move(error));
     for (const auto & ref : requested) {
@@ -853,7 +853,7 @@ common_tool_execution_result daemon_outcome_predict_target_hunt(
         {"unresolved_refs",std::move(unresolved)}}.dump());
 }
 
-common_tool_execution_result daemon_outcome_predict(
+common_tool_execution_result daemon_prediction_predict(
         common_learning_lifecycle_store * store,
         common_semi_oracle_store * semi_oracle_store,
         common_flydelta_outcome_guidance_config config,
@@ -865,48 +865,47 @@ common_tool_execution_result daemon_outcome_predict(
     using json = nlohmann::ordered_json;
     const auto args = json::parse(input, nullptr, false);
     if (!args.is_object()) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_arguments", common_tool_failure_class::validation, false,
-        "Outcome prediction arguments must be an object.", "arguments are not a JSON object");
+        "tool.prediction.invalid_arguments", common_tool_failure_class::validation, false,
+        "Prediction arguments must be an object.", "arguments are not a JSON object");
     const auto family = args.value("family", std::string("flydelta"));
     if (family == "target_hunt") {
         if (semi_oracle_store == nullptr) return common_tool_execution_result::failure(
-            "tool.outcome.family_unavailable", common_tool_failure_class::policy, false,
+            "tool.prediction.family_unavailable", common_tool_failure_class::policy, false,
             "Target Hunt outcome history is unavailable in this runtime.", "no SemiOracle store is bound");
-        return daemon_outcome_predict_target_hunt(*semi_oracle_store, namespace_id,
+        return daemon_prediction_predict_target_hunt(*semi_oracle_store, namespace_id,
             project_id, session_id, input);
     }
     if (family != "flydelta") return common_tool_execution_result::failure(
-        "tool.outcome.invalid_family", common_tool_failure_class::validation, false,
-            "family must be flydelta or target_hunt.", "unsupported outcome family");
+        "tool.prediction.invalid_family", common_tool_failure_class::validation, false,
+            "family must be flydelta or target_hunt.", "unsupported prediction family");
     if (store == nullptr) return common_tool_execution_result::failure(
-        "tool.outcome.family_unavailable", common_tool_failure_class::policy, false,
+        "tool.prediction.family_unavailable", common_tool_failure_class::policy, false,
         "FlyDelta outcome history is unavailable in this runtime.", "no lifecycle store is bound");
-    if (config.mode == common_flydelta_outcome_guidance_mode::off) {
-        return common_tool_execution_result::failure(
-            "tool.outcome.guidance_disabled", common_tool_failure_class::policy, false,
-            "Historical outcome guidance is disabled by runtime configuration.",
-            "runtime.adaptation.flydelta.outcome_guidance.mode is off");
-    }
+    // This is an explicit, policy-authorized read through the ordinary tool
+    // view. FlyDelta's operator mode controls its automatic search adviser;
+    // it does not disable a caller's read-only prediction tool. Reuse the
+    // statistical settings with shadow semantics so this call has no search
+    // or lifecycle side effects.
     config.mode = common_flydelta_outcome_guidance_mode::shadow;
     if (args.contains("max_candidates") && !args["max_candidates"].is_number_unsigned() &&
             !args["max_candidates"].is_number_integer()) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "tool.prediction.invalid_limit", common_tool_failure_class::validation, false,
         "max_candidates must be an integer.", "max_candidates is not an integer");
     const size_t limit = args.value("max_candidates", size_t{8});
     if (limit == 0 || limit > 16) return common_tool_execution_result::failure(
-        "tool.outcome.invalid_limit", common_tool_failure_class::validation, false,
+        "tool.prediction.invalid_limit", common_tool_failure_class::validation, false,
         "max_candidates must be between 1 and 16.", "max_candidates outside supported range");
     std::vector<common_learning_lifecycle_record> records;
     uint64_t watermark = 0;
     std::string error;
     if (generalization.project_history && project_id.empty()) return common_tool_execution_result::failure(
-        "tool.outcome.project_scope_required", common_tool_failure_class::policy, false,
+        "tool.prediction.project_scope_required", common_tool_failure_class::policy, false,
         "Project history is enabled but this request has no project scope.", "project_history requires project_id");
     if (!(generalization.project_history
             ? store->list_project_with_watermark(namespace_id, project_id, records, watermark, error)
             : store->list_scope_with_watermark(namespace_id, project_id, session_id, records, watermark, error)))
         return common_tool_execution_result::failure(
-        "tool.outcome.history_unavailable", common_tool_failure_class::execution, true,
+        "tool.prediction.history_unavailable", common_tool_failure_class::execution, true,
         "Historical outcome guidance is temporarily unavailable.", std::move(error));
 
     struct row_entry {
@@ -1012,14 +1011,14 @@ common_tool_execution_result daemon_outcome_predict(
     if (args.contains("candidate_refs")) {
         const auto & refs = args["candidate_refs"];
         if (!refs.is_array() || refs.size() > 16) return common_tool_execution_result::failure(
-            "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+            "tool.prediction.invalid_refs", common_tool_failure_class::validation, false,
             "candidate_refs must contain at most 16 observation references.", "invalid candidate_refs array");
         for (const auto & ref : refs) {
             if (!ref.is_string() || ref.get<std::string>().empty()) return common_tool_execution_result::failure(
-                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "tool.prediction.invalid_refs", common_tool_failure_class::validation, false,
                 "candidate_refs contains an invalid observation reference.", "reference must be a non-empty string");
             if (ref.get<std::string>().size() > 256) return common_tool_execution_result::failure(
-                "tool.outcome.invalid_refs", common_tool_failure_class::validation, false,
+                "tool.prediction.invalid_refs", common_tool_failure_class::validation, false,
                 "candidate_refs contains an invalid observation reference.", "reference exceeds 256 characters");
             requested.push_back(ref.get<std::string>());
         }
@@ -1490,16 +1489,16 @@ bool resolve_agent_daemon_tooling(
         tool_request.semi_oracle_tool_call = {};
     }
     if (!request.session_id.empty() && (learning_lifecycle_store != nullptr || semi_oracle_store != nullptr)) {
-        tool_request.outcome_predict_tool_call = [learning_lifecycle_store, semi_oracle_store,
+        tool_request.prediction_predict_tool_call = [learning_lifecycle_store, semi_oracle_store,
                 guidance_config = options.adaptation_flydelta_outcome_guidance,
                 generalization = options.adaptation_outcome_guidance_generalization,
                 namespace_id = request.namespace_id.empty() ? std::string("local") : request.namespace_id,
                 project_id = request.project_id, session_id = request.session_id](const std::string & input) {
-            return daemon_outcome_predict(learning_lifecycle_store, semi_oracle_store,
+            return daemon_prediction_predict(learning_lifecycle_store, semi_oracle_store,
                 guidance_config, generalization, namespace_id, project_id, session_id, input);
         };
     } else {
-        tool_request.outcome_predict_tool_call = {};
+        tool_request.prediction_predict_tool_call = {};
     }
         std::string * current_plan_id = runtime != nullptr
         ? const_cast<std::string *>(&runtime->current_plan_id())
@@ -1776,7 +1775,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         {},
         [config_store, &memory_store, &plan_store, &resource_store, data_store,
             semi_oracle_store = runtime.semi_oracle_store.get(),
-            lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store](
+            lifecycle_store = runtime.flydelta_review_lifecycle_store](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
@@ -1794,7 +1793,7 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 data_store,
                 std::nullopt,
                 semi_oracle_store,
-                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr);
+                lifecycle_store.get());
         },
         runtime.model_residency,
         make_daemon_flydelta_deployment_resolver(options, config_store, runtime),
@@ -2080,7 +2079,7 @@ bool initialize_agent_daemon_environment(
     common_agent_data_store * data_store = runtime.data_store.get();
     runtime.tool_executor = [config_store = runtime.config_store, memory_store, plan_store,
             resource_store, data_store, semi_oracle_store = runtime.semi_oracle_store.get(),
-            lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store](
+            lifecycle_store = runtime.flydelta_review_lifecycle_store](
             const common_agent_daemon_tool_payload & payload,
             agent_tool_result & result,
             std::string & callback_error) mutable {
@@ -2114,7 +2113,7 @@ bool initialize_agent_daemon_environment(
                 data_store,
                 payload.allow_policy_gated_writes,
                 semi_oracle_store,
-                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr)) {
+                lifecycle_store.get())) {
             return false;
         }
         if (tooling.tool_view == nullptr) {
@@ -2191,14 +2190,16 @@ void configure_agent_daemon_provider_probe(
     common_plan_store * probe_plan_store = runtime.plan_store.get();
     agent_resource_store * probe_resource_store = runtime.resource_store.get();
     common_agent_data_store * probe_data_store = runtime.data_store.get();
-    auto * lifecycle_store_ref = &runtime.flydelta_review_lifecycle_store;
+    common_semi_oracle_store * probe_semi_oracle_store = runtime.semi_oracle_store.get();
+    auto lifecycle_store = runtime.flydelta_review_lifecycle_store;
     runtime.probe_mcp_providers = [
         probe_options = options,
         probe_memory_store,
         probe_plan_store,
         probe_resource_store,
         probe_data_store,
-        lifecycle_store_ref](
+        probe_semi_oracle_store,
+        lifecycle_store](
             common_agent_runtime_tooling & retained_tooling,
             std::vector<common_agent_daemon_provider_readiness> & provider_status,
             std::string & probe_error) {
@@ -2233,8 +2234,8 @@ void configure_agent_daemon_provider_probe(
                 native_error,
                 probe_data_store,
                 std::nullopt,
-                nullptr,
-                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr)) {
+                probe_semi_oracle_store,
+                lifecycle_store.get())) {
             retained_tooling = std::move(native_tooling);
         }
 
@@ -2271,8 +2272,8 @@ void configure_agent_daemon_provider_probe(
                 provider_error,
                 probe_data_store,
                 std::nullopt,
-                nullptr,
-                lifecycle_store_ref != nullptr ? lifecycle_store_ref->get() : nullptr);
+                probe_semi_oracle_store,
+                lifecycle_store.get());
             if (provider_ready) {
                 status.status = "ready";
                 for (auto & tool : provider_tooling.tools) {

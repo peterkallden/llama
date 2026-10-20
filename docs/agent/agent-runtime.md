@@ -4613,7 +4613,7 @@ partition; scoped providers share its retained cache. Its
 and zero disables retention. Guidance adds no stop rule or guaranteed probe saving. See
 [the configuration, trace schemas and verification status](agent-flydelta.md#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite).
 
-The read-only MCP tool `outcome.predict` uses typed adapters over shared
+The read-only MCP tool `prediction.predict` uses typed adapters over shared
 posterior/projection math. `family="flydelta"` inspects verified intervention
 outcomes; `family="target_hunt"` inspects host-verified Target Hunt branch
 quality under the active session RuleSet. Their vocabularies remain separate
@@ -4623,6 +4623,32 @@ are host-resolved. The tool cannot append observations or grant learning credit.
 MCP `tools/list` advertises the family-discriminated result contract and
 successful calls return it under `structuredContent.result` in the shared
 `{ok,result,...}` envelope.
+
+The tool belongs to the ordinary `prediction` routing family and the
+`prediction.read` capability. Catalog policy, the native provider, MCP
+registration, argument validation and observation handling are the same as
+for other read-only tools. The previous `outcome.predict` name is removed.
+The model's compact DSL call is:
+
+```text
+open! prediction.predict
+family: flydelta
+max_candidates: 8
+```
+
+The equivalent MCP request uses the same canonical arguments:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"prediction.predict","arguments":{"family":"flydelta","max_candidates":8}}}
+```
+
+Here `family` selects a prediction domain (`flydelta` or `target_hunt`);
+the tool-routing family remains `prediction`. An explicit tool call reads
+history when authorized by the tool profile, even when FlyDelta's automatic
+search adviser is `off`. The tool returns advice to the ordinary model
+context; subsequent actions and host-verified observations use the existing
+runtime and learning paths. It does not inject a separate arm-selection
+decision into FlyDelta.
 
 The two history-broadening controls live at
 `runtime.adaptation.outcome_guidance.generalization` and default to `false`:
@@ -4634,6 +4660,13 @@ not operator activation controls: automatic search selection still requires
 separate qualification and operator mode. See the explicit example
 `docs/examples/agent-host-config-outcome-generalization.json` and
 [shared prediction core and MCP inspection](agent-flydelta.md#shared-prediction-core-and-mcp-inspection).
+
+The model-free `llama-agent-daemon-mcp-config-ctest` exercises the production
+resolver and tool executor after ownership is transferred into the daemon
+dispatcher. It checks live HTTP `tools/list`/`tools/call`, advertised schemas,
+DSL arguments, opaque-reference retries and family-backoff off/on against the
+same synthetic lifecycle fixture. This is contract evidence; it does not
+measure predictive value on model-generated outcomes.
 
 SemiOracle algebra and Target Hunt search use that same posterior math with independent
 `runtime.adaptation.semi_oracle.outcome_guidance` settings: `mode` defaults to
