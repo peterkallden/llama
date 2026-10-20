@@ -20,6 +20,7 @@
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include "../data/agent-data-store-factory.h"
+#include "../data/agent-investigation-dataset-source.h"
 #ifdef LLAMA_MEMORY_USE_COZO
 #include "memory/cozo/memory-cozo.h"
 #endif
@@ -1975,6 +1976,18 @@ bool initialize_agent_daemon_environment(
     }
     if (!open_daemon_data_store(options, runtime.data_store, error)) {
         return false;
+    }
+    if (options.investigation.enabled) {
+        auto source = std::make_unique<agent_investigation_virtual_dataset_source>(options.investigation);
+        if (!source->register_datasets(*runtime.data_store, error)) {
+            error = "investigation virtual datasets could not be registered: " + error;
+            return false;
+        }
+        if (!runtime.data_store->set_virtual_dataset_source(source.get())) {
+            error = "configured data store does not support investigation virtual datasets";
+            return false;
+        }
+        runtime.investigation_dataset_source = std::move(source);
     }
     if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
         return false;

@@ -8,6 +8,7 @@
 #include "agent/workspace-contract.h"
 #include "agent-diagnostics-config.h"
 #include "agent-host-openapi-provider-config.h"
+#include "agent-investigation-config.h"
 #include "resource/resource-contract.h"
 #include "agent/adaptation/learning-cause-classifier.h"
 #include "agent/adaptation/learning-domain-policy.h"
@@ -126,6 +127,7 @@ struct agent_host_config {
     agent_host_diagnostics_config diagnostics;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
+    agent_host_investigation_config investigation;
     // Optional directory of provider-object JSON fragments. The loader
     // expands these into the provider vectors before validation/runtime use.
     std::string tools_include_dir;

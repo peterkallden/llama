@@ -849,6 +849,84 @@ bool parse_agent_host_config_json(
         }
     }
 
+    if (parsed.contains("investigation")) {
+        const auto & investigation = parsed["investigation"];
+        if (!investigation.is_object()) {
+            error = "investigation must be an object";
+            return false;
+        }
+        read_optional(investigation, "enabled", config.investigation.enabled);
+        read_optional(investigation, "max_events_per_query", config.investigation.max_events_per_query);
+        read_optional(investigation, "max_nodes_per_expansion", config.investigation.max_nodes_per_expansion);
+        read_optional(investigation, "max_edges_per_expansion", config.investigation.max_edges_per_expansion);
+        read_optional(investigation, "max_expansions_per_turn", config.investigation.max_expansions_per_turn);
+        read_optional(investigation, "max_materialized_rows", config.investigation.max_materialized_rows);
+        if (investigation.contains("sources")) {
+            if (!investigation["sources"].is_array()) {
+                error = "investigation.sources must be an array";
+                return false;
+            }
+            config.investigation.sources.clear();
+            for (const auto & source_json : investigation["sources"]) {
+                if (!source_json.is_object()) {
+                    error = "investigation.sources entries must be objects";
+                    return false;
+                }
+                agent_host_investigation_source_config source;
+                read_optional(source_json, "id", source.id);
+                read_optional(source_json, "dialect", source.dialect);
+                read_optional(source_json, "base_url", source.base_url);
+                read_optional(source_json, "allow_private_network", source.allow_private_network);
+                read_optional(source_json, "connect_timeout_ms", source.connect_timeout_ms);
+                read_optional(source_json, "request_timeout_ms", source.request_timeout_ms);
+                read_optional(source_json, "max_page_size", source.max_page_size);
+                read_optional(source_json, "max_result_bytes", source.max_result_bytes);
+                if (source_json.contains("allowed_indices") &&
+                        !read_string_array(source_json["allowed_indices"], source.allowed_indices,
+                            "investigation source allowed_indices", error)) return false;
+                if (source_json.contains("allowed_namespaces") &&
+                        !read_string_array(source_json["allowed_namespaces"], source.allowed_namespaces,
+                            "investigation source allowed_namespaces", error)) return false;
+                if (source_json.contains("allowed_projects") &&
+                        !read_string_array(source_json["allowed_projects"], source.allowed_projects,
+                            "investigation source allowed_projects", error)) return false;
+                if (source_json.contains("fields")) {
+                    if (!source_json["fields"].is_object()) {
+                        error = "investigation source fields must be an object";
+                        return false;
+                    }
+                    for (auto it = source_json["fields"].begin(); it != source_json["fields"].end(); ++it) {
+                        if (!it.value().is_string()) {
+                            error = "investigation source field mappings must be strings";
+                            return false;
+                        }
+                        source.fields.emplace(it.key(), it.value().get<std::string>());
+                    }
+                }
+                if (source_json.contains("auth")) {
+                    const auto & auth = source_json["auth"];
+                    if (!auth.is_object()) {
+                        error = "investigation source auth must be an object";
+                        return false;
+                    }
+                    read_optional(auth, "type", source.auth.type);
+                    read_optional(auth, "scheme", source.auth.scheme);
+                    read_optional(auth, "token_url", source.auth.token_url);
+                    read_optional(auth, "scopes", source.auth.scopes);
+                    read_optional(auth, "token_env", source.auth.token_env);
+                    read_optional(auth, "username_env", source.auth.username_env);
+                    read_optional(auth, "password_env", source.auth.password_env);
+                    read_optional(auth, "client_id_env", source.auth.client_id_env);
+                    read_optional(auth, "client_secret_env", source.auth.client_secret_env);
+                    read_optional(auth, "client_cert_path_env", source.auth.client_cert_path_env);
+                    read_optional(auth, "client_key_path_env", source.auth.client_key_path_env);
+                    read_optional(auth, "ca_cert_path_env", source.auth.ca_cert_path_env);
+                }
+                config.investigation.sources.push_back(std::move(source));
+            }
+        }
+    }
+
     if (parsed.contains("resources") && parsed["resources"].is_object()) {
         const auto & resources = parsed["resources"];
         read_optional(resources, "blob_backend", config.resource_blob_backend);
@@ -1611,6 +1689,40 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"path", config.data_db},
             }},
         }},
+        {"investigation", [&config]() {
+            json sources = json::array();
+            for (const auto & source : config.investigation.sources) {
+                sources.push_back({
+                    {"id", source.id}, {"dialect", source.dialect}, {"base_url", source.base_url},
+                    {"allowed_indices", source.allowed_indices},
+                    {"allowed_namespaces", source.allowed_namespaces},
+                    {"allowed_projects", source.allowed_projects}, {"fields", source.fields},
+                    {"auth", {
+                        {"type", source.auth.type}, {"scheme", source.auth.scheme},
+                        {"token_url", source.auth.token_url}, {"scopes", source.auth.scopes},
+                        {"token_env", source.auth.token_env}, {"username_env", source.auth.username_env},
+                        {"password_env", source.auth.password_env}, {"client_id_env", source.auth.client_id_env},
+                        {"client_secret_env", source.auth.client_secret_env},
+                        {"client_cert_path_env", source.auth.client_cert_path_env},
+                        {"client_key_path_env", source.auth.client_key_path_env},
+                        {"ca_cert_path_env", source.auth.ca_cert_path_env},
+                    }},
+                    {"allow_private_network", source.allow_private_network},
+                    {"connect_timeout_ms", source.connect_timeout_ms},
+                    {"request_timeout_ms", source.request_timeout_ms},
+                    {"max_page_size", source.max_page_size},
+                    {"max_result_bytes", source.max_result_bytes},
+                });
+            }
+            return json{
+                {"enabled", config.investigation.enabled}, {"sources", std::move(sources)},
+                {"max_events_per_query", config.investigation.max_events_per_query},
+                {"max_nodes_per_expansion", config.investigation.max_nodes_per_expansion},
+                {"max_edges_per_expansion", config.investigation.max_edges_per_expansion},
+                {"max_expansions_per_turn", config.investigation.max_expansions_per_turn},
+                {"max_materialized_rows", config.investigation.max_materialized_rows},
+            };
+        }()},
         {"resources", {
             {"blob_backend", config.resource_blob_backend},
             {"blob_root", config.resource_blob_root},
@@ -1941,6 +2053,78 @@ bool validate_agent_host_config(
     if ((config.data_backend == "cozo" || config.data_backend == "sqlite") && config.data_db.empty()) {
         error = "stores.data.path is required when stores.data.backend is cozo or sqlite";
         return false;
+    }
+    const auto & investigation = config.investigation;
+    if (investigation.max_events_per_query == 0 || investigation.max_events_per_query > 100000 ||
+            investigation.max_nodes_per_expansion == 0 || investigation.max_nodes_per_expansion > 1000 ||
+            investigation.max_edges_per_expansion == 0 || investigation.max_edges_per_expansion > 4000 ||
+            investigation.max_expansions_per_turn == 0 || investigation.max_expansions_per_turn > 128 ||
+            investigation.max_materialized_rows == 0 || investigation.max_materialized_rows > 1000000) {
+        error = "investigation limits are outside supported bounds";
+        return false;
+    }
+    if (investigation.enabled) {
+#ifndef LLAMA_MEMORY_USE_COZO
+        error = "investigation.enabled requires a build with LLAMA_MEMORY_COZO";
+        return false;
+#else
+        if (config.data_backend != "cozo" || config.data_db.empty()) {
+            error = "investigation.enabled requires stores.data.backend=cozo and stores.data.path";
+            return false;
+        }
+        if (investigation.sources.empty()) {
+            error = "investigation.enabled requires at least one configured search source";
+            return false;
+        }
+#endif
+    }
+    std::unordered_set<std::string> investigation_source_ids;
+    for (const auto & source : investigation.sources) {
+        if (source.id.empty() || source.id.size() > 128 || !investigation_source_ids.insert(source.id).second ||
+                (source.dialect != "elasticsearch" && source.dialect != "opensearch") ||
+                source.base_url.empty() || source.base_url.size() > 2048 ||
+                source.allowed_indices.empty() || source.allowed_indices.size() > 256 ||
+                source.allowed_namespaces.empty() || source.allowed_namespaces.size() > 256 ||
+                source.connect_timeout_ms == 0 || source.request_timeout_ms == 0 ||
+                source.max_page_size == 0 || source.max_page_size > investigation.max_events_per_query ||
+                source.max_result_bytes == 0 || source.max_result_bytes > 64 * 1024 * 1024) {
+            error = "investigation source identity, dialect, endpoint, index allowlist, or limits are invalid";
+            return false;
+        }
+        for (const auto & index : source.allowed_indices) {
+            if (index.empty() || index.size() > 255 || index.find_first_of("*?{},") != std::string::npos) {
+                error = "investigation source allowed_indices must be explicit names without wildcards";
+                return false;
+            }
+        }
+        for (const auto & scope_id : source.allowed_namespaces) {
+            if (scope_id.empty() || scope_id.size() > 256) {
+                error = "investigation source allowed_namespaces must contain explicit namespace IDs";
+                return false;
+            }
+        }
+        for (const auto & scope_id : source.allowed_projects) {
+            if (scope_id.empty() || scope_id.size() > 256) {
+                error = "investigation source allowed_projects must contain explicit project IDs";
+                return false;
+            }
+        }
+        static const std::unordered_set<std::string> mapped_fields = {
+            "event_id", "event_time", "collected_time", "host_id", "host_name", "user_id",
+            "source_ip", "destination_ip", "process_id", "process_start_time", "file_hash",
+            "trace_id", "message_id", "event_type"
+        };
+        for (const auto & field : source.fields) {
+            if (!mapped_fields.count(field.first) || field.second.empty() || field.second.size() > 256) {
+                error = "investigation source contains an unsupported or empty field mapping";
+                return false;
+            }
+        }
+        if (!validate_provider_auth(source.auth, "investigation source", true, error)) return false;
+        if (source.auth.type == "api_key") {
+            error = "investigation source api_key auth requires an explicit header contract and is not supported";
+            return false;
+        }
     }
     if (config.diagnostics.semantic_backend != "auto" &&
             config.diagnostics.semantic_backend != "text" &&
@@ -2340,6 +2524,7 @@ void apply_agent_host_config_to_daemon_options(
     options.plan_db = config.plan_db;
     options.data_backend = config.data_backend;
     options.data_db = config.data_db;
+    options.investigation = config.investigation;
     options.tool_profile = config.tool_profile;
     options.tool_capabilities = config.tool_capabilities;
     options.tool_family_descriptions = config.tool_family_descriptions;
@@ -2470,6 +2655,7 @@ void apply_agent_host_config_to_args(
     options.tool_profiles = config.tool_profiles;
     options.mcp_providers = config.mcp_providers;
     options.openapi_providers = config.openapi_providers;
+    options.investigation = config.investigation;
     options.sandbox = config.sandbox;
     options.diagnostics = config.diagnostics;
     options.repository_root = config.repository_root;

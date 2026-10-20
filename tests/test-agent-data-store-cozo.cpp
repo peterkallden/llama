@@ -9,6 +9,28 @@
 
 using json = nlohmann::ordered_json;
 
+class virtual_dataset_fixture final : public common_agent_virtual_dataset_source {
+public:
+    size_t calls = 0;
+    common_agent_scope last_scope;
+    bool last_allow_network = false;
+    bool execute(const common_agent_dataset_descriptor &, const std::string &,
+            const std::string &, const common_agent_scope & scope, bool allow_network,
+            std::string & result, std::string & error) override {
+        ++calls;
+        last_scope = scope;
+        last_allow_network = allow_network;
+        if (!allow_network) {
+            error = "network permission is required for the virtual source";
+            return false;
+        }
+        result = json{{"rows", json::array()}, {"row_count", 0}, {"complete", false},
+            {"scan_truncated", true}, {"result_truncated", false}}.dump();
+        error.clear();
+        return true;
+    }
+};
+
 #define TEST_ASSERT(expr) do { \
     const bool test_result = static_cast<bool>(expr); \
     assert(test_result); \
@@ -28,6 +50,39 @@ int main() {
         std::fprintf(stderr, "Cozo open failed: %s\n", error.c_str());
         return 1;
     }
+    virtual_dataset_fixture virtual_source;
+    TEST_ASSERT(store.set_virtual_dataset_source(&virtual_source));
+    common_investigation_case_revision investigation;
+    investigation.case_id = "case-persist-1";
+    investigation.title = "Persistence contract";
+    investigation.question = "Can this case be reopened?";
+    investigation.scope.namespace_id = "tenant-a";
+    investigation.scope.project_id = "project-a";
+    investigation.scope.session_id = "session-a";
+    investigation.source_id = "elastic-a";
+    investigation.window_start_ms = 100;
+    investigation.window_end_ms = 200;
+    common_investigation_case_revision published;
+    TEST_ASSERT(store.publish_investigation_case(investigation, 0,
+        "resource://investigation/case-persist-1/revision-1", published, error));
+    TEST_ASSERT(published.revision == 1 && published.fingerprint.rfind("sha256:", 0) == 0);
+    common_investigation_case_revision reloaded_case;
+    TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
+    TEST_ASSERT(reloaded_case.revision == 1 && reloaded_case.fingerprint == published.fingerprint);
+    TEST_ASSERT(!store.publish_investigation_case(investigation, 0,
+        "resource://investigation/case-persist-1/conflict", published, error));
+    TEST_ASSERT(error.find("revision conflict") != std::string::npos);
+    auto next_revision = reloaded_case;
+    next_revision.revision = 2;
+    next_revision.title = "Persistence contract updated";
+    TEST_ASSERT(store.publish_investigation_case(next_revision, 1,
+        "resource://investigation/case-persist-1/revision-2", published, error));
+    TEST_ASSERT(published.revision == 2 && published.previous_revision_uri ==
+        "resource://investigation/case-persist-1/revision-1");
+    auto other_scope = investigation.scope;
+    other_scope.project_id = "project-b";
+    TEST_ASSERT(!store.get_investigation_case("case-persist-1", other_scope, reloaded_case, error));
+
     TEST_ASSERT(store.put_row("dataset://local/orders", "1", R"({"id":1,"customer_id":10,"region":"north","value":12})", error));
     TEST_ASSERT(store.put_row("dataset://local/orders", "2", R"({"id":2,"customer_id":11,"region":"south","value":8})", error));
     TEST_ASSERT(store.put_row("dataset://local/orders", "3", R"({"id":3,"customer_id":10,"region":"north","value":4})", error));
@@ -94,6 +149,34 @@ int main() {
         error.find("customers") != std::string::npos);
 
     std::string output;
+    common_agent_dataset_descriptor virtual_dataset;
+    virtual_dataset.ref.uri = "dataset://investigation/elastic-a/logs-2026.10";
+    virtual_dataset.ref.name = "Security events";
+    virtual_dataset.ref.column_count = 1;
+    virtual_dataset.ref.source_representation = "elasticsearch:search";
+    virtual_dataset.ref.source_provider = "elastic-a";
+    virtual_dataset.ref.source_operation = "search";
+    virtual_dataset.ref.source_request_json = R"({"time_field":"@timestamp"})";
+    virtual_dataset.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    virtual_dataset.ref.count_kind = common_agent_dataset_count_kind::unknown;
+    virtual_dataset.columns = {{"event.id", common_agent_dataset_column_type::string, false}};
+    virtual_dataset.capabilities = {"filter", "project", "sort", "page"};
+    virtual_dataset.read_context_id = "read-context-1";
+    TEST_ASSERT(store.put_dataset_descriptor(virtual_dataset, error));
+    common_agent_scope virtual_scope;
+    virtual_scope.namespace_id = "tenant-a";
+    virtual_scope.project_id = "project-a";
+    TEST_ASSERT(store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","max_result_rows":5})", virtual_scope, true, output, error));
+    TEST_ASSERT(virtual_source.calls == 1 && json::parse(output)["complete"] == false);
+    TEST_ASSERT(virtual_source.last_scope.namespace_id == "tenant-a" &&
+        virtual_source.last_scope.project_id == "project-a" && virtual_source.last_allow_network);
+    TEST_ASSERT(!store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","max_result_rows":5})", virtual_scope, false, output, error));
+    TEST_ASSERT(error.find("network permission") != std::string::npos && virtual_source.calls == 2);
+    TEST_ASSERT(!store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","materialize":true,"result_dataset":"dataset://derived/all"})", virtual_scope, true, output, error));
+    TEST_ASSERT(error.find("incomplete virtual") != std::string::npos && virtual_source.calls == 3);
+    TEST_ASSERT(!store.execute("data.join", R"({"left":"dataset://investigation/elastic-a/logs-2026.10","right":"dataset://local/orders","type":"inner","on":[{"left":"event.id","right":"id"}]})", output, error));
+    TEST_ASSERT(error.find("virtual datasets") != std::string::npos);
+
     TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/orders","order_by":[{"field":"value","direction":"desc"}],"max_scan_rows":2,"max_result_rows":1})", output, error));
     auto query = json::parse(output);
     TEST_ASSERT(query["scanned_rows"] == 2 && query["scan_truncated"] == true && query["row_count"] == 1 && query["result_truncated"] == true);

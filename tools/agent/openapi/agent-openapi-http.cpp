@@ -763,3 +763,111 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
         return true;
     };
 }
+
+bool agent_investigation_http_search(
+        const agent_tool_context & context,
+        const agent_host_investigation_source_config & source,
+        const std::string & index,
+        const nlohmann::ordered_json & query,
+        std::string & response_json,
+        std::string & error) {
+    response_json.clear();
+    if (std::find(source.allowed_indices.begin(), source.allowed_indices.end(), index) ==
+            source.allowed_indices.end()) {
+        error = "investigation search index is outside the configured allowlist";
+        return false;
+    }
+    if (!query.is_object() || query.dump().size() > 1024 * 1024 ||
+            !query.contains("query") || !query["query"].is_object()) {
+        error = "investigation search query must be an object within the host request bound";
+        return false;
+    }
+    for (const char * forbidden : {"script", "script_fields", "runtime_mappings", "aggs", "aggregations"}) {
+        if (query.contains(forbidden)) {
+            error = "investigation search does not accept scripts, runtime fields, or caller-defined aggregations";
+            return false;
+        }
+    }
+    nlohmann::ordered_json bounded_query = query;
+    size_t page_size = source.max_page_size;
+    if (query.contains("size")) {
+        if (!query["size"].is_number_unsigned() && !query["size"].is_number_integer()) {
+            error = "investigation search size must be an integer";
+            return false;
+        }
+        uint64_t requested = 0;
+        if (query["size"].is_number_unsigned()) requested = query["size"].get<uint64_t>();
+        else {
+            const auto signed_requested = query["size"].get<int64_t>();
+            if (signed_requested <= 0) {
+                error = "investigation search size exceeds the configured page bound";
+                return false;
+            }
+            requested = static_cast<uint64_t>(signed_requested);
+        }
+        if (requested == 0 || requested > source.max_page_size) {
+            error = "investigation search size exceeds the configured page bound";
+            return false;
+        }
+        page_size = static_cast<size_t>(requested);
+    }
+    bounded_query["size"] = page_size;
+    if (source.auth.type == "api_key") {
+        error = "investigation sources do not support api_key auth without an explicit header contract";
+        return false;
+    }
+    agent_host_openapi_provider_config provider;
+    provider.id = "investigation:" + source.id;
+    provider.base_url = source.base_url;
+    provider.auth = source.auth;
+    provider.allow_private_network = source.allow_private_network;
+    provider.connect_timeout_ms = source.connect_timeout_ms;
+    provider.request_timeout_ms = source.request_timeout_ms;
+    provider.max_result_bytes = source.max_result_bytes;
+
+    agent_openapi_operation operation;
+    operation.operation_id = "investigation.search";
+    operation.method = "post";
+    operation.path = "/{index}/_search";
+    operation.path_parameters = {"index"};
+    operation.host_required_parameters = {"index", "body"};
+    operation.access = agent_openapi_access::read;
+    operation.read_only = true;
+    operation.auth_required = source.auth.type != "none";
+    if (source.auth.type == "bearer") {
+        operation.security_schemes = {"investigation"};
+        operation.security_definitions.push_back({"investigation", "http", "bearer"});
+    } else if (source.auth.type == "basic") {
+        operation.security_schemes = {"investigation"};
+        operation.security_definitions.push_back({"investigation", "http", "basic"});
+    } else if (source.auth.type == "mutual_tls") {
+        operation.security_schemes = {"investigation"};
+        operation.security_definitions.push_back({"investigation", "mutualTLS"});
+    } else if (source.auth.type == "oauth2_client_credentials") {
+        operation.security_schemes = {"investigation"};
+        operation.security_definitions.push_back({"investigation", "oauth2", {}, {}, {},
+            "clientCredentials", source.auth.token_url});
+    } else if (source.auth.type != "none") {
+        error = "investigation source auth type is not supported by the shared HTTP adapter";
+        return false;
+    }
+
+    auto executor = make_agent_openapi_http_executor(std::move(provider));
+    const nlohmann::ordered_json arguments = {
+        {"index", index}, {"body", bounded_query}
+    };
+    agent_openapi_execution_result result;
+    if (!executor(context, operation, arguments.dump(), result, error)) return false;
+    if (!result.ok) {
+        if (error.empty()) error = "investigation search request failed";
+        return false;
+    }
+    const auto parsed = nlohmann::ordered_json::parse(result.structured_content_json, nullptr, false);
+    if (!parsed.is_object()) {
+        error = "investigation search returned a non-object response";
+        return false;
+    }
+    response_json = parsed.dump();
+    error.clear();
+    return true;
+}

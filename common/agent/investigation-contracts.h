@@ -1,0 +1,154 @@
+#pragma once
+
+#include "agent/agent-scope.h"
+
+#include <cstdint>
+#include <map>
+#include <string>
+#include <vector>
+#include <nlohmann/json.hpp>
+
+// Host-owned, versioned investigation facts. These records contain references
+// to source evidence; they never replace the resource store as byte authority.
+enum class common_investigation_entity_kind {
+    user, host, process, ip, file, hash, service, trace, message, event, unknown
+};
+
+enum class common_investigation_relation_kind {
+    authenticated_to, communicated_with, spawned, accessed, modified,
+    participates_in_trace, follows, correlated_with, unknown
+};
+
+enum class common_investigation_claim_state {
+    observation, correlation, hypothesis, reviewed_conclusion
+};
+
+struct common_investigation_time {
+    int64_t event_time_ms = 0;
+    int64_t collected_time_ms = 0;
+    uint64_t uncertainty_ms = 0;
+    bool has_event_time = false;
+};
+
+struct common_investigation_entity {
+    std::string id;
+    std::string source_id;
+    common_investigation_entity_kind kind = common_investigation_entity_kind::unknown;
+    std::string value;
+    std::string display_name;
+    std::string host_identity;
+    int64_t valid_from_ms = 0;
+    int64_t valid_to_ms = 0;
+};
+
+struct common_investigation_event {
+    std::string id;
+    std::string source_id;
+    std::string source_document_id;
+    std::string event_type;
+    common_investigation_time time;
+    std::vector<std::string> entity_ids;
+    std::string raw_resource_uri;
+    std::string normalized_resource_uri;
+};
+
+struct common_investigation_relation {
+    std::string id;
+    std::string source_id;
+    std::string from_entity_id;
+    std::string to_entity_id;
+    common_investigation_relation_kind kind = common_investigation_relation_kind::unknown;
+    int64_t first_seen_ms = 0;
+    int64_t last_seen_ms = 0;
+    bool has_time = false;
+    uint64_t event_count = 0;
+    std::string rule_id;
+    std::string rule_revision;
+    std::string confidence_label = "observed";
+    std::vector<std::string> evidence_event_ids;
+};
+
+struct common_investigation_claim {
+    std::string id;
+    std::string text;
+    common_investigation_claim_state state = common_investigation_claim_state::hypothesis;
+    std::vector<std::string> supporting_event_ids;
+    std::vector<std::string> contradicting_event_ids;
+    std::vector<std::string> limitations;
+};
+
+struct common_investigation_case_revision {
+    uint32_t schema_version = 1;
+    std::string case_id;
+    uint64_t revision = 1;
+    std::string previous_revision_uri;
+    std::string title;
+    std::string question;
+    common_agent_scope scope;
+    std::string source_id;
+    int64_t window_start_ms = 0;
+    int64_t window_end_ms = 0;
+    std::vector<common_investigation_entity> entities;
+    std::vector<common_investigation_event> events;
+    std::vector<common_investigation_relation> relations;
+    std::vector<common_investigation_claim> claims;
+    std::vector<std::string> gaps;
+    std::string fingerprint;
+};
+
+struct common_investigation_graph_query {
+    std::string case_id;
+    uint64_t case_revision = 0;
+    std::string center_entity_id;
+    size_t max_depth = 1;
+    size_t max_nodes = 100;
+    size_t max_edges = 200;
+    int64_t window_start_ms = 0;
+    int64_t window_end_ms = 0;
+    std::vector<common_investigation_relation_kind> relation_kinds;
+};
+
+struct common_investigation_graph_result {
+    uint64_t case_revision = 0;
+    std::vector<common_investigation_entity> nodes;
+    std::vector<common_investigation_relation> edges;
+    bool truncated = false;
+    std::vector<std::string> limitations;
+};
+
+struct common_investigation_analysis_budget {
+    size_t max_expansions = 256;
+    size_t max_path_length = 12;
+    size_t max_candidates = 32;
+};
+
+struct common_investigation_candidate {
+    std::string id;
+    std::string operation;
+    std::string entity_id;
+    std::string reason;
+    double deterministic_priority = 0.0;
+    double posterior_priority = 0.0;
+    size_t history_count = 0;
+    double useful_history_weight = 0.0;
+    double unhelpful_history_weight = 0.0;
+};
+
+bool common_investigation_case_validate(
+    const common_investigation_case_revision &, std::string & error);
+nlohmann::ordered_json common_investigation_case_to_json(
+    const common_investigation_case_revision &);
+bool common_investigation_case_from_json(const nlohmann::ordered_json &,
+    common_investigation_case_revision &, std::string & error);
+bool common_investigation_graph_expand(
+    const common_investigation_case_revision &,
+    const common_investigation_graph_query &,
+    common_investigation_graph_result &, std::string & error);
+bool common_investigation_graph_shortest_path(
+    const common_investigation_case_revision &,
+    const std::string & start_id, const std::string & goal_id,
+    const common_investigation_analysis_budget &,
+    std::vector<std::string> & relation_ids, bool & complete,
+    std::string & error);
+std::vector<common_investigation_candidate> common_investigation_rank_candidates(
+    std::vector<common_investigation_candidate>, size_t max_candidates);

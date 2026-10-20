@@ -214,6 +214,25 @@ int main() {
     TEST_ASSERT(decoded_ref.source_request_json == provenance_ref.source_request_json);
     TEST_ASSERT(decoded_ref.retrieved_at == provenance_ref.retrieved_at);
     TEST_ASSERT(decoded_ref.content_hash == provenance_ref.content_hash);
+    common_agent_dataset_ref virtual_ref;
+    virtual_ref.uri = "dataset://investigation/elastic-a/logs-2026.10";
+    virtual_ref.name = "Elastic logs";
+    virtual_ref.column_count = 3;
+    virtual_ref.source_representation = "elasticsearch:search";
+    virtual_ref.source_provider = "elastic-a";
+    virtual_ref.source_operation = "search";
+    virtual_ref.source_request_json = R"({"time_field":"@timestamp"})";
+    virtual_ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    virtual_ref.count_kind = common_agent_dataset_count_kind::unknown;
+    TEST_ASSERT(validate_common_agent_dataset_ref(virtual_ref, error));
+    const auto virtual_json = common_agent_dataset_ref_to_json(
+        virtual_ref, common_agent_dataset_ref_json_projection::full);
+    common_agent_dataset_ref virtual_roundtrip;
+    TEST_ASSERT(common_agent_dataset_ref_from_json(virtual_json, virtual_roundtrip, error));
+    TEST_ASSERT(virtual_roundtrip.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
+        virtual_roundtrip.count_kind == common_agent_dataset_count_kind::unknown);
+    virtual_ref.row_count = 10;
+    TEST_ASSERT(!validate_common_agent_dataset_ref(virtual_ref, error));
     TEST_ASSERT(common_agent_dataset_uri_scope_component("turn/a 1") == "turn-a-1");
     TEST_ASSERT(common_agent_dataset_uri_is_current_turn(
         "dataset://agent/turn/turn-a-1/step-2", "turn/a 1"));

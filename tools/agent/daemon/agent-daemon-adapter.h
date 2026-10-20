@@ -12,6 +12,7 @@
 
 #include "../host/agent-host-mcp-provider-config.h"
 #include "../host/agent-host-openapi-provider-config.h"
+#include "../host/agent-investigation-config.h"
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
 #include "../runtime/agent-runtime-execution.h"
@@ -48,6 +49,7 @@ struct daemon_options {
     std::string plan_db;
     std::string data_backend = "auto";
     std::string data_db;
+    agent_host_investigation_config investigation;
     std::string default_mode = "chat";
     std::string thinking_mode = "reflective";
     int max_reflection_rounds = 1;

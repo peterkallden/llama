@@ -96,6 +96,7 @@ struct common_agent_daemon_runtime {
     std::unique_ptr<common_memory_store> memory_store;
     std::unique_ptr<common_plan_store> plan_store;
     std::unique_ptr<common_agent_data_store> data_store;
+    std::unique_ptr<common_agent_virtual_dataset_source> investigation_dataset_source;
     // SemiOracle shares the configured adaptation database; the daemon owns
     // the store for the full lifetime of all session tool callbacks.
     std::unique_ptr<common_semi_oracle_store> semi_oracle_store;

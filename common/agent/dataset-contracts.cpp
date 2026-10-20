@@ -266,6 +266,19 @@ const char * common_agent_dataset_column_type_name(
     return "unknown";
 }
 
+const char * common_agent_dataset_storage_mode_name(common_agent_dataset_storage_mode mode) {
+    return mode == common_agent_dataset_storage_mode::virtual_ ? "virtual" : "materialized";
+}
+
+const char * common_agent_dataset_count_kind_name(common_agent_dataset_count_kind kind) {
+    switch (kind) {
+        case common_agent_dataset_count_kind::exact: return "exact";
+        case common_agent_dataset_count_kind::estimated: return "estimated";
+        case common_agent_dataset_count_kind::unknown: return "unknown";
+    }
+    return "unknown";
+}
+
 nlohmann::ordered_json common_agent_dataset_ref_to_json(
         const common_agent_dataset_ref & ref,
         common_agent_dataset_ref_json_projection projection) {
@@ -276,6 +289,8 @@ nlohmann::ordered_json common_agent_dataset_ref_to_json(
         {"column_count", ref.column_count},
         {"source_resource_uri", ref.source_resource_uri},
         {"source_representation", ref.source_representation},
+        {"storage_mode", common_agent_dataset_storage_mode_name(ref.storage_mode)},
+        {"count_kind", common_agent_dataset_count_kind_name(ref.count_kind)},
     };
     if (projection == common_agent_dataset_ref_json_projection::full) {
         value["source_provider"] = ref.source_provider;
@@ -302,6 +317,15 @@ bool common_agent_dataset_ref_from_json(
     ref.column_count = value.value("column_count", size_t(0));
     ref.source_resource_uri = value.value("source_resource_uri", std::string{});
     ref.source_representation = value.value("source_representation", std::string{});
+    const auto storage_mode = value.value("storage_mode", std::string("materialized"));
+    if (storage_mode == "materialized") ref.storage_mode = common_agent_dataset_storage_mode::materialized;
+    else if (storage_mode == "virtual") ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    else { error = "dataset storage_mode is unsupported"; return false; }
+    const auto count_kind = value.value("count_kind", std::string("exact"));
+    if (count_kind == "exact") ref.count_kind = common_agent_dataset_count_kind::exact;
+    else if (count_kind == "estimated") ref.count_kind = common_agent_dataset_count_kind::estimated;
+    else if (count_kind == "unknown") ref.count_kind = common_agent_dataset_count_kind::unknown;
+    else { error = "dataset count_kind is unsupported"; return false; }
     ref.source_provider = value.value("source_provider", std::string{});
     ref.source_operation = value.value("source_operation", std::string{});
     ref.source_request_json = value.value("source_request_json", std::string{});
@@ -419,8 +443,17 @@ bool validate_common_agent_dataset_ref(
         error = "dataset reference URI must use the canonical dataset:// scheme";
         return false;
     }
-    if (ref.source_resource_uri.empty()) {
+    if (ref.storage_mode == common_agent_dataset_storage_mode::materialized && ref.source_resource_uri.empty()) {
         error = "dataset reference requires source resource provenance";
+        return false;
+    }
+    if (ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
+            (ref.source_provider.empty() || ref.source_operation.empty() || ref.source_request_json.empty())) {
+        error = "virtual dataset reference requires a provider, operation and host query provenance";
+        return false;
+    }
+    if (ref.count_kind != common_agent_dataset_count_kind::exact && ref.row_count != 0) {
+        error = "virtual or estimated dataset counts must not be represented as exact row_count values";
         return false;
     }
     if (ref.column_count == 0 && ref.row_count != 0) {
@@ -460,8 +493,14 @@ bool validate_common_agent_dataset_descriptor(
             return false;
         }
     }
-    if (descriptor.import_processor_id.empty()) {
+    if (descriptor.ref.storage_mode == common_agent_dataset_storage_mode::materialized &&
+            descriptor.import_processor_id.empty()) {
         error = "dataset descriptor requires import processor provenance";
+        return false;
+    }
+    if (descriptor.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
+            (descriptor.capabilities.empty() || descriptor.read_context_id.empty())) {
+        error = "virtual dataset descriptor requires capabilities and a host read context";
         return false;
     }
     error.clear();

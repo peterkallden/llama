@@ -7,6 +7,7 @@
 #include "agent/sandbox/sandbox-host-config.h"
 #include "tools/agent/host/agent-host-mcp-provider-config.h"
 #include "tools/agent/host/agent-host-openapi-provider-config.h"
+#include "tools/agent/host/agent-investigation-config.h"
 #include "tools/agent/host/agent-diagnostics-config.h"
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
@@ -67,6 +68,7 @@ struct args {
     std::string mcp_tool_prefix;
     std::vector<agent_host_mcp_provider_config> mcp_providers;
     std::vector<agent_host_openapi_provider_config> openapi_providers;
+    agent_host_investigation_config investigation;
     std::string resource_blob_backend = "auto";
     std::string resource_blob_root;
     std::string resource_metadata_backend = "auto";

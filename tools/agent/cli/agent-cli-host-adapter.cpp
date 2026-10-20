@@ -886,6 +886,8 @@ bool resolve_agent_host_tool_selection(
             tool_catalog,
             [bindings](const agent_tool_context & context, common_native_tool_bindings & resolved, std::string & binding_error) mutable {
                 resolved = bindings;
+                resolved.tool_scope = context.scope;
+                resolved.allow_network = context.allow_network;
                 resolved.resource_runtime.namespace_id = context.scope.namespace_id;
                 resolved.resource_runtime.session_id = context.scope.session_id;
                 resolved.resource_runtime.project_id = context.scope.project_id;

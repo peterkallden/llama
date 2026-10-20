@@ -48,6 +48,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/assembly/agent-resource-processor-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-processing-cache.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-factory.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-investigation-dataset-source.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-dataset-importer.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp

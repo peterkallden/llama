@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/dataset-contracts.h"
+#include "agent/investigation-contracts.h"
 
 #include <string>
 #include <utility>
@@ -9,6 +10,19 @@
 struct common_agent_data_store_config {
     std::string backend = "auto";
     std::string path;
+};
+
+class common_agent_virtual_dataset_source {
+public:
+    virtual ~common_agent_virtual_dataset_source() = default;
+    virtual bool execute(
+        const common_agent_dataset_descriptor & descriptor,
+        const std::string & operation,
+        const std::string & request_json,
+        const common_agent_scope & scope,
+        bool allow_network,
+        std::string & result_json,
+        std::string & error) = 0;
 };
 
 // Host-owned backend seam for structured data tools. Tool arguments remain
@@ -126,4 +140,30 @@ public:
         const std::string & request_json,
         std::string & result_json,
         std::string & error) = 0;
+
+    // Scoped execution is used by host-backed virtual datasets. Remote
+    // sources must explicitly honor the selected scope and resolved network
+    // permission; existing local stores retain their established behavior.
+    virtual bool execute_scoped(
+        const std::string & operation,
+        const std::string & request_json,
+        const common_agent_scope & scope,
+        bool allow_network,
+        std::string & result_json,
+        std::string & error) {
+        (void) scope;
+        (void) allow_network;
+        return execute(operation, request_json, result_json, error);
+    }
+
+    virtual bool get_investigation_case(const std::string &, const common_agent_scope &,
+            common_investigation_case_revision &, std::string &) {
+        return false;
+    }
+    virtual bool publish_investigation_case(const common_investigation_case_revision &,
+            uint64_t, const std::string &, common_investigation_case_revision &,
+            std::string &) {
+        return false;
+    }
+    virtual bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) { return false; }
 };

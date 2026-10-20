@@ -528,7 +528,8 @@ common_tool_execution_result execute_data_backend(
     }
     std::string result;
     std::string error;
-    if (!bindings.data_store->execute(operation, input, result, error)) {
+    if (!bindings.data_store->execute_scoped(operation, input,
+            bindings.tool_scope, bindings.allow_network, result, error)) {
         return common_adapter_execution_failure(
             "tool.data.backend_failed",
             error.empty() ? "structured data backend failed" : std::move(error),
@@ -583,6 +584,9 @@ common_tool_execution_result execute_dataset_descriptor_tool(
             return common_adapter_success_json({
                 {"dataset", descriptor.ref.uri}, {"name", descriptor.ref.name},
                 {"rows", descriptor.ref.row_count}, {"columns", descriptor.ref.column_count},
+                {"storage_mode", common_agent_dataset_storage_mode_name(descriptor.ref.storage_mode)},
+                {"count_kind", common_agent_dataset_count_kind_name(descriptor.ref.count_kind)},
+                {"capabilities", descriptor.capabilities},
                 {"source", descriptor.ref.source_resource_uri},
                 {"source_sheet", descriptor.source_sheet_name}, {"source_range", descriptor.source_range},
                 {"import_processor", descriptor.import_processor_id},

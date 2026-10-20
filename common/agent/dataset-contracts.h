@@ -24,6 +24,12 @@ enum class common_agent_dataset_column_type {
     unknown,
 };
 
+enum class common_agent_dataset_storage_mode { materialized, virtual_ };
+enum class common_agent_dataset_count_kind { exact, estimated, unknown };
+
+const char * common_agent_dataset_storage_mode_name(common_agent_dataset_storage_mode);
+const char * common_agent_dataset_count_kind_name(common_agent_dataset_count_kind);
+
 const char * common_agent_dataset_column_type_name(
         common_agent_dataset_column_type type);
 
@@ -48,6 +54,8 @@ struct common_agent_dataset_ref {
     std::string source_request_json;
     int64_t retrieved_at = 0;
     std::string content_hash;
+    common_agent_dataset_storage_mode storage_mode = common_agent_dataset_storage_mode::materialized;
+    common_agent_dataset_count_kind count_kind = common_agent_dataset_count_kind::exact;
 };
 
 // Dataset refs cross several boundaries. Keep the canonical field mapping in
@@ -142,6 +150,9 @@ bool resolve_common_agent_document_table(
 struct common_agent_dataset_descriptor {
     common_agent_dataset_ref ref;
     std::vector<common_agent_dataset_column> columns;
+    std::vector<std::string> capabilities;
+    // Host-only pagination state; excluded from every model-facing projection.
+    std::string read_context_id;
     std::string source_workbook_name;
     std::string source_sheet_name;
     std::optional<size_t> source_sheet_index;

@@ -500,6 +500,8 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-native-crash-cdb-smoke.cpp
         test-agent-config-bootstrap.cpp
         test-agent-factorized-cvec-config.cpp
+        test-agent-investigation-config.cpp
+        test-agent-investigation-http.cpp
         test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-artifact.cpp
@@ -559,6 +561,11 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-context-management")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
+        if (TEST_NAME MATCHES "^test-agent-investigation-(config|http)$")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+            set_property(TEST ${TEST_NAME} PROPERTY LABELS "agent;investigation;model-free")
         endif()
         if (TEST_NAME MATCHES "^test-memory-(store|retrieval|tool-service|cozo)$")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-memory)
@@ -758,6 +765,11 @@ test-agent-flydelta-alpha-response-search.cpp
     target_compile_features(test-agent-runtime-contract PRIVATE cxx_std_17)
     add_test(NAME test-agent-runtime-contract COMMAND test-agent-runtime-contract)
     set_property(TEST test-agent-runtime-contract PROPERTY LABELS agent)
+
+    add_executable(test-agent-investigation-contract test-agent-investigation-contract.cpp)
+    target_link_libraries(test-agent-investigation-contract PRIVATE llama-agent-core)
+    add_test(NAME test-agent-investigation-contract COMMAND test-agent-investigation-contract)
+    set_property(TEST test-agent-investigation-contract PROPERTY LABELS "agent;investigation;model-free")
 
     add_executable(test-agent-event-queue test-agent-event-queue.cpp)
     target_include_directories(test-agent-event-queue PRIVATE

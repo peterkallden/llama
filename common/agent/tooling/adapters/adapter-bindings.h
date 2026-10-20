@@ -17,6 +17,8 @@ class agent_resource_processing_provider;
 // separate from the registration entry point so a family header does not
 // pull in the complete adapter router.
 struct common_native_tool_bindings {
+    common_agent_scope tool_scope;
+    bool allow_network = false;
     common_memory_store * memory_store = nullptr;
     common_plan_store * plan_store = nullptr;
     common_memory_query memory_query;

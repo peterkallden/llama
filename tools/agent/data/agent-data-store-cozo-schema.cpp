@@ -91,9 +91,31 @@ const char * dataset_schema = R"COZO(
     }
 )COZO";
 
+const char * investigation_schema = R"COZO(
+    {
+        ?[case_key, revision, payload, revision_uri] <- [['__probe__', 1, '{}', '']]
+        :create agent_investigation_current {
+            case_key: String =>
+            revision: Int,
+            payload: String,
+            revision_uri: String
+        }
+    }
+    {
+        ?[case_key, revision, payload, revision_uri] <- [['__probe__', 1, '{}', '']]
+        :create agent_investigation_revisions {
+            case_key: String,
+            revision: Int =>
+            payload: String,
+            revision_uri: String
+        }
+    }
+)COZO";
+
 } // namespace
 
 const char * agent_cozo_schema_script() { return schema; }
 const char * agent_cozo_values_schema_script() { return values_schema; }
 const char * agent_cozo_order_schema_script() { return order_schema; }
 const char * agent_cozo_dataset_schema_script() { return dataset_schema; }
+const char * agent_cozo_investigation_schema_script() { return investigation_schema; }
