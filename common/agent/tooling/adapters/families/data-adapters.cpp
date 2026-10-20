@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/families/data-adapters.h"
 
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,11 +12,14 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -127,6 +131,47 @@ bool parse_cell_number(const std::string & value, double & out) {
     if (end == value.c_str() || !std::isfinite(out)) return false;
     while (*end != '\0' && std::isspace(static_cast<unsigned char>(*end))) ++end;
     return *end == '\0';
+}
+
+bool parse_investigation_time(const json & value, int64_t & out) {
+    if (value.is_number_integer()) { out = value.get<int64_t>(); return true; }
+    if (value.is_number_float()) { out = static_cast<int64_t>(value.get<double>()); return true; }
+    if (!value.is_string()) return false;
+    const std::string text = value.get<std::string>();
+    char * end = nullptr;
+    const auto integer = std::strtoll(text.c_str(), &end, 10);
+    if (end != text.c_str() && *end == '\0') { out = integer; return true; }
+    if (text.size() < 20) return false;
+    std::tm parsed{};
+    std::istringstream input(text.substr(0, 19));
+    input >> std::get_time(&parsed, "%Y-%m-%dT%H:%M:%S");
+    if (input.fail()) return false;
+    const time_t seconds = timegm(&parsed);
+    if (seconds < 0) return false;
+    int64_t millis = static_cast<int64_t>(seconds) * 1000;
+    size_t cursor = 19;
+    if (cursor < text.size() && text[cursor] == '.') {
+        ++cursor;
+        int fraction = 0, digits = 0;
+        while (cursor < text.size() && std::isdigit(static_cast<unsigned char>(text[cursor]))) {
+            if (digits < 3) fraction = fraction * 10 + (text[cursor] - '0');
+            ++digits; ++cursor;
+        }
+        while (digits < 3) { fraction *= 10; ++digits; }
+        millis += fraction;
+    }
+    if (cursor < text.size() && text[cursor] == 'Z') ++cursor;
+    else if (cursor + 6 == text.size() && (text[cursor] == '+' || text[cursor] == '-') && text[cursor + 3] == ':') {
+        const int hours = std::atoi(text.substr(cursor + 1, 2).c_str());
+        const int minutes = std::atoi(text.substr(cursor + 4, 2).c_str());
+        if (hours > 23 || minutes > 59) return false;
+        const int64_t offset_ms = static_cast<int64_t>(hours * 60 + minutes) * 60 * 1000;
+        millis += text[cursor] == '+' ? -offset_ms : offset_ms;
+        cursor = text.size();
+    }
+    if (cursor != text.size()) return false;
+    out = millis;
+    return true;
 }
 
 bool prepare_dataset_validation_rules(
@@ -598,6 +643,221 @@ common_tool_execution_result execute_investigation_tool(
     if (operation == "investigation.case.open") {
         return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
     }
+    if (operation == "investigation.collect") {
+        if (arguments.value("expected_revision", uint64_t(0)) != value.revision) {
+            return common_adapter_execution_failure("tool.investigation.revision_conflict",
+                "case revision changed before collection", "Reload the case before collecting more evidence.");
+        }
+        if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
+            "tool.investigation.evidence_store_unavailable", "resource store is unavailable",
+            "Evidence collection is unavailable because persistent resource storage is not configured.");
+        common_agent_dataset_descriptor dataset;
+        const auto dataset_uri = arguments.value("dataset", std::string());
+        if (!bindings.data_store->get_dataset_descriptor(dataset_uri, dataset, error) ||
+                dataset.ref.storage_mode != common_agent_dataset_storage_mode::virtual_ ||
+                dataset.ref.source_provider != value.source_id) {
+            return common_adapter_not_found_failure("tool.investigation.dataset_unavailable",
+                error.empty() ? "dataset is not a configured virtual dataset for this case source" : std::move(error),
+                "Choose a virtual dataset configured for this case source.");
+        }
+        const size_t limit = arguments.value("limit", size_t(200));
+        if (limit == 0 || limit > 500) return common_adapter_validation_failure(
+            "tool.investigation.collect_limit_invalid", "collection page size must be from 1 to 500");
+        json selected = json::array();
+        for (const auto & column : dataset.columns) selected.push_back(column.name);
+        json predicates = json::array({{{"field", arguments.value("identifier_field", std::string())},
+            {"operator", "="}, {"value", arguments.value("identifier_value", std::string())}}});
+        const auto has_column = [&](const std::string & name) {
+            return std::any_of(dataset.columns.begin(), dataset.columns.end(),
+                [&](const auto & column) { return column.name == name; });
+        };
+        const auto first_column = [&](std::initializer_list<const char *> candidates) {
+            for (const char * candidate : candidates) if (has_column(candidate)) return std::string(candidate);
+            return std::string();
+        };
+        const auto time_field = first_column({"@timestamp", "event_time", "event.time"});
+        if (!time_field.empty()) {
+            predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
+            predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
+        }
+        const json query = {{"dataset", dataset_uri}, {"select", selected}, {"where", predicates},
+            {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit}};
+        std::string response;
+        if (!bindings.data_store->execute_scoped("data.query", query.dump(), bindings.tool_scope,
+                bindings.allow_network, response, error)) {
+            return common_adapter_execution_failure("tool.investigation.collect_failed", std::move(error),
+                "The configured source could not return this evidence page.");
+        }
+        const auto page = json::parse(response, nullptr, false);
+        if (!page.is_object() || !page.contains("columns") || !page["columns"].is_array() ||
+                !page.contains("rows") || !page["rows"].is_array()) return common_adapter_execution_failure(
+            "tool.investigation.collect_invalid_result", "virtual dataset returned an invalid row page",
+            "The source result could not be normalized.");
+        std::vector<std::string> columns;
+        for (const auto & column : page["columns"]) if (column.is_string()) columns.push_back(column.get<std::string>());
+        std::vector<json> rows;
+        for (const auto & row : page["rows"]) {
+            if (!row.is_array() || row.size() != columns.size()) continue;
+            json object = json::object();
+            for (size_t i = 0; i < columns.size(); ++i) object[columns[i]] = row[i];
+            rows.push_back(std::move(object));
+        }
+        const auto get_string = [](const json & row, const std::string & field) {
+            if (field.empty() || !row.contains(field) || row[field].is_null()) return std::string();
+            if (row[field].is_string()) return row[field].get<std::string>();
+            return row[field].dump();
+        };
+        const auto get_alias = [&](const json & row, std::initializer_list<const char *> candidates) {
+            for (const char * candidate : candidates) {
+                const auto result = get_string(row, candidate);
+                if (!result.empty()) return result;
+            }
+            return std::string();
+        };
+        std::map<std::string, common_investigation_entity> entities_by_id;
+        std::unordered_set<std::string> existing_events;
+        for (const auto & event : value.events) existing_events.insert(event.id);
+        std::vector<common_investigation_event> collected_events;
+        std::vector<std::string> limitations;
+        if (!page.value("complete", false) || page.value("scan_truncated", false) ||
+                page.value("result_truncated", false)) {
+            limitations.push_back("source page is partial or truncated; case coverage does not represent a complete search");
+        }
+        const auto entity_id = [&](common_investigation_entity_kind kind, const std::string & raw,
+                const std::string & host = std::string()) {
+            if (raw.empty()) return std::string();
+            const std::string kind_name = kind == common_investigation_entity_kind::user ? "user" :
+                kind == common_investigation_entity_kind::host ? "host" :
+                kind == common_investigation_entity_kind::process ? "process" :
+                kind == common_investigation_entity_kind::ip ? "ip" :
+                kind == common_investigation_entity_kind::file ? "file" :
+                kind == common_investigation_entity_kind::hash ? "hash" :
+                kind == common_investigation_entity_kind::service ? "service" :
+                kind == common_investigation_entity_kind::trace ? "trace" : "message";
+            std::string identity = value.source_id + ":" + kind_name + ":" + (host.empty() ? "" : host + ":") + raw;
+            if (identity.size() > 480) identity = value.source_id + ":" + kind_name + ":sha256:" + hash_sha256_hex(identity.data(), identity.size());
+            const std::string id = "entity:" + identity;
+            if (!entities_by_id.count(id)) entities_by_id.emplace(id, common_investigation_entity{
+                id, value.source_id, kind, raw, raw, host, 0, 0});
+            return id;
+        };
+        json normalized_rows = json::array();
+        for (const auto & row : rows) {
+            const std::string source_document_id = get_alias(row, {"event.id", "event_id", "id"});
+            const std::string serialized_row = row.dump();
+            const std::string event_id = "event:" + value.source_id + ":" +
+                (source_document_id.empty() ? hash_sha256_hex(serialized_row.data(), serialized_row.size()) : source_document_id);
+            if (existing_events.count(event_id)) continue;
+            const std::string event_type_value = get_alias(row, {"event.type", "event_type", "event.category"});
+            const std::string event_type = event_type_value.empty() ? "unknown" : event_type_value;
+            common_investigation_time event_time;
+            const std::string timestamp_field = first_column({"@timestamp", "event_time", "event.time"});
+            if (!timestamp_field.empty() && row.contains(timestamp_field))
+                event_time.has_event_time = parse_investigation_time(row[timestamp_field], event_time.event_time_ms);
+            if (!event_time.has_event_time) limitations.push_back("one or more source timestamps were unavailable or invalid; event time remains unknown");
+            event_time.collected_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const std::string user_id = entity_id(common_investigation_entity_kind::user, get_alias(row, {"user.id", "user_id", "user.name"}));
+            const std::string host_value = get_alias(row, {"host.id", "host_id", "host.name", "host"});
+            const std::string host_id = entity_id(common_investigation_entity_kind::host, host_value);
+            const std::string source_ip = entity_id(common_investigation_entity_kind::ip, get_alias(row, {"source.ip", "source_ip"}));
+            const std::string destination_ip = entity_id(common_investigation_entity_kind::ip, get_alias(row, {"destination.ip", "destination_ip"}));
+            const std::string process_value = get_alias(row, {"process.entity_id", "process_entity_id", "process.pid", "process_pid"});
+            const std::string process_start = get_alias(row, {"process.start", "process_start", "process.start_time"});
+            const std::string process_identity = process_value.empty() ? std::string() :
+                process_start.empty() ? process_value + "@" + event_id : process_value + "@" + process_start;
+            if (!process_value.empty() && process_start.empty()) limitations.push_back(
+                "process start time was missing; the process identity is isolated to its source event");
+            const std::string process_id = entity_id(common_investigation_entity_kind::process, process_identity, host_value);
+            const std::string file_hash = get_alias(row, {"file.hash.sha256", "file_hash"});
+            const std::string file_value = file_hash.empty()
+                ? get_alias(row, {"file.path", "file_path"}) : file_hash;
+            const std::string file_id = entity_id(file_hash.empty()
+                ? common_investigation_entity_kind::file : common_investigation_entity_kind::hash, file_value);
+            const std::string trace_id = entity_id(common_investigation_entity_kind::trace, get_alias(row, {"trace.id", "trace_id"}));
+            const std::string message_id = entity_id(common_investigation_entity_kind::message, get_alias(row, {"message.id", "message_id"}));
+            std::vector<std::string> refs;
+            for (const auto & id : {user_id, host_id, source_ip, destination_ip, process_id, file_id, trace_id, message_id}) if (!id.empty()) refs.push_back(id);
+            collected_events.push_back({event_id, value.source_id,
+                source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
+                refs, {}, {}});
+            existing_events.insert(event_id);
+            normalized_rows.push_back({{"event_id", event_id}, {"event_type", event_type},
+                {"event_time_ms", event_time.event_time_ms}, {"has_event_time", event_time.has_event_time},
+                {"entity_ids", refs}});
+        }
+        if (collected_events.empty()) return common_adapter_success_json({{"case_id", value.case_id},
+            {"revision", value.revision}, {"collected_events", 0}, {"complete", page.value("complete", false)},
+            {"limitations", limitations}});
+        json raw_page = {{"source_id", value.source_id}, {"dataset", dataset_uri},
+            {"query", query}, {"result", page}, {"collected_at_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count()}};
+        agent_resource_put_request raw_put;
+        raw_put.name = value.case_id + "-source-page-r" + std::to_string(value.revision + 1) + ".json";
+        raw_put.description = "Immutable raw search page collected for investigation case " + value.case_id;
+        raw_put.mime_type = "application/json"; raw_put.text = raw_page.dump(2);
+        raw_put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+        raw_put.source_provider = value.source_id; raw_put.source_tool = "investigation.collect";
+        apply_agent_resource_runtime(bindings.resource_runtime, raw_put);
+        agent_resource_descriptor raw_descriptor;
+        if (!bindings.resource_runtime.store->put_text(raw_put, raw_descriptor, error)) return common_adapter_execution_failure(
+            "tool.investigation.raw_evidence_store_failed", std::move(error), "The raw search result could not be preserved.");
+        json normalized = {{"schema_version", 1}, {"case_id", value.case_id}, {"case_revision", value.revision + 1},
+            {"source_id", value.source_id}, {"events", normalized_rows}, {"limitations", limitations}};
+        agent_resource_put_request normalized_put = raw_put;
+        normalized_put.name = value.case_id + "-normalized-r" + std::to_string(value.revision + 1) + ".json";
+        normalized_put.description = "Normalized investigation events and entity references";
+        normalized_put.text = normalized.dump(2);
+        agent_resource_descriptor normalized_descriptor;
+        if (!bindings.resource_runtime.store->put_text(normalized_put, normalized_descriptor, error)) return common_adapter_execution_failure(
+            "tool.investigation.normalized_evidence_store_failed", std::move(error), "The normalized evidence could not be preserved.");
+        for (auto & event : collected_events) {
+            event.raw_resource_uri = raw_descriptor.uri;
+            event.normalized_resource_uri = normalized_descriptor.uri;
+            value.events.push_back(event);
+        }
+        for (auto & item : entities_by_id) {
+            if (std::none_of(value.entities.begin(), value.entities.end(), [&](const auto & old) { return old.id == item.first; }))
+                value.entities.push_back(std::move(item.second));
+        }
+        value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
+        std::vector<common_investigation_relation_rule> rules;
+        for (const auto & event : collected_events) {
+            if (event.event_type.find("auth") != std::string::npos || event.event_type.find("login") != std::string::npos)
+                rules.push_back({"builtin-authentication-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::user,
+                    common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to});
+            if (event.event_type.find("network") != std::string::npos || event.event_type.find("connection") != std::string::npos)
+                rules.push_back({"builtin-network-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::ip,
+                    common_investigation_entity_kind::ip, common_investigation_relation_kind::communicated_with});
+            if (event.event_type.find("process") != std::string::npos)
+                rules.push_back({"builtin-process-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
+                    common_investigation_entity_kind::process, common_investigation_relation_kind::spawned});
+            if (event.event_type.find("file") != std::string::npos)
+                rules.push_back({"builtin-file-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
+                    common_investigation_entity_kind::file, common_investigation_relation_kind::accessed});
+            if (event.event_type.find("trace") != std::string::npos)
+                rules.push_back({"builtin-trace-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::trace,
+                    common_investigation_entity_kind::message, common_investigation_relation_kind::correlated_with});
+        }
+        std::sort(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id < b.id; });
+        rules.erase(std::unique(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id == b.id && a.event_type == b.event_type; }), rules.end());
+        std::vector<common_investigation_relation> relations;
+        if (!common_investigation_build_relations(value.source_id, value.entities, value.events,
+                rules, relations, limitations, error)) return common_adapter_validation_failure(
+            "tool.investigation.normalization_failed", std::move(error));
+        value.relations = std::move(relations);
+        value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
+        const uint64_t expected = value.revision++;
+        common_investigation_case_revision published;
+        const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
+        if (!bindings.data_store->publish_investigation_case(value, expected, revision_uri, published, error))
+            return common_adapter_execution_failure("tool.investigation.revision_conflict", std::move(error),
+                "The case changed while evidence was being collected; reload and retry.");
+        return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
+            {"collected_events", collected_events.size()}, {"complete", page.value("complete", false)},
+            {"limitations", limitations}, {"raw_resource_uri", raw_descriptor.uri},
+            {"normalized_resource_uri", normalized_descriptor.uri}});
+    }
     if (operation == "investigation.analyze") {
         const auto analysis = arguments.value("analysis", std::string());
         common_investigation_analysis_budget budget;
@@ -817,6 +1077,7 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.dataset.sample" ||
         definition.executor_id == "builtin.investigation.case.create" ||
         definition.executor_id == "builtin.investigation.case.open" ||
+        definition.executor_id == "builtin.investigation.collect" ||
         definition.executor_id == "builtin.investigation.graph.expand" ||
         definition.executor_id == "builtin.investigation.analyze" ||
         definition.executor_id == "builtin.investigation.events" ||

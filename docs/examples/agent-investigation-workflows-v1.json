@@ -26,7 +26,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-identity-analysis@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "required_context": []
     },
     {
@@ -36,7 +36,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-communication-analysis@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "required_context": []
     },
     {
@@ -46,7 +46,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-event-chain@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "required_context": []
     },
     {
@@ -56,7 +56,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-integration-trace@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "required_context": []
     },
     {
@@ -66,7 +66,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-hypothesis-testing@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "required_context": []
     },
     {
@@ -76,7 +76,7 @@
       "workflow_revision": "v1",
       "family": "investigation",
       "graph_revision": "investigation-report-composition@v1",
-      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_capabilities": ["investigation.case", "investigation.collect", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
       "optional_capabilities": ["artifact.export", "document.open", "document.save"],
       "required_context": []
     }

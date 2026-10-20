@@ -90,10 +90,21 @@ class test_investigation_store final : public common_agent_data_store {
 public:
     common_agent_dataset_descriptor source;
     std::map<std::string, common_investigation_case_revision> cases;
+    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
     bool execute(const std::string &, const std::string &, std::string &, std::string & error) override {
         error = "not used by investigation adapter contract";
         return false;
+    }
+    bool execute_scoped(const std::string & operation, const std::string &, const common_agent_scope &,
+            bool, std::string & result, std::string & error) override {
+        if (operation != "data.query") { error = "unexpected virtual operation"; return false; }
+        result = virtual_page; error.clear(); return true;
+    }
+    bool get_dataset_descriptor(const std::string & uri, common_agent_dataset_descriptor & out,
+            std::string & error) override {
+        if (uri != source.ref.uri) { error = "virtual dataset not found"; return false; }
+        out = source; error.clear(); return true;
     }
     bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & out,
             std::string & error) override {
@@ -1128,6 +1139,11 @@ int main() {
     investigation_store.source.ref.name = "security";
     investigation_store.source.ref.source_provider = "logs";
     investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    investigation_store.source.columns = {{"event.id", common_agent_dataset_column_type::string, false},
+        {"event.type", common_agent_dataset_column_type::string, false},
+        {"@timestamp", common_agent_dataset_column_type::string, true},
+        {"user.id", common_agent_dataset_column_type::string, true},
+        {"host.name", common_agent_dataset_column_type::string, true}};
     common_investigation_case_revision investigation_case;
     investigation_case.case_id = "graph-case";
     investigation_case.title = "Authentication chain";
@@ -1153,6 +1169,8 @@ int main() {
     common_native_tool_bindings investigation_bindings;
     investigation_bindings.data_store = &investigation_store;
     investigation_bindings.tool_scope = investigation_case.scope;
+    test_resource_store investigation_resources;
+    investigation_bindings.resource_runtime.store = &investigation_resources;
     common_tool_registry investigation_registry;
     assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
         investigation_bindings, investigation_registry, adapters, error));
@@ -1163,6 +1181,15 @@ int main() {
         R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
     assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
         result.output.find("event:1") != std::string::npos);
+    result = investigation_registry.execute({"investigation.collect",
+        R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    assert(result.ok && result.output.find("collected_events") != std::string::npos &&
+        investigation_store.cases.at("graph-case").events.size() == 2 &&
+        investigation_store.cases.at("graph-case").events[1].source_document_id == "doc-2" &&
+        investigation_store.cases.at("graph-case").events[1].time.has_event_time &&
+        investigation_store.cases.at("graph-case").events[1].time.event_time_ms == 300 &&
+        investigation_store.cases.at("graph-case").entities.size() == 4 &&
+        investigation_resources.requests.size() == 2);
     result = investigation_registry.execute({"investigation.analyze",
         R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
     assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&
@@ -1171,13 +1198,19 @@ int main() {
         R"({"case_id":"graph-case","analysis":"temporal_path","start_entity_id":"user:logs:alice","goal_entity_id":"host:logs:app1"})"});
     assert(result.ok && result.output.find("event:1") != std::string::npos &&
         result.output.find("shortest_hop_count") != std::string::npos);
+    const auto evidence_relation = std::find_if(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
+                relation.evidence_event_ids.end();
+        });
+    assert(evidence_relation != investigation_store.cases.at("graph-case").relations.end());
     result = investigation_registry.execute({"investigation.events",
-        R"({"case_id":"graph-case","relation_id":"rel:1"})"});
+        nlohmann::json{{"case_id", "graph-case"}, {"relation_id", evidence_relation->id}}.dump()});
     assert(result.ok && result.output.find("doc-1") != std::string::npos);
     result = investigation_registry.execute({"investigation.claim.hypothesize",
-        R"({"case_id":"graph-case","expected_revision":1,"claim_id":"h-1","text":"The login may be unusual.","supporting_event_ids":["event:1"]})"});
+        R"({"case_id":"graph-case","expected_revision":2,"claim_id":"h-1","text":"The login may be unusual.","supporting_event_ids":["event:1"]})"});
     assert(result.ok && result.output.find("hypothesis") != std::string::npos &&
-        investigation_store.cases.at("graph-case").revision == 2 &&
+        investigation_store.cases.at("graph-case").revision == 3 &&
         investigation_store.cases.at("graph-case").claims[0].state == common_investigation_claim_state::hypothesis);
     auto foreign_scope = investigation_bindings;
     foreign_scope.tool_scope.namespace_id = "tenant-b";
