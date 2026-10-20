@@ -38,6 +38,10 @@ struct common_flydelta_experiment_fixture {
     // guidance projection. Legacy fixtures remain valid but are not eligible
     // for cross-job history reuse when these identities are absent.
     std::string scope_fingerprint;
+    // Outcome-history compatibility scope is intentionally stable across
+    // turns in one authorized session. Other experiment/artifact scope keeps
+    // the turn-sensitive scope_fingerprint above.
+    std::string guidance_scope_fingerprint;
     std::string baseline_deployment_fingerprint;
     // Optional provenance for domains that execute a versioned ruleset or
     // action contract. These fields are strict reuse boundaries when present.

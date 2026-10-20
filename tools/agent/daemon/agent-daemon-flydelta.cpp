@@ -1,6 +1,7 @@
 #include "agent-daemon-flydelta-internal.h"
 
 #include "agent/agent-residual-patch.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-guidance-qualification.h"
 
 #include <chrono>
 #include <ctime>
@@ -521,6 +522,7 @@ bool daemon_flydelta_run_search_pipeline(
     fixture.execution_context_fingerprint = job.seed.execution_context_fingerprint;
     fixture.verifier_revision = job.seed.verifier_ref;
     fixture.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
+    fixture.guidance_scope_fingerprint = common_flydelta_outcome_guidance_scope_fingerprint(job.seed.scope);
     fixture.semantic_domain = job.seed.behavior_key.empty()
         ? common_adaptation_evidence_source_name(job.seed.source) : job.seed.behavior_key;
     fixture.model_n_layers = provider->model_n_layers;
@@ -804,7 +806,8 @@ bool daemon_flydelta_run_search_pipeline(
             !fixture.baseline_deployment_fingerprint.empty() &&
             !fixture.outcome_guidance_verifier_revision.empty()) {
         common_flydelta_outcome_guidance_context base_context;
-        base_context.scope_fingerprint = fixture.scope_fingerprint;
+        base_context.scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
+            ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
         base_context.model_profile_fingerprint = fixture.model_profile_fingerprint;
         base_context.tokenizer_fingerprint = fixture.tokenizer_fingerprint;
         base_context.template_fingerprint = fixture.template_fingerprint;
@@ -1793,6 +1796,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     fixture.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
+    fixture.guidance_scope_fingerprint = common_flydelta_outcome_guidance_scope_fingerprint(job.seed.scope);
     fixture.semantic_domain = job.seed.behavior_key.empty()
         ? common_adaptation_evidence_source_name(job.seed.source)
         : job.seed.behavior_key;
@@ -1884,7 +1888,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.guidance_layer_index = layer_index;
     coefficient_config.guidance_model_layer_count = provider->model_n_layers;
     common_flydelta_outcome_guidance_context guidance_context;
-    guidance_context.scope_fingerprint = fixture.scope_fingerprint;
+    guidance_context.scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
+        ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
     guidance_context.model_profile_fingerprint = fixture.model_profile_fingerprint;
     guidance_context.tokenizer_fingerprint = fixture.tokenizer_fingerprint;
     guidance_context.template_fingerprint = fixture.template_fingerprint;
@@ -1904,6 +1909,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     size_t guidance_read_history_rows = 0;
     uint64_t guidance_history_watermark = 0;
     std::string guidance_history_failure_reason;
+    bool deep_selection_qualified = false;
+    std::string deep_selection_qualification_reason = "qualification_not_found";
     double guidance_projection_ms = 0.0;
     const auto guidance_preparation_started = std::chrono::steady_clock::now();
     auto persisted_guidance_sequence_by_pool = std::make_shared<std::map<std::string, size_t>>();
@@ -1939,6 +1946,19 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 job.seed.scope.session_id, records, guidance_history_watermark,
                 history_error)) {
             records.clear();
+        }
+        common_flydelta_guidance_qualification_context qualification_context;
+        qualification_context.authorized_scope = job.seed.scope;
+        qualification_context.outcome_context = guidance_context;
+        qualification_context.policy_revision =
+            common_flydelta_guidance_qualification_policy_revision(guidance_config);
+        common_flydelta_guidance_qualification_result qualification_result;
+        std::string qualification_error;
+        if (!common_flydelta_guidance_find_qualification(records, qualification_context,
+                guidance_history_watermark, qualification_result, deep_selection_qualified,
+                deep_selection_qualification_reason, qualification_error)) {
+            deep_selection_qualified = false;
+            deep_selection_qualification_reason = "qualification_record_invalid:" + qualification_error;
         }
         guidance_read_history_rows = records.size();
         if (history_error.empty()) {
@@ -2205,6 +2225,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             phase_id = static_cast<int>(plan.phase),
             job_id = job.id, history_load_failed = guidance_history_load_failed,
             history_failure_reason = guidance_history_failure_reason,
+            deep_selection_qualified, deep_selection_qualification_reason,
             read_history_rows = guidance_read_history_rows,
             ineligible_rows = guidance_ineligible_history_rows](
             const common_flydelta_outcome_guidance_request & request,
@@ -2261,6 +2282,12 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 (*persisted_guidance_policy_cursor_before_by_pool)[sequence_key] = policy_cursor_before;
             }
             const size_t policy_slots_consumed = std::min(limit, pool.size());
+            const bool deep_selection_point = stage == "deep_full_generation_frontier";
+            common_flydelta_outcome_guidance_config effective_guidance_config = guidance_config;
+            effective_guidance_config.mode = common_flydelta_guidance_effective_mode(
+                guidance_config.mode,
+                common_flydelta_guidance_decision_point::deep_full_generation_selection,
+                !deep_selection_point || deep_selection_qualified);
             uint64_t wave_seed = 1469598103934665603ULL;
             for (const unsigned char ch : job_id) { wave_seed ^= ch; wave_seed *= 1099511628211ULL; }
             wave_seed ^= static_cast<uint64_t>(decision_phase_id);
@@ -2274,7 +2301,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             }
             const auto prediction_started = std::chrono::steady_clock::now();
             if (history_load_failed || !common_flydelta_outcome_guidance_decide_from_projection(
-                    guidance_config, guidance_context, guidance_projection, pool, limit,
+                    effective_guidance_config, guidance_context, guidance_projection, pool, limit,
                     wave_seed, decision, adviser_error,
                     common_flydelta_outcome_guidance_policy::posterior_sampling,
                     policy_sequence_start)) {
@@ -2294,7 +2321,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             decision.phase_id = decision_phase_id;
             decision.round = round;
             decision.decision_id = decision_id;
-            decision.shadow_mode = guidance_config.mode == common_flydelta_outcome_guidance_mode::shadow;
+            decision.shadow_mode = effective_guidance_config.mode == common_flydelta_outcome_guidance_mode::shadow;
             prediction_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - prediction_started).count();
             if (lifecycle_store) {
@@ -2352,6 +2379,17 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 {"phase_id", decision_phase_id},
                 {"seed", wave_seed},
                 {"mode", common_flydelta_outcome_guidance_mode_name(guidance_config.mode)},
+                {"effective_mode", common_flydelta_outcome_guidance_mode_name(
+                    common_flydelta_guidance_effective_mode(guidance_config.mode,
+                        common_flydelta_guidance_decision_point::deep_full_generation_selection,
+                        !deep_selection_point || deep_selection_qualified))},
+                {"qualification_decision_point", deep_selection_point
+                    ? "deep_full_generation_selection" : "not_applicable"},
+                {"qualification_capability", deep_selection_point
+                    ? "select_budgeted_subset" : "not_applicable"},
+                {"qualification_usable", deep_selection_point && deep_selection_qualified},
+                {"qualification_reason", deep_selection_point
+                    ? deep_selection_qualification_reason : "not_applicable"},
                 {"history_fingerprint", decision.history_fingerprint},
                 {"decision_sequence", wave_index},
                 {"candidate_pool_fingerprint", pool_fingerprint},

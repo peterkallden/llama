@@ -4589,7 +4589,13 @@ The same host configuration carries
 Its default `mode="shadow"` records historical predictions while preserving
 the search order. `off` avoids history reads and guidance logs;
 `experimental` can influence Whirlpool WHERE priors/probes, Deep's bounded
-full-generation frontier and TFO-lite's pending arm order. The job freezes
+full-generation frontier only after a compatible host qualification, and
+TFO-lite's pending arm order (ordering alone does not reduce its full-population
+compute). Without a current Deep qualification, the effective mode at that
+selection point is `shadow`; the requested operator mode remains visible in
+trace. Qualification is specific to the typed decision point and capability,
+uses matched baseline/mixed-policy/random selections from the same executed
+union, and cannot grant Oracle, learning-credit or promotion authority. The job freezes
 eligible scope/model/verifier-compatible history; current observations still
 control Whirlpool's objective and host verification determines outcomes and
 learning credit. Whirlpool, Deep and TFO share a precomputed immutable

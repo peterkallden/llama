@@ -184,6 +184,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-search-pipeline.cpp adaptation/flydelta/flydelta-search-pipeline.h
     adaptation/flydelta/flydelta-coefficient-search.cpp adaptation/flydelta/flydelta-coefficient-search.h
     adaptation/flydelta/experiment/flydelta-outcome-guidance.cpp adaptation/flydelta/experiment/flydelta-outcome-guidance.h
+    adaptation/flydelta/experiment/flydelta-guidance-qualification.cpp adaptation/flydelta/experiment/flydelta-guidance-qualification.h
     prediction/outcome-guidance.cpp prediction/outcome-guidance.h
     adaptation/flydelta/flydelta-decision-margin.cpp adaptation/flydelta/flydelta-decision-margin.h
     adaptation/flydelta/flydelta-deep-search.cpp adaptation/flydelta/flydelta-deep-search.h

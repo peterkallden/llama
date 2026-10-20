@@ -927,7 +927,11 @@ includes the current daemon settings. Within `runtime.adaptation.flydelta`:
 `shadow` is the default: it predicts and records hypothetical choices while
 preserving execution order. `off` skips guidance work. `experimental` may
 change Whirlpool's initial centre/probe selection, Deep's full-generation
-shortlist and TFO-lite's pending execution order within existing budgets.
+shortlist only after an exact-context host qualification, and TFO-lite's
+pending execution order within existing budgets. An unqualified/stale Deep
+record makes the effective decision `shadow` even when the operator requested
+`experimental`; traces show both modes and the qualification reason. TFO order
+alone does not claim compute savings because the full population still runs.
 Missing compatible history yields prior-only predictions; a random sampled
 ranking is not a learned preference. No automatic reduction in probe count
 follows from enabling guidance.

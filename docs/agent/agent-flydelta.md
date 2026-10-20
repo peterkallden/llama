@@ -2205,6 +2205,51 @@ The configurable fields and their defaults are:
 | `max_prior_strength` | `4.0` | Finite value in `[0, 4]`; zero disables coarser pseudo-observations |
 | `projection_cache_bytes` | `16777216` | Retained immutable projection budget, `0..268435456`; zero disables retention |
 
+`experimental` is an operator ceiling, not proof that every decision point has
+earned selection authority. Deep's `deep_full_generation_frontier` is now
+qualified separately as the typed decision point
+`deep_full_generation_selection` with capability `select_budgeted_subset`.
+For this point, an unqualified, paused, stale, malformed, or incompatible
+qualification forces the effective decision mode to `shadow`; the ordinary
+Deep diagnostic ranking remains the executed order. The requested operator
+mode and effective mode, qualification reason and decision capability are
+reported separately in the guidance trace. Other FlyDelta decision points keep
+their existing operator-mode behavior; qualification is not inferred across
+Whirlpool, TFO, staged coefficient search, ranking, selection or pruning.
+
+Qualification records are append-only `flydelta_experiment` lifecycle events,
+not promotion evidence. Their typed contract records the decision point,
+capability, model/tokenizer/template, baseline deployment, verifier/ruleset,
+action contract, stable session-level outcome scope and policy revision. A
+matched cohort contract stores baseline Top-K, the existing mixed Bayesian
+policy, and a random-selection ablation, plus each actually executed union
+arm's verified outcome and per-arm inference cost. The evaluator scores each
+policy from its own selected arms; shared union wall time is not reported as
+saved compute. Unknown outcomes contribute zero
+utility and are not treated as failures. Qualification requires at least 20
+independent fixture groups, a positive paired approximate 95% lower bound on
+guided-minus-baseline utility per selected arm, and no increase in the guided
+harm rate. Results below the evidence floor remain `insufficient_evidence`;
+failed or regressed checks are `paused`. Revalidation becomes due at the saved
+lifecycle watermark, and new compatible evidence can produce a later
+qualification event. The normal operator mode still wins: `shadow` never
+changes selection, and `off` still skips history work.
+
+The outcome-history compatibility scope is stable across turns, but remains
+isolated by the lifecycle store's namespace, project and session filters. It
+does not enable implicit cross-session or cross-project transfer. The original
+turn-sensitive scope remains in place for artifact/experiment ownership.
+Qualification compatibility also fingerprints the selection policy and its
+utility parameters; changing them invalidates the old qualification.
+
+The qualification evaluator and lifecycle contract are model-free and consume
+matched union outcomes. The runtime does not yet launch this extra union cohort
+automatically: a trusted matched-run harness must produce it from real
+daemon/model/verifier executions. Synthetic outcomes or the Bayesian
+prediction itself cannot create a qualified record. Until such a cohort exists,
+`experimental` at the Deep selection point safely behaves as `shadow`. This
+qualification does not grant Oracle, learning-credit or promotion authority.
+
 The eight-group default applies to **backoff**, not to direct arm-category
 evidence. A category with fewer observations can still have a posterior, with
 correspondingly little evidence. When FlyDelta is disabled no adviser runs.

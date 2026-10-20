@@ -520,7 +520,8 @@ bool common_flydelta_append_search_pipeline_lifecycle(
                 observation.guidance_observation_id = fixture.task_fingerprint +
                     ":whirlpool:" + std::to_string(stable_hash);
                 observation.guidance_fixture_group_id = fixture.guidance_fixture_group_id;
-                observation.guidance_scope_fingerprint = fixture.scope_fingerprint;
+                observation.guidance_scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
+                    ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
                 observation.guidance_model_profile_fingerprint = fixture.model_profile_fingerprint;
                 observation.guidance_tokenizer_fingerprint = fixture.tokenizer_fingerprint;
                 observation.guidance_template_fingerprint = fixture.template_fingerprint;
