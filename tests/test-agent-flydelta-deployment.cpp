@@ -117,6 +117,13 @@ int main() {
     CHECK(baseline.activation && baseline.activation->overlay.enabled);
     CHECK(baseline.activation->overlay.data[0] == 3.0f);
 
+    auto no_canary_scale = request;
+    no_canary_scale.gate_request.requested_scale = 0.0f;
+    common_flydelta_deployment_result no_canary_result;
+    CHECK(common_flydelta_resolve_deployment(
+        config, no_canary_scale, no_canary_result, error));
+    CHECK(!no_canary_result.canary_selected && no_canary_result.active_only);
+
     // A normal daemon turn may not yet have a host-owned behavior/scope
     // classification. Active resolution remains usable, but canary matching
     // must fail closed rather than guessing applicability.

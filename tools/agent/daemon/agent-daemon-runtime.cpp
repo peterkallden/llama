@@ -1595,7 +1595,7 @@ make_daemon_flydelta_deployment_resolver(
             return true;
         }
         auto loaded = common_agent_runtime_loaded_model_cast(model_handle->model);
-        if (!loaded || loaded->model == nullptr) {
+        if (!loaded || loaded->model_n_embd == 0 || loaded->model_n_layers == 0) {
             error = "FlyDelta deployment resolver requires the resident model handle";
             return false;
         }
@@ -1647,8 +1647,8 @@ make_daemon_flydelta_deployment_resolver(
         deployment_request.now_epoch_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
-        deployment_request.model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
-        deployment_request.model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
+        deployment_request.model_n_embd = loaded->model_n_embd;
+        deployment_request.model_n_layers = loaded->model_n_layers;
         deployment_request.model_profile_fingerprint =
             deployment_request.profile.base_model_fingerprint;
         deployment_request.capture_layout_revision =

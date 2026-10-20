@@ -18,6 +18,12 @@ struct common_agent_runtime_loaded_model final
 
     common_agent_model_selection selection;
     llama_model * model = nullptr;
+    // Model geometry is backend-independent runtime metadata. The server-
+    // context loader keeps the llama_model owned by server_context and thus
+    // leaves `model` null, while consumers such as deployment resolution
+    // still need these dimensions.
+    size_t model_n_embd = 0;
+    size_t model_n_layers = 0;
     common_chat_templates_ptr chat_templates;
     std::shared_ptr<common_agent_server_context_host> server_context_host;
 };

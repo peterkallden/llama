@@ -14,8 +14,12 @@ bool finite_nonnegative(float value) {
     return std::isfinite(value) && value >= 0.0f;
 }
 
-bool finite_scale(double value) {
-    return std::isfinite(value) && value > 0.0 && value <= 4.0;
+bool finite_requested_scale(double value) {
+    // Zero is the documented no-op request in the gate contract. Deployment
+    // resolution runs for ordinary turns too, where no canary scale is
+    // requested, so rejecting zero here prevents otherwise valid turns from
+    // reaching planning.
+    return std::isfinite(value) && value >= 0.0 && value <= 4.0;
 }
 
 bool same_generalized_manifest_after_canary_transition(
@@ -552,7 +556,7 @@ bool common_flydelta_resolve_deployment(
     }
     if (request.profile.sidebands.size() > 4 ||
             request.model_n_embd == 0 || request.model_n_layers < 2 ||
-            !finite_scale(request.gate_request.requested_scale)) {
+            !finite_requested_scale(request.gate_request.requested_scale)) {
         error = "FlyDelta deployment request is outside bounds";
         return false;
     }

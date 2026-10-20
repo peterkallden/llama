@@ -3,6 +3,7 @@
 #include "agent-server-context-host.h"
 
 #include "common.h"
+#include "server-context.h"
 
 #include <filesystem>
 #include <mutex>
@@ -65,6 +66,8 @@ bool common_agent_runtime_cli_model_loader::load(
         error = "failed to load CLI model: " + selection.path;
         return false;
     }
+    loaded->model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded->model));
+    loaded->model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded->model));
     loaded->chat_templates = common_chat_templates_init(loaded->model, "");
     if (!loaded->chat_templates) {
         error = "failed to initialize CLI chat templates: " + selection.path;
@@ -123,10 +126,21 @@ bool common_agent_runtime_server_context_model_loader::load(
         }
     }
 
+    const auto * context = host->server().get_llama_context();
+    const auto * loaded_model = context == nullptr ? nullptr : llama_get_model(context);
+    if (loaded_model == nullptr || llama_model_n_embd(loaded_model) <= 0 ||
+            llama_model_n_layer(loaded_model) <= 0) {
+        host->stop();
+        error = "server-context model loader could not read resident model geometry: " + selection.path;
+        return false;
+    }
+
     auto loaded = std::make_shared<common_agent_runtime_loaded_model>();
     loaded->selection = selection;
     loaded->selection.n_parallel = options.n_parallel;
     loaded->selection.n_sequences = options.n_sequences;
+    loaded->model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded_model));
+    loaded->model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded_model));
     loaded->server_context_host = std::move(host);
     model = std::move(loaded);
     error.clear();
