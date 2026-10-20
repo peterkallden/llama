@@ -32,7 +32,8 @@ public:
             common_semi_oracle_level level, const std::string & goal,
             common_semi_oracle_budget host_budget,
             const std::vector<std::string> & host_guidance,
-            common_semi_oracle_result & result, std::string & error);
+            common_semi_oracle_result & result, std::string & error,
+            common_semi_oracle_frontier_observer frontier_observer = {});
     // Production placement-game entry point: state and transition are owned
     // by the host. A successful proof advances the session board atomically
     // from the caller's perspective; rejected/unknown actions do not advance.
@@ -53,7 +54,8 @@ public:
     bool define_problem(const std::string & problem_dsl, std::string & state, std::string & error);
     bool search_active_goal(common_semi_oracle_result & result, std::string & error,
             common_semi_oracle_budget budget = {2048, 1024},
-            const std::vector<std::string> & host_order = {});
+            const std::vector<std::string> & host_order = {},
+            common_semi_oracle_frontier_observer frontier_observer = {});
     // Host-only strategic ranking. The complete bounded ranking and proofs
     // are appended through the configured semi-oracle evaluation store.
     bool rank_placements(const std::string & state_json,

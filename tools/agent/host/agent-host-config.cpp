@@ -568,8 +568,19 @@ bool parse_agent_host_config_json(
                     if (search.contains("suboptimality_bound") && !search["suboptimality_bound"].is_number()) {
                         error = "runtime.adaptation.semi_oracle.search.suboptimality_bound must be numeric"; return false;
                     }
+                    if (search.contains("exact_history_order") && !search["exact_history_order"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.search.exact_history_order must be a string"; return false;
+                    }
                     read_optional(search, "algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm);
                     read_optional(search, "suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound);
+                    if (search.contains("exact_history_order")) {
+                        const auto order = search["exact_history_order"].get<std::string>();
+                        if (order == "before_h") config.adaptation_semi_oracle_outcome_guidance.exact_history_order =
+                            common_semi_oracle_history_order::before_heuristic;
+                        else if (order == "after_h") config.adaptation_semi_oracle_outcome_guidance.exact_history_order =
+                            common_semi_oracle_history_order::after_heuristic;
+                        else { error = "runtime.adaptation.semi_oracle.search.exact_history_order must be before_h or after_h"; return false; }
+                    }
                 }
                 if (oracle.contains("outcome_guidance")) {
                     const auto & guidance = oracle["outcome_guidance"];
@@ -1457,6 +1468,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"semi_oracle", {{"search", {
                     {"algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm},
                     {"suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound},
+                    {"exact_history_order", config.adaptation_semi_oracle_outcome_guidance.exact_history_order ==
+                        common_semi_oracle_history_order::after_heuristic ? "after_h" : "before_h"},
                 }}, {"outcome_guidance", {
                     {"mode", config.adaptation_semi_oracle_outcome_guidance.mode},
                     {"seed", config.adaptation_semi_oracle_outcome_guidance.seed},

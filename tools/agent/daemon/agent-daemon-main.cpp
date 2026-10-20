@@ -354,7 +354,8 @@ int main(int argc, char ** argv) {
             candidate.adaptation_semi_oracle_outcome_guidance.max_history_evaluations != options.adaptation_semi_oracle_outcome_guidance.max_history_evaluations ||
             candidate.adaptation_semi_oracle_outcome_guidance.search_algorithm != options.adaptation_semi_oracle_outcome_guidance.search_algorithm ||
             candidate.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != options.adaptation_semi_oracle_outcome_guidance.suboptimality_bound ||
-            candidate.adaptation_semi_oracle_outcome_guidance.sampling_policy != options.adaptation_semi_oracle_outcome_guidance.sampling_policy,
+            candidate.adaptation_semi_oracle_outcome_guidance.sampling_policy != options.adaptation_semi_oracle_outcome_guidance.sampling_policy ||
+            candidate.adaptation_semi_oracle_outcome_guidance.exact_history_order != options.adaptation_semi_oracle_outcome_guidance.exact_history_order,
             "runtime.adaptation.semi_oracle");
         require_restart(
             candidate.adaptation_flydelta_enabled != options.adaptation_flydelta_enabled ||

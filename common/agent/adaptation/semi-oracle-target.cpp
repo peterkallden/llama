@@ -257,8 +257,9 @@ bool common_semi_oracle_target_evaluate(const common_semi_oracle_ruleset & r,
             return std::find(q.guidance.begin(),q.guidance.end(),a)<std::find(q.guidance.begin(),q.guidance.end(),z);});
         for(const auto & action:order){std::string next;if(move(x,action,next))transitions.push_back({next,action,1});}return true;};
     problem.heuristic=[](const std::string & s){board x;std::string e;parse(s,x,e);return size_t(std::abs(x.row-x.tr)+std::abs(x.col-x.tc));};
-    problem.heuristic_admissible=true;problem.transition_adviser=q.transition_adviser;problem.record_history=q.record_search_history;
-    problem.transition_score=q.transition_score;
+    problem.heuristic_admissible=true;problem.transition_adviser=q.transition_adviser;
+    problem.transition_score=q.transition_score;problem.historical_identity=q.historical_identity;
+    problem.frontier_observer=q.frontier_observer;problem.record_history=q.record_search_history;
     common_semi_oracle_search_result result;
     if(!common_semi_oracle_search_run(problem,q.budget,q.search_policy,q.use_historical_order,result)){error=result.error;return false;}
     out.applied_search_policy = q.search_policy;

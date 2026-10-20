@@ -48,10 +48,31 @@ struct common_semi_oracle_budget {
 };
 
 enum class common_semi_oracle_search_algorithm { exact, focal };
+enum class common_semi_oracle_history_order { before_heuristic, after_heuristic };
 struct common_semi_oracle_search_policy {
     common_semi_oracle_search_algorithm algorithm = common_semi_oracle_search_algorithm::exact;
     double suboptimality_bound = 1.0;
+    common_semi_oracle_history_order exact_history_order = common_semi_oracle_history_order::before_heuristic;
 };
+
+struct common_semi_oracle_frontier_event {
+    size_t decision = 0;
+    size_t expansions_used = 0;
+    size_t expansions_remaining = 0;
+    size_t frontier_size = 0;
+    size_t equal_f_candidates = 0;
+    size_t focal_candidates = 0;
+    size_t focal_f_classes = 0;
+    size_t f_min = 0;
+    double focal_limit = 0.0;
+    size_t selected_g = 0, selected_h = 0, selected_f = 0;
+    double selected_score = 0.0;
+    std::string selected_state, selected_action, posterior_identity;
+    size_t stale_entries_removed = 0;
+    size_t duplicate_successors_suppressed = 0;
+    size_t states_reopened = 0;
+};
+using common_semi_oracle_frontier_observer = std::function<void(const common_semi_oracle_frontier_event &)>;
 
 // Receives only host-generated legal successor actions. Returns a permutation
 // of their indices; it cannot introduce a state, action, cost or heuristic.
@@ -76,9 +97,11 @@ struct common_semi_oracle_query {
     std::vector<std::string> guidance;
     common_semi_oracle_transition_adviser transition_adviser;
     common_semi_oracle_transition_score transition_score;
+    std::function<std::string(const std::string &, const std::string &, const std::string &)> historical_identity;
     bool record_search_history = false;
     bool use_historical_order = false;
     common_semi_oracle_search_policy search_policy;
+    common_semi_oracle_frontier_observer frontier_observer;
 };
 
 struct common_semi_oracle_result {

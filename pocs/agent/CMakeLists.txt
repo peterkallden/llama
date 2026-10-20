@@ -151,9 +151,10 @@ target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
 target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-adaptation-storage)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if(LLAMA_BUILD_TESTS)
-    add_test(NAME llama-agent-semi-oracle-target-hunt-ctest COMMAND ${TARGET}
-        --trace ${CMAKE_CURRENT_BINARY_DIR}/target-hunt-trace.jsonl)
-    set_tests_properties(llama-agent-semi-oracle-target-hunt-ctest PROPERTIES TIMEOUT 600 LABELS "agent-adaptation")
+    # Keep routine CTest verification bounded; the full JSONL comparison is
+    # an explicit manual diagnostic run and can take substantially longer.
+    add_test(NAME llama-agent-semi-oracle-target-hunt-ctest COMMAND ${TARGET} --quick)
+    set_tests_properties(llama-agent-semi-oracle-target-hunt-ctest PROPERTIES TIMEOUT 1800 LABELS "agent-adaptation")
 endif()
 
 # Optional Qwen/Phi smoke for natural RuleSpec DSL, dynamic action contracts,

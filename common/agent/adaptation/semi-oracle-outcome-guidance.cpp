@@ -47,6 +47,8 @@ bool common_semi_oracle_outcome_guidance_config_validate(
             config.projection_cache_bytes > 256 * 1024 * 1024 ||
             (config.search_algorithm != "exact" && config.search_algorithm != "focal") ||
             (config.sampling_policy != "posterior_sampling" && config.sampling_policy != "posterior_mean") ||
+            (config.exact_history_order != common_semi_oracle_history_order::before_heuristic &&
+             config.exact_history_order != common_semi_oracle_history_order::after_heuristic) ||
             !std::isfinite(config.suboptimality_bound) || config.suboptimality_bound < 1.0 ||
             config.suboptimality_bound > 2.0 ||
             (config.search_algorithm == "exact" && config.suboptimality_bound != 1.0)) {
@@ -352,12 +354,18 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
     guided.record_search_history = true;
     guided.use_historical_order = config.mode == "experimental";
     std::map<std::pair<std::string,std::string>,double> transition_scores;
+    std::map<std::pair<std::string,std::string>,std::string> transition_identities;
     if (!query.transition_adviser && !query.transition_score && fallback.empty()) {
         guided.transition_score = [&](const std::string & before, const std::string &,
                 const std::string & action) {
             const auto score=transition_scores.find({before,action});
             if(score==transition_scores.end())throw std::runtime_error("missing transition posterior score");
             return score->second;
+        };
+        guided.historical_identity = [&](const std::string & before, const std::string &,
+                const std::string & action) {
+            const auto identity = transition_identities.find({before, action});
+            return identity == transition_identities.end() ? std::string{} : identity->second;
         };
         guided.transition_adviser = [&](const std::string & current, const std::vector<std::string> & candidates,
                 std::vector<size_t> & order, std::string & advice_error) {
@@ -379,6 +387,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
                 const auto fine_key=category(current,action);
                 const auto coarse_key=target?coarse_category(current,action):fine_key;
                 const auto key=target&&group_counts[fine_key]<8?coarse_key:fine_key;
+                transition_identities[{current,action}]=key;
                 const auto found = weights.find(key);
                 const counts w = found == weights.end() ? counts{} : found->second;
                 matching_history = matching_history || w[0] + w[1] + w[2] > 0.0;
@@ -478,6 +487,7 @@ bool common_semi_oracle_evaluate_with_history(common_semi_oracle_store & store,
         {"fixture_group", fixture}, {"observations", observations},
         {"diagnostics", {{"mode", config.mode}, {"seed", config.seed},
             {"sampling_policy",config.sampling_policy},
+            {"exact_history_order",config.exact_history_order==common_semi_oracle_history_order::after_heuristic?"after_h":"before_h"},
             {"search_algorithm",result.applied_search_policy.algorithm==common_semi_oracle_search_algorithm::focal?"focal":"exact"},
             {"suboptimality_bound",result.applied_search_policy.suboptimality_bound},
             {"family",context["family"]},{"evaluator_revision",context["evaluator_revision"]},

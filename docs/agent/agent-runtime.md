@@ -4648,8 +4648,17 @@ across parents and are not used as frontier scores. Goal reachability can
 remain verified after depth pruning, but optimality and Focal bound-proof flags
 are then false. Target Hunt feature/evaluator V3 and history payload version 4
 separate the corrected symmetry transform from older history. These seam
-corrections await compilation and test execution; see the SemiOracle document's
-implementation-status section for the remaining production and smoke work.
+corrections are covered by the focused SemiOracle tests. Exact-search tie
+ordering is host-configurable with
+`runtime.adaptation.semi_oracle.search.exact_history_order`: `before_h` (the
+default) orders equal-f nodes by historical score, then `h`, then ordinal;
+`after_h` orders by `h`, then historical score, then ordinal. Both retain
+minimum-f ordering and do not change transition validity, costs, goal checks,
+or proof semantics. `shadow` still executes the ordinary `f → h → ordinal`
+reference order. An optional frontier observer records selected-node,
+focal-set, budget, stale-entry, duplicate and reopen diagnostics only when
+explicitly installed. See the SemiOracle document's implementation-status
+section for the current comparison and smoke coverage.
 
 The `semi-oracle` tool profile also includes `oracle.problem.define`. With an
 active `target_hunt` RuleSet, it admits a bounded grid/start/target into the

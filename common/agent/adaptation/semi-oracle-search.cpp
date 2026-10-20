@@ -19,6 +19,7 @@ struct node {
     size_t depth = 0;
     size_t ordinal = 0;
     double historical_score = 0.0;
+    std::string posterior_identity;
     bool dead_end = false;
 };
 
@@ -71,6 +72,7 @@ bool common_semi_oracle_search_run(
     std::set<queue_item, queue_order> frontier;
     std::unordered_map<std::string, size_t> best_cost;
     size_t ordinal = 0;
+    size_t decisions = 0;
     bool depth_limited = false;
     const auto finish_history = [&](size_t goal_index) {
         if (!problem.record_history) return;
@@ -98,9 +100,10 @@ bool common_semi_oracle_search_run(
     };
 
     while (!frontier.empty()) {
+        size_t stale_removed = 0;
         // Only a stale minimum can affect f_min. Avoid an O(frontier) sweep
         // before every expansion of ordinary exact A*.
-        while(!frontier.empty()&&!current_entry(*frontier.begin()))frontier.erase(frontier.begin());
+        while(!frontier.empty()&&!current_entry(*frontier.begin())){frontier.erase(frontier.begin());++stale_removed;}
         if(frontier.empty())break;
         auto selected = frontier.begin();
         if (focal) {
@@ -119,12 +122,50 @@ bool common_semi_oracle_search_run(
             const size_t f_min = frontier.begin()->f;
             for (auto it = frontier.begin(); it != frontier.end() && it->f == f_min; ++it) {
                 if(!current_entry(*it))continue;
-                if (it->score < selected->score || (it->score == selected->score &&
-                        (it->h < selected->h || (it->h == selected->h && it->ordinal < selected->ordinal))))
+                const bool after_h = policy.exact_history_order ==
+                    common_semi_oracle_history_order::after_heuristic;
+                const bool better = after_h
+                    ? (it->h < selected->h || (it->h == selected->h &&
+                        (it->score < selected->score || (it->score == selected->score && it->ordinal < selected->ordinal))))
+                    : (it->score < selected->score || (it->score == selected->score &&
+                        (it->h < selected->h || (it->h == selected->h && it->ordinal < selected->ordinal))));
+                if (better)
                     selected = it;
             }
         }
         const queue_item item = *selected;
+        common_semi_oracle_frontier_event event;
+        const bool observe = static_cast<bool>(problem.frontier_observer);
+        if (observe) {
+            event.decision = decisions;
+            event.expansions_used = result.expansions;
+            event.expansions_remaining = budget.max_expansions > result.expansions
+                ? budget.max_expansions - result.expansions : 0;
+            event.f_min = frontier.begin()->f;
+            event.focal_limit = focal ? static_cast<double>(policy.suboptimality_bound) * event.f_min
+                                      : static_cast<double>(event.f_min);
+            std::set<size_t> focal_classes;
+            for (const auto & candidate : frontier) {
+                if (!current_entry(candidate)) continue;
+                ++event.frontier_size;
+                if (candidate.f == event.f_min) ++event.equal_f_candidates;
+                if (focal && static_cast<long double>(candidate.f) <=
+                        static_cast<long double>(policy.suboptimality_bound) * event.f_min) {
+                    ++event.focal_candidates;
+                    focal_classes.insert(candidate.f);
+                }
+            }
+            event.focal_f_classes = focal ? focal_classes.size() : 1;
+            event.selected_g = nodes[item.node_index].g;
+            event.selected_h = item.h;
+            event.selected_f = item.f;
+            event.selected_score = item.score;
+            event.selected_state = nodes[item.node_index].state;
+            event.selected_action = nodes[item.node_index].action;
+            event.posterior_identity = nodes[item.node_index].posterior_identity;
+            event.stale_entries_removed = stale_removed;
+        }
+        ++decisions;
         frontier.erase(selected);
         const node current = nodes[item.node_index];
         const auto best = best_cost.find(current.state);
@@ -133,6 +174,7 @@ bool common_semi_oracle_search_run(
         bool goal = false;
         if (!problem.is_goal(current.state, goal, result.error)) return false;
         if (goal) {
+            if (observe) { try { problem.frontier_observer(event); } catch (...) {} }
             result.stop_reason = "goal_reached";
             result.found = true;
             result.total_cost = current.g;
@@ -148,9 +190,14 @@ bool common_semi_oracle_search_run(
             finish_history(item.node_index);
             return true;
         }
-        if (current.depth >= budget.max_depth) { depth_limited = true; continue; }
+        if (current.depth >= budget.max_depth) {
+            depth_limited = true;
+            if (observe) { try { problem.frontier_observer(event); } catch (...) {} }
+            continue;
+        }
         if (result.expansions >= budget.max_expansions) {
             result.stop_reason = "max_expansions";
+            if (observe) { try { problem.frontier_observer(event); } catch (...) {} }
             finish_history(std::numeric_limits<size_t>::max());
             return true;
         }
@@ -189,7 +236,11 @@ bool common_semi_oracle_search_run(
             size_t next_g = 0;
             if (!add_saturated(current.g, transition.cost, next_g)) continue;
             const auto previous = best_cost.find(transition.state);
-            if (previous != best_cost.end() && previous->second <= next_g) continue;
+            if (previous != best_cost.end() && previous->second <= next_g) {
+                if (observe) ++event.duplicate_successors_suppressed;
+                continue;
+            }
+            if (previous != best_cost.end() && observe) ++event.states_reopened;
             const size_t h = problem.heuristic ? problem.heuristic(transition.state) : 0;
             size_t f = 0;
             if (!add_saturated(next_g, h, f)) continue;
@@ -212,10 +263,15 @@ bool common_semi_oracle_search_run(
             next.state = transition.state; next.g = next_g; next.h = h; next.parent = item.node_index;
             next.action = transition.action; next.edge_cost = transition.cost; next.depth = current.depth + 1;
             next.ordinal = ordinal++; next.historical_score = score;
+            if (problem.historical_identity) {
+                try { next.posterior_identity = problem.historical_identity(current.state, transition.state, transition.action); }
+                catch (...) { next.posterior_identity.clear(); }
+            }
             const size_t next_index = nodes.size(); nodes.push_back(std::move(next));
             best_cost[transition.state] = next_g;
             frontier.insert({f, h, nodes.back().ordinal, next_index, score});
         }
+        if (observe) { try { problem.frontier_observer(event); } catch (...) {} }
     }
     result.exhausted = !depth_limited;
     result.stop_reason = depth_limited ? "max_depth" : "frontier_exhausted";

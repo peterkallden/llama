@@ -525,6 +525,35 @@ int main() {
     common_semi_oracle_search_result exact_search, focal_search;
     CHECK(common_semi_oracle_search_run(focal_problem, {16, 8}, exact_policy, false, exact_search));
     CHECK(exact_search.found && exact_search.total_cost == 2 && exact_search.optimality_proven);
+    auto after_h_problem=focal_problem;
+    after_h_problem.initial_state="root-after-h";
+    after_h_problem.heuristic=[](const std::string & state) {
+        return state=="higher-h"||state=="goal-higher"?size_t{1}:size_t{0};
+    };
+    after_h_problem.historical_score=[](const std::string & state,const std::string &) {
+        return state=="higher-h"||state=="goal-higher"?-1.0:0.0;
+    };
+    common_semi_oracle_frontier_event observed_event;
+    std::vector<common_semi_oracle_frontier_event> observed_events;
+    after_h_problem.frontier_observer=[&](const auto & event){observed_event=event;observed_events.push_back(event);};
+    auto before_h=exact_policy;before_h.exact_history_order=common_semi_oracle_history_order::before_heuristic;
+    after_h_problem.expand=[](const std::string & state,
+            std::vector<common_semi_oracle_search_transition> & transitions,std::string &) {
+        transitions.clear();
+        if(state=="root-after-h") transitions={{"lower-h","low",2},{"higher-h","high",1}};
+        else if(state=="lower-h") transitions={{"goal-lower","finish",1}};
+        else if(state=="higher-h") transitions={{"goal-higher","finish",1}};
+        return true;
+    };
+    CHECK(common_semi_oracle_search_run(after_h_problem,{1,8},before_h,true,exact_search));
+    CHECK(exact_search.stop_reason=="max_expansions"&&observed_events.size()==2&&
+        observed_events[1].selected_state=="higher-h"&&observed_events[1].selected_f==2);
+    auto after_h=before_h;after_h.exact_history_order=common_semi_oracle_history_order::after_heuristic;
+    observed_events.clear();
+    CHECK(common_semi_oracle_search_run(after_h_problem,{1,8},after_h,true,exact_search));
+    CHECK(exact_search.stop_reason=="max_expansions"&&observed_events.size()==2&&
+        observed_events[1].selected_state=="lower-h"&&observed_events[1].selected_f==2);
+    CHECK(observed_event.selected_f==observed_event.selected_g+observed_event.selected_h);
     common_semi_oracle_search_policy focal_policy;
     focal_policy.algorithm = common_semi_oracle_search_algorithm::focal;
     focal_policy.suboptimality_bound = 1.5;

@@ -4,7 +4,9 @@
 #include "tools/agent/adaptation/semi-oracle-store-factory.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -14,6 +16,7 @@
 #include <random>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace {
 using json=nlohmann::ordered_json;
@@ -64,9 +67,22 @@ std::vector<int> distances_to_target(const fixture & f){const int h=int(f.grid.s
             if(nr<0||nc<0||nr>=h||nc>=w||f.grid[nr][nc]=='#'||dist[nr*w+nc]>=0)continue;
             dist[nr*w+nc]=dist[p]+1;q.push(nr*w+nc);}}
     return dist;}
-fixture generate(size_t id,std::mt19937_64 & rng){int n=id%2?13:9;fixture f;f.grid.assign(n,std::string(n,'.'));
-    if(id%4<2){for(int r=1;r<n-1;r+=2){int gap=int(rng()%n);for(int c=0;c<n;++c)if(c!=gap)f.grid[r][c]='#';}}
-    else for(auto & row:f.grid)for(auto & c:row)if(rng()%4==0)c='#';
+fixture generate(size_t id,size_t family,std::mt19937_64 & rng){int n=id%2?13:9;fixture f;f.grid.assign(n,std::string(n,'.'));
+    if(family==0){
+        if(id%4<2){for(int r=1;r<n-1;r+=2){int gap=int(rng()%n);for(int c=0;c<n;++c)if(c!=gap)f.grid[r][c]='#';}}
+        else for(auto & row:f.grid)for(auto & c:row)if(rng()%4==0)c='#';
+    } else {
+        // A separate recurring-detour family: repeated barriers with offset
+        // openings. Rotations/reflections vary presentation without changing
+        // the underlying local corridor patterns.
+        for(int r=2;r<n-2;r+=3){const int gap=int(rng()%n);for(int c=0;c<n;++c)if(c!=gap)f.grid[r][c]='#';}
+        if(n>9){const int wall=2+int(rng()%3);for(int r=0;r<n;++r)if(r!=wall&&r!=wall+3)f.grid[r][n/2]='#';}
+        const int transform=int(rng()%8);
+        if(transform&1)for(auto & row:f.grid)std::reverse(row.begin(),row.end());
+        if(transform&2)std::reverse(f.grid.begin(),f.grid.end());
+        if(transform&4){std::vector<std::string> rotated(size_t(n),std::string(size_t(n),'.'));
+            for(int r=0;r<n;++r)for(int c=0;c<n;++c)rotated[c][n-1-r]=f.grid[r][c];f.grid=std::move(rotated);}
+    }
     f.sr=int(rng()%n);f.sc=int(rng()%n);f.tr=int(rng()%n);f.tc=int(rng()%n);f.grid[f.sr][f.sc]='.';f.grid[f.tr][f.tc]='.';return f;}
 void check_result(const fixture & f,const common_semi_oracle_result & r,double allowed_bound=1.0){int distance=bfs(f);
     if(r.verdict==common_semi_oracle_verdict::satisfied){auto proof=json::parse(r.proof_json);require(distance>=0&&
@@ -85,11 +101,29 @@ json trace_guidance(const std::string & text){
     }
     return value;
 }
+json trace_frontier(const common_semi_oracle_frontier_event & e){
+    return json{{"decision",e.decision},{"expansions_used",e.expansions_used},
+        {"expansions_remaining",e.expansions_remaining},{"frontier_size",e.frontier_size},
+        {"equal_f_candidates",e.equal_f_candidates},{"focal_candidates",e.focal_candidates},
+        {"focal_f_classes",e.focal_f_classes},{"f_min",e.f_min},{"focal_limit",e.focal_limit},
+        {"selected_g",e.selected_g},{"selected_h",e.selected_h},{"selected_f",e.selected_f},
+        {"selected_score",e.selected_score},{"selected_state",e.selected_state},
+        {"selected_action",e.selected_action},{"posterior_identity",e.posterior_identity},
+        {"stale_entries_removed",e.stale_entries_removed},
+        {"duplicate_successors_suppressed",e.duplicate_successors_suppressed},
+        {"states_reopened",e.states_reopened}};
+}
 }
 
 int main(int argc,char ** argv){try{
-    std::ofstream trace;if(argc==3&&std::string(argv[1])=="--trace"){trace.open(argv[2]);require(bool(trace),"cannot open trace");}
-    else require(argc==1,"usage: target-hunt-smoke [--trace FILE]");
+    std::ofstream trace;bool quick=false;
+    for(int arg=1;arg<argc;++arg){
+        const std::string option=argv[arg];
+        if(option=="--quick")quick=true;
+        else if(option=="--trace"&&arg+1<argc){trace.open(argv[++arg]);require(bool(trace),"cannot open trace");}
+        else throw std::runtime_error("usage: target-hunt-smoke [--quick] [--trace FILE]");
+    }
+    const uint64_t seed_repetitions=quick?2:8;
     std::string error;auto store=make_agent_semi_oracle_store("in_memory","",error);require(bool(store),error);
     common_semi_oracle_tool_service training(*store,"target-smoke","target-session",{"shadow",0,1024},"target-project");
     common_semi_oracle_ruleset rule;require(training.define_ruleset(rules,common_semi_oracle_rule_authority::declared,rule,error),error);
@@ -147,17 +181,25 @@ int main(int argc,char ** argv){try{
         focal_proof["total_cost"].get<double>()<=1.1*bfs({{"...","..."},0,0,0,2}),
         "Focal A* did not return a path with an explicit host-bound proof");
     std::mt19937_64 rng(20261019);std::set<std::string> groups;std::vector<fixture> fixtures;
-    for(size_t attempt=0;fixtures.size()<96&&attempt<10000;++attempt){auto f=generate(attempt,rng);
+    for(size_t attempt=0;fixtures.size()<192&&attempt<20000;++attempt){
+        const size_t family=fixtures.size()<96?0:1;
+        auto f=generate(attempt,family,rng);
         if(f.sr==f.tr&&f.sc==f.tc)continue;
         require(training.define_problem(dsl(f),state,error),error);
         if(groups.insert(common_semi_oracle_target_group(state)).second)fixtures.push_back(std::move(f));}
-    require(fixtures.size()==96,"insufficient independent maps");
+    require(fixtures.size()==192,"insufficient independent maps in both fixture families");
     // Independent BFS truth pass: branch regret is a label, never a feature.
     std::vector<common_outcome_guidance_projection_observation> branch_rows;
     const std::array<std::string,4> branch_actions{{"north","south","east","west"}};
     const int branch_dr[]={-1,1,0,0},branch_dc[]={0,0,1,-1};
     json branch_training=json::array();
-    for(size_t fi=0;fi<64;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
+    const std::array<std::pair<size_t,size_t>,2> train_ranges{{{0,64},{96,160}}};
+    const std::array<std::pair<size_t,size_t>,2> heldout_ranges{{{64,96},{160,192}}};
+    std::vector<size_t> heldout_indices;
+    if(quick){heldout_indices={64,65,66,67,68,69,91,160,161,162,163,164,165,166,167};}
+    else for(const auto & range:heldout_ranges)for(size_t i=range.first;i<range.second;++i)heldout_indices.push_back(i);
+    const size_t heldout_count=heldout_indices.size();
+    for(const auto & range:train_ranges)for(size_t fi=range.first;fi<range.second;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
         const auto distance=distances_to_target(f);json map_labels=json::array();
         json group_state={{"grid",f.grid},{"start",{f.sr,f.sc}},{"target",{f.tr,f.tc}},{"position",{f.sr,f.sc}}};
         const std::string fixture_group=common_semi_oracle_target_group(group_state.dump());
@@ -181,15 +223,19 @@ int main(int argc,char ** argv){try{
         branch_training.push_back({{"fixture",fi},{"fixture_group",fixture_group},{"labels",map_labels}});
     }
     common_outcome_guidance_projection branch_projection;
-    const std::string branch_source="target-hunt-bfs-training-v1:64-independent-fixture-groups";
+    const std::string branch_source="target-hunt-bfs-training-v1:128-independent-fixture-groups";
     require(common_outcome_guidance_build_projection(branch_rows,"target-hunt-branch-projection-v1",
         branch_source,0,branch_projection,error),error);
     std::map<std::string,std::vector<double>> branch_weights;std::map<std::string,size_t> branch_groups;
     branch_projection.aggregate_excluding("",branch_weights,branch_groups);
-    size_t branch_baseline_top1=0,branch_guided_top1=0,branch_pairs=0,branch_baseline_correct=0,branch_guided_correct=0;
+    size_t branch_baseline_top1=0,branch_guided_top1=0,branch_pairs=0,branch_baseline_correct=0,branch_guided_correct=0,branch_scored_candidates=0;
+    double branch_baseline_brier=0.0,branch_guided_brier=0.0;
+    double branch_baseline_brier_map_macro=0.0,branch_guided_brier_map_macro=0.0;
+    size_t branch_brier_maps=0;
     json branch_heldout=json::array();
-    for(size_t fi=64;fi<96;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
-        const auto distance=distances_to_target(f);size_t map_baseline=0,map_guided=0,map_pairs=0,map_base_correct=0,map_guide_correct=0;
+    for(const auto & range:heldout_ranges)for(size_t fi=range.first;fi<range.second;++fi){const auto & f=fixtures[fi];const int h=int(f.grid.size()),w=int(f.grid[0].size());
+        const auto distance=distances_to_target(f);size_t map_baseline=0,map_guided=0,map_pairs=0,map_base_correct=0,map_guide_correct=0,map_scored=0;
+        double map_base_brier=0.0,map_guided_brier=0.0;
         for(int r=0;r<h;++r)for(int c=0;c<w;++c){const int here=r*w+c;if(f.grid[r][c]=='#')continue;
             json state_json={{"grid",f.grid},{"start",{f.sr,f.sc}},{"target",{f.tr,f.tc}},{"position",{r,c}}};
             struct branch_candidate{std::string action;int truth;size_t original;double p_opt=1.0/3.0,p_unreachable=1.0/3.0;};
@@ -207,6 +253,12 @@ int main(int argc,char ** argv){try{
                         counts,{1.0/3,1.0/3,1.0/3},0.0,3.0,posterior),"invalid branch posterior");
                     candidates.push_back({branch_actions[ai],truth,ai,posterior.category_probabilities[0],posterior.category_probabilities[2]});
                 }else candidates.push_back({branch_actions[ai],truth,ai});
+                const double p[3]={candidates.back().p_opt,
+                    std::max(0.0,1.0-candidates.back().p_opt-candidates.back().p_unreachable),
+                    candidates.back().p_unreachable};
+                for(size_t k=0;k<3;++k){const double delta=p[k]-(size_t(truth)==k?1.0:0.0);map_guided_brier+=delta*delta;}
+                double base_row=0.0;for(size_t k=0;k<3;++k){const double d=1.0/3.0-(size_t(truth)==k?1.0:0.0);base_row+=d*d;}
+                map_base_brier+=base_row;++map_scored;
             }
             if(candidates.empty())continue;
             auto guided_candidates=candidates;
@@ -233,17 +285,27 @@ int main(int argc,char ** argv){try{
                 }
             }
         }
-        branch_heldout.push_back({{"fixture",fi},{"baseline_optimal_top1",map_baseline},
+        branch_baseline_brier+=map_base_brier;branch_guided_brier+=map_guided_brier;branch_scored_candidates+=map_scored;
+        if(map_scored){branch_baseline_brier_map_macro+=map_base_brier/map_scored;
+            branch_guided_brier_map_macro+=map_guided_brier/map_scored;++branch_brier_maps;}
+        branch_heldout.push_back({{"fixture",fi},{"fixture_family",fi<96?"mixed_corridor_random":"recurring_detours"},{"baseline_optimal_top1",map_baseline},
             {"guided_optimal_top1",map_guided},{"strict_sibling_pairs",map_pairs},
-            {"baseline_correct_pairs",map_base_correct},{"guided_correct_pairs",map_guide_correct}});
+            {"baseline_correct_pairs",map_base_correct},{"guided_correct_pairs",map_guide_correct},
+            {"scored_candidates",map_scored},{"baseline_brier_sum",map_base_brier},{"guided_brier_sum",map_guided_brier}});
     }
     const json branch_report={{"truth_source","independent_reverse_bfs"},{"feature_version","target_hunt_features_v3"},
-        {"training_fixture_groups",64},{"heldout_fixture_groups",32},{"projection_fingerprint",branch_projection.fingerprint},
+        {"training_fixture_groups",128},{"heldout_fixture_groups",64},{"projection_fingerprint",branch_projection.fingerprint},
         {"baseline_optimal_top1",branch_baseline_top1},{"posterior_mean_optimal_top1",branch_guided_top1},
         {"strict_sibling_pairs",branch_pairs},{"baseline_correct_pairs",branch_baseline_correct},
-        {"posterior_mean_correct_pairs",branch_guided_correct},{"heldout_by_fixture",branch_heldout}};
+        {"posterior_mean_correct_pairs",branch_guided_correct},{"scored_candidates",branch_scored_candidates},
+        {"uniform_baseline_brier",branch_scored_candidates?branch_baseline_brier/branch_scored_candidates:0.0},
+        {"posterior_mean_brier",branch_scored_candidates?branch_guided_brier/branch_scored_candidates:0.0},
+        {"map_macro_uniform_baseline_brier",branch_brier_maps?branch_baseline_brier_map_macro/branch_brier_maps:0.0},
+        {"map_macro_posterior_mean_brier",branch_brier_maps?branch_guided_brier_map_macro/branch_brier_maps:0.0},
+        {"brier_map_groups",branch_brier_maps},
+        {"heldout_by_fixture",branch_heldout}};
     if(trace)trace<<json{{"phase","verified_branch_quality"},{"training",branch_training},{"report",branch_report}}.dump()<<'\n';
-    for(size_t budget:{16,64,256})for(size_t i=0;i<64;++i){
+    for(size_t budget:{16,64,256})for(const auto & range:train_ranges)for(size_t i=range.first;i<range.second;++i){
         require(training.define_problem(dsl(fixtures[i]),state,error),error);
         std::vector<std::string> order={"north","south","east","west"};
         auto training_rng=rng;training_rng.discard(uint64_t(i*7+budget));
@@ -260,8 +322,8 @@ int main(int argc,char ** argv){try{
         return context.at("max_depth")!=256||
             (budget!=16&&budget!=64&&budget!=256);
     }),frozen.history.end());
-    require(frozen.history.size()==192,
-        "training snapshot must contain one completed search per fixture and expansion budget");
+    require(frozen.history.size()==384,
+        "training snapshot must contain two families with one search per training fixture and expansion budget");
     // Keep every prediction input and source ID, while avoiding repeated parsing
     // of verbose diagnostics. The original evaluations remain in the production store/trace.
     for(auto & record:frozen.history){auto data=json::parse(record.guidance_json);
@@ -342,13 +404,28 @@ int main(int argc,char ** argv){try{
     conflicting["context"]["goal"]="conflicting-goal";
     frozen.history.back().guidance_json=conflicting.dump();
     require(evaluate("target-smoke",rule)["conflicting_records"]==1,"conflicting retry not excluded");frozen.history.pop_back();
-    json summaries=json::array();size_t changed=0,changed_paths=0;
-    for(size_t budget:{16,64,256})for(uint64_t seed=0;seed<8;++seed){
+    json summaries=json::array();size_t changed=0,changed_paths=0,after_h_changed_paths=0;
+    using case_key=std::tuple<size_t,uint64_t,size_t>;
+    std::map<std::string,std::map<case_key,std::pair<bool,size_t>>> paired_cases;
+    for(size_t budget:{16,64,256})for(uint64_t seed=0;seed<seed_repetitions;++seed){
         json row={{"budget",budget},{"seed",seed}};
-        for(const auto * mode:{"off","random_tie","shadow","experimental"}){size_t hits=0,unknown=0,expansions=0;double elapsed=0,projection_ms=0,adviser_ms=0,search_ms=0;
+        for(const auto * mode:{"off","random_tie","shadow","experimental","experimental_mean",
+                "experimental_after_h","experimental_after_h_mean"}){
+            const std::string mode_name=mode;
+            if((mode_name=="experimental_mean"||mode_name=="experimental_after_h_mean")&&seed!=0)continue;
+            size_t hits=0,unknown=0,expansions=0;double elapsed=0,projection_ms=0,adviser_ms=0,search_ms=0;
             const std::string guidance_mode=std::string(mode)=="random_tie"?"off":mode;
-            common_semi_oracle_tool_service service(frozen,"target-smoke","target-session",{guidance_mode,seed,1024},"target-project");
-            for(size_t i=64;i<96;++i){require(service.define_problem(dsl(fixtures[i]),state,error),error);
+            common_semi_oracle_outcome_guidance_config config{guidance_mode,seed,1024};
+            if(mode_name=="experimental_mean"||mode_name=="experimental_after_h_mean")
+                config.sampling_policy="posterior_mean";
+            if(mode_name=="experimental_after_h"||mode_name=="experimental_after_h_mean"){
+                config.mode="experimental";
+                config.exact_history_order=common_semi_oracle_history_order::after_heuristic;
+            } else if(mode_name=="experimental_mean") {
+                config.mode="experimental";
+            }
+            common_semi_oracle_tool_service service(frozen,"target-smoke","target-session",config,"target-project");
+            for(const size_t i:heldout_indices){require(service.define_problem(dsl(fixtures[i]),state,error),error);
                 // Stable problem identity across variants: canonical instance bytes, not a fresh host nonce.
                 auto stable=json::parse(state);stable["problem_id"]="heldout-"+std::to_string(i);state=stable.dump();
                 require(service.initialize_active_state(state,true,error),error);
@@ -357,45 +434,85 @@ int main(int argc,char ** argv){try{
                     tie_order={"north","south","east","west"};
                     std::mt19937_64 tie_rng(seed^(uint64_t(i)<<16)^uint64_t(budget));std::shuffle(tie_order.begin(),tie_order.end(),tie_rng);
                 }
+                std::vector<common_semi_oracle_frontier_event> frontier_events;
+                const bool focus_frontier=trace&&(budget==16)&&(i==66||i==91)&&
+                    (std::string(mode)=="off"||std::string(mode)=="experimental"||
+                     std::string(mode)=="experimental_after_h");
+                common_semi_oracle_frontier_observer frontier_observer;
+                if(focus_frontier)frontier_observer=[&](const auto & event){frontier_events.push_back(event);};
                 auto start=std::chrono::steady_clock::now();common_semi_oracle_result r;
-                require(service.search_active_goal(r,error,{budget,256},tie_order),error);
+                require(service.search_active_goal(r,error,{budget,256},tie_order,std::move(frontier_observer)),error);
                 elapsed+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();check_result(fixtures[i],r);
                 hits+=r.verdict==common_semi_oracle_verdict::satisfied;unknown+=r.verdict==common_semi_oracle_verdict::unknown;expansions+=r.expansions;
+                paired_cases[mode_name][std::make_tuple(budget,seed,i)]={
+                    r.verdict==common_semi_oracle_verdict::satisfied,r.expansions};
                 auto guidance=trace_guidance(r.search_guidance_json);
                 if(guidance.contains("diagnostics")){
                     const auto & diagnostics=guidance["diagnostics"];
                     projection_ms+=diagnostics.value("projection_ms",0.0);adviser_ms+=diagnostics.value("adviser_ms",0.0);search_ms+=diagnostics.value("search_ms",0.0);
                 }
-                if(std::string(mode)=="experimental")for(const auto & decision:guidance["diagnostics"]["decisions"]){
+                if(mode_name.rfind("experimental",0)==0)for(const auto & decision:guidance["diagnostics"]["decisions"]){
                     std::vector<size_t> original_order(decision["executed_order"].size());std::iota(original_order.begin(),original_order.end(),size_t{0});
                     if(decision["executed_order"]!=json(original_order))++changed;}
-                if(trace)trace<<json{{"phase","heldout"},{"fixture",i},{"fixture_group",common_semi_oracle_target_group(state)},
+                if(trace)trace<<json{{"phase","heldout"},{"fixture",i},
+                    {"fixture_family",i<96?"mixed_corridor_random":"recurring_detours"},
+                    {"fixture_group",common_semi_oracle_target_group(state)},
                     {"problem_state",json::parse(state)},
                     {"mode",mode},{"seed",seed},{"budget",budget},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
                     {"stop_reason",r.reason},
                     {"expansions",r.expansions},{"bfs_distance",bfs(fixtures[i])},{"proof",json::parse(r.proof_json.empty()?"null":r.proof_json)},
                     {"guidance",guidance}}.dump()<<'\n';
+                if(focus_frontier)for(const auto & event:frontier_events)
+                    trace<<json{{"phase","frontier_decision"},{"fixture",i},{"seed",seed},
+                        {"budget",budget},{"mode",mode},{"event",trace_frontier(event)}}.dump()<<'\n';
                 // For every task, shadow must preserve the complete returned proof and expansion count.
                 static std::map<std::tuple<size_t,uint64_t,size_t>,std::pair<std::string,size_t>> reference;
                 auto key=std::make_tuple(budget,seed,i);
                 if(std::string(mode)=="off")reference[key]={r.proof_json,r.expansions};
                 if(std::string(mode)=="shadow")require(reference.at(key)==std::make_pair(r.proof_json,r.expansions),"shadow changed executed search");
-                if(std::string(mode)=="experimental"&&reference.at(key)!=std::make_pair(r.proof_json,r.expansions))++changed_paths;
+                if(mode_name=="experimental"&&reference.at(key)!=std::make_pair(r.proof_json,r.expansions))++changed_paths;
+                if(mode_name=="experimental_after_h"&&reference.at(key)!=std::make_pair(r.proof_json,r.expansions))++after_h_changed_paths;
             }
-            row[mode]={{"found",hits},{"unknown",unknown},{"unreachable",32-hits-unknown},{"expansions",expansions},{"total_ms",elapsed},
+            row[mode]={{"found",hits},{"unknown",unknown},{"unreachable",heldout_count-hits-unknown},{"heldout_maps",heldout_count},{"repetitions",1},{"expansions",expansions},{"total_ms",elapsed},
                 {"projection_ms",std::string(mode)=="off"?json(nullptr):json(projection_ms)},
                 {"adviser_ms",std::string(mode)=="off"?json(nullptr):json(adviser_ms)},
                 {"search_evaluation_ms",std::string(mode)=="off"?json(nullptr):json(search_ms)}};
         }summaries.push_back(row);
     }
+    json paired_by_map=json::array();
+    for(const auto & policy:paired_cases){
+        if(policy.first=="off")continue;
+        std::map<std::pair<size_t,size_t>,std::array<size_t,4>> per_map;
+        std::map<std::pair<size_t,size_t>,std::vector<int64_t>> expansion_deltas;
+        for(const auto & item:policy.second){
+            const auto budget=std::get<0>(item.first),fixture=std::get<2>(item.first);
+            const auto baseline=paired_cases["off"].find(item.first);if(baseline==paired_cases["off"].end())continue;
+            auto & counts=per_map[{budget,fixture}];++counts[0];
+            if(item.second.first&&!baseline->second.first)++counts[1];
+            else if(!item.second.first&&baseline->second.first)++counts[2];
+            else ++counts[3];
+            expansion_deltas[{budget,fixture}].push_back(
+                static_cast<int64_t>(item.second.second)-static_cast<int64_t>(baseline->second.second));
+        }
+        for(const auto & item:per_map){
+            const auto & deltas=expansion_deltas[item.first];
+            const double mean_delta=deltas.empty()?0.0:std::accumulate(deltas.begin(),deltas.end(),0.0)/deltas.size();
+            paired_by_map.push_back({{"policy",policy.first},
+                {"budget",item.first.first},{"fixture",item.first.second},{"paired_seeds",item.second[0]},
+                {"wins",item.second[1]},{"losses",item.second[2]},{"unchanged",item.second[3]},
+                {"mean_expansion_delta_vs_off",mean_delta}});
+        }
+    }
     json focal_comparisons=json::array();
-    for(double bound:{1.0,1.05,1.1})for(const auto & variant:
+    for(double bound:{1.0,1.05,1.1,1.25})for(const auto & variant:
             std::vector<std::pair<std::string,std::string>>{{"off","posterior_sampling"},
                 {"experimental","posterior_mean"},{"experimental","posterior_sampling"}}){
         json variant_result={{"algorithm","focal"},{"bound",bound},{"mode",variant.first},
-            {"sampling_policy",variant.second},{"seeds",8}};
-        const uint64_t seed_count=variant.first=="experimental"&&variant.second=="posterior_sampling"?8:1;
+            {"sampling_policy",variant.second}};
+        const uint64_t seed_count=variant.first=="experimental"&&variant.second=="posterior_sampling"?seed_repetitions:1;
+        variant_result["seeds"]=seed_count;
         variant_result["sampling_repetitions"]=seed_count;
+        json focal_focus=json::array();
         for(size_t budget:{16,64,256}){size_t hits=0,unknown=0,expansions=0;double cost_sum=0.0;size_t cost_count=0;
             for(uint64_t seed=0;seed<seed_count;++seed){
                 common_semi_oracle_outcome_guidance_config focal_config;
@@ -405,30 +522,53 @@ int main(int argc,char ** argv){try{
                 // Keep every variant on the exact same frozen training source;
                 // writes from one focal run must not leak into later runs.
                 common_semi_oracle_tool_service focal_variant(frozen,"target-smoke","target-session",focal_config,"target-project");
-                for(size_t i=64;i<96;++i){require(focal_variant.define_problem(dsl(fixtures[i]),state,error),error);
+                for(const size_t i:heldout_indices){require(focal_variant.define_problem(dsl(fixtures[i]),state,error),error);
                     auto stable=json::parse(state);stable["problem_id"]="focal-"+std::to_string(i);state=stable.dump();
                     require(focal_variant.initialize_active_state(state,true,error),error);
-                    common_semi_oracle_result r;require(focal_variant.search_active_goal(r,error,{budget,256}),error);
+                    std::vector<common_semi_oracle_frontier_event> frontier_events;
+                    const bool focus_frontier=trace&&budget==16&&(i==66||i==91);
+                    common_semi_oracle_frontier_observer frontier_observer;
+                    if(focus_frontier)frontier_observer=[&](const auto & event){frontier_events.push_back(event);};
+                    common_semi_oracle_result r;require(focal_variant.search_active_goal(r,error,{budget,256},{},
+                        std::move(frontier_observer)),error);
                     check_result(fixtures[i],r,bound);hits+=r.verdict==common_semi_oracle_verdict::satisfied;
                     unknown+=r.verdict==common_semi_oracle_verdict::unknown;expansions+=r.expansions;
                     const auto proof=json::parse(r.proof_json.empty()?"null":r.proof_json);
                     if(proof.is_object()&&proof.contains("total_cost")){cost_sum+=proof["total_cost"].get<double>();++cost_count;}
-                    if(trace)trace<<json{{"phase","focal_comparison"},{"fixture",i},{"fixture_group",common_semi_oracle_target_group(state)},
+                    if(trace)trace<<json{{"phase","focal_comparison"},{"fixture",i},
+                        {"fixture_family",i<96?"mixed_corridor_random":"recurring_detours"},
+                        {"fixture_group",common_semi_oracle_target_group(state)},
                         {"mode",variant.first},{"sampling_policy",variant.second},{"seed",seed},{"budget",budget},
                         {"bound",bound},{"verdict",common_semi_oracle_verdict_name(r.verdict)},
                         {"expansions",r.expansions},{"bfs_distance",bfs(fixtures[i])},
                         {"proof",proof},{"guidance",trace_guidance(r.search_guidance_json)}}.dump()<<'\n';
+                    if(focus_frontier){
+                        size_t max_candidates=0,max_classes=0;for(const auto & event:frontier_events){
+                            max_candidates=std::max(max_candidates,event.focal_candidates);
+                            max_classes=std::max(max_classes,event.focal_f_classes);
+                            trace<<json{{"phase","frontier_decision"},{"fixture",i},{"seed",seed},
+                                {"budget",budget},{"mode",variant.first},{"sampling_policy",variant.second},
+                                {"bound",bound},{"event",trace_frontier(event)}}.dump()<<'\n';}
+                        focal_focus.push_back({{"fixture",i},{"seed",seed},{"decisions",frontier_events.size()},
+                            {"max_focal_candidates",max_candidates},{"max_focal_f_classes",max_classes}});
+                    }
                 }
             }
             variant_result["budget_"+std::to_string(budget)]={{"solved",hits},{"unknown",unknown},
                 {"expansions_total",expansions},{"mean_solved_cost",cost_count?cost_sum/cost_count:0.0}};
         }
+        variant_result["frontier_membership_focus_budget16"]=focal_focus;
         focal_comparisons.push_back(variant_result);
     }
     require(changed>0,"historical adviser never changed any successor order");
     require(changed_paths>0,"guidance changed orders but never changed an executed path or expansion count");
-    std::cout<<json{{"train_maps",64},{"heldout_maps",32},{"history_source","compact_frozen_projection"},{"frozen_records",frozen.history.size()},
-        {"changed_orders",changed},{"changed_searches",changed_paths},{"comparisons",summaries},
+    std::cout<<json{{"run_profile",quick?"quick":"full"},
+        {"fixture_families",json::array({"mixed_corridor_random","recurring_detours"})},
+        {"train_maps_per_family",64},{"heldout_maps_per_family",32},
+        {"heldout_maps_this_run",heldout_indices.size()},
+        {"history_source","compact_frozen_projection"},{"frozen_records",frozen.history.size()},
+        {"changed_orders",changed},{"changed_searches",changed_paths},{"after_h_changed_searches",after_h_changed_paths},
+        {"paired_by_map",paired_by_map},{"comparisons",summaries},
         {"focal_comparisons",focal_comparisons},{"verified_branch_quality",branch_report},
         {"persisted_branch_quality",persisted_branch_report}}.dump(2)<<'\n';
     return 0;

@@ -11,6 +11,7 @@ struct common_semi_oracle_outcome_guidance_config {
     std::string search_algorithm = "exact";
     double suboptimality_bound = 1.0;
     std::string sampling_policy = "posterior_sampling";
+    common_semi_oracle_history_order exact_history_order = common_semi_oracle_history_order::before_heuristic;
     size_t projection_cache_bytes = 16 * 1024 * 1024;
 };
 

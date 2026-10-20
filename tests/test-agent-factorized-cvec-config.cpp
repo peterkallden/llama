@@ -52,7 +52,7 @@ int main() {
         {"limits", {{"worker_count", 2}}},
     };
     compatible["runtime"]["adaptation"]["semi_oracle"] = {
-        {"search", {{"algorithm", "focal"}, {"suboptimality_bound", 1.1}}},
+        {"search", {{"algorithm", "focal"}, {"suboptimality_bound", 1.1}, {"exact_history_order", "after_h"}}},
         {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"},
             {"projection_cache_bytes", 2097152}}}
     };
@@ -61,6 +61,7 @@ int main() {
             config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
             config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
             config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            config.adaptation_semi_oracle_outcome_guidance.exact_history_order != common_semi_oracle_history_order::after_heuristic ||
             config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean") {
         std::cerr << "default compatible factorized cvec config rejected: " << error << '\n';
         return 1;
@@ -87,7 +88,9 @@ int main() {
             guidance_options.adaptation_flydelta_outcome_guidance.seed != 71 ||
             guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend" ||
             guidance_options.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
-            guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152) {
+            guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152 ||
+            guidance_options.adaptation_semi_oracle_outcome_guidance.exact_history_order !=
+                common_semi_oracle_history_order::after_heuristic) {
         std::cerr << "outcome guidance config did not reach daemon options\n";
         return 1;
     }
@@ -105,12 +108,16 @@ int main() {
             roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.exact_history_order != common_semi_oracle_history_order::after_heuristic ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean" ||
             roundtrip_config.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
             roundtrip_config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152) {
         std::cerr << "factorized cvec config did not round-trip: " << error << '\n';
         return 1;
     }
+    auto bad_exact_order=compatible;
+    bad_exact_order["runtime"]["adaptation"]["semi_oracle"]["search"]["exact_history_order"]="random";
+    if (parse_agent_host_config_json(bad_exact_order, config, error)) return __LINE__;
     for (const auto * family : {"semi_oracle", "flydelta"}) {
         auto zero_cache = compatible;
         zero_cache["runtime"]["adaptation"][family]["outcome_guidance"]["projection_cache_bytes"] = 0;

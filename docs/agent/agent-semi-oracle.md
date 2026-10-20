@@ -144,39 +144,61 @@ the same map/start/target share a fixture group. Proven-path observations are
 positive; other branches remain unknown unless an actual leaf was proved.
 A corridor allowing return is not a proven dead end. Algebra V1 remains readable.
 
-The model-free smoke trains on 64 maps with one actual search at each expansion
-budget 16/64/256, freezes the resulting 192 evaluation records, and evaluates
-32 held-out maps. Fixture-group weighting prevents the three budget records
-from counting as three independent maps. It compares ordinary ordering, seeded
-random tie-breaking, shadow, and experimental exact A* at budgets 16/64/256
-and eight seeds. It separately compares Focal bounds
-1.0/1.05/1.1 with deterministic no-history, posterior-mean, and Thompson
-ordering; only the stochastic Thompson policy repeats eight seeds. Independent
-BFS validates every returned path and its declared cost guarantee; shadow must
-reproduce the ordinary exact-search proof and expansion count. A separate BFS
-truth pass labels branches optimal/detour/unreachable and reports held-out
-sibling ranking without exposing BFS distance/regret to search features. JSONL
-contains the frozen source, decisions, proofs, fingerprints and
-projection/adviser/search timing. Reproduce with:
+The full model-free smoke uses two non-overlapping fixture families, each with
+64 training and 32 held-out maps: mixed corridor/random mazes and recurring
+barrier/detour mazes. Its `--quick` CTest profile retains both families and all
+policy/bound variants, but uses 15 held-out maps (including historical
+regressions 66 and 91) and two seeds to keep routine verification bounded. Full
+mode performs one actual search at each expansion budget
+16/64/256 per training map and freezes the resulting 384 search-evaluation
+records. Fixture-group weighting prevents the three budget records from
+counting as three independent maps. It compares ordinary ordering, seeded
+random tie-breaking, shadow, exact experimental history-before-heuristic
+ordering, and conservative exact history-after-heuristic ordering. Both exact
+orders are measured with posterior mean and Thompson sampling where applicable;
+the smoke also checks that `shadow` reproduces the reference proof and
+expansion count. Focal bounds are 1.0/1.05/1.1/1.25 with deterministic
+no-history, posterior-mean, and Thompson ordering; only stochastic Thompson
+repeats eight seeds. Independent BFS validates every returned path and its
+declared cost guarantee. A separate BFS truth pass labels branches
+optimal/detour/unreachable and reports held-out sibling ranking and Brier score
+without exposing BFS distance/regret to search features. JSONL can include
+frontier snapshots for the historical budget-16 regressions (maps 66 and 91),
+including selected node, `g/h/f`, posterior identity, available frontier,
+remaining expansions, duplicate suppression and reopen counts. Reproduce with:
 
 ```sh
 cmake --build build-agent-vulkan-cozo --target llama-agent-semi-oracle-target-hunt-smoke
-build-agent-vulkan-cozo/bin/llama-agent-semi-oracle-target-hunt-smoke --trace /tmp/target-hunt.jsonl
+build-agent-vulkan-cozo/bin/llama-agent-semi-oracle-target-hunt-smoke --quick
+build-agent-vulkan-cozo/bin/llama-agent-semi-oracle-target-hunt-smoke --trace /tmp/target-hunt-full.jsonl
 ctest --test-dir build-agent-vulkan-cozo -R 'semi-oracle' --output-on-failure
 ```
+
+The full `--trace` invocation is intentionally separate from CTest because
+the exhaustive trace can exceed hundreds of MiB and materially distort the
+cost measurements. CTest runs `--quick` without trace output. The frontier
+observer itself is covered by focused CTests; use a manual full trace run when
+inspecting decisions, and treat any externally imposed timeout as an
+incomplete run rather than as a result. Full mode can be run without `--trace`
+for measurements; it is intentionally more expensive than routine CTest.
 
 The frozen history retains all prediction inputs and source IDs, omitting
 verbose diagnostic payloads from repeated parsing; the trace includes that
 snapshot. Its projection timings describe this compact in-memory view, not
 database loading. Search timing includes domain validation and proof building.
 
-The smoke checks whether ordering reaches execution. Performance and budget
-success rates are measured results, not acceptance assumptions. Exact A* keeps
-minimum-f priority; history only orders equal-f frontier entries. Focal A*
-orders only entries inside its host-selected `f <= w*f_min` set. No GPU/model
-is required.
+The smoke checks whether ordering reaches execution and emits paired
+win/loss/unchanged and expansion deltas per held-out map, not just pooled seed
+counts. Performance and budget success rates are measured results, not
+acceptance assumptions. Exact A* always keeps minimum-f priority. Its default
+historical order is `before_h` (`f → history score → h → ordinal`) among equal-f
+nodes; the conservative `after_h` order is `f → h → history score → ordinal`.
+Focal A* orders only entries inside its host-selected `f <= w*f_min` set. The
+optional frontier observer performs its frontier scan only when enabled. No
+GPU/model is required.
 
-The CTest also writes `pocs/agent/target-hunt-trace.jsonl` under its build tree.
+The optional `--trace` invocation writes JSONL only to the path explicitly
+passed by the caller; CTest does not create or overwrite a trace file.
 
 ### Implementation status after the seam review
 
@@ -347,13 +369,56 @@ better search outcomes. The full trace is at
 `build-agent-vulkan-cozo/pocs/agent/target-hunt-trace.jsonl`; the current CTest
 output is in `build-agent-vulkan-cozo/Testing/Temporary/LastTest.log`.
 
-The additional full-sweep items still outstanding are the independent
-recurring-map families, grouped uncertainty/calibration reporting, explicit
-per-frontier selection summaries and cold/warm/trace-disabled cost comparison.
-The newly prepared integration cases must also be compiled and executed before
-the current storage/projection changes are considered verified. The retained
-CPU projection caches use their explicit runtime byte budgets; they do not
-consume the model backend's device-overlay workspace budget.
+The implementation now includes the second recurring-map family, per-map
+paired outcomes, a held-out branch Brier comparison and opt-in frontier
+snapshots. A warmed four-repetition cost benchmark is still outstanding; do
+not infer production speedup from CTest wall time. The CTest intentionally
+runs without trace output; full JSONL tracing is a separate manual mode. The
+retained CPU projection caches use their explicit runtime byte budgets; they
+do not consume the model backend's device-overlay workspace budget.
+
+On 2026-10-20, the bounded `--quick` CTest passed in 623.09 seconds. It used
+all 128 training maps and their 384 frozen search records, plus 15 held-out
+maps (7 mixed/random including maps 66 and 91, and 8 recurring-detour maps),
+two seeds, budgets 16/64/256, all exact ordering variants and all four Focal
+bounds. This is a functional/policy comparison, not the full 64+32-by-family,
+eight-seed benchmark. The attempted full comparison timed out at 1,800 seconds
+both with and without JSONL tracing; those runs are incomplete and are not
+reported as benchmark results. The earlier trace artifact in the build tree
+is partial and must not be used as a complete run.
+
+In the quick held-out sample, ordinary and `shadow` were identical: 10/15
+solved at budget 16 and 11/15 at 64 and 256. `before_h` posterior sampling
+solved 9/15 per seed at budget 16 (two paired losses, both on map 91), and
+11/15 at 64/256; it did not improve solve count. `after_h` matched the
+ordinary solve count at all three budgets. It used fewer expansions at 16
+(291 vs 300 across the two seeds), but one more at 64 and 256; this is not a
+performance claim. The first logged
+divergence for map 91 at decision 2 had equal `f=11`: reference chose `g=2,
+h=9`, while historical `before_h` chose `g=1,h=10` on posterior score. That
+concrete tie-break consumed budget before the better-heuristic branch. On map
+66 the first divergence was also decision 2, with equal `g/h/f` and frontier
+size; only the posterior score differed. This explains where ordering
+diverged, not the underlying semantic cause of the learned score.
+
+The independent BFS branch ranking remained better: optimal top-1 counts were
+2,570 → 4,087; strict sibling orders 3,809/7,544 → 6,787/7,544. Candidate
+Brier was 0.667 for a uniform baseline and 0.427 micro / 0.377 map-macro for
+the posterior. The production-persisted branch projection used 128 fixture
+groups and 16,058 observations and produced candidate predictions. This
+supports predictive branch information, but does not translate to additional
+solved searches in the quick sample. Focal `w=1.0/1.05/1.1` did not show a
+solve-rate gain over its deterministic counterpart; `w=1.25` changed some
+expansion/cost outcomes but likewise showed no demonstrated net benefit.
+
+The quick timing totals were one run per seed, not four warmed repetitions:
+ordinary `off` was roughly 30–47 ms for 15 maps, while `shadow` was roughly
+1.5–4.0 s and experimental guidance roughly 1.5–2.5 s, depending on budget
+and seed. These include the small smoke's end-to-end host work and are noisy,
+but they expose material projection/adviser overhead. Do not use `shadow` as a
+performance mode; `off` avoids history work. A separate warmed, trace-disabled
+multi-repetition cost benchmark remains outstanding before any production
+cost claim.
 
 ## Historical ordering for algebra search
 

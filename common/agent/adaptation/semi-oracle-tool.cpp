@@ -101,7 +101,8 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
         const std::string & action_dsl,common_semi_oracle_level level,
         const std::string & goal,common_semi_oracle_budget budget,
         const std::vector<std::string> & guidance,
-        common_semi_oracle_result & result,std::string & error) {
+        common_semi_oracle_result & result,std::string & error,
+        common_semi_oracle_frontier_observer frontier_observer) {
     common_semi_oracle_ruleset ruleset;bool found=false;
     if(!active_ruleset(ruleset,found,error))return false;
     if(!found){error="no active semi-oracle RuleSet is bound to this session";return false;}
@@ -114,6 +115,8 @@ bool common_semi_oracle_tool_service::verify_action(const std::string & state_js
         ? common_semi_oracle_search_algorithm::focal : common_semi_oracle_search_algorithm::exact;
     query.search_policy.suboptimality_bound = query.search_policy.algorithm ==
             common_semi_oracle_search_algorithm::focal ? guidance_.suboptimality_bound : 1.0;
+    query.search_policy.exact_history_order = guidance_.exact_history_order;
+    query.frontier_observer = std::move(frontier_observer);
     query.use_historical_order = guidance_.mode == "experimental";
     if(!common_semi_oracle_evaluate_with_history(store_, guidance_, host_namespace_,
             session_id_, ruleset, query, result, error, project_id_))return false;
@@ -187,7 +190,8 @@ bool common_semi_oracle_tool_service::define_problem(const std::string & dsl,
 }
 
 bool common_semi_oracle_tool_service::search_active_goal(common_semi_oracle_result & result,
-        std::string & error, common_semi_oracle_budget budget, const std::vector<std::string> & host_order) {
+        std::string & error, common_semi_oracle_budget budget, const std::vector<std::string> & host_order,
+        common_semi_oracle_frontier_observer frontier_observer) {
     common_semi_oracle_ruleset ruleset;
     bool found = false;
     if (!active_ruleset(ruleset, found, error)) return false;
@@ -204,7 +208,8 @@ bool common_semi_oracle_tool_service::search_active_goal(common_semi_oracle_resu
     }
     const auto parsed = json::parse(state, nullptr, false);
     if (ruleset.domain == common_semi_oracle_domain::target_hunt)
-        return verify_action(state,"",common_semi_oracle_level::bounded,"reach:target",budget,host_order,result,error);
+        return verify_action(state,"",common_semi_oracle_level::bounded,"reach:target",budget,host_order,result,error,
+            std::move(frontier_observer));
     if (!parsed.is_object() || !parsed.contains("lhs") || !parsed["lhs"].is_string()) {
         error = "active algebra state is not a supported equation";
         return false;

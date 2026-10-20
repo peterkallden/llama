@@ -9,7 +9,8 @@
       "semi_oracle": {
         "search": {
           "algorithm": "exact",
-          "suboptimality_bound": 1.0
+          "suboptimality_bound": 1.0,
+          "exact_history_order": "before_h"
         },
         "outcome_guidance": {
           "mode": "shadow",
