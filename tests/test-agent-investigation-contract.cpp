@@ -52,6 +52,28 @@ int main() {
           "bounded shortest path should execute");
     check(path.size() == 2 && complete, "shortest path should return its evidence relations");
 
+    common_investigation_graph_metrics metrics;
+    check(common_investigation_graph_analyze(value, {}, metrics, error),
+          "bounded graph metrics should execute");
+    check(metrics.complete && metrics.betweenness_normalized && metrics.nodes.size() == 3 &&
+            metrics.nodes[0].degree == 2 && std::abs(metrics.nodes[0].betweenness - 1.0) < 1e-9,
+          "component, degree and normalized betweenness metrics should be deterministic");
+    common_investigation_analysis_budget tiny_budget;
+    tiny_budget.max_expansions = 1;
+    check(common_investigation_graph_analyze(value, tiny_budget, metrics, error) && !metrics.complete,
+          "budget exhaustion must mark graph metrics partial");
+
+    check(common_investigation_temporal_path(value, "host:1", "host:2", 100, {}, path, complete, error),
+          "time-ordered path analysis should execute");
+    check(complete && path == std::vector<std::string>({"rel:1", "rel:2"}),
+          "temporal path should require nondecreasing relation intervals");
+    auto out_of_order = value;
+    out_of_order.relations[1].first_seen_ms = 150;
+    out_of_order.relations[1].last_seen_ms = 150;
+    check(common_investigation_temporal_path(out_of_order, "host:1", "host:2", 100, {}, path, complete, error) &&
+            complete && path.empty(),
+          "temporal path must not invent a chain across out-of-order events");
+
     std::vector<common_investigation_relation> rebuilt;
     std::vector<std::string> limitations;
     const std::vector<common_investigation_relation_rule> relation_rules = {

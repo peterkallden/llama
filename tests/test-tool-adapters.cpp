@@ -1163,6 +1163,14 @@ int main() {
         R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
     assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
         result.output.find("event:1") != std::string::npos);
+    result = investigation_registry.execute({"investigation.analyze",
+        R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
+    assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&
+        result.output.find("\"complete\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigation.analyze",
+        R"({"case_id":"graph-case","analysis":"temporal_path","start_entity_id":"user:logs:alice","goal_entity_id":"host:logs:app1"})"});
+    assert(result.ok && result.output.find("event:1") != std::string::npos &&
+        result.output.find("shortest_hop_count") != std::string::npos);
     result = investigation_registry.execute({"investigation.events",
         R"({"case_id":"graph-case","relation_id":"rel:1"})"});
     assert(result.ok && result.output.find("doc-1") != std::string::npos);

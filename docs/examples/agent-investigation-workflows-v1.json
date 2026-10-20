@@ -1,0 +1,99 @@
+{
+  "schema_version": 2,
+  "name": "agent-investigation-workflows",
+  "version": "v1",
+  "procedures": [
+    {
+      "id": "investigation-evidence-discipline-v1",
+      "summary": "Keep observations, correlations, hypotheses and reviewed conclusions distinct.",
+      "content": "Use only host-returned events and source references as observations. Describe rule-derived links as correlations and retain the rule and evidence references. Record proposed explanations as hypotheses. Promote a claim to a reviewed conclusion only after an analyst review decision; preserve contradictions, missing coverage and clock uncertainty.",
+      "importance": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "id": "investigation-source-boundaries-v1",
+      "summary": "Respect configured sources, case scope, time windows and analysis budgets.",
+      "content": "Use only sources configured by the host and available in the current namespace or project scope. Keep collection within the case time window and declared budgets. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur.",
+      "importance": 1.0,
+      "confidence": 1.0
+    }
+  ],
+  "workflows": [
+    {
+      "id": "investigation-identity-analysis-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/identity-analysis",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-identity-analysis@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_context": []
+    },
+    {
+      "id": "investigation-communication-analysis-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/communication-analysis",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-communication-analysis@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_context": []
+    },
+    {
+      "id": "investigation-event-chain-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/event-chain",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-event-chain@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_context": []
+    },
+    {
+      "id": "investigation-integration-trace-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/integration-trace",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-integration-trace@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_context": []
+    },
+    {
+      "id": "investigation-hypothesis-testing-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/hypothesis-testing",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-hypothesis-testing@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "required_context": []
+    },
+    {
+      "id": "investigation-report-composition-v1",
+      "source_revision": "agent-investigation-workflows@v1",
+      "workflow_ref": "workflow://investigation/report-composition",
+      "workflow_revision": "v1",
+      "family": "investigation",
+      "graph_revision": "investigation-report-composition@v1",
+      "required_capabilities": ["investigation.case", "investigation.graph", "investigation.analysis", "investigation.hypothesis"],
+      "optional_capabilities": ["artifact.export", "document.open", "document.save"],
+      "required_context": []
+    }
+  ],
+  "artifact_profiles": [
+    {
+      "id": "investigation_report",
+      "revision": "v1",
+      "title": "Investigation report",
+      "purpose": "Present one immutable case revision with traceable evidence, supported and contradicted claims, and explicit gaps.",
+      "sections": [
+        {"id": "scope", "title": "Scope and method", "purpose": "Identify the case revision, source, time window and analysis method.", "required": true, "allowed_block_kinds": ["observation"]},
+        {"id": "timeline", "title": "Timeline", "purpose": "List events in event-time order while retaining unknown and uncertain timestamps.", "required": true, "allowed_block_kinds": ["observation"]},
+        {"id": "relations", "title": "Relations", "purpose": "Describe observed and rule-derived links with their evidence and derivation rules.", "required": true, "allowed_block_kinds": ["observation", "conclusion"]},
+        {"id": "claims", "title": "Claims and alternatives", "purpose": "Separate hypotheses from reviewed conclusions and include supporting and contradicting evidence.", "required": true, "evidence_relations": ["supports", "contradicts", "qualifies"], "allowed_block_kinds": ["observation", "conclusion"]},
+        {"id": "gaps", "title": "Gaps and limitations", "purpose": "Record partial searches, missing fields, coverage gaps and unresolved questions.", "required": true, "allowed_block_kinds": ["observation", "recommendation"]}
+      ]
+    }
+  ]
+}

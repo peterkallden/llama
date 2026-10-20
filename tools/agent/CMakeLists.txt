@@ -1135,6 +1135,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-config.example.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-bootstrap-workflows-v1.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/agent-investigation-workflows-v1.json
         ${AGENT_HOST_CONFIG_EXAMPLES}
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-daemon-requests.jsonl
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json

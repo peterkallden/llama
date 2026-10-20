@@ -283,6 +283,43 @@ int main() {
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v2"));
     assert(has_procedure("json-stat-dataset-interpretation-v1"));
+
+    std::ifstream investigation_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
+        "/docs/examples/agent-investigation-workflows-v1.json");
+    assert(investigation_file);
+    std::stringstream investigation_file_text;
+    investigation_file_text << investigation_file.rdbuf();
+    common_agent_bootstrap_package investigation_package;
+    assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
+    const std::vector<std::string> investigation_workflows = {
+        "workflow://investigation/identity-analysis",
+        "workflow://investigation/communication-analysis",
+        "workflow://investigation/event-chain",
+        "workflow://investigation/integration-trace",
+        "workflow://investigation/hypothesis-testing",
+        "workflow://investigation/report-composition",
+    };
+    assert(investigation_package.workflows.size() == investigation_workflows.size());
+    for (const auto & workflow_ref : investigation_workflows) {
+        assert(std::any_of(investigation_package.workflows.begin(), investigation_package.workflows.end(),
+            [&](const auto & workflow) { return workflow.definition.workflow_ref == workflow_ref; }));
+    }
+    const auto investigation_report = std::find_if(investigation_package.artifact_profiles.begin(),
+        investigation_package.artifact_profiles.end(), [](const auto & profile) {
+            return profile.id == "investigation_report";
+        });
+    assert(investigation_report != investigation_package.artifact_profiles.end());
+    assert(investigation_report->sections.size() == 5);
+    common_memory_in_memory_store investigation_memory;
+    common_plan_in_memory_store investigation_plans;
+    assert(investigation_memory.open("", error) && investigation_plans.open("", error));
+    common_agent_bootstrap_result investigation_installed;
+    assert(common_agent_install_bootstrap_package(investigation_memory, investigation_plans,
+        config, investigation_package,
+        [](const std::string &, std::vector<float> & embedding, std::string & e) {
+            embedding = {1.0f, 0.0f}; e.clear(); return true;
+        }, investigation_installed, error));
+    assert(investigation_installed.installed_workflow_ids.size() == investigation_workflows.size());
     std::string checked_in_roundtrip_json;
     assert(common_agent_package_to_json(checked_in_starter,
         checked_in_roundtrip_json, error, false));

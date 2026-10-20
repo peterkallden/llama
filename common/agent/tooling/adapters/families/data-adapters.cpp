@@ -598,6 +598,52 @@ common_tool_execution_result execute_investigation_tool(
     if (operation == "investigation.case.open") {
         return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
     }
+    if (operation == "investigation.analyze") {
+        const auto analysis = arguments.value("analysis", std::string());
+        common_investigation_analysis_budget budget;
+        budget.max_expansions = arguments.value("max_expansions", budget.max_expansions);
+        budget.max_path_length = arguments.value("max_path_length", budget.max_path_length);
+        if (analysis == "graph_metrics") {
+            common_investigation_graph_metrics metrics;
+            if (!common_investigation_graph_analyze(value, budget, metrics, error)) {
+                return common_adapter_validation_failure("tool.investigation.analysis_invalid", std::move(error));
+            }
+            json nodes = json::array();
+            for (const auto & node : metrics.nodes) nodes.push_back({{"entity_id", node.entity_id},
+                {"degree", node.degree}, {"component", node.component},
+                {"betweenness", node.betweenness}});
+            return common_adapter_success_json({{"case_revision", metrics.case_revision},
+                {"analysis", analysis}, {"complete", metrics.complete},
+                {"nodes", nodes}, {"explored_states", metrics.explored_states},
+                {"betweenness_normalized", metrics.betweenness_normalized},
+                {"optimality", metrics.complete ? "exact_for_case_revision" : "budget_limited"}});
+        }
+        const auto start = arguments.value("start_entity_id", std::string());
+        const auto goal = arguments.value("goal_entity_id", std::string());
+        if (start.empty() || goal.empty()) return common_adapter_validation_failure(
+            "tool.investigation.analysis_endpoints_required", "path analysis requires start_entity_id and goal_entity_id");
+        std::vector<std::string> relation_ids;
+        bool complete = false;
+        const bool ok = analysis == "shortest_path"
+            ? common_investigation_graph_shortest_path(value, start, goal, budget, relation_ids, complete, error)
+            : analysis == "temporal_path"
+                ? common_investigation_temporal_path(value, start, goal,
+                    arguments.value("not_before_ms", value.window_start_ms), budget, relation_ids, complete, error)
+                : false;
+        if (!ok) return common_adapter_validation_failure("tool.investigation.analysis_invalid",
+            error.empty() ? "analysis must be graph_metrics, shortest_path, or temporal_path" : std::move(error));
+        std::set<std::string> evidence_ids;
+        for (const auto & relation_id : relation_ids) {
+            const auto relation = std::find_if(value.relations.begin(), value.relations.end(),
+                [&](const auto & item) { return item.id == relation_id; });
+            if (relation != value.relations.end()) evidence_ids.insert(relation->evidence_event_ids.begin(),
+                relation->evidence_event_ids.end());
+        }
+        return common_adapter_success_json({{"case_revision", value.revision},
+            {"analysis", analysis}, {"complete", complete}, {"relation_ids", relation_ids},
+            {"evidence_refs", std::vector<std::string>(evidence_ids.begin(), evidence_ids.end())},
+            {"optimality", complete ? (relation_ids.empty() ? "no_path_in_case" : "shortest_hop_count") : "budget_limited"}});
+    }
     if (operation == "investigation.graph.expand") {
         common_investigation_graph_query query;
         query.case_id = case_id;
@@ -772,6 +818,7 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.investigation.case.create" ||
         definition.executor_id == "builtin.investigation.case.open" ||
         definition.executor_id == "builtin.investigation.graph.expand" ||
+        definition.executor_id == "builtin.investigation.analyze" ||
         definition.executor_id == "builtin.investigation.events" ||
         definition.executor_id == "builtin.investigation.claim.hypothesize" ||
         definition.executor_id == "builtin.data.query" ||

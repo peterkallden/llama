@@ -142,6 +142,21 @@ struct common_investigation_candidate {
     double unhelpful_history_weight = 0.0;
 };
 
+struct common_investigation_node_metric {
+    std::string entity_id;
+    size_t degree = 0;
+    size_t component = 0;
+    double betweenness = 0.0;
+};
+
+struct common_investigation_graph_metrics {
+    uint64_t case_revision = 0;
+    std::vector<common_investigation_node_metric> nodes;
+    size_t explored_states = 0;
+    bool complete = false;
+    bool betweenness_normalized = false;
+};
+
 bool common_investigation_case_validate(
     const common_investigation_case_revision &, std::string & error);
 nlohmann::ordered_json common_investigation_case_to_json(
@@ -156,6 +171,16 @@ bool common_investigation_graph_shortest_path(
     const common_investigation_case_revision &,
     const std::string & start_id, const std::string & goal_id,
     const common_investigation_analysis_budget &,
+    std::vector<std::string> & relation_ids, bool & complete,
+    std::string & error);
+bool common_investigation_graph_analyze(
+    const common_investigation_case_revision &,
+    const common_investigation_analysis_budget &,
+    common_investigation_graph_metrics &, std::string & error);
+bool common_investigation_temporal_path(
+    const common_investigation_case_revision &,
+    const std::string & start_id, const std::string & goal_id,
+    int64_t not_before_ms, const common_investigation_analysis_budget &,
     std::vector<std::string> & relation_ids, bool & complete,
     std::string & error);
 bool common_investigation_build_relations(

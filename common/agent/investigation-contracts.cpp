@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -208,6 +210,152 @@ bool common_investigation_graph_shortest_path(
     complete = found || queue.empty();
     if (found) {
         for (auto at = goal_id; at != start_id; at = visited.at(at).previous) relation_ids.push_back(visited.at(at).relation);
+        std::reverse(relation_ids.begin(), relation_ids.end());
+    }
+    error.clear();
+    return true;
+}
+
+bool common_investigation_graph_analyze(
+        const common_investigation_case_revision & value,
+        const common_investigation_analysis_budget & budget,
+        common_investigation_graph_metrics & result, std::string & error) {
+    result = {};
+    if (!common_investigation_case_validate(value, error)) return false;
+    if (value.entities.size() > 512 || value.relations.size() > 4000 ||
+            budget.max_expansions == 0 || budget.max_expansions > 100000) {
+        error = "graph analysis exceeds the supported node, edge or expansion bound";
+        return false;
+    }
+    std::unordered_map<std::string, size_t> index;
+    for (size_t i = 0; i < value.entities.size(); ++i) index.emplace(value.entities[i].id, i);
+    std::vector<std::vector<size_t>> adjacency(value.entities.size());
+    for (size_t i = 0; i < value.relations.size(); ++i) {
+        const auto & relation = value.relations[i];
+        const auto from = index.find(relation.from_entity_id), to = index.find(relation.to_entity_id);
+        if (from == index.end() || to == index.end()) {
+            error = "graph analysis encountered a relation with an unknown endpoint";
+            return false;
+        }
+        adjacency[from->second].push_back(to->second);
+        if (from->second != to->second) adjacency[to->second].push_back(from->second);
+    }
+    for (auto & neighbors : adjacency) std::sort(neighbors.begin(), neighbors.end());
+    result.case_revision = value.revision;
+    result.nodes.resize(value.entities.size());
+    for (size_t i = 0; i < value.entities.size(); ++i) {
+        result.nodes[i].entity_id = value.entities[i].id;
+        result.nodes[i].degree = adjacency[i].size();
+    }
+    size_t component = 0;
+    std::vector<bool> assigned(value.entities.size(), false);
+    for (size_t root = 0; root < value.entities.size(); ++root) {
+        if (assigned[root]) continue;
+        std::deque<size_t> queue{root}; assigned[root] = true;
+        while (!queue.empty()) {
+            const size_t current = queue.front(); queue.pop_front();
+            result.nodes[current].component = component;
+            for (const size_t next : adjacency[current]) {
+                if (++result.explored_states > budget.max_expansions) {
+                    result.complete = false; error.clear(); return true;
+                }
+                if (!assigned[next]) { assigned[next] = true; queue.push_back(next); }
+            }
+        }
+        ++component;
+    }
+
+    std::vector<double> centrality(value.entities.size(), 0.0);
+    bool exhausted = false;
+    for (size_t source = 0; source < value.entities.size() && !exhausted; ++source) {
+        std::vector<std::vector<size_t>> predecessors(value.entities.size());
+        std::vector<double> paths(value.entities.size(), 0.0);
+        std::vector<int64_t> distance(value.entities.size(), -1);
+        std::vector<size_t> stack;
+        std::deque<size_t> queue{source};
+        paths[source] = 1.0; distance[source] = 0;
+        while (!queue.empty() && !exhausted) {
+            const size_t current = queue.front(); queue.pop_front(); stack.push_back(current);
+            for (const size_t next : adjacency[current]) {
+                if (++result.explored_states > budget.max_expansions) { exhausted = true; break; }
+                if (distance[next] < 0) {
+                    distance[next] = distance[current] + 1;
+                    queue.push_back(next);
+                }
+                if (distance[next] == distance[current] + 1) {
+                    paths[next] += paths[current];
+                    predecessors[next].push_back(current);
+                }
+            }
+        }
+        if (exhausted) break;
+        std::vector<double> dependency(value.entities.size(), 0.0);
+        while (!stack.empty()) {
+            const size_t node = stack.back(); stack.pop_back();
+            for (const size_t previous : predecessors[node]) {
+                if (paths[node] > 0.0) dependency[previous] +=
+                    (paths[previous] / paths[node]) * (1.0 + dependency[node]);
+            }
+            if (node != source) centrality[node] += dependency[node];
+        }
+    }
+    result.complete = !exhausted;
+    if (result.complete) {
+        const double normalization = value.entities.size() > 2
+            ? 1.0 / (static_cast<double>(value.entities.size() - 1) *
+                static_cast<double>(value.entities.size() - 2)) : 0.0;
+        for (size_t i = 0; i < centrality.size(); ++i) result.nodes[i].betweenness = centrality[i] * normalization;
+        result.betweenness_normalized = true;
+    }
+    error.clear();
+    return true;
+}
+
+bool common_investigation_temporal_path(
+        const common_investigation_case_revision & value, const std::string & start_id,
+        const std::string & goal_id, int64_t not_before_ms,
+        const common_investigation_analysis_budget & budget,
+        std::vector<std::string> & relation_ids, bool & complete, std::string & error) {
+    relation_ids.clear(); complete = false;
+    if (!common_investigation_case_validate(value, error)) return false;
+    if (budget.max_expansions == 0 || budget.max_expansions > 100000 ||
+            budget.max_path_length == 0 || budget.max_path_length > 64 ||
+            std::none_of(value.entities.begin(), value.entities.end(), [&](const auto & entity) { return entity.id == start_id; }) ||
+            std::none_of(value.entities.begin(), value.entities.end(), [&](const auto & entity) { return entity.id == goal_id; })) {
+        error = "temporal path request has unknown endpoints or invalid budget";
+        return false;
+    }
+    struct state { std::string entity; int64_t time = 0; size_t depth = 0; };
+    const size_t no_parent = std::numeric_limits<size_t>::max();
+    struct parent { size_t previous = std::numeric_limits<size_t>::max(); std::string relation; };
+    std::vector<state> states{{start_id, not_before_ms, 0}};
+    std::vector<parent> parents(1);
+    std::deque<size_t> queue{0};
+    std::set<std::pair<std::string, int64_t>> visited{{start_id, not_before_ms}};
+    size_t found = start_id == goal_id ? 0 : no_parent;
+    size_t expanded = 0;
+    while (!queue.empty() && found == no_parent && expanded < budget.max_expansions) {
+        const size_t current_index = queue.front(); queue.pop_front(); ++expanded;
+        const auto current = states[current_index];
+        if (current.depth >= budget.max_path_length) continue;
+        for (const auto & relation : value.relations) {
+            if (!relation.has_time || relation.first_seen_ms < current.time) continue;
+            std::string next;
+            if (relation.from_entity_id == current.entity) next = relation.to_entity_id;
+            else if (relation.to_entity_id == current.entity) next = relation.from_entity_id;
+            else continue;
+            const int64_t next_time = std::max(current.time, relation.last_seen_ms);
+            if (!visited.emplace(next, next_time).second) continue;
+            const size_t next_index = states.size();
+            states.push_back({next, next_time, current.depth + 1});
+            parents.push_back({current_index, relation.id});
+            if (next == goal_id) { found = next_index; break; }
+            queue.push_back(next_index);
+        }
+    }
+    complete = found != no_parent || queue.empty();
+    if (found != no_parent) {
+        for (size_t at = found; at != 0; at = parents[at].previous) relation_ids.push_back(parents[at].relation);
         std::reverse(relation_ids.begin(), relation_ids.end());
     }
     error.clear();
