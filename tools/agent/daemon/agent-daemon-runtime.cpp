@@ -1570,42 +1570,8 @@ bool resolve_agent_daemon_tooling(
             error = error.empty() ? "investigation context case is unavailable in the current scope" : error;
             return false;
         }
-        if (case_value.revision != binding.revision) {
-            error = "investigation context revision is stale; reopen the case and retry";
-            return false;
-        }
-        auto projection = common_investigation_case_to_json(case_value);
-        auto select_refs = [&](const std::vector<std::string> & refs, const char * key,
-                const char * field, std::string & select_error) {
-            auto & output = projection[key];
-            output = nlohmann::ordered_json::array();
-            const auto & all = projection[field];
-            for (const auto & ref : refs) {
-                auto found = std::find_if(all.begin(), all.end(), [&](const auto & item) {
-                    return item.is_object() && item.value("id", std::string{}) == ref;
-                });
-                if (found == all.end()) {
-                    select_error = std::string("investigation context contains an unknown ") + key + " reference";
-                    return false;
-                }
-                output.push_back(*found);
-            }
-            return true;
-        };
-        std::string context_error;
-        if (!select_refs(binding.entity_ids, "selected_entities", "entities", context_error) ||
-                !select_refs(binding.relation_ids, "selected_relations", "relations", context_error) ||
-                !select_refs(binding.event_ids, "selected_events", "events", context_error)) {
-            error = std::move(context_error);
-            return false;
-        }
-        projection.erase("entities");
-        projection.erase("relations");
-        projection.erase("events");
-        projection.erase("claims");
-        projection.erase("fingerprint");
-        projection.erase("previous_revision_uri");
-        projection.erase("scope");
+        nlohmann::ordered_json projection;
+        if (!common_investigation_project_context(case_value, binding, projection, error)) return false;
         auto rendered = projection.dump(2);
         constexpr size_t max_context_bytes = 16 * 1024;
         if (rendered.size() > max_context_bytes) {

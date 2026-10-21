@@ -52,6 +52,56 @@ bool common_investigation_case_from_json(const nlohmann::ordered_json & j, commo
     return common_investigation_case_validate(c,error);
 }
 
+bool common_investigation_project_context(
+        const common_investigation_case_revision & value,
+        const common_investigation_context_binding & binding,
+        nlohmann::ordered_json & projection, std::string & error) {
+    if (!common_investigation_case_validate(value, error)) return false;
+    if (binding.case_id != value.case_id || binding.revision != value.revision) {
+        error = "investigation context case or revision is stale";
+        return false;
+    }
+    projection = common_investigation_case_to_json(value);
+    const auto select = [&](const std::vector<std::string> & refs, const char * selected_key,
+            const char * source_key) {
+        if (refs.size() > 64) {
+            error = std::string("investigation context has too many ") + selected_key;
+            return false;
+        }
+        auto & output = projection[selected_key];
+        output = nlohmann::ordered_json::array();
+        const auto & source = projection[source_key];
+        std::set<std::string> unique;
+        for (const auto & ref : refs) {
+            if (ref.empty() || ref.size() > 512 || !unique.insert(ref).second) {
+                error = std::string("investigation context has invalid ") + selected_key + " references";
+                return false;
+            }
+            const auto found = std::find_if(source.begin(), source.end(), [&](const auto & item) {
+                return item.is_object() && item.value("id", std::string{}) == ref;
+            });
+            if (found == source.end()) {
+                error = std::string("investigation context contains an unknown ") + selected_key + " reference";
+                return false;
+            }
+            output.push_back(*found);
+        }
+        return true;
+    };
+    if (!select(binding.entity_ids, "selected_entities", "entities") ||
+            !select(binding.relation_ids, "selected_relations", "relations") ||
+            !select(binding.event_ids, "selected_events", "events")) return false;
+    projection.erase("entities");
+    projection.erase("relations");
+    projection.erase("events");
+    projection.erase("claims");
+    projection.erase("fingerprint");
+    projection.erase("previous_revision_uri");
+    projection.erase("scope");
+    error.clear();
+    return true;
+}
+
 bool common_investigation_case_validate(
         const common_investigation_case_revision & value, std::string & error) {
     error.clear();

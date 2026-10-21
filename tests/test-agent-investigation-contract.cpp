@@ -36,6 +36,26 @@ int main() {
           decoded.events.size() == value.events.size() && decoded.scope.project_id == value.scope.project_id,
           "case JSON roundtrip must preserve evidence, revision, and scope");
 
+    common_investigation_context_binding binding;
+    binding.case_id = value.case_id; binding.revision = value.revision;
+    binding.entity_ids = {"user:1"}; binding.relation_ids = {"rel:1"}; binding.event_ids = {"event:1"};
+    nlohmann::ordered_json context_projection;
+    check(common_investigation_project_context(value, binding, context_projection, error) &&
+          !context_projection.contains("entities") && context_projection["selected_entities"].size() == 1 &&
+          context_projection["selected_entities"][0]["id"] == "user:1" &&
+          context_projection["selected_relations"][0]["id"] == "rel:1" &&
+          context_projection["selected_events"][0]["id"] == "event:1",
+          "case context projection must resolve only explicitly selected stable references");
+    auto stale_binding = binding; ++stale_binding.revision;
+    check(!common_investigation_project_context(value, stale_binding, context_projection, error),
+          "case context projection must reject a stale revision");
+    auto invalid_binding = binding; invalid_binding.event_ids = {"missing-event"};
+    check(!common_investigation_project_context(value, invalid_binding, context_projection, error),
+          "case context projection must reject unknown evidence references");
+    invalid_binding = binding; invalid_binding.entity_ids = {"user:1", "user:1"};
+    check(!common_investigation_project_context(value, invalid_binding, context_projection, error),
+          "case context projection must reject duplicate references");
+
     common_investigation_case_revision network_case;
     network_case.case_id = "network-case"; network_case.source_id = "elastic-a";
     network_case.title = "Network direction"; network_case.scope.namespace_id = "local";

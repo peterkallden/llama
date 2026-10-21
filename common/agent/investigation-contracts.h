@@ -186,6 +186,10 @@ nlohmann::ordered_json common_investigation_case_to_json(
     const common_investigation_case_revision &);
 bool common_investigation_case_from_json(const nlohmann::ordered_json &,
     common_investigation_case_revision &, std::string & error);
+bool common_investigation_project_context(
+    const common_investigation_case_revision &,
+    const common_investigation_context_binding &,
+    nlohmann::ordered_json &, std::string & error);
 bool common_investigation_graph_expand(
     const common_investigation_case_revision &,
     const common_investigation_graph_query &,
