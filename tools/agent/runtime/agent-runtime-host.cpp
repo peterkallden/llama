@@ -247,7 +247,8 @@ bool run_agent_runtime_host(
                 execution.turn_request.request,
                 execution.turn_request.generation_options,
                 {execution.turn_request.policy.max_tool_rounds,
-                    execution.turn_request.runtime_config.max_continuations},
+                    execution.turn_request.runtime_config.max_continuations,
+                    execution.turn_request.runtime_config.generation_config.enable_tool_family_routing},
                 execution.tooling,
                 execution.turn_request.execution_control,
             };

@@ -7,6 +7,9 @@
 #include "../src/llama-adapter.h"
 #include "../src/llama-graph.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -505,6 +508,14 @@ void test_server_task_cvec_batch_view() {
 } // namespace
 
 int main() {
+    std::string budget_error;
+    assert(common_agent_generation_context_fits(90, 100, 10, budget_error));
+    assert(!common_agent_generation_context_fits(91, 100, 10, budget_error));
+    assert(budget_error.find("reserved_output=10") != std::string::npos);
+    assert(!common_agent_generation_context_fits(100, 100, 0, budget_error));
+    assert(common_agent_generation_context_fits(99, 100, 0, budget_error));
+    assert(!common_agent_generation_context_fits(std::numeric_limits<size_t>::max(), 100, 1, budget_error));
+
     test_generation_batch_scalar_fallback();
     test_teacher_forced_batch_fallback();
     test_prepare_tool_generation();

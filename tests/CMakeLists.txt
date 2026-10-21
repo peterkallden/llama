@@ -390,6 +390,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
         test-agent-runtime-json.cpp
+        test-agent-chat-routing.cpp
         test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
         test-agent-loop.cpp
@@ -558,6 +559,10 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
         endif()
+        if (TEST_NAME STREQUAL "test-agent-chat-routing")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-context-management")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
@@ -693,6 +698,9 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+        if (TEST_NAME MATCHES "^(test-agent-chat-routing|test-agent-prepared-generation|test-tool-family-index)$")
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS model-free)
+        endif()
     endforeach()
 
     llama_build_and_test(test-agent-semi-oracle-teaching.cpp)

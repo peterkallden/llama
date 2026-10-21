@@ -4,6 +4,9 @@
 #include "agent/contracts/agent-request.h"
 #include "plan/plan-json.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -361,12 +364,18 @@ void test_nested_arguments_and_multistep_plan() {
     common_plan_state plan;
     std::vector<common_plan_operation> operations;
     assert(common_plan_parse_proposal_json(proposal, plan, operations, error, 6));
-    assert(operations.size() >= 2);
-    assert(operations[0].step->tool_call->name == "dataset.inspect");
-    assert(operations[1].step->tool_call->name == "data.aggregate");
-    assert(operations[0].step->semantic_alias && *operations[0].step->semantic_alias == "inspect");
+    // Proposals also contain dependency operations between executable steps.
+    // Select the tool steps rather than treating every operation as one.
+    std::vector<const common_plan_step *> tool_steps;
+    for (const auto & operation : operations) {
+        if (operation.step && operation.step->tool_call) tool_steps.push_back(&*operation.step);
+    }
+    assert(tool_steps.size() == 2);
+    assert(tool_steps[0]->tool_call->name == "dataset.inspect");
+    assert(tool_steps[1]->tool_call->name == "data.aggregate");
+    assert(tool_steps[0]->semantic_alias && *tool_steps[0]->semantic_alias == "inspect");
     const auto aggregate_args = nlohmann::json::parse(
-        operations[1].step->tool_call->arguments_json, nullptr, false);
+        tool_steps[1]->tool_call->arguments_json, nullptr, false);
     assert(aggregate_args["dataset"].value("$from_step", "") == "step_1");
     assert(aggregate_args["dataset"].value("$json_pointer", "") == "/dataset");
     assert(!common_parse_compact_dsl_plan(

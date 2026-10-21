@@ -21,6 +21,9 @@
 #include "chat-peg-parser.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -959,7 +962,8 @@ static void test_required_planner_failure_preserves_diagnostics() {
     assert(error.find("missing.tool") != std::string::npos);
     assert(inference.seen.size() == 2);
     const auto & repair_prompt = inference.seen[1].messages[2].content;
-    assert(repair_prompt.find("Repair it using only executable steps") != std::string::npos);
+    assert(repair_prompt.find("missing.tool") != std::string::npos);
+    assert(repair_prompt.find("executable tool step") != std::string::npos);
     assert(repair_prompt.find("attachment choices") == std::string::npos);
 }
 
@@ -2491,7 +2495,9 @@ static void test_runtime_resident_runtime_builder() {
     assert(error.empty());
     assert(agent_result.response == "draft-content");
     assert(agent_result.plan_id);
-    assert(runtime.current_plan_id() == *agent_result.plan_id);
+    const auto completed = plans.get(*agent_result.plan_id, error);
+    assert(completed && completed->status == common_plan_status::completed);
+    assert(runtime.current_plan_id().empty());
     assert(inference_ptr->seen.size() == 5);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-9:conversation");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
@@ -2572,7 +2578,9 @@ static void test_runtime_resident_agent_host_builder() {
     assert(error.empty());
     assert(result.response == "draft-content");
     assert(result.plan_id);
-    assert(host.current_plan_id() == *result.plan_id);
+    const auto completed = plans.get(*result.plan_id, error);
+    assert(completed && completed->status == common_plan_status::completed);
+    assert(host.current_plan_id().empty());
     assert(inference_ptr->seen.size() == 4);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:planner");
     assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");

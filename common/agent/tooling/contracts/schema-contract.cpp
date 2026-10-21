@@ -35,7 +35,11 @@ bool validate_value(
         const bool valid = exactly_one ? matches == 1 : matches > 0;
         if (!valid) {
             error = std::string("contract field '") + field + "' does not match " + key;
-            if (!first_error.empty()) error += ": " + first_error;
+            if (exactly_one && matches > 1) {
+                error += ": expected exactly one matching alternative, got " + std::to_string(matches);
+            } else if (!first_error.empty()) {
+                error += ": " + first_error;
+            }
         }
         return valid;
     };

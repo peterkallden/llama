@@ -264,6 +264,11 @@ bool common_agent_server_context_host::build_inference_session(
         return false;
     }
 
+    auto * context = instance->server->get_llama_context();
+    if (!context) {
+        error = "server_context host has no active model context";
+        return false;
+    }
     session = {};
     session.backend = agent_inference_backend::server_context;
     auto meta = instance->server->get_meta();
@@ -276,7 +281,9 @@ bool common_agent_server_context_host::build_inference_session(
         meta.logit_bias_eog,
         session.templates,
         session.capabilities.image,
-        session.capabilities.audio);
+        session.capabilities.audio,
+        llama_model_get_vocab(llama_get_model(context)),
+        static_cast<size_t>(meta.slot_n_ctx));
     if (server_context_host_trace_enabled()) {
         std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit\n");
         std::fflush(stderr);

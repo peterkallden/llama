@@ -22,4 +22,6 @@ std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     const std::vector<llama_logit_bias> & logit_bias_eog,
     const common_chat_templates * templates,
     bool supports_image,
-    bool supports_audio);
+    bool supports_audio,
+    const llama_vocab * vocab,
+    size_t context_tokens);

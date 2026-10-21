@@ -280,180 +280,12 @@ bool select_model_tool_families(
 
     const auto families = common_generate_tool_family_index(
         execution.tooling.tools, execution.tooling.family_descriptions);
-    std::vector<std::string> required_attachment_families;
-    const bool bound_resource_read = request.resource_read_binding &&
-        request.resource_read_binding->require_content_read;
-    for (const auto & input : request.input_resources) {
-        if (!bound_resource_read && input.role != "attachment_question" && input.role != "document_context") continue;
-        required_attachment_families.push_back("resource");
-        const auto & mime = input.resource.mime_type;
-        if (mime == "text/csv" || mime == "text/tab-separated-values") {
-            required_attachment_families.push_back("dataset");
-        }
-        if (mime == "text/html" ||
-                mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-                mime == "application/epub+zip") {
-            required_attachment_families.push_back("document");
-        }
-    }
-    std::sort(required_attachment_families.begin(), required_attachment_families.end());
-    required_attachment_families.erase(
-        std::unique(required_attachment_families.begin(), required_attachment_families.end()),
-        required_attachment_families.end());
-    if (bound_resource_read) {
-        for (const auto & family : families) {
-            if ((family.id == "resource" || family.id == "dataset" || family.id == "document") &&
-                    std::find(required_attachment_families.begin(), required_attachment_families.end(), family.id) ==
-                        required_attachment_families.end()) {
-                required_attachment_families.push_back(family.id);
-            }
-        }
-        std::sort(required_attachment_families.begin(), required_attachment_families.end());
-    }
-    const std::string family_view = common_render_tool_family_index(families, 2048);
-    const bool required_family_selection = caller_requires_tool_execution;
-    common_chat_msg system{
-        "system",
-        required_family_selection
-            ? common_tool_family_required_selection_prompt(families)
-            : "Decide whether the user request needs external tools. Reply with exactly one line: "
-              "NO_TOOLS for ordinary conversation, or TOOLS: family_id[, family_id...] when tools "
-              "are needed. If the user asks about text already included in the prompt, including "
-              "host-validated document context, answer from that text and return NO_TOOLS. Do not "
-              "select resource or document only because the user mentions an attached file. Select "
-              "those families only when more content must be fetched or extracted; select web when "
-              "external research is requested, and document tools when editing is requested. "
-              "For other requests, attached files are optional inputs: choose resource or dataset "
-              "when their contents must be read or analyzed, and keep NO_TOOLS for unrelated conversation. "
-              "Return family ids, not tool names; for example, "
-              "dataset.validate belongs to the dataset family. Do not explain, use JSON, or invent family ids. Available "
-              "families:\n" + family_view,
-    };
-    common_chat_msg user{"user", common_tool_family_selection_user_prompt(request.prompt) +
-        common_agent_render_input_resource_context(
-        request.input_resources, 2048, request.available_resources)};
-    common_agent_generation_options options;
-    // This is a one-line classifier, not a planning turn. A small hard cap
-    // prevents a weak model from spending the whole turn elaborating before
-    // the host can route it.
-    options.n_predict = 64;
-    options.n_threads = generation_config.n_threads;
-    options.generation_trace = generation_config.generation_trace;
-    const auto generate_selection = [&](const std::string & request_suffix,
-                                        const std::vector<common_chat_msg> & messages,
-                                        const std::string & json_schema = std::string{}) {
-        return execution.inference.generate_result(
-            common_agent_make_generation_request(
-                common_agent_generation_purpose::tool_family_selection,
-                request.turn_id + request_suffix,
-                common_agent_scope_from_request(request),
-                messages,
-                options,
-                json_schema));
-    };
-    const std::string required_schema = required_family_selection
-        ? common_tool_family_required_selection_schema(families)
-        : std::string{};
-    auto generation = generate_selection(
-        ":tool-family-selection", {system, user}, required_schema);
-    if (!common_agent_generation_succeeded(generation)) {
-        error = "tool family selection failed: " + generation.error_message;
-        if (generation.error_message.empty()) error += " model did not return a completed selection";
-        return false;
-    }
-
     common_tool_family_selection selection;
-    const bool parsed = required_family_selection
-        ? common_parse_tool_family_required_selection(
-            generation.content, families, selection, error)
-        : common_parse_tool_family_selection_text(
-            generation.content, families, selection, error);
-    if (!parsed) {
-        const std::string original_selection_error = error;
-        // Keep the parser strict: a malformed first classifier response must
-        // never grant a family that it did not name exactly.  Small models do
-        // occasionally append prompt text after an otherwise valid `TOOLS:`
-        // answer, though.  Give that one-line classifier one bounded repair
-        // turn with a structured response instead of weakening the
-        // authorization grammar itself.
-        common_chat_msg repair{
-            "system",
-            required_family_selection
-                ? common_tool_family_required_selection_repair_prompt()
-                : "Your previous tool-family selection was invalid. Return the required JSON object only. "
-                  "Families may contain only ids from the available list; do not include tool arguments, "
-                  "resource ids, explanations, or any other text.",
-        };
-        const auto repaired = generate_selection(
-            ":tool-family-selection-repair", {system, repair, user},
-            required_family_selection
-                ? common_tool_family_required_selection_schema(families)
-                : common_tool_family_selection_schema(families));
-        const bool repaired_ok = common_agent_generation_succeeded(repaired) &&
-            (required_family_selection
-                ? common_parse_tool_family_required_selection(
-                    repaired.content, families, selection, error)
-                : common_parse_tool_family_selection(
-                    repaired.content, selection, error));
-        if (repaired_ok) {
-            // Repaired selection is subject to the same policy filtering as
-            // the original response.
-        } else {
-            // A weak model can emit the required TOOLS: prefix and then stop
-            // before naming a family. With exactly one current-turn resource,
-            // the host can safely default to the already policy-filtered
-            // resource family. This keeps the family gate intact and does not
-            // guess when there are multiple resources or no resource family.
-            const bool empty_tools_selection =
-                original_selection_error == "tool family selection must include at least one family after TOOLS:";
-            const bool has_resource_family = std::any_of(
-                families.begin(), families.end(), [](const common_tool_family_index & family) {
-                    return family.id == "resource";
-                });
-            if (!required_family_selection && empty_tools_selection &&
-                    request.input_resources.size() == 1 && has_resource_family) {
-                selection.needs_tools = true;
-                selection.family_ids = {"resource"};
-                error.clear();
-            } else {
-                error = "tool family selection failed: " + error;
-                return false;
-            }
-        }
-    }
-    // A caller-bound attachment question must actually inspect its resource;
-    // a model-selected web or unrelated tool alone is not grounded. Add the
-    // host-required families after model classification so the model may also
-    // select web/research or other capabilities requested by the user.
-    for (const auto & required_family : required_attachment_families) {
-        const bool family_available = std::any_of(
-            families.begin(), families.end(), [&required_family](const auto & family) {
-                return family.id == required_family;
-            });
-        if (!family_available) {
-            error = "attached resource requires unavailable tool family: " + required_family;
-            return false;
-        }
-        if (std::find(selection.family_ids.begin(), selection.family_ids.end(), required_family) ==
-                selection.family_ids.end()) {
-            selection.family_ids.push_back(required_family);
-        }
-        selection.needs_tools = true;
-    }
-    if (!selection.needs_tools && !selection.family_ids.empty()) {
-        error = "tool family selection must not select families when needs_tools is false";
-        return false;
-    }
-    const auto unknown_family = std::find_if(
-        selection.family_ids.begin(), selection.family_ids.end(),
-        [&families](const std::string & id) {
-            return std::none_of(families.begin(), families.end(),
-                [&id](const common_tool_family_index & family) { return family.id == id; });
-        });
-    if (unknown_family != selection.family_ids.end()) {
-        error = "tool family selection returned unknown family: " + *unknown_family;
-        return false;
-    }
+    common_agent_generation_options family_options;
+    family_options.n_threads = generation_config.n_threads;
+    family_options.generation_trace = generation_config.generation_trace;
+    if (!common_agent_select_tool_families(execution.inference, request, family_options,
+            families, caller_requires_tool_execution, selection, error)) return false;
     if (!selection.needs_tools) {
         if (execution.require_tool_execution) {
             error = "tool family selection declined tools for a tool-required request";
@@ -1916,17 +1748,17 @@ bool run_agent_runtime_driver(
         return stop_for_execution_control();
     }
     if (!maybe_auto_select_plan(orchestration_context, error)) {
-        return false;
+        return fail_with_partial_result(error);
     }
     if (execution.execution_control.should_stop()) {
         return stop_for_execution_control();
     }
 
-    if (!restore_and_validate_bound_route(execution, error)) return false;
+    if (!restore_and_validate_bound_route(execution, error)) return fail_with_partial_result(error);
 
     if (!maybe_select_agent_route(orchestration_context, execution.selected_route,
             execution.route_selected, error)) {
-        return false;
+        return fail_with_partial_result(error);
     }
 
     if (execution.route_selected) {
@@ -1935,7 +1767,7 @@ bool run_agent_runtime_driver(
                 execution.selected_route, execution.tooling,
                 execution.execution_envelope, error)) {
             error = "execution envelope construction failed: " + error;
-            return false;
+            return fail_with_partial_result(error);
         }
         execution.execution_envelope_ready = true;
     }
@@ -1956,17 +1788,19 @@ bool run_agent_runtime_driver(
             execution.selected_route.kind == common_agent_route_kind::normal_plan) {
         const common_agent_request routed_request = make_agent_runtime_driver_request(execution);
         if (!select_model_tool_families(execution, routed_request, error)) {
-            return false;
+            if (execution.family_chat_routed) aggregate = std::move(execution.family_chat_result);
+            return fail_with_partial_result(error);
         }
         if (execution.family_chat_routed) {
-            result = std::move(execution.family_chat_result);
+            aggregate = std::move(execution.family_chat_result);
+            preserve_partial_result();
             error.clear();
             return true;
         }
     }
 
     if (!prepare_resource_chunk_observations(execution, error)) {
-        return false;
+        return fail_with_partial_result(error);
     }
 
     while (true) {

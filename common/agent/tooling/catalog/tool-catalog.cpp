@@ -339,11 +339,21 @@ std::vector<common_tool_definition> builtin_definitions() {
         const auto add_source_union = [](std::string & schema_json) {
             auto schema = json::parse(schema_json, nullptr, false);
             if (!schema.is_object()) return;
-            schema["oneOf"] = json::array({
-                json{{"required", {"dataset"}}},
-                json{{"required", {"resource"}}},
-                json{{"required", {"path"}}},
-            });
+            // The grammar compiler visits alternatives independently of sibling
+            // properties. Each branch must therefore be a complete, disjoint
+            // object schema, not just a required-field predicate.
+            auto alternatives = json::array();
+            for (const auto * source : {"dataset", "resource", "path"}) {
+                auto alternative = schema;
+                for (const auto * other : {"dataset", "resource", "path"}) {
+                    if (std::string(source) != other) alternative["properties"].erase(other);
+                }
+                auto & required = alternative["required"];
+                if (!required.is_array()) required = json::array();
+                required.push_back(source);
+                alternatives.push_back(std::move(alternative));
+            }
+            schema["oneOf"] = std::move(alternatives);
             schema_json = schema.dump();
         };
         add_source_union(definition.input_schema_json);

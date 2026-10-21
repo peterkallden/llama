@@ -298,7 +298,12 @@ bool common_parse_tool_family_selection_text(
         common_tool_family_selection & selection,
         std::string & error) {
     selection = {};
-    std::string line = text.substr(0, text.find('\n'));
+    // Leading formatting whitespace is not a different routing decision.
+    // Find the first nonblank line before parsing the one-line contract.
+    size_t begin = 0;
+    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+    const auto end = text.find('\n', begin);
+    std::string line = text.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
     while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
     size_t first = 0;
     while (first < line.size() && std::isspace(static_cast<unsigned char>(line[first]))) ++first;

@@ -637,3 +637,50 @@ The SQLite datastore smoke is an optional storage-profile test. A build with
 `libsqlite3-dev`, which supplies both the library and `sqlite3.h`. Runtime-only
 profiles intentionally keep SQLite disabled. This is a build prerequisite, not
 a runtime defect and not a reason to weaken or silently disable the smoke.
+
+## Full tool catalog exposed to ordinary chat
+
+A preview configured with `tools.profile=all-configured` exposed 76 tools to
+both the agent and direct chat entry points. A direct `Reply exactly OK`
+request rendered to 5,283 tokens and exceeded the configured 3,072-token
+resident context. The direct chat entry point bypassed the family preflight
+already used by automatic agent planning.
+
+Automatic chat now reuses the same family selection implementation as agent
+planning. `NO_TOOLS` exposes no tool schemas; selected families and their
+host-owned prerequisites remain bounded by the authorized catalog. Required
+tool execution and required attachment reads cannot become ordinary answers.
+Explicitly disabling automatic family routing retains the existing direct
+chat/tool contract.
+
+Resident completion requests count the fully template-rendered text with the
+resident model tokenizer before submission and reserve their requested output
+budget against the actual per-slot context. Oversized text fails without
+submitting a server task; mandatory schemas and messages are not truncated.
+Native media expansion remains validated by the server after media processing.
+`LLAMA_AGENT_RESIDENT_TRACE=1` records request identity, purpose, tool/message
+counts, rendered text token count, context/output budgets, elapsed time and
+completion status without enabling prompt/output content logging.
+
+The automatic-agent timeout also involves planner generation. In the preview,
+the compact-DSL planner reached its 512-token output limit after roughly
+299 seconds before any dataset tool ran; the 180-second turn deadline cut
+this phase short. A comparison using an explicit native-output model profile
+completed its first planner generation but exposed a separate dataset schema
+contract failure. Increasing the turn deadline alone does not repair either
+contract. These timings describe this local model/device configuration.
+
+Dataset source unions now contain complete, disjoint object alternatives.
+Previously each `oneOf` branch only declared a required source field. The
+grammar compiler visits alternatives independently and those branches became
+unconstrained JSON, losing the sibling property restrictions. Each branch
+now preserves the tool's other required fields and permits exactly one of
+`dataset`, `resource` and `path`. Host validation remains authoritative.
+Overlapping `oneOf` matches also receive an explicit ambiguity diagnostic,
+instead of an unrelated missing-field error from a failing alternative.
+
+Early driver failures and family-routed conversation results now retain the
+pre-turn events/trace and any partial conversation decode metadata. Previously,
+returning before the main execution loop discarded those records. A zero turn
+`total_decoded_tokens` is not proof that route/family selection performed no
+model work; use the per-generation trace for those internal phases.

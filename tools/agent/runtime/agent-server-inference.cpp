@@ -48,11 +48,14 @@ void resident_trace(const char * event, const common_agent_generation_request & 
     if (!resident_trace_enabled()) {
         return;
     }
-    std::fprintf(stderr, "agent resident trace: event=%s purpose=%s schema=%s n_predict=%d %s\n",
+    std::string trace_id = request.trace_id.value_or("").substr(0, 160);
+    for (char & ch : trace_id) if (static_cast<unsigned char>(ch) <= 0x20 || ch == 0x7f) ch = '_';
+    std::fprintf(stderr, "agent resident trace: event=%s purpose=%s schema=%s n_predict=%d request_id=%s tools=%zu messages=%zu %s\n",
         event,
         common_agent_generation_purpose_name(request.purpose),
         request.json_schema.empty() ? "no" : "yes",
         request.options.n_predict,
+        trace_id.c_str(), request.tools.size(), request.messages.size(),
         (std::string("capture=") +
             ((request.flydelta_capture && request.flydelta_capture->enabled) ? "yes" : "no") +
             " residual_patch=" + (request.residual_patch ? "yes" : "no") +
@@ -302,17 +305,37 @@ public:
             const std::vector<llama_logit_bias> & logit_bias_eog,
             const common_chat_templates * templates,
             bool supports_image,
-            bool supports_audio)
+            bool supports_audio,
+            const llama_vocab * vocab,
+            size_t context_tokens)
         : server(server), params_base(params_base), logit_bias_eog(logit_bias_eog), templates(templates),
-          supports_image(supports_image), supports_audio(supports_audio) {}
+          supports_image(supports_image), supports_audio(supports_audio), vocab(vocab), context_tokens(context_tokens) {}
 
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
-        return generate_one(request, result);
+        const auto started = std::chrono::steady_clock::now();
+        resident_trace("generation-enter", request,
+            ("tools=" + std::to_string(request.tools.size()) + " messages=" + std::to_string(request.messages.size())).c_str());
+        const bool ok = generate_one(request, result);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+        resident_trace("generation-exit", request,
+            ("elapsed_ms=" + std::to_string(elapsed) + " decoded_tokens=" + std::to_string(result.decoded_tokens) +
+             " status=" + common_agent_generation_status_name(result.status) + " stop=" + common_agent_generation_stop_reason_name(result.stop_reason)).c_str());
+        return ok;
     }
 
 private:
+    bool validate_context(const common_agent_generation_request & request,
+            const common_agent_prepared_generation & prepared, std::string & error) const {
+        if (!vocab) { error = "server generation has no tokenizer for context validation"; return false; }
+        const size_t prompt_tokens = common_tokenize(vocab, prepared.prompt, true, true).size();
+        resident_trace("context-budget", request,
+            ("tools=" + std::to_string(request.tools.size()) + " prompt_tokens=" + std::to_string(prompt_tokens) +
+             " reserved_output=" + std::to_string(request.options.n_predict) + " context_tokens=" + std::to_string(context_tokens)).c_str());
+        return common_agent_generation_context_fits(prompt_tokens, context_tokens, request.options.n_predict, error);
+    }
+
     bool prepare_completion_task(
             const common_agent_generation_request & request,
             server_response_reader & reader,
@@ -333,6 +356,7 @@ private:
             return false;
         }
         generation_trace_prompt(request, prepared);
+        if (!validate_context(request, prepared, error)) return false;
 
         task = server_task(SERVER_TASK_TYPE_COMPLETION);
         task.id = reader.get_new_id();
@@ -434,6 +458,12 @@ private:
                 return false;
             }
             generation_trace_prompt(request, prepared);
+            if (!validate_context(request, prepared, result.error_message)) {
+                result.status = common_agent_generation_status::errored;
+                result.stop_reason = common_agent_generation_stop_reason::error;
+                resident_trace("context-rejected", request);
+                return false;
+            }
             result.chat_params = chat_params;
             if (resident_trace_enabled()) {
                 std::fprintf(stderr, "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
@@ -1165,6 +1195,8 @@ private:
     const common_chat_templates * templates;
     bool supports_image = false;
     bool supports_audio = false;
+    const llama_vocab * vocab;
+    size_t context_tokens;
 };
 
 } // namespace
@@ -1175,7 +1207,9 @@ std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
     const std::vector<llama_logit_bias> & logit_bias_eog,
     const common_chat_templates * templates,
     bool supports_image,
-    bool supports_audio) {
+    bool supports_audio,
+    const llama_vocab * vocab,
+    size_t context_tokens) {
     return std::make_unique<server_context_agent_inference>(
-        server, params_base, logit_bias_eog, templates, supports_image, supports_audio);
+        server, params_base, logit_bias_eog, templates, supports_image, supports_audio, vocab, context_tokens);
 }

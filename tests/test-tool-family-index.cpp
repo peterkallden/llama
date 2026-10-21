@@ -141,6 +141,12 @@ int main() {
         selection,
         error));
     assert(common_parse_tool_family_selection_text("NO_TOOLS\n", families, selection, error));
+    assert(common_parse_tool_family_selection_text(" \r\n\tNO_TOOLS\n", families, selection, error));
+    assert(!selection.needs_tools);
+    assert(common_parse_tool_family_selection_text("\n\nTOOLS: dataset", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids == std::vector<std::string>{"dataset"});
+    assert(!common_parse_tool_family_selection_text("\nTOOLS: unknown", families, selection, error));
+    assert(common_parse_tool_family_selection_text("NO_TOOLS", families, selection, error));
     assert(!selection.needs_tools && selection.family_ids.empty());
     assert(common_parse_tool_family_selection_text("TOOLS: dataset, data", families, selection, error));
     assert(selection.needs_tools && selection.family_ids.size() == 2);
