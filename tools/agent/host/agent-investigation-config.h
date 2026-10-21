@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-host-provider-auth-config.h"
+#include "agent/investigation-contracts.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@ struct agent_host_investigation_source_config {
     std::vector<std::string> allowed_namespaces;
     std::vector<std::string> allowed_projects;
     std::map<std::string, std::string> fields;
+    std::vector<common_investigation_relation_rule> relation_profiles;
     agent_host_provider_auth_config auth;
     bool allow_private_network = false;
     uint32_t connect_timeout_ms = 5000;

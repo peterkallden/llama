@@ -32,12 +32,21 @@ index administration requests.
         "allowed_indices": ["logs-security-2026.10"],
         "allowed_namespaces": ["tenant-a"],
         "fields": {
-          "event.id": "event.id",
-          "event.type": "event.category",
-          "@timestamp": "@timestamp",
-          "user.id": "user.id",
-          "host.name": "host.name"
+          "event_id": "event.id",
+          "event_type": "event.category",
+          "event_time": "@timestamp",
+          "user_id": "user.id",
+          "host_name": "host.name"
         },
+        "relation_profiles": [
+          {
+            "id": "auth-observed-v1",
+            "event_type": "authentication",
+            "from_kind": "user",
+            "to_kind": "host",
+            "relation_kind": "authenticated_to"
+          }
+        ],
         "auth": { "type": "bearer", "token_env": "ELASTIC_TOKEN" },
         "max_page_size": 200
       }
@@ -86,9 +95,11 @@ partial. A relation records the deterministic rule and source event IDs that
 support it; it does not establish cause. The model may record hypotheses but
 cannot mark them as reviewed conclusions.
 
-Automatic relation rules use exact normalized event-type profiles. Unknown or
+Configured relation profiles match the mapped event type exactly and declare
+endpoint kinds, relation kind and optional endpoint roles. When a source has no
+profiles, a small built-in exact event-type profile set is used. Unknown or
 near-matching event types remain unlinked observations and add a case
-limitation. A source-specific configurable profile registry is still pending.
+limitation.
 
 This version performs bounded historical search. Case-page cursors paginate
 already published case contents; they do not yet provide PIT/search-after

@@ -155,7 +155,16 @@ bool agent_investigation_virtual_dataset_source::register_datasets(
             descriptor.ref.source_representation = source.dialect + ":search";
             descriptor.ref.source_provider = source.id;
             descriptor.ref.source_operation = "search";
-            descriptor.ref.source_request_json = json{{"index", index}, {"dialect", source.dialect}}.dump();
+            json relation_profiles = json::array();
+            for (const auto & rule : source.relation_profiles) {
+                relation_profiles.push_back({{"id", rule.id}, {"event_type", rule.event_type},
+                    {"from_kind", common_investigation_entity_kind_name(rule.from_kind)},
+                    {"to_kind", common_investigation_entity_kind_name(rule.to_kind)},
+                    {"relation_kind", common_investigation_relation_kind_name(rule.relation_kind)},
+                    {"from_role", rule.from_role}, {"to_role", rule.to_role}});
+            }
+            descriptor.ref.source_request_json = json{{"index", index}, {"dialect", source.dialect},
+                {"relation_profiles", std::move(relation_profiles)}}.dump();
             descriptor.ref.retrieved_at = static_cast<int64_t>(std::time(nullptr));
             descriptor.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
             descriptor.ref.count_kind = common_agent_dataset_count_kind::unknown;

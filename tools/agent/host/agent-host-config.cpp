@@ -10,11 +10,45 @@
 #include <cstdlib>
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <unordered_set>
 
 using json = nlohmann::ordered_json;
 
 namespace {
+
+bool investigation_entity_kind_from_name(const std::string & value,
+        common_investigation_entity_kind & out) {
+    static const std::map<std::string, common_investigation_entity_kind> kinds = {
+        {"user", common_investigation_entity_kind::user}, {"host", common_investigation_entity_kind::host},
+        {"process", common_investigation_entity_kind::process}, {"ip", common_investigation_entity_kind::ip},
+        {"file", common_investigation_entity_kind::file}, {"hash", common_investigation_entity_kind::hash},
+        {"service", common_investigation_entity_kind::service}, {"trace", common_investigation_entity_kind::trace},
+        {"message", common_investigation_entity_kind::message}, {"event", common_investigation_entity_kind::event}};
+    const auto found = kinds.find(value);
+    if (found == kinds.end()) return false;
+    out = found->second;
+    return true;
+}
+
+const char * investigation_entity_kind_name(common_investigation_entity_kind value) {
+    return common_investigation_entity_kind_name(value);
+}
+
+bool investigation_relation_kind_from_name(const std::string & value,
+        common_investigation_relation_kind & out) {
+    for (const auto kind : {common_investigation_relation_kind::authenticated_to,
+            common_investigation_relation_kind::communicated_with, common_investigation_relation_kind::spawned,
+            common_investigation_relation_kind::accessed, common_investigation_relation_kind::modified,
+            common_investigation_relation_kind::participates_in_trace, common_investigation_relation_kind::follows,
+            common_investigation_relation_kind::correlated_with}) {
+        if (value == common_investigation_relation_kind_name(kind)) {
+            out = kind;
+            return true;
+        }
+    }
+    return false;
+}
 
 std::string environment_value(const char * name) {
     const char * value = std::getenv(name);
@@ -904,6 +938,40 @@ bool parse_agent_host_config_json(
                         source.fields.emplace(it.key(), it.value().get<std::string>());
                     }
                 }
+                if (source_json.contains("relation_profiles")) {
+                    const auto & profiles = source_json["relation_profiles"];
+                    if (!profiles.is_array() || profiles.size() > 256) {
+                        error = "investigation source relation_profiles must be an array of at most 256 entries";
+                        return false;
+                    }
+                    for (const auto & profile : profiles) {
+                        if (!profile.is_object() || !profile.contains("id") || !profile["id"].is_string() ||
+                                !profile.contains("event_type") || !profile["event_type"].is_string() ||
+                                !profile.contains("from_kind") || !profile["from_kind"].is_string() ||
+                                !profile.contains("to_kind") || !profile["to_kind"].is_string() ||
+                                !profile.contains("relation_kind") || !profile["relation_kind"].is_string()) {
+                            error = "investigation relation profile requires string id, event_type, from_kind, to_kind and relation_kind";
+                            return false;
+                        }
+                        common_investigation_relation_rule rule;
+                        rule.id = profile["id"].get<std::string>();
+                        rule.event_type = profile["event_type"].get<std::string>();
+                        if (!investigation_entity_kind_from_name(profile["from_kind"].get<std::string>(), rule.from_kind) ||
+                                !investigation_entity_kind_from_name(profile["to_kind"].get<std::string>(), rule.to_kind) ||
+                                !investigation_relation_kind_from_name(profile["relation_kind"].get<std::string>(), rule.relation_kind)) {
+                            error = "investigation relation profile contains an unknown entity or relation kind";
+                            return false;
+                        }
+                        if ((profile.contains("from_role") && !profile["from_role"].is_string()) ||
+                                (profile.contains("to_role") && !profile["to_role"].is_string())) {
+                            error = "investigation relation profile roles must be strings";
+                            return false;
+                        }
+                        rule.from_role = profile.value("from_role", std::string());
+                        rule.to_role = profile.value("to_role", std::string());
+                        source.relation_profiles.push_back(std::move(rule));
+                    }
+                }
                 if (source_json.contains("auth")) {
                     const auto & auth = source_json["auth"];
                     if (!auth.is_object()) {
@@ -1704,11 +1772,20 @@ nlohmann::ordered_json agent_host_config_to_json(
         {"investigation", [&config]() {
             json sources = json::array();
             for (const auto & source : config.investigation.sources) {
+                json relation_profiles = json::array();
+                for (const auto & rule : source.relation_profiles) {
+                    relation_profiles.push_back({{"id", rule.id}, {"event_type", rule.event_type},
+                        {"from_kind", investigation_entity_kind_name(rule.from_kind)},
+                        {"to_kind", investigation_entity_kind_name(rule.to_kind)},
+                        {"relation_kind", common_investigation_relation_kind_name(rule.relation_kind)},
+                        {"from_role", rule.from_role}, {"to_role", rule.to_role}});
+                }
                 sources.push_back({
                     {"id", source.id}, {"dialect", source.dialect}, {"base_url", source.base_url},
                     {"allowed_indices", source.allowed_indices},
                     {"allowed_namespaces", source.allowed_namespaces},
                     {"allowed_projects", source.allowed_projects}, {"fields", source.fields},
+                    {"relation_profiles", std::move(relation_profiles)},
                     {"auth", {
                         {"type", source.auth.type}, {"scheme", source.auth.scheme},
                         {"token_url", source.auth.token_url}, {"scopes", source.auth.scopes},
@@ -2136,6 +2213,13 @@ bool validate_agent_host_config(
                 error = "investigation source contains an unsupported or empty field mapping";
                 return false;
             }
+        }
+        std::vector<common_investigation_relation> profile_probe_relations;
+        std::vector<std::string> profile_probe_limitations;
+        if (!common_investigation_build_relations(source.id, {}, {}, source.relation_profiles,
+                profile_probe_relations, profile_probe_limitations, error)) {
+            error = "investigation source relation profile is invalid: " + error;
+            return false;
         }
         if (!validate_provider_auth(source.auth, "investigation source", true, error)) return false;
         if (source.auth.type == "api_key") {

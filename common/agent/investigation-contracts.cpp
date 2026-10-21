@@ -32,6 +32,10 @@ const char * common_investigation_relation_kind_name(common_investigation_relati
     return relation_kind(value);
 }
 
+const char * common_investigation_entity_kind_name(common_investigation_entity_kind value) {
+    return entity_kind(value);
+}
+
 nlohmann::ordered_json common_investigation_case_to_json(const common_investigation_case_revision & c) {
     using json = nlohmann::ordered_json;
     json entities=json::array(),events=json::array(),relations=json::array(),claims=json::array();

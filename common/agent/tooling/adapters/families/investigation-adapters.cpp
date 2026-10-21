@@ -114,6 +114,30 @@ std::string normalize_investigation_event_type(std::string value) {
     return normalized;
 }
 
+bool investigation_entity_kind_from_name(const std::string & value,
+        common_investigation_entity_kind & out) {
+    for (const auto kind : {common_investigation_entity_kind::user, common_investigation_entity_kind::host,
+            common_investigation_entity_kind::process, common_investigation_entity_kind::ip,
+            common_investigation_entity_kind::file, common_investigation_entity_kind::hash,
+            common_investigation_entity_kind::service, common_investigation_entity_kind::trace,
+            common_investigation_entity_kind::message, common_investigation_entity_kind::event}) {
+        if (value == common_investigation_entity_kind_name(kind)) { out = kind; return true; }
+    }
+    return false;
+}
+
+bool investigation_relation_kind_from_name(const std::string & value,
+        common_investigation_relation_kind & out) {
+    for (const auto kind : {common_investigation_relation_kind::authenticated_to,
+            common_investigation_relation_kind::communicated_with, common_investigation_relation_kind::spawned,
+            common_investigation_relation_kind::accessed, common_investigation_relation_kind::modified,
+            common_investigation_relation_kind::participates_in_trace, common_investigation_relation_kind::follows,
+            common_investigation_relation_kind::correlated_with}) {
+        if (value == common_investigation_relation_kind_name(kind)) { out = kind; return true; }
+    }
+    return false;
+}
+
 
 common_tool_execution_result execute_investigation_tool(
         const common_native_tool_bindings & bindings, const std::string & operation,
@@ -377,6 +401,42 @@ common_tool_execution_result execute_investigation_tool(
                 error.empty() ? "dataset is not a configured virtual dataset for this case source" : std::move(error),
                 "Choose a virtual dataset configured for this case source.");
         }
+        std::vector<common_investigation_relation_rule> configured_relation_profiles;
+        if (!dataset.ref.source_request_json.empty()) {
+            const auto source_request = json::parse(dataset.ref.source_request_json, nullptr, false);
+            if (!source_request.is_object() ||
+                    (source_request.contains("relation_profiles") &&
+                        (!source_request["relation_profiles"].is_array() || source_request["relation_profiles"].size() > 256))) {
+                return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                    "configured source relation profiles are malformed");
+            }
+            if (source_request.contains("relation_profiles")) {
+                for (const auto & profile : source_request["relation_profiles"]) {
+                    if (!profile.is_object() || !profile.contains("id") || !profile["id"].is_string() ||
+                            !profile.contains("event_type") || !profile["event_type"].is_string() ||
+                            !profile.contains("from_kind") || !profile["from_kind"].is_string() ||
+                            !profile.contains("to_kind") || !profile["to_kind"].is_string() ||
+                            !profile.contains("relation_kind") || !profile["relation_kind"].is_string()) {
+                        return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                            "configured source relation profile is incomplete");
+                    }
+                    common_investigation_relation_rule rule;
+                    rule.id = profile["id"].get<std::string>();
+                    rule.event_type = profile["event_type"].get<std::string>();
+                    if (!investigation_entity_kind_from_name(profile["from_kind"].get<std::string>(), rule.from_kind) ||
+                            !investigation_entity_kind_from_name(profile["to_kind"].get<std::string>(), rule.to_kind) ||
+                            !investigation_relation_kind_from_name(profile["relation_kind"].get<std::string>(), rule.relation_kind) ||
+                            (profile.contains("from_role") && !profile["from_role"].is_string()) ||
+                            (profile.contains("to_role") && !profile["to_role"].is_string())) {
+                        return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                            "configured source relation profile contains an invalid kind or role");
+                    }
+                    rule.from_role = profile.value("from_role", std::string());
+                    rule.to_role = profile.value("to_role", std::string());
+                    configured_relation_profiles.push_back(std::move(rule));
+                }
+            }
+        }
         const size_t limit = arguments.value("limit", size_t(200));
         if (limit == 0 || limit > 500) return common_adapter_validation_failure(
             "tool.investigation.collect_limit_invalid", "collection page size must be from 1 to 500");
@@ -564,7 +624,14 @@ common_tool_execution_result execute_investigation_tool(
         std::unordered_set<std::string> newly_collected_event_ids;
         for (const auto & event : collected_events) newly_collected_event_ids.insert(event.id);
         bool unprofiled_event = false;
-        for (const auto & event : value.events) {
+        if (!configured_relation_profiles.empty()) {
+            rules = configured_relation_profiles;
+            for (const auto & event : collected_events) {
+                if (std::none_of(rules.begin(), rules.end(), [&](const auto & rule) {
+                        return rule.event_type == event.event_type;
+                    })) unprofiled_event = true;
+            }
+        } else for (const auto & event : value.events) {
             const auto normalized_type = normalize_investigation_event_type(event.event_type);
             const auto rule_id = [&](const char * profile) {
                 return std::string("builtin-") + profile + "-v1:" +

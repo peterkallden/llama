@@ -1157,6 +1157,9 @@ int main() {
     investigation_store.source.ref.uri = "dataset://investigation/logs/security";
     investigation_store.source.ref.name = "security";
     investigation_store.source.ref.source_provider = "logs";
+    investigation_store.source.ref.source_request_json = nlohmann::json{{"relation_profiles", nlohmann::json::array({
+        {{"id", "auth-observed-v1"}, {"event_type", "authentication"},
+            {"from_kind", "user"}, {"to_kind", "host"}, {"relation_kind", "authenticated_to"}}})}}.dump();
     investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
     investigation_store.source.columns = {{"event.id", common_agent_dataset_column_type::string, false},
         {"event.type", common_agent_dataset_column_type::string, false},

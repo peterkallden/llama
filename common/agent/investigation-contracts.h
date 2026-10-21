@@ -18,6 +18,7 @@ enum class common_investigation_relation_kind {
     authenticated_to, communicated_with, spawned, accessed, modified,
     participates_in_trace, follows, correlated_with, unknown
 };
+const char * common_investigation_entity_kind_name(common_investigation_entity_kind);
 const char * common_investigation_relation_kind_name(common_investigation_relation_kind);
 
 enum class common_investigation_claim_state {

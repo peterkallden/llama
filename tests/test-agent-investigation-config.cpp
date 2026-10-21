@@ -26,6 +26,9 @@ int main() {
             {"allowed_namespaces", json::array({"tenant-a"})},
             {"fields", {{"event_time", "@timestamp"}, {"host_id", "host.id"},
                 {"user_id", "user.id"}}},
+            {"relation_profiles", json::array({{{"id", "auth-observed-v1"},
+                {"event_type", "authentication"}, {"from_kind", "user"}, {"to_kind", "host"},
+                {"relation_kind", "authenticated_to"}}})},
             {"auth", {{"type", "bearer"}, {"token_env", "ELASTIC_TOKEN"}}},
             {"max_page_size", 500}}})},
     };
@@ -33,6 +36,8 @@ int main() {
     if (!parse_agent_host_config_json(configured, defaults, error) || !defaults.investigation.enabled ||
             defaults.investigation.sources.size() != 1 ||
             defaults.investigation.sources[0].fields.at("host_id") != "host.id" ||
+            defaults.investigation.sources[0].relation_profiles.size() != 1 ||
+            defaults.investigation.sources[0].relation_profiles[0].id != "auth-observed-v1" ||
             defaults.investigation.sources[0].auth.token_env != "ELASTIC_TOKEN") {
         std::cerr << "investigation source config did not parse: " << error << '\n';
         return 3;
@@ -42,6 +47,8 @@ int main() {
             configured_roundtrip.investigation.sources.size() != 1 ||
             configured_roundtrip.investigation.sources[0].allowed_indices[0] != "logs-security-2026.10" ||
             configured_roundtrip.investigation.sources[0].allowed_namespaces[0] != "tenant-a" ||
+            configured_roundtrip.investigation.sources[0].relation_profiles.size() != 1 ||
+            configured_roundtrip.investigation.sources[0].relation_profiles[0].event_type != "authentication" ||
             configured_roundtrip.investigation.max_events_per_query != 2500 ||
             configured_roundtrip.investigation.workflow_package != "docs/examples/agent-investigation-workflows-v1.json") return 4;
     auto missing_workflow_package = configured;
