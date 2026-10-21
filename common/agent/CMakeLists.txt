@@ -97,6 +97,18 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-visualization-contracts
+    visualization/visualization-contract.cpp visualization/visualization-contract.h)
+target_include_directories(llama-agent-visualization-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-visualization-contracts PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-visualization-contracts PUBLIC llama-common)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-visualization-contracts PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(${TARGET}
     agent-bootstrap.cpp agent-bootstrap.h
     agent-package-json.cpp agent-package-json.h
@@ -347,6 +359,7 @@ target_link_libraries(${TARGET}
     PUBLIC
         llama-agent-artifact
         llama-agent-dataset-contracts
+        llama-agent-visualization-contracts
         llama-agent-plan
         llama-agent-memory
         llama-agent-tooling

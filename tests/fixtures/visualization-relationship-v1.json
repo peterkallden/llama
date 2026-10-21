@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "kind": "relationship",
+  "title": "Service dependencies",
+  "data_revision": "fixture-r1",
+  "nodes": [
+    { "id": "svc-api", "label": "API service", "kind": "service" },
+    { "id": "svc-store", "label": "Storage service", "kind": "service" }
+  ],
+  "edges": [
+    { "id": "edge-api-store", "source": "svc-api", "target": "svc-store", "label": "calls", "directed": true }
+  ],
+  "complete": true,
+  "truncated": false,
+  "limitations": [],
+  "view": { "layout": "cose", "selected_nodes": [], "selected_edges": [] }
+}

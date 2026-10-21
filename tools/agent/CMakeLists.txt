@@ -840,6 +840,8 @@ if(LLAMA_AGENT_NPM_EXECUTABLE AND EXISTS ${LLAMA_AGENT_INVESTIGATION_WORKSPACE_D
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/package-lock.json
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/vite.investigation.config.ts
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/visualization/contract.ts
+            ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/visualization/relationship-renderer.ts
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.css
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/src/mcp-app/investigation-workspace.html
             ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/scripts/embed-investigation-workspace.mjs

@@ -1,5 +1,5 @@
-import cytoscape, { type Core } from "cytoscape";
 import "./investigation-workspace.css";
+import { RelationshipRenderer } from "../visualization/relationship-renderer";
 
 declare global { interface Window { __investigationWorkspace?: true } }
 if (!window.__investigationWorkspace) {
@@ -15,7 +15,7 @@ if (!window.__investigationWorkspace) {
   let selectedEntity = "";
   let selectedRelation = "";
   let selectedEvent = "";
-  let graph: Core | null = null;
+  let graph: RelationshipRenderer | null = null;
   let lastAppCallAt = 0;
   let caseListCursor = "";
   let eventsCursor = "";
@@ -127,36 +127,29 @@ if (!window.__investigationWorkspace) {
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   function renderGraph(value: Json, replace = false) {
-    const elements = [
-      ...(value.nodes ?? []).map((node: Json) => ({ data: { id: node.id, label: node.label, kind: node.type } })),
-      ...(value.edges ?? []).map((edge: Json) => ({ data: { id: edge.id, source: edge.source, target: edge.target,
-        label: `${edge.event_count} event${edge.event_count === 1 ? "" : "s"}`, classification: edge.classification } })),
-    ];
     if (!graph) {
-      graph = cytoscape({ container: q<HTMLDivElement>("#graph"), elements,
-        style: [
-          { selector: "node", style: { "background-color": "#3979b8", label: "data(label)", color: "#e9f2ff",
-            "font-size": "11px", "text-wrap": "wrap", "text-max-width": "100px", width: 36, height: 36, "border-width": 2, "border-color": "#79b7f1" } },
-          { selector: "node[kind = 0]", style: { "background-color": "#a06fbd", "border-color": "#d4a6ee" } },
-          { selector: "node[kind = 1]", style: { "background-color": "#3979b8" } },
-          { selector: "edge", style: { width: 2, "line-color": "#6f8eaf", "target-arrow-color": "#6f8eaf",
-            "target-arrow-shape": "triangle", "curve-style": "bezier", label: "data(label)", color: "#b9cce0", "font-size": "9px" } },
-          { selector: "edge:selected", style: { "line-color": "#f0b95e", "target-arrow-color": "#f0b95e", width: 4 } },
-          { selector: "node:selected", style: { "border-color": "#ffd27d", "border-width": 4 } },
-        ], layout: { name: "cose", animate: false, fit: true, padding: 32 }, userZoomingEnabled: true, userPanningEnabled: true });
-      graph.on("tap", "node", (event) => { resetEvents(); selectedEntity = event.target.id(); selectedRelation = ""; void expand(selectedEntity); });
-      graph.on("tap", "edge", (event) => { resetEvents(); selectedRelation = event.target.id(); selectedEntity = ""; void loadEvents("", selectedRelation); });
-    } else {
-      if (replace) graph.elements().remove();
-      graph.batch(() => {
-        for (const element of elements) {
-          const existing = graph!.getElementById(element.data.id);
-          if (existing.empty()) graph!.add(element); else existing.data(element.data);
+      graph = new RelationshipRenderer(q<HTMLDivElement>("#graph"), { onSelect: (selection) => {
+        resetEvents();
+        if (selection.kind === "node") {
+          selectedEntity = selection.id; selectedRelation = ""; void expand(selectedEntity);
+        } else {
+          selectedRelation = selection.id; selectedEntity = ""; void loadEvents("", selectedRelation);
         }
-      });
-      graph.layout({ name: "cose", animate: false, fit: true, padding: 32 }).run();
+      } });
     }
-    q("#graph-status").textContent = `${graph.nodes().length} objects · ${graph.edges().length} relations${value.truncated ? " · truncated by bounds" : ""}`;
+    const limitations = Array.isArray(value.limitations) ? value.limitations.map(String) : [];
+    const truncated = value.truncated === true;
+    if (truncated && limitations.length === 0) limitations.push("The host truncated this graph to its configured bounds.");
+    graph.update({ schema_version: 1, kind: "relationship", title: "Investigation relations",
+      data_revision: String(value.case_revision ?? currentCase?.revision ?? ""),
+      nodes: (value.nodes ?? []).map((node: Json) => ({ id: String(node.id),
+        label: String(node.label ?? node.display_name ?? node.id), kind: String(node.type ?? "") })),
+      edges: (value.edges ?? []).map((edge: Json) => ({ id: String(edge.id), source: String(edge.source),
+        target: String(edge.target), label: `${edge.event_count} event${edge.event_count === 1 ? "" : "s"}`, directed: true })),
+      complete: !truncated, truncated, limitations,
+    }, { replace });
+    const counts = graph.counts();
+    q("#graph-status").textContent = `${counts.nodes} objects · ${counts.edges} relations${truncated ? " · truncated by bounds" : ""}`;
   }
   async function expand(center = selectedEntity) {
     if (!currentCase) return;

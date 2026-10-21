@@ -779,6 +779,12 @@ test-agent-flydelta-alpha-response-search.cpp
     add_test(NAME test-agent-investigation-contract COMMAND test-agent-investigation-contract)
     set_property(TEST test-agent-investigation-contract PROPERTY LABELS "agent;investigation;model-free")
 
+    add_executable(test-agent-visualization-contract test-agent-visualization-contract.cpp)
+    target_compile_definitions(test-agent-visualization-contract PRIVATE LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(test-agent-visualization-contract PRIVATE llama-agent-core)
+    add_test(NAME test-agent-visualization-contract COMMAND test-agent-visualization-contract)
+    set_property(TEST test-agent-visualization-contract PROPERTY LABELS "agent;visualization;model-free")
+
     add_executable(test-agent-event-queue test-agent-event-queue.cpp)
     target_include_directories(test-agent-event-queue PRIVATE
         ${PROJECT_SOURCE_DIR}
@@ -799,6 +805,7 @@ test-agent-flydelta-alpha-response-search.cpp
             COMMAND "${LLAMA_AGENT_WEB_TEST_NODE_EXECUTABLE}"
                 "${LLAMA_AGENT_WEB_TEST_DIR}/node_modules/vitest/vitest.mjs" run
                 src/components/report-view.test.ts src/components/app-invocation.test.ts
+                src/visualization/contract.test.ts
                 src/components/dataset-table.test.ts src/components/document-editor-access.test.ts
                 src/api/agent-api.test.ts src/session.test.ts)
         set_tests_properties(test-agent-web-workspace PROPERTIES
