@@ -86,6 +86,10 @@ partial. A relation records the deterministic rule and source event IDs that
 support it; it does not establish cause. The model may record hypotheses but
 cannot mark them as reviewed conclusions.
 
+Automatic relation rules use exact normalized event-type profiles. Unknown or
+near-matching event types remain unlinked observations and add a case
+limitation. A source-specific configurable profile registry is still pending.
+
 This version performs bounded historical search. Case-page cursors paginate
 already published case contents; they do not yet provide PIT/search-after
 continuation against Elasticsearch or OpenSearch. It also does not provide

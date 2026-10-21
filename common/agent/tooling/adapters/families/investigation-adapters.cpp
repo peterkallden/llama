@@ -98,6 +98,22 @@ bool parse_investigation_time(const json & value, int64_t & out) {
     return true;
 }
 
+std::string normalize_investigation_event_type(std::string value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    bool separator = false;
+    for (const unsigned char c : value) {
+        if (std::isalnum(c)) {
+            if (separator && !normalized.empty()) normalized.push_back('_');
+            normalized.push_back(static_cast<char>(std::tolower(c)));
+            separator = false;
+        } else {
+            separator = true;
+        }
+    }
+    return normalized;
+}
+
 
 common_tool_execution_result execute_investigation_tool(
         const common_native_tool_bindings & bindings, const std::string & operation,
@@ -476,6 +492,12 @@ common_tool_execution_result execute_investigation_tool(
             if (!process_value.empty() && process_start.empty()) limitations.push_back(
                 "process start time was missing; the process identity is isolated to its source event");
             const std::string process_id = entity_id(common_investigation_entity_kind::process, process_identity, host_value);
+            const std::string parent_process_value = get_alias(row, {"process.parent.entity_id", "process.parent.pid", "parent_process_id", "parent_pid"});
+            const std::string parent_process_start = get_alias(row, {"process.parent.start", "parent_process_start"});
+            const std::string parent_process_identity = parent_process_value.empty() ? std::string() :
+                parent_process_start.empty() ? parent_process_value + "@" + event_id : parent_process_value + "@" + parent_process_start;
+            const std::string parent_process_id = entity_id(common_investigation_entity_kind::process,
+                parent_process_identity, host_value);
             const std::string file_hash = get_alias(row, {"file.hash.sha256", "file_hash"});
             const std::string file_value = file_hash.empty()
                 ? get_alias(row, {"file.path", "file_path"}) : file_hash;
@@ -484,13 +506,22 @@ common_tool_execution_result execute_investigation_tool(
             const std::string trace_id = entity_id(common_investigation_entity_kind::trace, get_alias(row, {"trace.id", "trace_id"}));
             const std::string message_id = entity_id(common_investigation_entity_kind::message, get_alias(row, {"message.id", "message_id"}));
             std::vector<std::string> refs;
-            for (const auto & id : {user_id, host_id, source_ip, destination_ip, process_id, file_id, trace_id, message_id}) if (!id.empty()) refs.push_back(id);
+            for (const auto & id : {user_id, host_id, source_ip, destination_ip, process_id, parent_process_id,
+                    file_id, trace_id, message_id}) if (!id.empty()) refs.push_back(id);
             collected_events.push_back({event_id, value.source_id,
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
                 refs, {}, {}, {}, {}});
             collected_events.back().source_index = source_index;
             if (!source_ip.empty()) collected_events.back().entity_roles["source_ip"] = source_ip;
             if (!destination_ip.empty()) collected_events.back().entity_roles["destination_ip"] = destination_ip;
+            if (!process_id.empty()) {
+                collected_events.back().entity_roles["child_process"] = process_id;
+                collected_events.back().entity_roles["process"] = process_id;
+            }
+            if (!parent_process_id.empty()) collected_events.back().entity_roles["parent_process"] = parent_process_id;
+            if (!file_id.empty()) collected_events.back().entity_roles["file"] = file_id;
+            if (!trace_id.empty()) collected_events.back().entity_roles["trace"] = trace_id;
+            if (!message_id.empty()) collected_events.back().entity_roles["message"] = message_id;
             existing_events.insert(event_id);
             normalized_rows.push_back({{"event_id", event_id}, {"source_index", source_index},
                 {"source_document_id", source_document_id}, {"event_type", event_type},
@@ -530,24 +561,57 @@ common_tool_execution_result execute_investigation_tool(
         }
         value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
         std::vector<common_investigation_relation_rule> rules;
+        std::unordered_set<std::string> newly_collected_event_ids;
+        for (const auto & event : collected_events) newly_collected_event_ids.insert(event.id);
+        bool unprofiled_event = false;
         for (const auto & event : value.events) {
-            if (event.event_type.find("auth") != std::string::npos || event.event_type.find("login") != std::string::npos)
-                rules.push_back({"builtin-authentication-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::user,
+            const auto normalized_type = normalize_investigation_event_type(event.event_type);
+            const auto rule_id = [&](const char * profile) {
+                return std::string("builtin-") + profile + "-v1:" +
+                    hash_sha256_hex(event.event_type.data(), event.event_type.size());
+            };
+            static const std::set<std::string> authentication_types = {
+                "auth", "authentication", "authentication_failure", "authentication_success",
+                "login", "logon", "user_authentication", "user_login", "user_logon"};
+            static const std::set<std::string> communication_types = {
+                "connection", "network", "network_connection", "network_flow"};
+            static const std::set<std::string> process_types = {
+                "process_create", "process_created", "process_spawn", "process_start"};
+            static const std::set<std::string> file_types = {
+                "file_access", "file_create", "file_delete", "file_modify", "file_open", "file_read", "file_write"};
+            static const std::set<std::string> trace_types = {
+                "message_correlation", "span_correlation", "trace_correlation"};
+            const bool is_authentication = authentication_types.count(normalized_type) != 0;
+            const bool is_communication = communication_types.count(normalized_type) != 0;
+            const bool is_process = process_types.count(normalized_type) != 0;
+            const bool is_file = file_types.count(normalized_type) != 0;
+            const bool is_trace = trace_types.count(normalized_type) != 0;
+            if (newly_collected_event_ids.count(event.id) &&
+                    !(is_authentication || is_communication || is_process || is_file || is_trace)) {
+                unprofiled_event = true;
+            }
+            if (is_authentication)
+                rules.push_back({rule_id("authentication"), event.event_type, common_investigation_entity_kind::user,
                     common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to, {}, {}});
-            if (event.event_type.find("network") != std::string::npos || event.event_type.find("connection") != std::string::npos)
-                rules.push_back({"builtin-network-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::ip,
+            if (is_communication)
+                rules.push_back({rule_id("network"), event.event_type, common_investigation_entity_kind::ip,
                     common_investigation_entity_kind::ip, common_investigation_relation_kind::communicated_with,
                     "source_ip", "destination_ip"});
-            if (event.event_type.find("process") != std::string::npos)
-                rules.push_back({"builtin-process-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
-                    common_investigation_entity_kind::process, common_investigation_relation_kind::spawned, {}, {}});
-            if (event.event_type.find("file") != std::string::npos)
-                rules.push_back({"builtin-file-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
-                    common_investigation_entity_kind::file, common_investigation_relation_kind::accessed, {}, {}});
-            if (event.event_type.find("trace") != std::string::npos)
-                rules.push_back({"builtin-trace-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::trace,
-                    common_investigation_entity_kind::message, common_investigation_relation_kind::correlated_with, {}, {}});
+            if (is_process)
+                rules.push_back({rule_id("process"), event.event_type, common_investigation_entity_kind::process,
+                    common_investigation_entity_kind::process, common_investigation_relation_kind::spawned,
+                    "parent_process", "child_process"});
+            if (is_file)
+                rules.push_back({rule_id("file"), event.event_type, common_investigation_entity_kind::process,
+                    common_investigation_entity_kind::file, common_investigation_relation_kind::accessed,
+                    "process", "file"});
+            if (is_trace)
+                rules.push_back({rule_id("trace"), event.event_type, common_investigation_entity_kind::trace,
+                    common_investigation_entity_kind::message, common_investigation_relation_kind::correlated_with,
+                    "trace", "message"});
         }
+        if (unprofiled_event) limitations.push_back(
+            "one_or_more_events_have_no_declared_relation_profile_and_remain_unlinked_observations");
         std::sort(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id < b.id; });
         rules.erase(std::unique(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id == b.id && a.event_type == b.event_type; }), rules.end());
         std::vector<common_investigation_relation> relations;

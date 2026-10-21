@@ -1180,7 +1180,7 @@ int main() {
         {"host:logs:app1", "logs", common_investigation_entity_kind::host, "app1", "app1", "", 0, 0},
     };
     investigation_case.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
-        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}}};
+        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}, {}}};
     investigation_case.relations = {{"rel:1", "logs", "user:logs:alice", "host:logs:app1",
         common_investigation_relation_kind::authenticated_to, 200, 200, true, 1,
         "auth-v1", "1", "observed", {"event:1"}}};
@@ -1300,12 +1300,17 @@ int main() {
     collision_case.claims.clear(); collision_case.gaps.clear(); collision_case.revision = 1;
     collision_case.fingerprint.clear();
     investigation_store.seed(collision_case);
-    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["same-id","authentication","1970-01-01T00:00:00.300Z","alice","app-a","logs-a","same-id"],["same-id","authentication","1970-01-01T00:00:00.400Z","alice","app-b","logs-b","same-id"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["same-id","authentication","1970-01-01T00:00:00.300Z","alice","app-a","logs-a","same-id"],["same-id","not_authentication","1970-01-01T00:00:00.400Z","alice","app-b","logs-b","same-id"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
     result = investigation_registry.execute({"investigation.collect", R"({"case_id":"index-id-collision-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
     const auto & collision_events = investigation_store.cases.at("index-id-collision-case").events;
     assert(result.ok && collision_events.size() == 2 && collision_events[0].source_document_id == "same-id" &&
         collision_events[1].source_document_id == "same-id" && collision_events[0].source_index != collision_events[1].source_index &&
         collision_events[0].id != collision_events[1].id);
+    assert(std::none_of(investigation_store.cases.at("index-id-collision-case").relations.begin(),
+        investigation_store.cases.at("index-id-collision-case").relations.end(), [&](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), collision_events[1].id) !=
+                relation.evidence_event_ids.end();
+        }));
     std::filesystem::remove_all(repository);
     return 0;
 }
