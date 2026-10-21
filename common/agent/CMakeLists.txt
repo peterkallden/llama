@@ -257,6 +257,8 @@ set(AGENT_TOOLING_SOURCES
     tooling/adapters/families/memory-adapters.cpp
     tooling/adapters/families/oracle-adapters.cpp
     tooling/adapters/families/data-adapters.cpp
+    tooling/adapters/families/investigation-adapters.cpp
+    tooling/adapters/families/investigation-adapters.h
     tooling/adapters/families/document-adapters.cpp
     tooling/adapters/families/repository-adapters.cpp
     tooling/adapters/families/diagnostics-adapters.cpp

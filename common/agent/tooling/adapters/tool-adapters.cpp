@@ -2,6 +2,7 @@
 #include "agent/tooling/adapters/families/data-adapters.h"
 #include "agent/tooling/adapters/families/diagnostics-adapters.h"
 #include "agent/tooling/adapters/families/document-adapters.h"
+#include "agent/tooling/adapters/families/investigation-adapters.h"
 #include "agent/tooling/adapters/families/memory-adapters.h"
 #include "agent/tooling/adapters/families/oracle-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
@@ -1273,6 +1274,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         return predict(input);
                     }, error);
             }
+        } else if (common_try_register_investigation_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // The investigation family owns case, evidence and analysis operations.
         } else if (common_try_register_data_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The data family owns dataset, data and statistics adapters.
