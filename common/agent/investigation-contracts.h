@@ -50,6 +50,7 @@ struct common_investigation_event {
     std::vector<std::string> entity_ids;
     std::string raw_resource_uri;
     std::string normalized_resource_uri;
+    std::map<std::string, std::string> entity_roles;
 };
 
 struct common_investigation_relation {
@@ -74,6 +75,8 @@ struct common_investigation_relation_rule {
     common_investigation_entity_kind from_kind = common_investigation_entity_kind::unknown;
     common_investigation_entity_kind to_kind = common_investigation_entity_kind::unknown;
     common_investigation_relation_kind relation_kind = common_investigation_relation_kind::unknown;
+    std::string from_role;
+    std::string to_role;
 };
 
 struct common_investigation_claim {

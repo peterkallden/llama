@@ -14,6 +14,11 @@ public:
     size_t calls = 0;
     common_agent_scope last_scope;
     bool last_allow_network = false;
+    bool authorized = true;
+    bool authorize_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
+        if (!authorized || source_id != "elastic-a") { error = "source authorization denied"; return false; }
+        error.clear(); return true;
+    }
     bool execute(const common_agent_dataset_descriptor &, const std::string &,
             const std::string &, const common_agent_scope & scope, bool allow_network,
             std::string & result, std::string & error) override {
@@ -85,6 +90,10 @@ int main() {
     common_investigation_case_revision reloaded_case;
     TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
     TEST_ASSERT(reloaded_case.revision == 1 && reloaded_case.fingerprint == first_case_fingerprint);
+    virtual_source.authorized = false;
+    TEST_ASSERT(!store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
+    virtual_source.authorized = true;
+    TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
     TEST_ASSERT(!store.publish_investigation_case(investigation, 0,
         "resource://investigation/case-persist-1/conflict", published, error));
     TEST_ASSERT(error.find("revision conflict") != std::string::npos);

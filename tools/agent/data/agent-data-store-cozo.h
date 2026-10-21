@@ -38,6 +38,8 @@ public:
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) override;
     bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) override;
+    bool authorize_investigation_source(const std::string & source_id,
+        const common_agent_scope & scope, std::string & error) const override;
 
 private:
     int32_t db_id_ = -1;

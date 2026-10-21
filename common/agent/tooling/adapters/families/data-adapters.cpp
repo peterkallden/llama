@@ -606,6 +606,9 @@ common_tool_execution_result execute_investigation_tool(
                 std::move(error), "Configured investigation sources are unavailable.");
         }
         const auto source_id = arguments.value("source_id", std::string());
+        if (!bindings.data_store->authorize_investigation_source(source_id, bindings.tool_scope, error))
+            return common_adapter_not_found_failure("tool.investigation.source_unavailable",
+                std::move(error), "Choose a source currently authorized for this scope.");
         const bool source_exists = std::any_of(datasets.begin(), datasets.end(), [&](const auto & descriptor) {
             return descriptor.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
                 descriptor.ref.source_provider == source_id;
@@ -644,10 +647,14 @@ common_tool_execution_result execute_investigation_tool(
                 std::move(error), "Cases could not be listed in the current scope.");
         }
         json rows = json::array();
-        for (const auto & item : cases) rows.push_back({{"case_id", item.case_id},
+        for (const auto & item : cases) {
+            std::string authorization_error;
+            if (!bindings.data_store->authorize_investigation_source(item.source_id, bindings.tool_scope, authorization_error)) continue;
+            rows.push_back({{"case_id", item.case_id},
             {"revision", item.revision}, {"title", item.title}, {"question", item.question},
             {"source_id", item.source_id}, {"window_start_ms", item.window_start_ms},
             {"window_end_ms", item.window_end_ms}});
+        }
         return common_adapter_success_json({{"cases", std::move(rows)}, {"next_cursor", next_cursor}});
     }
     const auto case_id = arguments.value("case_id", std::string());
@@ -656,6 +663,9 @@ common_tool_execution_result execute_investigation_tool(
         return common_adapter_not_found_failure("tool.investigation.case_unavailable",
             std::move(error), "The case is unavailable in the current scope.");
     }
+    if (!bindings.data_store->authorize_investigation_source(value.source_id, bindings.tool_scope, error))
+        return common_adapter_not_found_failure("tool.investigation.case_unavailable",
+            "case source is no longer authorized", "The case is unavailable in the current scope.");
     if (operation == "investigation.case.open") {
         return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
     }
@@ -799,10 +809,11 @@ common_tool_execution_result execute_investigation_tool(
             return std::string();
         };
         const auto time_field = first_column({"@timestamp", "event_time", "event.time"});
-        if (!time_field.empty()) {
-            predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
-            predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
-        }
+        if (time_field.empty()) return common_adapter_validation_failure(
+            "tool.investigation.timestamp_unmapped",
+            "the configured source has no supported event-time field; collection cannot enforce this case window");
+        predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
+        predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
         const json query = {{"dataset", dataset_uri}, {"select", selected}, {"where", predicates},
             {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit}};
         std::string response;
@@ -903,15 +914,14 @@ common_tool_execution_result execute_investigation_tool(
             for (const auto & id : {user_id, host_id, source_ip, destination_ip, process_id, file_id, trace_id, message_id}) if (!id.empty()) refs.push_back(id);
             collected_events.push_back({event_id, value.source_id,
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
-                refs, {}, {}});
+                refs, {}, {}, {}});
+            if (!source_ip.empty()) collected_events.back().entity_roles["source_ip"] = source_ip;
+            if (!destination_ip.empty()) collected_events.back().entity_roles["destination_ip"] = destination_ip;
             existing_events.insert(event_id);
             normalized_rows.push_back({{"event_id", event_id}, {"event_type", event_type},
                 {"event_time_ms", event_time.event_time_ms}, {"has_event_time", event_time.has_event_time},
                 {"entity_ids", refs}});
         }
-        if (collected_events.empty()) return common_adapter_success_json({{"case_id", value.case_id},
-            {"revision", value.revision}, {"collected_events", 0}, {"complete", page.value("complete", false)},
-            {"limitations", limitations}});
         json raw_page = {{"source_id", value.source_id}, {"dataset", dataset_uri},
             {"query", query}, {"result", page}, {"collected_at_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count()}};
@@ -945,22 +955,23 @@ common_tool_execution_result execute_investigation_tool(
         }
         value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
         std::vector<common_investigation_relation_rule> rules;
-        for (const auto & event : collected_events) {
+        for (const auto & event : value.events) {
             if (event.event_type.find("auth") != std::string::npos || event.event_type.find("login") != std::string::npos)
                 rules.push_back({"builtin-authentication-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::user,
-                    common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to});
+                    common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to, {}, {}});
             if (event.event_type.find("network") != std::string::npos || event.event_type.find("connection") != std::string::npos)
                 rules.push_back({"builtin-network-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::ip,
-                    common_investigation_entity_kind::ip, common_investigation_relation_kind::communicated_with});
+                    common_investigation_entity_kind::ip, common_investigation_relation_kind::communicated_with,
+                    "source_ip", "destination_ip"});
             if (event.event_type.find("process") != std::string::npos)
                 rules.push_back({"builtin-process-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
-                    common_investigation_entity_kind::process, common_investigation_relation_kind::spawned});
+                    common_investigation_entity_kind::process, common_investigation_relation_kind::spawned, {}, {}});
             if (event.event_type.find("file") != std::string::npos)
                 rules.push_back({"builtin-file-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::process,
-                    common_investigation_entity_kind::file, common_investigation_relation_kind::accessed});
+                    common_investigation_entity_kind::file, common_investigation_relation_kind::accessed, {}, {}});
             if (event.event_type.find("trace") != std::string::npos)
                 rules.push_back({"builtin-trace-v1:" + hash_sha256_hex(event.event_type.data(), event.event_type.size()), event.event_type, common_investigation_entity_kind::trace,
-                    common_investigation_entity_kind::message, common_investigation_relation_kind::correlated_with});
+                    common_investigation_entity_kind::message, common_investigation_relation_kind::correlated_with, {}, {}});
         }
         std::sort(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id < b.id; });
         rules.erase(std::unique(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id == b.id && a.event_type == b.event_type; }), rules.end());

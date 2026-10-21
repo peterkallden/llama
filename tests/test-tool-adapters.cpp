@@ -92,6 +92,11 @@ public:
     std::map<std::string, common_investigation_case_revision> cases;
     std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
+    bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
+        if (source_id != source.ref.source_provider) { error = "source is not authorized"; return false; }
+        error.clear(); return true;
+    }
+
     bool execute(const std::string &, const std::string &, std::string &, std::string & error) override {
         error = "not used by investigation adapter contract";
         return false;
@@ -1173,7 +1178,7 @@ int main() {
         {"host:logs:app1", "logs", common_investigation_entity_kind::host, "app1", "app1", "", 0, 0},
     };
     investigation_case.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
-        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1"}};
+        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}}};
     investigation_case.relations = {{"rel:1", "logs", "user:logs:alice", "host:logs:app1",
         common_investigation_relation_kind::authenticated_to, 200, 200, true, 1,
         "auth-v1", "1", "observed", {"event:1"}}};
@@ -1197,6 +1202,15 @@ int main() {
         R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
     assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
         result.output.find("event:1") != std::string::npos);
+    const auto timestamp_column = std::find_if(investigation_store.source.columns.begin(),
+        investigation_store.source.columns.end(), [](const auto & column) { return column.name == "@timestamp"; });
+    const auto saved_timestamp_column = *timestamp_column;
+    investigation_store.source.columns.erase(timestamp_column);
+    result = investigation_registry.execute({"investigation.collect",
+        R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    assert(!result.ok && result.failure_code == "tool.investigation.timestamp_unmapped" &&
+        investigation_store.cases.at("graph-case").revision == 1);
+    investigation_store.source.columns.push_back(saved_timestamp_column);
     result = investigation_registry.execute({"investigation.collect",
         R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
     assert(result.ok && result.output.find("collected_events") != std::string::npos &&
@@ -1206,6 +1220,11 @@ int main() {
         investigation_store.cases.at("graph-case").events[1].time.event_time_ms == 300 &&
         investigation_store.cases.at("graph-case").entities.size() == 4 &&
         investigation_resources.requests.size() == 2);
+    assert(std::any_of(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
+                relation.evidence_event_ids.end();
+        }));
     result = investigation_registry.execute({"investigation.analyze",
         R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
     assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&

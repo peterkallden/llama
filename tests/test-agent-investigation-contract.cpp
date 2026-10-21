@@ -18,8 +18,8 @@ common_investigation_case_revision sample() {
     value.entities = {{"user:1", "elastic-a", common_investigation_entity_kind::user, "u-1", "user", "", 0, 0},
                       {"host:1", "elastic-a", common_investigation_entity_kind::host, "h-1", "host", "", 0, 0},
                       {"host:2", "elastic-a", common_investigation_entity_kind::host, "h-2", "host", "", 0, 0}};
-    value.events = {{"event:1", "elastic-a", "doc:1", "auth", {200, 300, 5, true}, {"user:1", "host:1"}, "resource://raw/1", "resource://normalized/1"},
-                    {"event:2", "elastic-a", "doc:2", "auth", {400, 500, 5, true}, {"user:1", "host:2"}, "resource://raw/2", "resource://normalized/2"}};
+    value.events = {{"event:1", "elastic-a", "doc:1", "auth", {200, 300, 5, true}, {"user:1", "host:1"}, "resource://raw/1", "resource://normalized/1", {}},
+                    {"event:2", "elastic-a", "doc:2", "auth", {400, 500, 5, true}, {"user:1", "host:2"}, "resource://raw/2", "resource://normalized/2", {}}};
     value.relations = {{"rel:1", "elastic-a", "user:1", "host:1", common_investigation_relation_kind::authenticated_to, 200, 200, true, 1, "auth-v1", "1", "observed", {"event:1"}},
                        {"rel:2", "elastic-a", "user:1", "host:2", common_investigation_relation_kind::authenticated_to, 400, 400, true, 1, "auth-v1", "1", "observed", {"event:2"}}};
     return value;
@@ -35,6 +35,26 @@ int main() {
     check(common_investigation_case_from_json(encoded, decoded, error) && decoded.case_id == value.case_id &&
           decoded.events.size() == value.events.size() && decoded.scope.project_id == value.scope.project_id,
           "case JSON roundtrip must preserve evidence, revision, and scope");
+
+    common_investigation_case_revision network_case;
+    network_case.case_id = "network-case"; network_case.source_id = "elastic-a";
+    network_case.title = "Network direction"; network_case.scope.namespace_id = "local";
+    network_case.entities = {
+        {"ip:a", "elastic-a", common_investigation_entity_kind::ip, "10.0.0.1", "10.0.0.1", "", 0, 0},
+        {"ip:b", "elastic-a", common_investigation_entity_kind::ip, "10.0.0.2", "10.0.0.2", "", 0, 0}};
+    common_investigation_event network_event{"event:net", "elastic-a", "doc:net", "network_connection",
+        {500, 510, 0, true}, {"ip:a", "ip:b"}, {}, {}, {}};
+    network_event.entity_roles = {{"source_ip", "ip:a"}, {"destination_ip", "ip:b"}};
+    network_case.events = {network_event};
+    std::vector<common_investigation_relation> network_relations;
+    std::vector<std::string> network_gaps;
+    const std::vector<common_investigation_relation_rule> network_rules = {{"network-v1", "network_connection",
+        common_investigation_entity_kind::ip, common_investigation_entity_kind::ip,
+        common_investigation_relation_kind::communicated_with, "source_ip", "destination_ip"}};
+    check(common_investigation_build_relations("elastic-a", network_case.entities, network_case.events,
+        network_rules, network_relations, network_gaps, error) && network_relations.size() == 1 &&
+        network_relations[0].from_entity_id == "ip:a" && network_relations[0].to_entity_id == "ip:b",
+        "directed network endpoints must produce one correctly oriented relation");
 
     common_investigation_graph_query query;
     query.case_id = value.case_id; query.case_revision = value.revision;
@@ -79,7 +99,7 @@ int main() {
     const std::vector<common_investigation_relation_rule> relation_rules = {
         {"auth-v1", "auth", common_investigation_entity_kind::user,
             common_investigation_entity_kind::host,
-            common_investigation_relation_kind::authenticated_to},
+            common_investigation_relation_kind::authenticated_to, {}, {}},
     };
     check(common_investigation_build_relations("elastic-a", value.entities, value.events,
             relation_rules, rebuilt, limitations, error),

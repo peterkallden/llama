@@ -6,6 +6,11 @@
 
 int main() {
     using json = nlohmann::ordered_json;
+    if (!agent_investigation_search_page_complete(true, false, true, 0, 0, 4, 4) ||
+            agent_investigation_search_page_complete(true, false, true, 1, 0, 4, 4) ||
+            agent_investigation_search_page_complete(true, true, true, 0, 0, 4, 4) ||
+            agent_investigation_search_page_complete(true, false, false, 0, 0, 4, 4) ||
+            agent_investigation_search_page_complete(false, false, true, 0, 0, 4, 4)) return 9;
     agent_host_investigation_source_config source;
     source.id = "logs";
     source.base_url = "https://search.example.invalid";

@@ -188,7 +188,8 @@ if (!window.__investigationWorkspace) {
     const target = q<HTMLDivElement>("#claims"); target.replaceChildren();
     for (const claim of claims) {
       const box = document.createElement("div"); box.className = "claim";
-      const state = document.createElement("small"); state.textContent = String(claim.state) === "2" ? "Reviewed conclusion" : "Hypothesis";
+      const state = document.createElement("small");
+      state.textContent = ["Observation", "Correlation", "Hypothesis", "Reviewed conclusion"][Number(claim.state)] ?? "Unknown claim state";
       const text = document.createElement("div"); text.textContent = claim.text;
       box.append(state, text); target.append(box);
     }

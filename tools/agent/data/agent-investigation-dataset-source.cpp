@@ -91,8 +91,30 @@ bool parse_request(const std::string & raw, json & value, std::string & error) {
 }
 }
 
+bool agent_investigation_search_page_complete(bool total_exact, bool timed_out,
+        bool shard_status_known, size_t failed_shards, size_t offset,
+        size_t returned_rows, size_t total) {
+    return total_exact && !timed_out && shard_status_known && failed_shards == 0 &&
+        offset <= total && returned_rows <= total - offset && offset + returned_rows >= total;
+}
+
 agent_investigation_virtual_dataset_source::agent_investigation_virtual_dataset_source(
         agent_host_investigation_config config) : config_(std::move(config)) {}
+
+bool agent_investigation_virtual_dataset_source::authorize_source(
+        const std::string & source_id, const common_agent_scope & scope, std::string & error) const {
+    const auto * source = find_source(config_, source_id);
+    if (!config_.enabled || !source) { error = "investigation source is not currently configured"; return false; }
+    if (std::find(source->allowed_namespaces.begin(), source->allowed_namespaces.end(), scope.namespace_id) == source->allowed_namespaces.end()) {
+        error = "investigation source is not authorized for this namespace"; return false;
+    }
+    if (!source->allowed_projects.empty() &&
+            std::find(source->allowed_projects.begin(), source->allowed_projects.end(), scope.project_id) == source->allowed_projects.end()) {
+        error = "investigation source is not authorized for this project"; return false;
+    }
+    error.clear();
+    return true;
+}
 
 bool agent_investigation_virtual_dataset_source::register_datasets(
         common_agent_data_store & store, std::string & error) const {
@@ -250,11 +272,20 @@ bool agent_investigation_virtual_dataset_source::execute(
         }
     }
     const bool timed_out = parsed.value("timed_out", false);
-    const bool complete = total_exact && !timed_out && offset + rows.size() >= total;
+    size_t failed_shards = 0;
+    const bool shard_status_known = parsed.contains("_shards") && parsed["_shards"].is_object() &&
+        parsed["_shards"].contains("failed") && parsed["_shards"]["failed"].is_number_integer();
+    if (shard_status_known) {
+        failed_shards = parsed["_shards"]["failed"].get<size_t>();
+    }
+    const bool complete = agent_investigation_search_page_complete(total_exact, timed_out,
+        shard_status_known, failed_shards, offset, rows.size(), total);
     result_json = json{{"columns", column_names}, {"rows", rows}, {"row_count", rows.size()},
         {"scanned_rows", rows.size()}, {"complete", complete},
         {"scan_truncated", !complete}, {"result_truncated", offset + rows.size() < total},
-        {"total", total}, {"total_exact", total_exact}, {"source_provider", source->id}}.dump();
+        {"total", total}, {"total_exact", total_exact}, {"timed_out", timed_out},
+        {"shard_status_known", shard_status_known}, {"failed_shards", failed_shards},
+        {"source_provider", source->id}}.dump();
     error.clear();
     return true;
 }

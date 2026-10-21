@@ -15,6 +15,10 @@ struct common_agent_data_store_config {
 class common_agent_virtual_dataset_source {
 public:
     virtual ~common_agent_virtual_dataset_source() = default;
+    virtual bool authorize_source(const std::string &, const common_agent_scope &, std::string & error) const {
+        error = "investigation source authorization is unavailable";
+        return false;
+    }
     virtual bool execute(
         const common_agent_dataset_descriptor & descriptor,
         const std::string & operation,
@@ -171,4 +175,10 @@ public:
         return false;
     }
     virtual bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) { return false; }
+    virtual bool authorize_investigation_source(const std::string & source_id,
+            const common_agent_scope & scope, std::string & error) const {
+        (void) source_id; (void) scope;
+        error = "investigation source authorization is unavailable";
+        return false;
+    }
 };

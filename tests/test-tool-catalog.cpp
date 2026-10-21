@@ -150,6 +150,11 @@ int main() {
     assert(document_import->mcp_app_write_authorized);
     const auto * document_patch = catalog.find_definition("document.propose_patch");
     assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
+    for (const auto * name : {"investigation.case.create", "investigation.claim.hypothesize", "investigation.report.compose"}) {
+        const auto * definition = catalog.find_definition(name);
+        assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
+            definition->requires_confirmation && definition->mcp_app_write_authorized);
+    }
     assert(artifact_export->risk_class == common_tool_risk_class::artifact_write);
     assert(artifact_export->requires_confirmation);
     const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);

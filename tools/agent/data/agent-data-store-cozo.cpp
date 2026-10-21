@@ -197,6 +197,10 @@ bool common_agent_cozo_data_store::get_investigation_case(
     if (out.case_id != case_id || !scope_equal(out.scope, scope)) {
         out = {}; error = "investigation case scope does not match its storage key"; return false;
     }
+    std::string authorization_error;
+    if (!authorize_investigation_source(out.source_id, scope, authorization_error)) {
+        out = {}; error = "investigation case is unavailable under current source permissions"; return false;
+    }
     return true;
 }
 
@@ -227,7 +231,9 @@ bool common_agent_cozo_data_store::list_investigation_cases(
         item.title = row[2].get<std::string>(); item.question = row[3].get<std::string>();
         item.source_id = row[4].get<std::string>(); item.window_start_ms = row[5].get<int64_t>();
         item.window_end_ms = row[6].get<int64_t>();
-        if (item.case_id > after) cases.push_back(std::move(item));
+        std::string authorization_error;
+        if (item.case_id > after && authorize_investigation_source(item.source_id, scope, authorization_error))
+            cases.push_back(std::move(item));
     }
     std::sort(cases.begin(), cases.end(), [](const auto & a, const auto & b) { return a.case_id < b.case_id; });
     if (cases.size() > limit) { cases.resize(limit); next_cursor = cases.back().case_id; }
@@ -308,6 +314,11 @@ bool common_agent_cozo_data_store::set_virtual_dataset_source(
         common_agent_virtual_dataset_source * source) {
     virtual_dataset_source_ = source;
     return true;
+}
+
+bool common_agent_cozo_data_store::authorize_investigation_source(
+        const std::string & source_id, const common_agent_scope & scope, std::string & error) const {
+    return virtual_dataset_source_ != nullptr && virtual_dataset_source_->authorize_source(source_id, scope, error);
 }
 
 bool common_agent_cozo_data_store::open(const std::string & path, std::string & error) {
