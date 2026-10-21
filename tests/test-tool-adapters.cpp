@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <iostream>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1238,14 +1239,23 @@ int main() {
             return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
                 relation.evidence_event_ids.end();
         }));
+    const auto & newly_collected_event = investigation_store.cases.at("graph-case").events[1];
+    if (newly_collected_event.entity_roles.at("user") != "entity:logs:user:alice" ||
+            newly_collected_event.entity_roles.at("host") != "entity:logs:host:db2") {
+        std::cerr << "new authentication events must preserve user and host endpoint roles\n";
+        return 20;
+    }
     const auto collected_auth_relation = std::find_if(investigation_store.cases.at("graph-case").relations.begin(),
         investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
             return !relation.evidence_event_ids.empty() && relation.evidence_event_ids[0] ==
                 "event:logs:logs-2026.10:doc-2";
         });
-    assert(collected_auth_relation != investigation_store.cases.at("graph-case").relations.end() &&
-        collected_auth_relation->from_entity_id == "entity:logs:user:alice" &&
-        collected_auth_relation->to_entity_id == "entity:logs:host:db2");
+    if (collected_auth_relation == investigation_store.cases.at("graph-case").relations.end() ||
+            collected_auth_relation->from_entity_id != "entity:logs:user:alice" ||
+            collected_auth_relation->to_entity_id != "entity:logs:host:db2") {
+        std::cerr << "configured authentication profiles must produce the declared directed endpoints\n";
+        return 21;
+    }
     result = investigation_registry.execute({"investigation.analyze",
         R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
     assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&
