@@ -275,7 +275,8 @@ common_tool_execution_result execute_investigation_tool(
         for (const auto * event : ordered_events) {
             markdown += "- " + (event->time.has_event_time ? std::to_string(event->time.event_time_ms) : std::string("time unknown")) +
                 " — " + safe_text(event->event_type) + " (`" + safe_text(event->id) + "`; document `" +
-                safe_text(event->source_document_id) + "`) [raw: " + safe_text(event->raw_resource_uri) + "]\n";
+                safe_text(event->source_document_id) + "`" + (event->source_index.empty() ? std::string() : "; index `" + safe_text(event->source_index) + "`") +
+                ") [raw: " + safe_text(event->raw_resource_uri) + "]\n";
         }
         markdown += "\n## Relations\n\n";
         if (value.relations.empty()) markdown += "No relations are derived in this revision.\n\n";
@@ -439,10 +440,15 @@ common_tool_execution_result execute_investigation_tool(
         };
         json normalized_rows = json::array();
         for (const auto & row : rows) {
-            const std::string source_document_id = get_alias(row, {"event.id", "event_id", "id"});
+            const std::string source_index = get_alias(row, {"@source.index"});
+            const std::string source_document_id = get_alias(row, {"@source.id", "event.id", "event_id", "id"});
             const std::string serialized_row = row.dump();
-            const std::string event_id = "event:" + value.source_id + ":" +
-                (source_document_id.empty() ? hash_sha256_hex(serialized_row.data(), serialized_row.size()) : source_document_id);
+            const std::string document_identity = source_index.empty() ? source_document_id : source_index + ":" + source_document_id;
+            const std::string event_identity = source_document_id.empty()
+                ? hash_sha256_hex(serialized_row.data(), serialized_row.size()) : document_identity;
+            const std::string event_prefix = "event:" + value.source_id + ":";
+            const std::string event_id = event_prefix + (event_prefix.size() + event_identity.size() > 512
+                ? "sha256:" + hash_sha256_hex(event_identity.data(), event_identity.size()) : event_identity);
             if (existing_events.count(event_id)) continue;
             const std::string event_type_value = get_alias(row, {"event.type", "event_type", "event.category"});
             const std::string event_type = event_type_value.empty() ? "unknown" : event_type_value;
@@ -476,11 +482,13 @@ common_tool_execution_result execute_investigation_tool(
             for (const auto & id : {user_id, host_id, source_ip, destination_ip, process_id, file_id, trace_id, message_id}) if (!id.empty()) refs.push_back(id);
             collected_events.push_back({event_id, value.source_id,
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
-                refs, {}, {}, {}});
+                refs, {}, {}, {}, {}});
+            collected_events.back().source_index = source_index;
             if (!source_ip.empty()) collected_events.back().entity_roles["source_ip"] = source_ip;
             if (!destination_ip.empty()) collected_events.back().entity_roles["destination_ip"] = destination_ip;
             existing_events.insert(event_id);
-            normalized_rows.push_back({{"event_id", event_id}, {"event_type", event_type},
+            normalized_rows.push_back({{"event_id", event_id}, {"source_index", source_index},
+                {"source_document_id", source_document_id}, {"event_type", event_type},
                 {"event_time_ms", event_time.event_time_ms}, {"has_event_time", event_time.has_event_time},
                 {"entity_ids", refs}});
         }
@@ -691,7 +699,8 @@ common_tool_execution_result execute_investigation_tool(
         constexpr size_t max_page_bytes = 48 * 1024;
         for (; next_offset < matched.size() && events.size() < limit; ++next_offset) {
             const auto & event = *matched[next_offset];
-            json row = {{"id", event.id}, {"source_document_id", event.source_document_id},
+            json row = {{"id", event.id}, {"source_index", event.source_index},
+                {"source_document_id", event.source_document_id},
                 {"event_type", event.event_type}, {"time", {{"event_time_ms", event.time.event_time_ms},
                     {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
                     {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},

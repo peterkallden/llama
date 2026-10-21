@@ -90,7 +90,7 @@ class test_investigation_store final : public common_agent_data_store {
 public:
     common_agent_dataset_descriptor source;
     std::map<std::string, common_investigation_case_revision> cases;
-    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
     bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
         if (source_id != source.ref.source_provider) { error = "source is not authorized"; return false; }
@@ -1162,7 +1162,9 @@ int main() {
         {"event.type", common_agent_dataset_column_type::string, false},
         {"@timestamp", common_agent_dataset_column_type::string, true},
         {"user.id", common_agent_dataset_column_type::string, true},
-        {"host.name", common_agent_dataset_column_type::string, true}};
+        {"host.name", common_agent_dataset_column_type::string, true},
+        {"@source.index", common_agent_dataset_column_type::string, false},
+        {"@source.id", common_agent_dataset_column_type::string, false}};
     common_investigation_case_revision investigation_case;
     investigation_case.case_id = "graph-case";
     investigation_case.title = "Authentication chain";
@@ -1220,6 +1222,7 @@ int main() {
     assert(result.ok && result.output.find("collected_events") != std::string::npos &&
         investigation_store.cases.at("graph-case").events.size() == 2 &&
         investigation_store.cases.at("graph-case").events[1].source_document_id == "doc-2" &&
+        investigation_store.cases.at("graph-case").events[1].source_index == "logs-2026.10" &&
         investigation_store.cases.at("graph-case").events[1].time.has_event_time &&
         investigation_store.cases.at("graph-case").events[1].time.event_time_ms == 300 &&
         investigation_store.cases.at("graph-case").entities.size() == 4 &&
@@ -1290,6 +1293,19 @@ int main() {
     result = foreign_investigation_registry.execute({"investigation.case.open",
         R"({"case_id":"graph-case"})"});
     assert(!result.ok && result.failure_code == "tool.investigation.case_unavailable");
+
+    auto collision_case = investigation_case;
+    collision_case.case_id = "index-id-collision-case";
+    collision_case.entities.clear(); collision_case.events.clear(); collision_case.relations.clear();
+    collision_case.claims.clear(); collision_case.gaps.clear(); collision_case.revision = 1;
+    collision_case.fingerprint.clear();
+    investigation_store.seed(collision_case);
+    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["same-id","authentication","1970-01-01T00:00:00.300Z","alice","app-a","logs-a","same-id"],["same-id","authentication","1970-01-01T00:00:00.400Z","alice","app-b","logs-b","same-id"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    result = investigation_registry.execute({"investigation.collect", R"({"case_id":"index-id-collision-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    const auto & collision_events = investigation_store.cases.at("index-id-collision-case").events;
+    assert(result.ok && collision_events.size() == 2 && collision_events[0].source_document_id == "same-id" &&
+        collision_events[1].source_document_id == "same-id" && collision_events[0].source_index != collision_events[1].source_index &&
+        collision_events[0].id != collision_events[1].id);
     std::filesystem::remove_all(repository);
     return 0;
 }

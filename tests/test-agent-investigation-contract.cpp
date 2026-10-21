@@ -18,8 +18,8 @@ common_investigation_case_revision sample() {
     value.entities = {{"user:1", "elastic-a", common_investigation_entity_kind::user, "u-1", "user", "", 0, 0},
                       {"host:1", "elastic-a", common_investigation_entity_kind::host, "h-1", "host", "", 0, 0},
                       {"host:2", "elastic-a", common_investigation_entity_kind::host, "h-2", "host", "", 0, 0}};
-    value.events = {{"event:1", "elastic-a", "doc:1", "auth", {200, 300, 5, true}, {"user:1", "host:1"}, "resource://raw/1", "resource://normalized/1", {}},
-                    {"event:2", "elastic-a", "doc:2", "auth", {400, 500, 5, true}, {"user:1", "host:2"}, "resource://raw/2", "resource://normalized/2", {}}};
+    value.events = {{"event:1", "elastic-a", "doc:1", "auth", {200, 300, 5, true}, {"user:1", "host:1"}, "resource://raw/1", "resource://normalized/1", {}, {}},
+                    {"event:2", "elastic-a", "doc:2", "auth", {400, 500, 5, true}, {"user:1", "host:2"}, "resource://raw/2", "resource://normalized/2", {}, {}}};
     value.relations = {{"rel:1", "elastic-a", "user:1", "host:1", common_investigation_relation_kind::authenticated_to, 200, 200, true, 1, "auth-v1", "1", "observed", {"event:1"}},
                        {"rel:2", "elastic-a", "user:1", "host:2", common_investigation_relation_kind::authenticated_to, 400, 400, true, 1, "auth-v1", "1", "observed", {"event:2"}}};
     return value;
@@ -29,12 +29,20 @@ common_investigation_case_revision sample() {
 int main() {
     std::string error;
     auto value = sample();
+    value.events[0].source_index = "logs-2026.10";
     check(common_investigation_case_validate(value, error), "valid case must pass validation");
     const auto encoded = common_investigation_case_to_json(value);
     common_investigation_case_revision decoded;
     check(common_investigation_case_from_json(encoded, decoded, error) && decoded.case_id == value.case_id &&
-          decoded.events.size() == value.events.size() && decoded.scope.project_id == value.scope.project_id,
+          decoded.events.size() == value.events.size() && decoded.events[0].source_index == "logs-2026.10" &&
+          decoded.scope.project_id == value.scope.project_id,
           "case JSON roundtrip must preserve evidence, revision, and scope");
+    auto legacy = encoded;
+    legacy["events"][1].erase("source_index");
+    common_investigation_case_revision legacy_decoded;
+    check(common_investigation_case_from_json(legacy, legacy_decoded, error) &&
+          legacy_decoded.events[1].source_index.empty(),
+          "older case revisions without source indexes must remain readable");
 
     common_investigation_context_binding binding;
     binding.case_id = value.case_id; binding.revision = value.revision;
@@ -63,7 +71,7 @@ int main() {
         {"ip:a", "elastic-a", common_investigation_entity_kind::ip, "10.0.0.1", "10.0.0.1", "", 0, 0},
         {"ip:b", "elastic-a", common_investigation_entity_kind::ip, "10.0.0.2", "10.0.0.2", "", 0, 0}};
     common_investigation_event network_event{"event:net", "elastic-a", "doc:net", "network_connection",
-        {500, 510, 0, true}, {"ip:a", "ip:b"}, {}, {}, {}};
+        {500, 510, 0, true}, {"ip:a", "ip:b"}, {}, {}, {}, {}};
     network_event.entity_roles = {{"source_ip", "ip:a"}, {"destination_ip", "ip:b"}};
     network_case.events = {network_event};
     std::vector<common_investigation_relation> network_relations;

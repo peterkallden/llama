@@ -186,7 +186,7 @@ if (!window.__investigationWorkspace) {
       const time = document.createElement("time"); time.textContent = event.time?.has_event_time
         ? new Date(event.time.event_time_ms).toLocaleString() : "Unknown event time";
       const title = document.createElement("strong"); title.textContent = event.event_type || "Event";
-      const id = document.createElement("small"); id.textContent = `Source document: ${event.source_document_id}`;
+      const id = document.createElement("small"); id.textContent = `Source: ${event.source_index ? `${event.source_index}/` : ""}${event.source_document_id}`;
       button.append(time, title, id); button.addEventListener("click", () => { selectedEvent = event.id; showEvidence(event); });
       list.append(button);
     }
@@ -195,7 +195,7 @@ if (!window.__investigationWorkspace) {
   function showEvidence(event: Json) {
     selectedEvent = event.id;
     q("#evidence").textContent = JSON.stringify({
-      event_id: event.id, source_document_id: event.source_document_id, event_type: event.event_type,
+      event_id: event.id, source_index: event.source_index, source_document_id: event.source_document_id, event_type: event.event_type,
       event_time: event.time, entities: event.entity_ids, raw_resource_uri: event.raw_resource_uri,
       normalized_resource_uri: event.normalized_resource_uri,
       note: "This is a source-linked observation. It does not by itself establish causality.",

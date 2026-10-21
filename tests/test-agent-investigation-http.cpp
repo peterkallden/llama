@@ -87,7 +87,7 @@ int main() {
         real_descriptor.ref.source_request_json = R"({"index":"llama-agent-investigation-smoke"})";
         context.scope.namespace_id = "tenant-a";
         const auto request = json{{"dataset", real_descriptor.ref.uri},
-            {"select", {"event.id", "host.name"}}, {"where", json::array({
+            {"select", {"event.id", "host.name", "@source.index", "@source.id"}}, {"where", json::array({
                 {{"field", "event.kind"}, {"operator", "="}, {"value", "auth"}}})},
             {"order_by", json::array({{{"field", "event.id"}, {"direction", "asc"}}})},
             {"limit", 2}, {"offset", 0}}.dump();
@@ -100,7 +100,8 @@ int main() {
         if (!page.is_object() || !page.contains("rows") || !page["rows"].is_array() ||
                 page["rows"].size() != 2 || page.value("complete", true) ||
                 !page.value("result_truncated", false) ||
-                page["rows"][0] != json::array({"evt-001", "SRV-APP-07"})) {
+                page["rows"][0] != json::array({"evt-001", "SRV-APP-07",
+                    "llama-agent-investigation-smoke", "evt-001"})) {
             std::cerr << "real search provider returned an unexpected filtered/paged result: " << response << '\n';
             return 8;
         }

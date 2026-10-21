@@ -52,6 +52,7 @@ struct common_investigation_event {
     std::string raw_resource_uri;
     std::string normalized_resource_uri;
     std::map<std::string, std::string> entity_roles;
+    std::string source_index;
 };
 
 struct common_investigation_relation {

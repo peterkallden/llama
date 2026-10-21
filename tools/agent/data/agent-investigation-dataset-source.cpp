@@ -136,6 +136,8 @@ bool agent_investigation_virtual_dataset_source::register_datasets(
                 descriptor.columns.push_back({field.first,
                     common_agent_dataset_column_type::unknown, true});
             }
+            descriptor.columns.push_back({"@source.index", common_agent_dataset_column_type::string, false});
+            descriptor.columns.push_back({"@source.id", common_agent_dataset_column_type::string, false});
             descriptor.ref.column_count = descriptor.columns.size();
             descriptor.capabilities = {"filter", "project", "sort", "page"};
             descriptor.read_context_id = "investigation-read-context:" + source.id;
@@ -194,6 +196,9 @@ bool agent_investigation_virtual_dataset_source::execute(
             error = "virtual query projection is invalid"; return false;
         }
         for (const auto & field : request["select"]) {
+            if (!field.is_string()) { error = "query projection fields must be strings"; return false; }
+            const auto logical = field.get<std::string>();
+            if (logical == "@source.index" || logical == "@source.id") continue;
             std::string actual;
             if (!mapped_field(*source, field, actual, error)) return false;
             selected.push_back(actual);
@@ -241,7 +246,13 @@ bool agent_investigation_virtual_dataset_source::execute(
     std::vector<std::string> paths;
     for (const auto & requested : (request.contains("select") ? request["select"] : json::array())) {
         if (!requested.is_string()) { error = "query projection fields must be strings"; return false; }
-        const auto found = source->fields.find(requested.get<std::string>());
+        const std::string logical = requested.get<std::string>();
+        if (logical == "@source.index" || logical == "@source.id") {
+            column_names.push_back(logical);
+            paths.push_back(logical);
+            continue;
+        }
+        const auto found = source->fields.find(logical);
         if (found == source->fields.end()) { error = "query projection uses an unmapped field"; return false; }
         column_names.push_back(found->first);
         paths.push_back(found->second);
@@ -254,6 +265,8 @@ bool agent_investigation_virtual_dataset_source::execute(
         if (!hit.is_object() || !hit.contains("_source") || !hit["_source"].is_object()) continue;
         json values = json::array();
         for (const auto & path : paths) {
+            if (path == "@source.index") { values.push_back(hit.value("_index", std::string{})); continue; }
+            if (path == "@source.id") { values.push_back(hit.value("_id", std::string{})); continue; }
             auto document = hit["_source"];
             const auto * value = lookup_path(document, path);
             values.push_back(value ? *value : json());
