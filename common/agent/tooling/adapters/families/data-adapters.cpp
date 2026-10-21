@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -25,6 +26,36 @@
 namespace {
 
 using json = common_adapter_json;
+
+std::string investigation_page_cursor(uint64_t revision, size_t offset, const json & binding) {
+    const auto serialized = binding.dump();
+    const std::string fingerprint = hash_sha256_hex(serialized.data(), serialized.size());
+    return std::to_string(revision) + ":" + std::to_string(offset) + ":" + fingerprint;
+}
+
+bool investigation_page_offset(const std::string & cursor, uint64_t revision,
+        const json & binding, size_t & offset) {
+    offset = 0;
+    if (cursor.empty()) return true;
+    const auto first = cursor.find(':');
+    const auto second = first == std::string::npos ? first : cursor.find(':', first + 1);
+    if (first == std::string::npos || second == std::string::npos || cursor.find(':', second + 1) != std::string::npos) return false;
+    uint64_t cursor_revision = 0;
+    size_t cursor_offset = 0;
+    try {
+        size_t used_revision = 0, used_offset = 0;
+        cursor_revision = std::stoull(cursor.substr(0, first), &used_revision);
+        const auto parsed_offset = std::stoull(cursor.substr(first + 1, second - first - 1), &used_offset);
+        if (parsed_offset > std::numeric_limits<size_t>::max()) return false;
+        cursor_offset = static_cast<size_t>(parsed_offset);
+        if (used_revision != first || used_offset != second - first - 1) return false;
+    } catch (...) { return false; }
+    const auto serialized = binding.dump();
+    const std::string fingerprint = hash_sha256_hex(serialized.data(), serialized.size());
+    if (cursor_revision != revision || cursor.substr(second + 1) != fingerprint) return false;
+    offset = cursor_offset;
+    return true;
+}
 
 std::string lower_copy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -667,7 +698,65 @@ common_tool_execution_result execute_investigation_tool(
         return common_adapter_not_found_failure("tool.investigation.case_unavailable",
             "case source is no longer authorized", "The case is unavailable in the current scope.");
     if (operation == "investigation.case.open") {
-        return common_adapter_success_json({{"case", common_investigation_case_to_json(value)}});
+        const std::string first_entity_id = value.entities.empty() ? std::string() : value.entities.front().id;
+        return common_adapter_success_json({{"case", {{"case_id", value.case_id}, {"revision", value.revision},
+            {"title", value.title}, {"question", value.question}, {"source_id", value.source_id},
+            {"window_start_ms", value.window_start_ms}, {"window_end_ms", value.window_end_ms},
+            {"counts", {{"entities", value.entities.size()}, {"events", value.events.size()},
+                {"relations", value.relations.size()}, {"claims", value.claims.size()}, {"gaps", value.gaps.size()}}},
+            {"first_entity_id", first_entity_id}, {"status", value.gaps.empty() ? "open" : "qualified"}}}});
+    }
+    if (operation == "investigation.case.items") {
+        if (!arguments.contains("case_revision") || !arguments["case_revision"].is_number_integer() ||
+                !arguments.contains("type") || !arguments["type"].is_string() ||
+                (arguments.contains("limit") && !arguments["limit"].is_number_integer()) ||
+                (arguments.contains("cursor") && !arguments["cursor"].is_string()))
+            return common_adapter_validation_failure("tool.investigation.items_invalid_arguments",
+                "case_revision and limit must be integers, type and cursor must be strings");
+        const uint64_t requested_revision = arguments.value("case_revision", uint64_t(0));
+        if (requested_revision != value.revision) return common_adapter_execution_failure(
+            "tool.investigation.stale_cursor", "requested case revision is no longer current",
+            "Reload the case before continuing this page.");
+        const std::string item_type = arguments.value("type", std::string());
+        const size_t limit = arguments.value("limit", size_t(50));
+        if (limit == 0 || limit > 100) return common_adapter_validation_failure(
+            "tool.investigation.page_limit_invalid", "case item page size must be from 1 to 100");
+        const json binding = {{"case_id", value.case_id}, {"type", item_type}};
+        size_t offset = 0;
+        if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
+            return common_adapter_execution_failure("tool.investigation.cursor_invalid",
+                "case item cursor does not match this case revision and filter",
+                "The page cursor is invalid or stale; reopen the case and start again.");
+        const auto serialized = common_investigation_case_to_json(value);
+        const char * collection = nullptr;
+        if (item_type == "entities") collection = "entities";
+        else if (item_type == "events") collection = "events";
+        else if (item_type == "relations") collection = "relations";
+        else if (item_type == "claims") collection = "claims";
+        else if (item_type == "gaps") collection = "gaps";
+        else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
+            "type must be entities, events, relations, claims or gaps");
+        const auto & source = serialized.at(collection);
+        json items = json::array();
+        if (offset > source.size()) return common_adapter_execution_failure(
+            "tool.investigation.cursor_invalid", "case item cursor offset exceeds the collection size",
+            "The page cursor is invalid or stale; reopen the case and start again.");
+        constexpr size_t max_page_bytes = 40 * 1024;
+        size_t end = offset, page_bytes = 0;
+        while (end < source.size() && items.size() < limit) {
+            const size_t item_bytes = source[end].dump().size();
+            if (!items.empty() && page_bytes + item_bytes > max_page_bytes) break;
+            if (items.empty() && item_bytes > max_page_bytes) return common_adapter_execution_failure(
+                "tool.investigation.item_too_large", "one case item exceeds the bounded page size",
+                "Read its referenced resource through the resource tools.");
+            page_bytes += item_bytes;
+            items.push_back(source[end++]);
+        }
+        const bool has_more = end < source.size();
+        const std::string next_cursor = has_more ? investigation_page_cursor(value.revision, end, binding) : std::string();
+        return common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
+            {"type", item_type}, {"items", std::move(items)}, {"next_cursor", next_cursor},
+            {"has_more", has_more}, {"total", source.size()}});
     }
     if (operation == "investigation.report.compose") {
         if (arguments.value("expected_revision", uint64_t(0)) != value.revision) return
@@ -1064,8 +1153,24 @@ common_tool_execution_result execute_investigation_tool(
             {"edges", edges}, {"truncated", graph.truncated}, {"limitations", graph.limitations}});
     }
     if (operation == "investigation.events") {
+        for (const char * field : {"case_revision", "limit", "window_start_ms", "window_end_ms"}) {
+            if (arguments.contains(field) && !arguments[field].is_number_integer())
+                return common_adapter_validation_failure("tool.investigation.events_invalid_arguments",
+                    std::string(field) + " must be an integer");
+        }
+        for (const char * field : {"entity_id", "relation_id", "cursor"}) {
+            if (arguments.contains(field) && !arguments[field].is_string())
+                return common_adapter_validation_failure("tool.investigation.events_invalid_arguments",
+                    std::string(field) + " must be a string");
+        }
+        if (!arguments.contains("case_revision")) return common_adapter_validation_failure(
+            "tool.investigation.events_invalid_arguments", "case_revision is required");
         const auto entity_id = arguments.value("entity_id", std::string());
         const auto relation_id = arguments.value("relation_id", std::string());
+        const uint64_t requested_revision = arguments.value("case_revision", uint64_t(0));
+        if (requested_revision != value.revision) return common_adapter_execution_failure(
+            "tool.investigation.stale_cursor", "requested case revision is no longer current",
+            "Reload the case before continuing this event page.");
         if (entity_id.empty() == relation_id.empty()) return common_adapter_validation_failure(
             "tool.investigation.events_invalid", "events requires exactly one entity_id or relation_id");
         std::set<std::string> evidence_ids;
@@ -1077,23 +1182,57 @@ common_tool_execution_result execute_investigation_tool(
                 "The selected relation is unavailable in this case.");
             evidence_ids.insert(relation->evidence_event_ids.begin(), relation->evidence_event_ids.end());
         }
-        json events = json::array();
+        const int64_t window_start = arguments.value("window_start_ms", value.window_start_ms);
+        const int64_t window_end = arguments.value("window_end_ms", value.window_end_ms);
+        if (window_start >= window_end) return common_adapter_validation_failure(
+            "tool.investigation.events_window_invalid", "event window start must precede its end");
+        const json binding = {{"case_id", value.case_id}, {"entity_id", entity_id},
+            {"relation_id", relation_id}, {"window_start_ms", window_start}, {"window_end_ms", window_end}};
+        size_t offset = 0;
+        if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
+            return common_adapter_execution_failure("tool.investigation.cursor_invalid",
+                "event cursor does not match this case revision and filter",
+                "The page cursor is invalid or stale; reopen the case and start again.");
         const size_t limit = arguments.value("limit", size_t(100));
-        bool truncated = false;
+        if (limit == 0 || limit > 200) return common_adapter_validation_failure(
+            "tool.investigation.page_limit_invalid", "event page size must be from 1 to 200");
+        std::vector<const common_investigation_event *> matched;
         for (const auto & event : value.events) {
             if (!entity_id.empty() && std::find(event.entity_ids.begin(), event.entity_ids.end(), entity_id) == event.entity_ids.end()) continue;
             if (!relation_id.empty() && !evidence_ids.count(event.id)) continue;
-            if (event.time.has_event_time && ((arguments.contains("window_start_ms") && event.time.event_time_ms < arguments["window_start_ms"].get<int64_t>()) ||
-                    (arguments.contains("window_end_ms") && event.time.event_time_ms >= arguments["window_end_ms"].get<int64_t>()))) continue;
-            if (events.size() >= limit) { truncated = true; break; }
-            events.push_back({{"id", event.id}, {"source_document_id", event.source_document_id},
+            if (event.time.has_event_time && (event.time.event_time_ms < window_start || event.time.event_time_ms >= window_end)) continue;
+            matched.push_back(&event);
+        }
+        std::stable_sort(matched.begin(), matched.end(), [](const auto * a, const auto * b) {
+            if (a->time.has_event_time != b->time.has_event_time) return a->time.has_event_time;
+            if (a->time.has_event_time && a->time.event_time_ms != b->time.event_time_ms)
+                return a->time.event_time_ms < b->time.event_time_ms;
+            return a->id < b->id;
+        });
+        if (offset > matched.size()) return common_adapter_execution_failure(
+            "tool.investigation.cursor_invalid", "event cursor offset exceeds the matching result set",
+            "The page cursor is invalid or stale; reopen the case and start again.");
+        json events = json::array();
+        size_t next_offset = offset;
+        size_t serialized_bytes = 0;
+        constexpr size_t max_page_bytes = 48 * 1024;
+        for (; next_offset < matched.size() && events.size() < limit; ++next_offset) {
+            const auto & event = *matched[next_offset];
+            json row = {{"id", event.id}, {"source_document_id", event.source_document_id},
                 {"event_type", event.event_type}, {"time", {{"event_time_ms", event.time.event_time_ms},
                     {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
                     {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},
-                {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}});
+                {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}};
+            const size_t row_bytes = row.dump().size();
+            if (!events.empty() && serialized_bytes + row_bytes > max_page_bytes) break;
+            serialized_bytes += row_bytes;
+            events.push_back(std::move(row));
         }
-        return common_adapter_success_json({{"events", events}, {"truncated", truncated},
-            {"limitations", value.gaps}});
+        const bool has_more = next_offset < matched.size();
+        const std::string next_cursor = has_more ? investigation_page_cursor(value.revision, next_offset, binding) : std::string();
+        return common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
+            {"events", std::move(events)}, {"next_cursor", next_cursor}, {"has_more", has_more},
+            {"total_matching", matched.size()}, {"limitations", value.gaps}});
     }
     if (operation == "investigation.claim.hypothesize") {
         const auto claim_id = arguments.value("claim_id", std::string());
@@ -1212,6 +1351,7 @@ bool common_try_register_data_tool_adapter(
         definition.executor_id == "builtin.investigation.case.create" ||
         definition.executor_id == "builtin.investigation.case.list" ||
         definition.executor_id == "builtin.investigation.case.open" ||
+        definition.executor_id == "builtin.investigation.case.items" ||
         definition.executor_id == "builtin.investigation.report.compose" ||
         definition.executor_id == "builtin.investigation.collect" ||
         definition.executor_id == "builtin.investigation.graph.expand" ||

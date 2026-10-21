@@ -1193,6 +1193,10 @@ int main() {
     common_tool_registry investigation_registry;
     assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
         investigation_bindings, investigation_registry, adapters, error));
+    result = investigation_registry.execute({"investigation.case.open", R"({"case_id":"graph-case"})"});
+    assert(result.ok && result.output.find("first_entity_id") != std::string::npos &&
+        result.output.find("\"counts\"") != std::string::npos &&
+        result.output.find("\"events\":[") == std::string::npos);
     result = investigation_registry.execute({"investigation.case.list", R"({"limit":10})"});
     assert(result.ok && result.output.find("graph-case") != std::string::npos);
     result = investigation_registry.execute({"investigation.case.create",
@@ -1239,9 +1243,32 @@ int main() {
                 relation.evidence_event_ids.end();
         });
     assert(evidence_relation != investigation_store.cases.at("graph-case").relations.end());
+    investigation_store.cases.at("graph-case").events[1].entity_ids.push_back("user:logs:alice");
+    evidence_relation->evidence_event_ids.push_back(investigation_store.cases.at("graph-case").events[1].id);
     result = investigation_registry.execute({"investigation.events",
-        nlohmann::json{{"case_id", "graph-case"}, {"relation_id", evidence_relation->id}}.dump()});
-    assert(result.ok && result.output.find("doc-1") != std::string::npos);
+        nlohmann::json{{"case_id", "graph-case"}, {"case_revision", 2}, {"relation_id", evidence_relation->id}, {"limit", 1}}.dump()});
+    assert(result.ok && result.output.find("doc-1") != std::string::npos && result.output.find("next_cursor") != std::string::npos &&
+        result.output.find("\"has_more\":true") != std::string::npos);
+    const auto event_page = nlohmann::json::parse(result.output);
+    result = investigation_registry.execute({"investigation.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"relation_id", evidence_relation->id},
+        {"limit", 1}, {"cursor", event_page.at("next_cursor")}}.dump()});
+    assert(result.ok && result.output.find("doc-2") != std::string::npos && result.output.find("\"has_more\":false") != std::string::npos);
+    result = investigation_registry.execute({"investigation.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 1}, {"relation_id", evidence_relation->id}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.investigation.stale_cursor");
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"type", "entities"}, {"limit", 1}}.dump()});
+    assert(result.ok && result.output.find("\"has_more\":true") != std::string::npos);
+    const auto item_page = nlohmann::json::parse(result.output);
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"type", "entities"},
+        {"limit", 1}, {"cursor", item_page.at("next_cursor")}}.dump()});
+    assert(result.ok && result.output.find("\"case_revision\":2") != std::string::npos &&
+        result.output.find("\"items\":[") != std::string::npos);
+    result = investigation_registry.execute({"investigation.case.items",
+        R"({"case_id":"graph-case","case_revision":"2","type":"entities"})"});
+    assert(!result.ok);
     result = investigation_registry.execute({"investigation.claim.hypothesize",
         R"({"case_id":"graph-case","expected_revision":2,"claim_id":"h-1","text":"The login may be unusual.","supporting_event_ids":["event:1"]})"});
     assert(result.ok && result.output.find("hypothesis") != std::string::npos &&

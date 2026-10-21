@@ -68,9 +68,14 @@ references and environment-backed secrets.
 The investigation tool family supports case creation, scoped case listing and
 opening, bounded collection from a virtual dataset, graph expansion, event
 inspection, deterministic graph/path analyses, hypothesis recording and
-freezing a report from an exact case revision. The MCP App provides the same
-case list, graph, time filter, event evidence view and report action. Case list
-cursors are ordered by case ID and are restricted to the active namespace plus
+freezing a report from an exact case revision. `investigation.case.open`
+returns only case metadata, counts and the first graph entity. Read entity,
+event, relation, claim or gap records through `investigation.case.items` pages.
+`investigation.events` also accepts a page cursor. These case cursors bind the
+case revision and query filter; requests reauthorize the case and reject stale
+revisions. Pages are bounded by item count and serialized size. The MCP App
+uses the same APIs and exposes a “Load more events” action. Case list cursors
+remain ordered by case ID and are restricted to the active namespace plus
 project, or namespace plus session when there is no project.
 
 Collected source pages and normalized event references are retained as
@@ -81,10 +86,12 @@ partial. A relation records the deterministic rule and source event IDs that
 support it; it does not establish cause. The model may record hypotheses but
 cannot mark them as reviewed conclusions.
 
-This version performs bounded historical search. It does not yet provide
-collector/Kafka subscriptions, PIT/search-after cursors, a live event stream,
-formal evidence chain-of-custody, or model-supported smoke coverage. Case
-listing and evidence reads are scope-checked on every request.
+This version performs bounded historical search. Case-page cursors paginate
+already published case contents; they do not yet provide PIT/search-after
+continuation against Elasticsearch or OpenSearch. It also does not provide
+collector/Kafka subscriptions, a live event stream, formal evidence
+chain-of-custody, or model-supported smoke coverage. Case listing and evidence
+reads are scope-checked on every request.
 
 The workspace can bind a selected case revision and selected entity, relation
 and event IDs to the next chat turn. The daemon reloads the case in the active

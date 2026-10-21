@@ -18,6 +18,8 @@ if (!window.__investigationWorkspace) {
   let graph: Core | null = null;
   let lastAppCallAt = 0;
   let caseListCursor = "";
+  let eventsCursor = "";
+  let eventQuery: Json = {};
 
   function rpc(method: string, params: Json = {}) {
     const id = seq++;
@@ -67,9 +69,18 @@ if (!window.__investigationWorkspace) {
     q<HTMLButtonElement>("#save-hypothesis").disabled = false;
     q<HTMLButtonElement>("#compose-report").disabled = false;
     q("#report-result").textContent = "No report created for this revision.";
-    renderClaims(value.claims ?? []);
+    renderClaims([]);
     renderGraph({ nodes: [], edges: [], case_revision: revision, truncated: false, limitations: [] });
     setStatus(`Case ${value.case_id} opened at revision ${revision}.`);
+  }
+  async function loadCaseClaims() {
+    if (!currentCase) return;
+    const token = generation;
+    try {
+      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+        case_revision: currentCase.revision, type: "claims", limit: 100 }, token);
+      if (value) renderClaims(value.items ?? []);
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function openCase(id: string) {
     const token = ++generation;
@@ -79,7 +90,8 @@ if (!window.__investigationWorkspace) {
       if (!result) return;
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
-      await expand();
+      await loadCaseClaims();
+      if (result.case.first_entity_id) await expand(result.case.first_entity_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function listCases(after = "") {
@@ -137,7 +149,7 @@ if (!window.__investigationWorkspace) {
     try {
       const value = await call("investigation.graph.expand", {
         case_id: currentCase.case_id, case_revision: currentCase.revision,
-        center_entity_id: center || currentCase.entities?.[0]?.id || "",
+        center_entity_id: center || currentCase.first_entity_id || "",
         max_depth: 2, max_nodes: 100, max_edges: 200,
         window_start_ms: msValue("#filter-start") || currentCase.window_start_ms,
         window_end_ms: msValue("#filter-end") || currentCase.window_end_ms,
@@ -146,23 +158,28 @@ if (!window.__investigationWorkspace) {
       renderGraph(value);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
-  async function loadEvents(entityId: string, relationId = "") {
+  async function loadEvents(entityId: string, relationId = "", continuation = false) {
     if (!currentCase) return;
     const token = ++generation;
     try {
       setStatus("Loading source events…");
-      const args: Json = { case_id: currentCase.case_id, limit: 200,
+      if (!continuation) {
+        eventsCursor = "";
+        eventQuery = { case_id: currentCase.case_id, case_revision: currentCase.revision, limit: 100,
         window_start_ms: msValue("#filter-start") || currentCase.window_start_ms,
         window_end_ms: msValue("#filter-end") || currentCase.window_end_ms };
-      if (relationId) args.relation_id = relationId; else args.entity_id = entityId;
+        if (relationId) eventQuery.relation_id = relationId; else eventQuery.entity_id = entityId;
+      }
+      const args: Json = { ...eventQuery, ...(continuation && eventsCursor ? { cursor: eventsCursor } : {}) };
       const value = await call("investigation.events", args, token);
       if (!value) return;
-      renderTimeline(value.events ?? [], Boolean(value.truncated));
-      setStatus(`${value.events?.length ?? 0} evidence events${value.truncated ? " · more events are available" : ""}.`);
+      eventsCursor = String(value.next_cursor ?? "");
+      renderTimeline(value.events ?? [], Boolean(value.has_more), continuation);
+      setStatus(`${value.events?.length ?? 0} evidence events on this page${value.has_more ? " · more events are available" : ""}.`);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
-  function renderTimeline(events: Json[], truncated: boolean) {
-    const list = q<HTMLDivElement>("#timeline"); list.replaceChildren();
+  function renderTimeline(events: Json[], hasMore: boolean, append = false) {
+    const list = q<HTMLDivElement>("#timeline"); if (!append) list.replaceChildren();
     events.sort((a, b) => Number(a.time?.event_time_ms ?? 0) - Number(b.time?.event_time_ms ?? 0));
     for (const event of events) {
       const button = document.createElement("button"); button.className = `event${selectedEvent === event.id ? " selected" : ""}`;
@@ -173,7 +190,7 @@ if (!window.__investigationWorkspace) {
       button.append(time, title, id); button.addEventListener("click", () => { selectedEvent = event.id; showEvidence(event); });
       list.append(button);
     }
-    if (truncated) { const note = document.createElement("p"); note.textContent = "Event list reached its display bound."; list.append(note); }
+    q<HTMLButtonElement>("#events-more").hidden = !hasMore;
   }
   function showEvidence(event: Json) {
     selectedEvent = event.id;
@@ -252,6 +269,7 @@ if (!window.__investigationWorkspace) {
   q("#case-submit").addEventListener("click", () => void createOrOpen());
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));
   q("#apply-filter").addEventListener("click", () => void expand());
+  q("#events-more").addEventListener("click", () => void loadEvents("", "", true));
   q("#save-hypothesis").addEventListener("click", () => void saveHypothesis());
   q("#compose-report").addEventListener("click", () => void composeReport());
   q<HTMLTextAreaElement>("#hypothesis").addEventListener("input", (event) => {
