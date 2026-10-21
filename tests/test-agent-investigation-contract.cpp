@@ -103,14 +103,17 @@ int main() {
     check(common_investigation_graph_analyze(value, tiny_budget, metrics, error) && !metrics.complete,
           "budget exhaustion must mark graph metrics partial");
 
-    check(common_investigation_temporal_path(value, "host:1", "host:2", 100, {}, path, complete, error),
+    check(common_investigation_temporal_path(value, "user:1", "host:2", 100, {}, path, complete, error),
           "time-ordered path analysis should execute");
-    check(complete && path == std::vector<std::string>({"rel:1", "rel:2"}),
-          "temporal path should require nondecreasing relation intervals");
+    check(complete && path == std::vector<std::string>({"rel:2"}),
+          "temporal path should follow the observed direction of a relation");
+    check(common_investigation_temporal_path(value, "host:2", "user:1", 100, {}, path, complete, error) &&
+            complete && path.empty(),
+          "temporal path must not traverse a directed relation backwards");
     auto out_of_order = value;
     out_of_order.relations[1].first_seen_ms = 150;
     out_of_order.relations[1].last_seen_ms = 150;
-    check(common_investigation_temporal_path(out_of_order, "host:1", "host:2", 100, {}, path, complete, error) &&
+    check(common_investigation_temporal_path(out_of_order, "user:1", "host:2", 500, {}, path, complete, error) &&
             complete && path.empty(),
           "temporal path must not invent a chain across out-of-order events");
 
@@ -133,6 +136,16 @@ int main() {
             relation_rules, rebuilt_again, limitations, error) &&
             rebuilt_again.size() == rebuilt.size() && rebuilt_again[0].id == rebuilt[0].id,
           "relation IDs and ordering must be reproducible");
+    auto malformed_roles = value.events;
+    malformed_roles[0].entity_roles["source_ip"] = "missing-entity";
+    check(!common_investigation_build_relations("elastic-a", value.entities, malformed_roles,
+            relation_rules, rebuilt_again, limitations, error),
+          "relation builder must reject malformed event role references without throwing");
+    auto incomplete_role_rule = relation_rules;
+    incomplete_role_rule[0].from_role = "principal";
+    check(!common_investigation_build_relations("elastic-a", value.entities, value.events,
+            incomplete_role_rule, rebuilt_again, limitations, error),
+          "relation builder must reject rules with only one endpoint role");
     auto unknown_time_events = value.events;
     unknown_time_events[0].time.has_event_time = false;
     check(common_investigation_build_relations("elastic-a", value.entities, unknown_time_events,
@@ -142,6 +155,9 @@ int main() {
 
     value.relations[0].evidence_event_ids = {"missing"};
     check(!common_investigation_case_validate(value, error), "unknown evidence must invalidate a relation");
+    value = sample();
+    value.relations[0].evidence_event_ids.clear();
+    check(!common_investigation_case_validate(value, error), "relations without concrete evidence must be rejected");
     value = sample();
     value.events[0].entity_ids.push_back("missing");
     check(!common_investigation_case_validate(value, error), "unknown event entities must fail closed");

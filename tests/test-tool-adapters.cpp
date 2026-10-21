@@ -1252,6 +1252,7 @@ int main() {
     assert(result.ok && result.output.find("report_uri") != std::string::npos &&
         investigation_resources.requests.size() == 3 &&
         investigation_resources.requests.back().text.find("## Timeline") != std::string::npos &&
+        investigation_resources.requests.back().text.find("authenticated_to") != std::string::npos &&
         investigation_resources.requests.back().text.find("Hypothesis:") != std::string::npos &&
         investigation_resources.requests.back().text.find("event:1") != std::string::npos);
     auto foreign_scope = investigation_bindings;

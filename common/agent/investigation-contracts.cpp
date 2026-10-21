@@ -28,6 +28,10 @@ template<class E> bool enum_from(const std::string & s, E & out) {
 }
 }
 
+const char * common_investigation_relation_kind_name(common_investigation_relation_kind value) {
+    return relation_kind(value);
+}
+
 nlohmann::ordered_json common_investigation_case_to_json(const common_investigation_case_revision & c) {
     using json = nlohmann::ordered_json;
     json entities=json::array(),events=json::array(),relations=json::array(),claims=json::array();
@@ -145,7 +149,8 @@ bool common_investigation_case_validate(
         if (!valid_id(relation.id) || relation.source_id != value.source_id || relation.kind == common_investigation_relation_kind::unknown ||
                 !entities.count(relation.from_entity_id) || !entities.count(relation.to_entity_id) ||
                 relation.rule_id.empty() || relation.rule_revision.empty() ||
-                relation.event_count == 0 || relation.evidence_event_ids.size() > 10000 ||
+                relation.event_count == 0 || relation.evidence_event_ids.empty() ||
+                relation.evidence_event_ids.size() > 10000 ||
                 !relations.insert(relation.id).second ||
                 (relation.has_time && relation.first_seen_ms > relation.last_seen_ms)) {
             error = "investigation relation has invalid endpoints, provenance, time, or bounds";
@@ -397,7 +402,6 @@ bool common_investigation_temporal_path(
             if (!relation.has_time || relation.first_seen_ms < current.time) continue;
             std::string next;
             if (relation.from_entity_id == current.entity) next = relation.to_entity_id;
-            else if (relation.to_entity_id == current.entity) next = relation.from_entity_id;
             else continue;
             const int64_t next_time = std::max(current.time, relation.last_seen_ms);
             if (!visited.emplace(next, next_time).second) continue;
@@ -456,6 +460,13 @@ bool common_investigation_build_relations(
             error = "relation build event references an unknown entity";
             return false;
         }
+        for (const auto & role : event.entity_roles) {
+            if (role.first.empty() || role.first.size() > 64 || !by_id.count(role.second) ||
+                    std::find(event.entity_ids.begin(), event.entity_ids.end(), role.second) == event.entity_ids.end()) {
+                error = "relation build event role references an unknown or unlisted entity";
+                return false;
+            }
+        }
     }
     std::unordered_set<std::string> rule_ids;
     for (const auto & rule : rules) {
@@ -463,6 +474,8 @@ bool common_investigation_build_relations(
                 rule.from_kind == common_investigation_entity_kind::unknown ||
                 rule.to_kind == common_investigation_entity_kind::unknown ||
                 rule.relation_kind == common_investigation_relation_kind::unknown ||
+                (rule.from_role.empty() != rule.to_role.empty()) ||
+                rule.from_role.size() > 64 || rule.to_role.size() > 64 ||
                 !rule_ids.insert(rule.id).second) {
             error = "relation build rule is invalid or duplicated";
             return false;

@@ -719,7 +719,7 @@ common_tool_execution_result execute_investigation_tool(
         if (value.relations.empty()) markdown += "No relations are derived in this revision.\n\n";
         for (const auto & relation : value.relations) {
             markdown += "- `" + safe_text(relation.from_entity_id) + "` → `" + safe_text(relation.to_entity_id) +
-                "` (type " + std::to_string(static_cast<int>(relation.kind)) + ", " + safe_text(relation.confidence_label) +
+                "` (" + common_investigation_relation_kind_name(relation.kind) + ", " + safe_text(relation.confidence_label) +
                 ", rule `" + safe_text(relation.rule_id) + "`); events: ";
             for (size_t i = 0; i < relation.evidence_event_ids.size(); ++i) {
                 if (i) markdown += ", ";
