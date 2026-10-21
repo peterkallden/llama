@@ -889,9 +889,9 @@ static void test_planner_resolves_host_dataset_inventory() {
     request.available_datasets = {orders, customers};
     const std::vector<common_chat_tool> tools = {
         {"data.query", "Query a dataset.",
-            R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"}}})"},
+            R"({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})"},
         {"data.join", "Join two datasets.",
-            R"({"type":"object","additionalProperties":false,"properties":{"left":{"type":"string"},"right":{"type":"string"},"on":{"type":"array"}}})"},
+            R"({"type":"object","additionalProperties":false,"properties":{"left":{"type":"string","x-agent-type":"dataset_ref"},"right":{"type":"string","x-agent-type":"dataset_ref"},"on":{"type":"array"}}})"},
     };
 
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
@@ -903,6 +903,48 @@ static void test_planner_resolves_host_dataset_inventory() {
     const auto second_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
     assert(first_arguments.value("dataset", "") == "dataset://local/orders");
     assert(second_arguments.value("dataset", "") == "dataset://local/customers");
+}
+
+static void test_planner_normalizes_only_declared_dataset_references() {
+    fake_agent_inference inference;
+    inference.queued = {
+        make_success(R"({"goal":"Inspect the selected dataset","steps":[
+            {"tool":"dataset.select","args":{"name":"d1"},"mode":"tool"},
+            {"tool":"data.query","args":{"dataset":"d1","where":[{"field":"marker","operator":"=","value":"d1"}]},"mode":"tool"}
+        ]})")
+    };
+
+    const auto options = make_test_args();
+    common_agent_request request = make_request();
+    request.require_tool_execution = true;
+    common_agent_dataset_descriptor dataset;
+    dataset.ref.name = "orders";
+    dataset.ref.uri = "dataset://seed/orders";
+    request.available_datasets = {dataset};
+    const std::vector<common_chat_tool> tools = {
+        {"dataset.select", "Select a named dataset.",
+            R"({"type":"object","properties":{"name":{"type":"string"}}})"},
+        {"data.query", "Query a dataset.",
+            R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"where":{"type":"array","items":{"type":"object"}}}})"},
+    };
+
+    auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
+    std::string error;
+    const auto proposal = planner->create_plan_result(request, error);
+    if (!error.empty() || proposal.operations.size() != 2 ||
+            !proposal.operations[0].step || !proposal.operations[0].step->tool_call ||
+            !proposal.operations[1].step || !proposal.operations[1].step->tool_call) {
+        std::fprintf(stderr, "schema-directed dataset normalization failed: %s\n", error.c_str());
+        std::exit(1);
+    }
+    const auto select_arguments = nlohmann::json::parse(proposal.operations[0].step->tool_call->arguments_json);
+    const auto query_arguments = nlohmann::json::parse(proposal.operations[1].step->tool_call->arguments_json);
+    if (select_arguments.value("name", "") != "d1" ||
+            query_arguments.value("dataset", "") != "dataset://seed/orders" ||
+            query_arguments["where"][0].value("value", "") != "d1") {
+        std::fprintf(stderr, "normalizer changed a non-dataset value or failed to resolve a typed reference\n");
+        std::exit(1);
+    }
 }
 
 static void test_planner_resolves_compact_dataset_handles() {
@@ -925,8 +967,8 @@ static void test_planner_resolves_compact_dataset_handles() {
     customers.ref.uri = "dataset://seed/customers";
     request.available_datasets = {orders, customers};
     const std::vector<common_chat_tool> tools = {
-        {"data.join", "Join datasets.", R"({"type":"object","properties":{"left":{"type":"string"},"right":{"type":"string"}}})"},
-        {"data.aggregate", "Aggregate a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string"},"measures":{"type":"array"}}})"},
+        {"data.join", "Join datasets.", R"({"type":"object","properties":{"left":{"type":"string","x-agent-type":"dataset_ref"},"right":{"type":"string","x-agent-type":"dataset_ref"}}})"},
+        {"data.aggregate", "Aggregate a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"measures":{"type":"array"}}})"},
     };
 
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
@@ -962,7 +1004,7 @@ static void test_planner_normalizes_unfiltered_query_shape() {
     dataset.ref.uri = "dataset://seed/orders";
     request.available_datasets = {dataset};
     const std::vector<common_chat_tool> tools = {
-        {"data.query", "Query a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string"}}})"},
+        {"data.query", "Query a dataset.", R"({"type":"object","properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"}}})"},
     };
 
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), tools);
@@ -2801,6 +2843,7 @@ static bool run_named_test(const std::string & name) {
         test_planner_repairs_invalid_resource_binding();
     } else if (name == "planner-host-dataset-inventory") {
         test_planner_resolves_host_dataset_inventory();
+        test_planner_normalizes_only_declared_dataset_references();
     } else if (name == "planner-compact-dataset-handles") {
         test_planner_resolves_compact_dataset_handles();
     } else if (name == "planner-unfiltered-query-shape") {

@@ -909,23 +909,30 @@ bool resolve_host_dataset_reference(
     return false;
 }
 
-bool normalize_host_dataset_references(
-        json & value,
+bool normalize_schema_dataset_references(
+        json & arguments,
+        const json & schema,
         const common_agent_request & request,
         const std::string & current_step_alias,
-        const std::string & field_name,
         bool & changed,
         std::string & error) {
-    if (value.is_string()) {
+    if (!arguments.is_object() || !schema.is_object()) return true;
+    const auto properties = schema.value("properties", json::object());
+    if (!properties.is_object()) return true;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (!it.value().is_object() ||
+                it.value().value("x-agent-type", std::string()) != "dataset_ref" ||
+                !arguments.contains(it.key()) || !arguments[it.key()].is_string()) continue;
+        auto & value = arguments[it.key()];
         const auto supplied = value.get<std::string>();
         std::string resolved;
         if (resolve_host_dataset_reference(request, supplied, current_step_alias, resolved, error)) {
             value = resolved;
             changed = true;
-            return true;
+            continue;
         }
         if (!error.empty()) return false;
-        if (field_name == "dataset" && supplied.find("://") == std::string::npos) {
+        if (supplied.find("://") == std::string::npos) {
             bool ambiguous = false;
             const auto * dataset = find_unique_inventory_dataset(request, supplied, ambiguous);
             if (dataset != nullptr && !dataset->ref.uri.empty()) {
@@ -939,17 +946,6 @@ bool normalize_host_dataset_references(
                 return false;
             }
         }
-        return true;
-    }
-    if (value.is_array()) {
-        for (auto & item : value) {
-            if (!normalize_host_dataset_references(item, request, current_step_alias, {}, changed, error)) return false;
-        }
-        return true;
-    }
-    if (!value.is_object()) return true;
-    for (auto it = value.begin(); it != value.end(); ++it) {
-        if (!normalize_host_dataset_references(it.value(), request, current_step_alias, it.key(), changed, error)) return false;
     }
     return true;
 }
@@ -981,6 +977,7 @@ bool is_materializable_data_tool(const std::string & tool) {
 bool normalize_planner_host_dataset_references(
         const common_agent_request & request,
         const std::string & content,
+        const std::vector<common_chat_tool> & tools,
         std::string & normalized,
         std::string & error,
         bool include_host_materialization = true) {
@@ -990,7 +987,7 @@ bool normalize_planner_host_dataset_references(
         return true;
     }
     // Resource handles are host-owned values, not dataflow references. Check
-    // the raw model document before generic dataset normalization can turn a
+    // the raw model document before schema-directed dataset normalization can turn a
     // mistaken $datasets... resource into an internal binding object.
     if (document.is_object() && document.contains("steps") && document["steps"].is_array()) {
         for (const auto & step : document["steps"]) {
@@ -1012,35 +1009,44 @@ bool normalize_planner_host_dataset_references(
         return true;
     }
     bool changed = false;
-    if (!normalize_host_dataset_references(document, request, {}, {}, changed, error)) return false;
-    if (document.is_object() && document.contains("steps") && document["steps"].is_array()) {
-        // Re-run self-alias resolution with the alias declared by each step;
-        // this is intentionally separate from generic recursive resolution so
-        // later dataflow aliases are not confused with catalog names.
-        auto original = json::parse(content, nullptr, false);
-        if (original.is_object() && original.contains("steps") && original["steps"].is_array()) {
-            std::vector<std::string> prior_aliases;
-            for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
-                const auto & source_step = original["steps"][index];
-                const std::string alias = source_step.is_object() ? source_step.value("as", std::string()) : std::string();
-                if (document["steps"][index].is_object() && document["steps"][index].contains("args") &&
-                        document["steps"][index]["args"].is_object()) {
-                    auto & arguments = document["steps"][index]["args"];
-                    for (const char * field : {"dataset", "left", "right"}) {
-                        if (!arguments.contains(field) || !arguments[field].is_string()) continue;
-                        const auto supplied = arguments[field].get<std::string>();
-                        if (supplied.empty() || supplied.front() == '$' || supplied.find("://") != std::string::npos) continue;
-                        if (std::find(prior_aliases.begin(), prior_aliases.end(), supplied) != prior_aliases.end()) {
-                            arguments[field] = "$" + supplied + ".dataset";
-                            changed = true;
-                        }
+    auto original = json::parse(content, nullptr, false);
+    if (document.is_object() && document.contains("steps") && document["steps"].is_array() &&
+            original.is_object() && original.contains("steps") && original["steps"].is_array()) {
+        std::vector<std::string> prior_aliases;
+        for (size_t index = 0; index < original["steps"].size() && index < document["steps"].size(); ++index) {
+            const auto & source_step = original["steps"][index];
+            auto & step = document["steps"][index];
+            if (!source_step.is_object() || !step.is_object() || !step.contains("args") || !step["args"].is_object()) continue;
+            const auto tool_name = source_step.value("tool", std::string());
+            const auto tool = std::find_if(tools.begin(), tools.end(), [&](const common_chat_tool & candidate) {
+                return candidate.name == tool_name;
+            });
+            if (tool == tools.end()) continue;
+            auto schema = json::parse(tool->parameters, nullptr, false);
+            if (schema.is_discarded() || !schema.is_object()) continue;
+            auto properties = schema.value("properties", json::object());
+            if (properties.is_object()) {
+                for (auto property = properties.begin(); property != properties.end(); ++property) {
+                    if (!property.value().is_object() || property.value().value("x-agent-type", std::string()) != "dataset_ref" ||
+                            !step["args"].contains(property.key()) || !step["args"][property.key()].is_string()) continue;
+                    const auto supplied = step["args"][property.key()].get<std::string>();
+                    if (supplied.empty() || supplied.front() == '$' || supplied.find("://") != std::string::npos) continue;
+                    if (std::find(prior_aliases.begin(), prior_aliases.end(), supplied) != prior_aliases.end()) {
+                        step["args"][property.key()] = "$" + supplied + ".dataset";
+                        changed = true;
                     }
                 }
-                if (alias.empty()) continue;
-                if (!normalize_host_dataset_references(document["steps"][index], request, alias, {}, changed, error)) return false;
-                prior_aliases.push_back(alias);
             }
-
+            const std::string alias = source_step.value("as", std::string());
+            if (!normalize_schema_dataset_references(step["args"], schema, request, alias, changed, error)) return false;
+            if (!alias.empty()) prior_aliases.push_back(alias);
+        }
+    }
+    if (document.is_object() && document.contains("steps") && document["steps"].is_array()) {
+        // Apply only structural canonicalizations here. Dataset references
+        // have already been normalized from each tool's declared schema, so
+        // ordinary strings such as dataset.select.name and filter values stay intact.
+        if (original.is_object() && original.contains("steps") && original["steps"].is_array()) {
             // Small models sometimes emit one join condition as an object
             // instead of the contract's array-of-conditions form. A single
             // well-shaped condition is unambiguous, so the host can safely
@@ -1765,7 +1771,7 @@ public:
                         candidate.content, tool_definitions, model_candidate_text, parse_error);
                 }
                 parsed = parsed && normalize_planner_host_dataset_references(
-                    request, model_candidate_text, model_normalized_candidate, parse_error, false) &&
+                    request, model_candidate_text, tool_definitions, model_normalized_candidate, parse_error, false) &&
                     common_plan_parse_proposal_json(
                         model_normalized_candidate, model_candidate_plan,
                         model_candidate_operations, parse_error, 6);
@@ -1790,7 +1796,7 @@ public:
                     // bindings. This is a separate phase from model-facing
                     // schema validation.
                     parsed = normalize_planner_host_dataset_references(
-                        request, model_candidate_text, normalized_candidate, parse_error) &&
+                        request, model_candidate_text, tool_definitions, normalized_candidate, parse_error) &&
                         common_plan_parse_proposal_json(
                             normalized_candidate, candidate_plan,
                             candidate_operations, parse_error, 6);

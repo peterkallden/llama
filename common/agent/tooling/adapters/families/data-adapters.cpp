@@ -808,20 +808,32 @@ bool common_try_register_data_tool_adapter(
             }
             common_agent_dataset_descriptor descriptor;
             if (!bindings.data_store->find_dataset_by_name(arguments["name"].get<std::string>(), descriptor, error)) {
+                bool repairable = false;
                 if (error == "dataset name was not found") {
                     std::vector<common_agent_dataset_descriptor> candidates;
                     std::string list_error;
                     if (bindings.data_store->list_dataset_descriptors(candidates, list_error) && !candidates.empty()) {
                         std::string choices;
-                        for (const auto & candidate : candidates) {
-                            if (candidate.ref.name.empty() || candidate.ref.uri.empty()) continue;
+                        for (auto candidate = candidates.begin(); candidate != candidates.end(); ++candidate) {
+                            common_tool_execution_result scope_failure;
+                            if (!validate_dataset_descriptor_scope(bindings, *candidate, scope_failure)) continue;
+                            if (candidate->ref.name.empty() || candidate->ref.uri.empty()) continue;
                             if (!choices.empty()) choices += ", ";
-                            choices += candidate.ref.name + " (" + candidate.ref.uri + ")";
+                            choices += candidate->ref.name + " (" + candidate->ref.uri + ")";
                         }
-                        if (!choices.empty()) error += "; choose one of: " + choices;
+                        if (!choices.empty()) {
+                            error += "; choose one of: " + choices;
+                            repairable = true;
+                        }
                     }
                 }
-                return common_adapter_not_found_failure("tool.dataset.select.not_found", std::move(error), "The named dataset was not found.");
+                // The lookup is safe to repeat after correcting the name. Mark
+                // this specific failure repairable so reflection receives the
+                // scope-filtered choices above; other not-found failures stay
+                // non-retryable.
+                return common_adapter_failure("tool.dataset.select.not_found",
+                    common_tool_failure_class::not_found, repairable,
+                    "The named dataset was not found.", std::move(error));
             }
             common_tool_execution_result scope_failure;
             if (!validate_dataset_descriptor_scope(bindings, descriptor, scope_failure)) {

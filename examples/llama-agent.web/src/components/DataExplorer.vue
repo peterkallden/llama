@@ -72,6 +72,6 @@ watch(() => [props.initialSource, props.initialKind], () => {
       <p v-if="result.scan_truncated || result.result_truncated" class="muted">This is a bounded sample; more rows exist outside this view.</p>
       <ResultTable :result="result" />
     </template>
-    <button v-if="result !== null && !hideHandoff" class="handoff-button" @click="emit('handoff', `Analyze the ${source} source ${dataset}. Read its schema and relevant rows through the dataset tools.`)">Continue with agent</button>
+    <button v-if="result !== null && !hideHandoff" class="handoff-button" @click="emit('handoff', source === 'dataset' ? `Analyze the already selected dataset ${dataset}. Use this exact dataset reference directly with dataset.schema and dataset.sample or data.query; do not look it up again with dataset.select.` : `Analyze the ${source} source ${dataset}. Read its schema and relevant rows through the dataset tools.`)">Continue with agent</button>
   </section>
 </template>
