@@ -572,6 +572,8 @@ common_tool_execution_result execute_investigation_tool(
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
                 refs, {}, {}, {}, {}});
             collected_events.back().source_index = source_index;
+            if (!user_id.empty()) collected_events.back().entity_roles["user"] = user_id;
+            if (!host_id.empty()) collected_events.back().entity_roles["host"] = host_id;
             if (!source_ip.empty()) collected_events.back().entity_roles["source_ip"] = source_ip;
             if (!destination_ip.empty()) collected_events.back().entity_roles["destination_ip"] = destination_ip;
             if (!process_id.empty()) {
@@ -659,7 +661,8 @@ common_tool_execution_result execute_investigation_tool(
             }
             if (is_authentication)
                 rules.push_back({rule_id("authentication"), event.event_type, common_investigation_entity_kind::user,
-                    common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to, {}, {}});
+                    common_investigation_entity_kind::host, common_investigation_relation_kind::authenticated_to,
+                    "user", "host"});
             if (is_communication)
                 rules.push_back({rule_id("network"), event.event_type, common_investigation_entity_kind::ip,
                     common_investigation_entity_kind::ip, common_investigation_relation_kind::communicated_with,

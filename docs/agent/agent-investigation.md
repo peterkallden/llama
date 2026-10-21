@@ -44,7 +44,9 @@ index administration requests.
             "event_type": "authentication",
             "from_kind": "user",
             "to_kind": "host",
-            "relation_kind": "authenticated_to"
+            "relation_kind": "authenticated_to",
+            "from_role": "user",
+            "to_role": "host"
           }
         ],
         "auth": { "type": "bearer", "token_env": "ELASTIC_TOKEN" },

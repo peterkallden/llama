@@ -132,6 +132,7 @@ int main() {
           "temporal path must not invent a chain across out-of-order events");
 
     std::vector<common_investigation_relation> rebuilt;
+    std::vector<common_investigation_relation> rebuilt_again;
     std::vector<std::string> limitations;
     const std::vector<common_investigation_relation_rule> relation_rules = {
         {"auth-v1", "auth", common_investigation_entity_kind::user,
@@ -145,7 +146,18 @@ int main() {
             rebuilt[0].confidence_label == "observed" &&
             rebuilt[0].evidence_event_ids.size() == 1,
           "derived edges must retain their rule and concrete event evidence");
-    auto rebuilt_again = std::vector<common_investigation_relation>{};
+    auto role_bound_rules = relation_rules;
+    role_bound_rules[0].from_role = "user";
+    role_bound_rules[0].to_role = "host";
+    check(common_investigation_build_relations("elastic-a", value.entities, value.events,
+            role_bound_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 2,
+          "role-bound profiles should migrate legacy events when each endpoint kind is unambiguous");
+    auto ambiguous_event = value.events;
+    ambiguous_event[0].entity_ids.push_back("host:2");
+    check(common_investigation_build_relations("elastic-a", value.entities, ambiguous_event,
+            role_bound_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 1 &&
+            rebuilt_again[0].evidence_event_ids == std::vector<std::string>({"event:2"}),
+          "role-bound profiles must leave ambiguous legacy events unlinked rather than create cross-product edges");
     check(common_investigation_build_relations("elastic-a", value.entities, value.events,
             relation_rules, rebuilt_again, limitations, error) &&
             rebuilt_again.size() == rebuilt.size() && rebuilt_again[0].id == rebuilt[0].id,

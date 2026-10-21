@@ -1159,7 +1159,8 @@ int main() {
     investigation_store.source.ref.source_provider = "logs";
     investigation_store.source.ref.source_request_json = nlohmann::json{{"relation_profiles", nlohmann::json::array({
         {{"id", "auth-observed-v1"}, {"event_type", "authentication"},
-            {"from_kind", "user"}, {"to_kind", "host"}, {"relation_kind", "authenticated_to"}}})}}.dump();
+            {"from_kind", "user"}, {"to_kind", "host"}, {"relation_kind", "authenticated_to"},
+            {"from_role", "user"}, {"to_role", "host"}}})}}.dump();
     investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
     investigation_store.source.columns = {{"event.id", common_agent_dataset_column_type::string, false},
         {"event.type", common_agent_dataset_column_type::string, false},
@@ -1228,6 +1229,8 @@ int main() {
         investigation_store.cases.at("graph-case").events[1].source_index == "logs-2026.10" &&
         investigation_store.cases.at("graph-case").events[1].time.has_event_time &&
         investigation_store.cases.at("graph-case").events[1].time.event_time_ms == 300 &&
+        investigation_store.cases.at("graph-case").events[1].entity_roles.at("user") == "entity:logs:user:alice" &&
+        investigation_store.cases.at("graph-case").events[1].entity_roles.at("host") == "entity:logs:host:db2" &&
         investigation_store.cases.at("graph-case").entities.size() == 4 &&
         investigation_resources.requests.size() == 2);
     assert(std::any_of(investigation_store.cases.at("graph-case").relations.begin(),
@@ -1235,6 +1238,14 @@ int main() {
             return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
                 relation.evidence_event_ids.end();
         }));
+    const auto collected_auth_relation = std::find_if(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return !relation.evidence_event_ids.empty() && relation.evidence_event_ids[0] ==
+                "event:logs:logs-2026.10:doc-2";
+        });
+    assert(collected_auth_relation != investigation_store.cases.at("graph-case").relations.end() &&
+        collected_auth_relation->from_entity_id == "entity:logs:user:alice" &&
+        collected_auth_relation->to_entity_id == "entity:logs:host:db2");
     result = investigation_registry.execute({"investigation.analyze",
         R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
     assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&

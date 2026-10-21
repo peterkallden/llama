@@ -497,9 +497,22 @@ bool common_investigation_build_relations(
             if (!rule.from_role.empty() || !rule.to_role.empty()) {
                 const auto from_role = event.entity_roles.find(rule.from_role);
                 const auto to_role = event.entity_roles.find(rule.to_role);
-                if (from_role == event.entity_roles.end() || to_role == event.entity_roles.end()) continue;
-                const auto * left = by_id.at(from_role->second);
-                const auto * right = by_id.at(to_role->second);
+                const auto unique_kind_entity = [&](common_investigation_entity_kind kind)
+                        -> const common_investigation_entity * {
+                    const common_investigation_entity * match = nullptr;
+                    for (const auto & id : event.entity_ids) {
+                        const auto * candidate = by_id.at(id);
+                        if (candidate->kind != kind) continue;
+                        if (match != nullptr) return nullptr;
+                        match = candidate;
+                    }
+                    return match;
+                };
+                const auto * left = from_role == event.entity_roles.end()
+                    ? unique_kind_entity(rule.from_kind) : by_id.at(from_role->second);
+                const auto * right = to_role == event.entity_roles.end()
+                    ? unique_kind_entity(rule.to_kind) : by_id.at(to_role->second);
+                if (left == nullptr || right == nullptr) continue;
                 if (left->kind == rule.from_kind && right->kind == rule.to_kind) {
                     from.push_back(left); to.push_back(right);
                 }
