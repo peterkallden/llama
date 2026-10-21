@@ -54,11 +54,20 @@ if (!window.__investigationWorkspace) {
     return Number.isFinite(time) ? time : 0;
   }
   function setDate(selector: string, ms: number) {
-    if (ms > 0) q<HTMLInputElement>(selector).value = new Date(ms).toISOString().slice(0, 16);
+    const date = new Date(ms);
+    q<HTMLInputElement>(selector).value = Number.isFinite(ms) && Number.isFinite(date.getTime())
+      ? new Date(ms - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
+  }
+  function resetEvents() {
+    eventsCursor = ""; eventQuery = {}; selectedEvent = "";
+    q("#timeline").replaceChildren(); q("#evidence").textContent = "";
+    q<HTMLButtonElement>("#events-more").hidden = true;
+    q<HTMLButtonElement>("#events-more").disabled = false;
   }
   function showCase(value: Json) {
     currentCase = value;
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
+    resetEvents();
     const revision = Number(value.revision ?? 1);
     q("#case-summary").textContent = `${value.title} · r${revision} · ${value.case_id}`;
     q<HTMLInputElement>("#case-id").value = value.case_id;
@@ -70,7 +79,7 @@ if (!window.__investigationWorkspace) {
     q<HTMLButtonElement>("#compose-report").disabled = false;
     q("#report-result").textContent = "No report created for this revision.";
     renderClaims([]);
-    renderGraph({ nodes: [], edges: [], case_revision: revision, truncated: false, limitations: [] });
+    renderGraph({ nodes: [], edges: [], case_revision: revision, truncated: false, limitations: [] }, true);
     setStatus(`Case ${value.case_id} opened at revision ${revision}.`);
   }
   async function loadCaseClaims() {
@@ -91,6 +100,7 @@ if (!window.__investigationWorkspace) {
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
       await loadCaseClaims();
+      if (token !== generation) return;
       if (result.case.first_entity_id) await expand(result.case.first_entity_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
@@ -116,7 +126,7 @@ if (!window.__investigationWorkspace) {
       setStatus(`${target.children.length} cases visible in this scope.`);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
-  function renderGraph(value: Json) {
+  function renderGraph(value: Json, replace = false) {
     const elements = [
       ...(value.nodes ?? []).map((node: Json) => ({ data: { id: node.id, label: node.label, kind: node.type } })),
       ...(value.edges ?? []).map((edge: Json) => ({ data: { id: edge.id, source: edge.source, target: edge.target,
@@ -134,14 +144,19 @@ if (!window.__investigationWorkspace) {
           { selector: "edge:selected", style: { "line-color": "#f0b95e", "target-arrow-color": "#f0b95e", width: 4 } },
           { selector: "node:selected", style: { "border-color": "#ffd27d", "border-width": 4 } },
         ], layout: { name: "cose", animate: false, fit: true, padding: 32 }, userZoomingEnabled: true, userPanningEnabled: true });
-      graph.on("tap", "node", (event) => { selectedEntity = event.target.id(); selectedRelation = ""; void expand(selectedEntity); });
-      graph.on("tap", "edge", (event) => { selectedRelation = event.target.id(); selectedEntity = ""; void loadEvents("", selectedRelation); });
+      graph.on("tap", "node", (event) => { resetEvents(); selectedEntity = event.target.id(); selectedRelation = ""; void expand(selectedEntity); });
+      graph.on("tap", "edge", (event) => { resetEvents(); selectedRelation = event.target.id(); selectedEntity = ""; void loadEvents("", selectedRelation); });
     } else {
-      graph.elements().remove();
-      graph.add(elements);
+      if (replace) graph.elements().remove();
+      graph.batch(() => {
+        for (const element of elements) {
+          const existing = graph!.getElementById(element.data.id);
+          if (existing.empty()) graph!.add(element); else existing.data(element.data);
+        }
+      });
       graph.layout({ name: "cose", animate: false, fit: true, padding: 32 }).run();
     }
-    q("#graph-status").textContent = `${value.nodes?.length ?? 0} objects · ${value.edges?.length ?? 0} relations${value.truncated ? " · truncated by bounds" : ""}`;
+    q("#graph-status").textContent = `${graph.nodes().length} objects · ${graph.edges().length} relations${value.truncated ? " · truncated by bounds" : ""}`;
   }
   async function expand(center = selectedEntity) {
     if (!currentCase) return;
@@ -160,16 +175,19 @@ if (!window.__investigationWorkspace) {
   }
   async function loadEvents(entityId: string, relationId = "", continuation = false) {
     if (!currentCase) return;
+    if (continuation && (!eventsCursor || eventQuery.case_id !== currentCase.case_id ||
+        eventQuery.case_revision !== currentCase.revision || q<HTMLButtonElement>("#events-more").disabled)) return;
     const token = ++generation;
     try {
       setStatus("Loading source events…");
       if (!continuation) {
-        eventsCursor = "";
+        resetEvents();
         eventQuery = { case_id: currentCase.case_id, case_revision: currentCase.revision, limit: 100,
         window_start_ms: msValue("#filter-start") || currentCase.window_start_ms,
         window_end_ms: msValue("#filter-end") || currentCase.window_end_ms };
         if (relationId) eventQuery.relation_id = relationId; else eventQuery.entity_id = entityId;
       }
+      q<HTMLButtonElement>("#events-more").disabled = true;
       const args: Json = { ...eventQuery, ...(continuation && eventsCursor ? { cursor: eventsCursor } : {}) };
       const value = await call("investigation.events", args, token);
       if (!value) return;
@@ -177,10 +195,10 @@ if (!window.__investigationWorkspace) {
       renderTimeline(value.events ?? [], Boolean(value.has_more), continuation);
       setStatus(`${value.events?.length ?? 0} evidence events on this page${value.has_more ? " · more events are available" : ""}.`);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally { if (token === generation) q<HTMLButtonElement>("#events-more").disabled = false; }
   }
   function renderTimeline(events: Json[], hasMore: boolean, append = false) {
     const list = q<HTMLDivElement>("#timeline"); if (!append) list.replaceChildren();
-    events.sort((a, b) => Number(a.time?.event_time_ms ?? 0) - Number(b.time?.event_time_ms ?? 0));
     for (const event of events) {
       const button = document.createElement("button"); button.className = `event${selectedEvent === event.id ? " selected" : ""}`;
       const time = document.createElement("time"); time.textContent = event.time?.has_event_time
@@ -268,7 +286,11 @@ if (!window.__investigationWorkspace) {
   q("#open-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").focus(); });
   q("#case-submit").addEventListener("click", () => void createOrOpen());
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));
-  q("#apply-filter").addEventListener("click", () => void expand());
+  q("#apply-filter").addEventListener("click", () => {
+    resetEvents(); selectedRelation = "";
+    renderGraph({ nodes: [], edges: [] }, true);
+    void expand();
+  });
   q("#events-more").addEventListener("click", () => void loadEvents("", "", true));
   q("#save-hypothesis").addEventListener("click", () => void saveHypothesis());
   q("#compose-report").addEventListener("click", () => void composeReport());

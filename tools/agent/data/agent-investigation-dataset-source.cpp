@@ -184,18 +184,8 @@ bool agent_investigation_virtual_dataset_source::execute(
         error = "virtual investigation datasets currently support data.query only";
         return false;
     }
+    if (!authorize_source(descriptor.ref.source_provider, scope, error)) return false;
     const auto * source = find_source(config_, descriptor.ref.source_provider);
-    if (!source || std::find(source->allowed_namespaces.begin(), source->allowed_namespaces.end(),
-            scope.namespace_id) == source->allowed_namespaces.end()) {
-        error = "investigation source is not authorized for this namespace";
-        return false;
-    }
-    if (!source->allowed_projects.empty() &&
-            std::find(source->allowed_projects.begin(), source->allowed_projects.end(),
-                scope.project_id) == source->allowed_projects.end()) {
-        error = "investigation source is not authorized for this project";
-        return false;
-    }
     if (!allow_network) { error = "network permission is required for this investigation source"; return false; }
     if (descriptor.ref.uri.rfind("dataset://investigation/" + source->id + "/", 0) != 0) {
         error = "virtual dataset provider is not registered for this source";
@@ -302,6 +292,9 @@ bool agent_investigation_virtual_dataset_source::execute(
     }
     if (!request.contains("select")) {
         for (const auto & field : source->fields) { column_names.push_back(field.first); paths.push_back(field.second); }
+        for (const char * metadata : {"@source.index", "@source.id"}) {
+            column_names.push_back(metadata); paths.push_back(metadata);
+        }
     }
     json rows = json::array();
     for (const auto & hit : parsed["hits"]["hits"]) {

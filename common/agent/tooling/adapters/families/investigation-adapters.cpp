@@ -36,6 +36,9 @@ bool investigation_page_offset(const std::string & cursor, uint64_t revision,
     const auto first = cursor.find(':');
     const auto second = first == std::string::npos ? first : cursor.find(':', first + 1);
     if (first == std::string::npos || second == std::string::npos || cursor.find(':', second + 1) != std::string::npos) return false;
+    if (first == 0 || second == first + 1 ||
+            !std::all_of(cursor.begin(), cursor.begin() + first, [](unsigned char c) { return c >= '0' && c <= '9'; }) ||
+            !std::all_of(cursor.begin() + first + 1, cursor.begin() + second, [](unsigned char c) { return c >= '0' && c <= '9'; })) return false;
     uint64_t cursor_revision = 0;
     size_t cursor_offset = 0;
     try {
@@ -194,7 +197,9 @@ common_tool_execution_result execute_investigation_tool(
         const size_t limit = arguments.value("limit", size_t(50));
         if (limit == 0 || limit > 100) return common_adapter_validation_failure(
             "tool.investigation.page_limit_invalid", "case item page size must be from 1 to 100");
-        const json binding = {{"case_id", value.case_id}, {"type", item_type}};
+        const json binding = {{"case_id", value.case_id}, {"type", item_type},
+            {"namespace_id", bindings.tool_scope.namespace_id}, {"project_id", bindings.tool_scope.project_id},
+            {"session_id", bindings.tool_scope.project_id.empty() ? bindings.tool_scope.session_id : std::string()}};
         size_t offset = 0;
         if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
             return common_adapter_execution_failure("tool.investigation.cursor_invalid",
@@ -668,7 +673,9 @@ common_tool_execution_result execute_investigation_tool(
         if (window_start >= window_end) return common_adapter_validation_failure(
             "tool.investigation.events_window_invalid", "event window start must precede its end");
         const json binding = {{"case_id", value.case_id}, {"entity_id", entity_id},
-            {"relation_id", relation_id}, {"window_start_ms", window_start}, {"window_end_ms", window_end}};
+            {"relation_id", relation_id}, {"window_start_ms", window_start}, {"window_end_ms", window_end},
+            {"namespace_id", bindings.tool_scope.namespace_id}, {"project_id", bindings.tool_scope.project_id},
+            {"session_id", bindings.tool_scope.project_id.empty() ? bindings.tool_scope.session_id : std::string()}};
         size_t offset = 0;
         if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
             return common_adapter_execution_failure("tool.investigation.cursor_invalid",
@@ -707,6 +714,9 @@ common_tool_execution_result execute_investigation_tool(
                 {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}};
             const size_t row_bytes = row.dump().size();
             if (!events.empty() && serialized_bytes + row_bytes > max_page_bytes) break;
+            if (row_bytes > max_page_bytes) return common_adapter_execution_failure(
+                "tool.investigation.item_too_large", "one event exceeds the bounded page size",
+                "Read its referenced resource through the resource tools.");
             serialized_bytes += row_bytes;
             events.push_back(std::move(row));
         }
