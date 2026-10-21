@@ -37,6 +37,11 @@ public:
     bool publish_investigation_case(const common_investigation_case_revision &,
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) override;
+    bool publish_investigation_report(const common_agent_scope &,
+            const common_investigation_report_index_entry &,
+            common_investigation_report_index_entry &, std::string &) override;
+    bool list_investigation_reports(const common_agent_scope &, const std::string &,
+            uint64_t, std::vector<common_investigation_report_index_entry> &, std::string &) override;
     bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) override;
     bool authorize_investigation_source(const std::string & source_id,
         const common_agent_scope & scope, std::string & error) const override;

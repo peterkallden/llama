@@ -150,11 +150,22 @@ int main() {
     assert(document_import->mcp_app_write_authorized);
     const auto * document_patch = catalog.find_definition("document.propose_patch");
     assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
-    for (const auto * name : {"investigation.case.create", "investigation.claim.hypothesize", "investigation.report.compose"}) {
+    for (const auto * name : {"investigation.case.create", "investigation.claim.hypothesize", "investigation.report.compose", "visualization.snapshot"}) {
         const auto * definition = catalog.find_definition(name);
         assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
             definition->requires_confirmation && definition->mcp_app_write_authorized);
     }
+    const auto * case_items = catalog.find_definition("investigation.case.items");
+    assert(case_items);
+    const auto case_items_schema = nlohmann::json::parse(case_items->input_schema_json);
+    const auto & item_types = case_items_schema["properties"]["type"]["enum"];
+    assert(item_types.is_array() && std::find(item_types.begin(), item_types.end(), "reports") != item_types.end());
+    const auto * investigation_collect = catalog.find_definition("investigation.collect");
+    const auto * visualization_create = catalog.find_definition("visualization.create");
+    assert(investigation_collect && investigation_collect->risk_class == common_tool_risk_class::artifact_write &&
+        investigation_collect->requires_confirmation);
+    assert(visualization_create && visualization_create->risk_class == common_tool_risk_class::artifact_write &&
+        visualization_create->requires_confirmation);
     assert(artifact_export->risk_class == common_tool_risk_class::artifact_write);
     assert(artifact_export->requires_confirmation);
     const auto native_crash_input = nlohmann::json::parse(native_crash->input_schema_json);
@@ -456,7 +467,8 @@ int main() {
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
                 "artifact.export") != definition.capabilities.end());
         } else if (definition.name == "document.import" || definition.name == "document.save" ||
-                definition.name == "document.propose_patch" || definition.name == "document.apply_patch") {
+                definition.name == "document.propose_patch" || definition.name == "document.apply_patch" ||
+                definition.name == "visualization.create") {
             assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);

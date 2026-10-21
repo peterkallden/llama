@@ -3,10 +3,12 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import MarkdownView from "./MarkdownView.vue";
 import { blockTargets, externalUri, object, objects, savedToolPayload, sourceTargets, strings, type Fields, type InspectionTarget } from "./report-view";
 import { structuredToolResult } from "./structured-tool-result";
+import { loadReportSnapshots, type ReportSnapshot } from "./report-snapshots";
 const props = defineProps<{
   uri: string; name: string; sessionId: string; editable: boolean;
   openDocument: (uri: string) => Promise<unknown>;
   readJson: (uri: string) => Promise<Fields>;
+  readBlob?: (uri: string) => Promise<Blob>;
 }>();
 const emit = defineEmits<{ edit: [uri: string]; inspect: [target: InspectionTarget] }>();
 const opened = ref<Fields>({});
@@ -15,6 +17,11 @@ const error = ref("");
 const provenanceError = ref("");
 const busy = ref(false);
 const downloading = ref(false);
+const figures = ref<(ReportSnapshot & { url?: string })[]>([]);
+function clearFigures() {
+  for (const figure of figures.value) if (figure.url) URL.revokeObjectURL(figure.url);
+  figures.value = [];
+}
 const document = computed(() => object(opened.value.document));
 const sections = computed(() => objects(document.value.sections));
 const targetIndex = computed(() => new Map<Fields, InspectionTarget[]>(sections.value.flatMap((section) =>
@@ -22,6 +29,7 @@ const targetIndex = computed(() => new Map<Fields, InspectionTarget[]>(sections.
 let generation = 0;
 async function load() {
   const current = ++generation;
+  clearFigures();
   busy.value = true; error.value = ""; provenanceError.value = ""; opened.value = {}; snapshot.value = {};
   try {
     const result = structuredToolResult(await props.openDocument(props.uri));
@@ -33,8 +41,15 @@ async function load() {
       try {
         const saved = await props.readJson(uri);
         if (current !== generation) return;
-        if (saved.fingerprint !== document.value.snapshot_fingerprint) throw new Error("The report and saved snapshot identities differ.");
-        snapshot.value = saved;
+        if (saved.schema === "investigation-report-source.v1") {
+          if (!props.readBlob) throw new Error("Snapshot image reading is unavailable.");
+          const assets = await loadReportSnapshots(document.value, props.readBlob);
+          if (current !== generation) return;
+          figures.value = assets.map((asset) => ({ ...asset, url: asset.blob ? URL.createObjectURL(asset.blob) : undefined }));
+        } else {
+          if (saved.fingerprint !== document.value.snapshot_fingerprint) throw new Error("The report and saved snapshot identities differ.");
+          snapshot.value = saved;
+        }
       } catch (cause) { if (current === generation) provenanceError.value = cause instanceof Error ? cause.message : String(cause); }
     }
   } catch (cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -46,6 +61,12 @@ function toolExcerpt(target: InspectionTarget) {
   return text.length > 600 ? text.slice(0, 600) + "…" : text;
 }
 function link(uri: string, block: Fields) {
+  const figure = figures.value.find((item) => item.uri === uri || item.sourceUri === uri);
+  if (figure) {
+    emit("inspect", { id: uri, uri, title: uri === figure.uri ? figure.caption : "Saved visualization projection",
+      kind: "resource", mimeType: uri === figure.uri ? "image/png" : "application/vnd.llama-agent.visualization+json" });
+    return;
+  }
   const external = externalUri(uri);
   const target = targets(block).find((item) => item.id === uri || item.uri === uri || (external && item.originalUri === external));
   if (target) emit("inspect", target);
@@ -53,6 +74,11 @@ function link(uri: string, block: Fields) {
     if (external) emit("inspect", { id: external, title: external, kind: "source", originalUri: external });
     else provenanceError.value = "This link has no resolvable source in the saved report context.";
   }
+}
+function imageFailed(figure: ReportSnapshot & { url?: string }) {
+  if (figure.url) URL.revokeObjectURL(figure.url);
+  figure.url = undefined;
+  figure.error = "The saved PNG could not be decoded by the browser.";
 }
 async function download() {
   if (downloading.value) return;
@@ -71,7 +97,7 @@ async function download() {
   finally { downloading.value = false; }
 }
 watch(() => [props.uri, props.sessionId], () => { void load(); }, { immediate: true });
-onBeforeUnmount(() => { generation++; });
+onBeforeUnmount(() => { generation++; clearFigures(); });
 </script>
 <template>
   <article class="report-card" aria-label="Saved document reading view">
@@ -88,6 +114,17 @@ onBeforeUnmount(() => { generation++; });
         <div class="report-block-meta"><span class="support-state">{{ block.support || 'unverified' }} · {{ block.review_state || 'unreviewed' }}</span><button v-for="target in targets(block)" :key="target.id" type="button" class="citation-button" :title="`Inspect saved ${target.kind}: ${target.title}`" @click="emit('inspect', target)">{{ target.kind === 'tool' ? 'Tool: ' : '' }}{{ target.title }}</button><span v-if="!targets(block).length && strings(block.evidence_ids).length" class="muted">Evidence references retained; no saved source mapping available.</span></div>
         <div v-if="targets(block).length" class="provenance-peek" role="note"><strong>Saved supporting material</strong><div v-for="target in targets(block)" :key="target.id"><span>{{ target.kind }} · {{ target.title }}</span><pre v-if="target.kind === 'tool'">{{ toolExcerpt(target) }}</pre></div><small>Choose a source or tool above to inspect it. A linked reference is not itself factual verification.</small></div>
       </div>
+    </section>
+    <section v-if="figures.length" class="report-snapshots" aria-label="Saved visualization snapshots">
+      <h4>Visualization snapshots</h4>
+      <figure v-for="figure in figures" :key="figure.uri">
+        <img v-if="figure.url" :src="figure.url" :alt="figure.caption" loading="lazy" @error="imageFailed(figure)" />
+        <p v-else class="error" role="status">Snapshot unavailable: {{ figure.error }}</p>
+        <figcaption>{{ figure.caption }}
+          <button type="button" class="citation-button" @click="emit('inspect', { id: figure.uri, uri: figure.uri, title: figure.caption, kind: 'resource', mimeType: 'image/png' })">Inspect snapshot</button>
+          <button type="button" class="citation-button" @click="emit('inspect', { id: figure.sourceUri, uri: figure.sourceUri, title: 'Saved visualization projection', kind: 'resource', mimeType: 'application/vnd.llama-agent.visualization+json' })">Inspect visualization</button>
+        </figcaption>
+      </figure>
     </section>
     <footer v-if="sourceTargets(document).length" class="report-sources"><h4>Sources</h4><ul><li v-for="source in sourceTargets(document)" :key="source.id"><button type="button" class="citation-button" @click="emit('inspect', source)">{{ source.title }}</button><span v-if="source.originalUri" class="muted"> {{ source.originalUri }}</span></li></ul></footer>
   </article>

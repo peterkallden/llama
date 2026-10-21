@@ -124,6 +124,15 @@ const char * investigation_schema = R"COZO(
             revision_uri: String
         }
     }
+    {
+        ?[case_key, case_revision, content_fingerprint, payload] <- [['__probe__', 1, '__probe__', '{}']]
+        :create agent_investigation_report_index {
+            case_key: String,
+            case_revision: Int,
+            content_fingerprint: String =>
+            payload: String
+        }
+    }
 )COZO";
 
 const char * investigation_scope_index_schema = R"COZO(
@@ -141,6 +150,16 @@ const char * investigation_scope_index_schema = R"COZO(
     }
 )COZO";
 
+const char * investigation_report_index_schema = R"COZO(
+    ?[case_key, case_revision, content_fingerprint, payload] <- [['__probe__', 1, '__probe__', '{}']]
+    :create agent_investigation_report_index {
+        case_key: String,
+        case_revision: Int,
+        content_fingerprint: String =>
+        payload: String
+    }
+)COZO";
+
 } // namespace
 
 const char * agent_cozo_schema_script() { return schema; }
@@ -149,3 +168,4 @@ const char * agent_cozo_order_schema_script() { return order_schema; }
 const char * agent_cozo_dataset_schema_script() { return dataset_schema; }
 const char * agent_cozo_investigation_schema_script() { return investigation_schema; }
 const char * agent_cozo_investigation_scope_index_schema_script() { return investigation_scope_index_schema; }
+const char * agent_cozo_investigation_report_index_schema_script() { return investigation_report_index_schema; }

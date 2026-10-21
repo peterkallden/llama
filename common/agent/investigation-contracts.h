@@ -120,6 +120,24 @@ struct common_investigation_case_summary {
     int64_t window_end_ms = 0;
 };
 
+// A frozen report is indexed separately from the case evidence revision. The
+// report resources remain immutable; this record only makes them discoverable
+// again when the case is reopened.
+struct common_investigation_report_index_entry {
+    std::string case_id;
+    uint64_t case_revision = 0;
+    std::string source_id;
+    std::string case_fingerprint;
+    std::string content_fingerprint;
+    std::string report_uri;
+    std::string markdown_uri;
+    std::string source_manifest_uri;
+    std::vector<std::string> visualization_uris;
+    std::vector<std::string> limitations;
+    bool complete = false;
+    int64_t created_at_ms = 0;
+};
+
 // A compact UI-to-runtime binding. It carries stable references only; the
 // daemon reauthorizes the case and resolves every reference before prompting.
 struct common_investigation_context_binding {

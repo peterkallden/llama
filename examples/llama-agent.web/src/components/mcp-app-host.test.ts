@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
 
 describe("MCP App sandbox host", () => {
+  it("opens only bounded resource references requested by the investigation workspace", () => {
+    expect(authorizedInvestigationReportReference("ui://llama-agent/apps/investigation-workspace", "agent-resource://resource/report-1"))
+      .toBe("agent-resource://resource/report-1");
+    expect(authorizedInvestigationReportReference("ui://llama-agent/apps/document-editor", "resource://report-1")).toBeNull();
+    expect(authorizedInvestigationReportReference("ui://llama-agent/apps/investigation-workspace", "https://example.invalid/report")).toBeNull();
+    expect(authorizedInvestigationReportReference("ui://llama-agent/apps/investigation-workspace", "resource://x\n" )).toBeNull();
+  });
   it("unwraps daemon tool envelopes before returning MCP structuredContent", () => {
     expect(canonicalToolStructuredContent({
       ok: true, result: { document_uri: "resource://doc", markdown: "Hello" }, summary: "opened",

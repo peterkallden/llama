@@ -8,3 +8,4 @@ const char * agent_cozo_order_schema_script();
 const char * agent_cozo_dataset_schema_script();
 const char * agent_cozo_investigation_schema_script();
 const char * agent_cozo_investigation_scope_index_schema_script();
+const char * agent_cozo_investigation_report_index_schema_script();

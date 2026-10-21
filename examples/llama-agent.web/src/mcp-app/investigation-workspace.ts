@@ -1,5 +1,6 @@
 import "./investigation-workspace.css";
 import { RelationshipRenderer } from "../visualization/relationship-renderer";
+import { parseRelationshipVisualization } from "../visualization/contract";
 
 declare global { interface Window { __investigationWorkspace?: true } }
 if (!window.__investigationWorkspace) {
@@ -18,8 +19,13 @@ if (!window.__investigationWorkspace) {
   let graph: RelationshipRenderer | null = null;
   let lastAppCallAt = 0;
   let caseListCursor = "";
+  let reportCursor = "";
   let eventsCursor = "";
   let eventQuery: Json = {};
+  let snapshotPending = false;
+  let renderedVisualizationUri = "";
+  for (const selector of ["#filter-start", "#filter-end", "#apply-filter"])
+    q<HTMLInputElement | HTMLButtonElement>(selector).disabled = true;
 
   function rpc(method: string, params: Json = {}) {
     const id = seq++;
@@ -66,7 +72,9 @@ if (!window.__investigationWorkspace) {
   }
   function showCase(value: Json) {
     currentCase = value;
+    renderedVisualizationUri = "";
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
+    q<HTMLInputElement>("#visualization-uri").value = "";
     resetEvents();
     const revision = Number(value.revision ?? 1);
     q("#case-summary").textContent = `${value.title} · r${revision} · ${value.case_id}`;
@@ -75,9 +83,15 @@ if (!window.__investigationWorkspace) {
     q<HTMLInputElement>("#case-question").value = value.question ?? "";
     q<HTMLInputElement>("#source-id").value = value.source_id;
     setDate("#filter-start", value.window_start_ms); setDate("#filter-end", value.window_end_ms);
+    for (const selector of ["#filter-start", "#filter-end", "#apply-filter"])
+      q<HTMLInputElement | HTMLButtonElement>(selector).disabled = false;
     q<HTMLButtonElement>("#save-hypothesis").disabled = false;
     q<HTMLButtonElement>("#compose-report").disabled = false;
     q("#report-result").textContent = "No report created for this revision.";
+    reportCursor = "";
+    q<HTMLButtonElement>("#frozen-reports-more").hidden = true;
+    const reportStatus = document.createElement("p"); reportStatus.textContent = "Loading indexed reports…";
+    q("#frozen-reports").replaceChildren(reportStatus);
     renderClaims([]);
     renderGraph({ nodes: [], edges: [], case_revision: revision, truncated: false, limitations: [] }, true);
     setStatus(`Case ${value.case_id} opened at revision ${revision}.`);
@@ -91,6 +105,49 @@ if (!window.__investigationWorkspace) {
       if (value) renderClaims(value.items ?? []);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
+  async function loadReports(continuation = false) {
+    if (!currentCase) return;
+    if (continuation && !reportCursor) return;
+    const token = generation;
+    const target = q<HTMLDivElement>("#frozen-reports");
+    try {
+      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+        case_revision: currentCase.revision, type: "reports", limit: 50,
+        ...(continuation ? { cursor: reportCursor } : {}) }, token);
+      if (!value || token !== generation) return;
+      if (!continuation) target.replaceChildren();
+      reportCursor = String(value.next_cursor ?? "");
+      q<HTMLButtonElement>("#frozen-reports-more").hidden = !value.has_more;
+      const reports = Array.isArray(value.items) ? value.items : [];
+      if (!reports.length && !continuation) {
+        const empty = document.createElement("p"); empty.textContent = "No frozen reports are indexed for this revision.";
+        target.append(empty); return;
+      }
+      for (const report of reports) {
+        const button = document.createElement("button"); button.className = "frozen-report";
+        const title = document.createElement("strong"); title.textContent = `Frozen report · revision ${report.case_revision}`;
+        const state = document.createElement("small"); state.className = report.complete ? "" : "qualified";
+        state.textContent = report.complete ? "No recorded gaps" : `Partial / qualified${Array.isArray(report.limitations) && report.limitations.length ? ` · ${report.limitations.length} limitation(s)` : ""}`;
+        const fingerprint = document.createElement("small"); fingerprint.textContent = String(report.content_fingerprint ?? "");
+        const uri = document.createElement("small"); uri.textContent = String(report.report_uri ?? "");
+        button.append(title, state, fingerprint, uri);
+        button.addEventListener("click", async () => {
+          const documentUri = String(report.report_uri ?? "");
+          if (!documentUri) return;
+          try {
+            await rpc("ui/message", { action: "open-investigation-report", content: { type: "text", text: documentUri } });
+            setStatus(`Opening frozen report from revision ${report.case_revision}…`);
+          } catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
+        });
+        target.append(button);
+      }
+    } catch (error) {
+      if (token !== generation) return;
+      target.replaceChildren();
+      const failure = document.createElement("p"); failure.textContent = `Could not load frozen reports: ${error instanceof Error ? error.message : String(error)}`;
+      target.append(failure);
+    }
+  }
   async function openCase(id: string) {
     const token = ++generation;
     try {
@@ -100,6 +157,7 @@ if (!window.__investigationWorkspace) {
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
       await loadCaseClaims();
+      await loadReports();
       if (token !== generation) return;
       if (result.case.first_entity_id) await expand(result.case.first_entity_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
@@ -151,7 +209,31 @@ if (!window.__investigationWorkspace) {
       complete: !truncated, truncated, limitations,
     }, { replace });
     const counts = graph.counts();
-    q("#graph-status").textContent = `${counts.nodes} objects · ${counts.edges} relations${truncated ? " · truncated by bounds" : ""}`;
+    q("#graph-status").textContent = `${counts.nodes} objects · ${counts.edges} relations${counts.truncated ? " · truncated by bounds" : !counts.complete ? " · incomplete projection" : ""}${counts.limitations.length ? ` · ${counts.limitations.join(" ")}` : ""}`;
+    q<HTMLButtonElement>("#save-snapshot").disabled = snapshotPending || counts.nodes === 0;
+  }
+  function showVisualization(result: Json) {
+    const visualization = parseRelationshipVisualization(result.visualization);
+    // Keep the current case intact unless both validation and rendering succeed.
+    renderGraph(visualization, true);
+    ++generation;
+    currentCase = null;
+    selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
+    resetEvents(); renderClaims([]);
+    q<HTMLButtonElement>("#save-hypothesis").disabled = true;
+    q<HTMLButtonElement>("#compose-report").disabled = true;
+    q("#report-result").textContent = "No report is attached to this visualization.";
+    q<HTMLInputElement>("#visualization-uri").value = "";
+    for (const selector of ["#filter-start", "#filter-end", "#apply-filter"])
+      q<HTMLInputElement | HTMLButtonElement>(selector).disabled = true;
+    q<HTMLInputElement>("#filter-start").value = "";
+    q<HTMLInputElement>("#filter-end").value = "";
+    q("#case-summary").textContent = visualization.title;
+    const uri = String(result.visualization_uri ?? "");
+    renderedVisualizationUri = uri;
+    if (uri) q<HTMLInputElement>("#visualization-uri").value = uri;
+    q<HTMLButtonElement>("#save-snapshot").disabled = !uri || !graph || graph.counts().nodes === 0;
+    setStatus(`${uri ? `Opened ${uri}` : "Opened saved visualization"}${visualization.complete === false ? " · projection is incomplete" : ""}.`);
   }
   async function expand(center = selectedEntity) {
     if (!currentCase) return;
@@ -253,10 +335,12 @@ if (!window.__investigationWorkspace) {
     try {
       const result = await call("investigation.report.compose", {
         case_id: currentCase.case_id, expected_revision: currentCase.revision,
+        visualization_uris: q<HTMLTextAreaElement>("#snapshot-refs").value.split(/[\r\n,]+/).map((uri) => uri.trim()).filter(Boolean),
       }, token);
       if (!result) return;
-      q("#report-result").textContent = `${result.complete ? "No recorded gaps" : "Partial / qualified"} · frozen revision ${result.case_revision}\n${result.report_uri}\n${result.content_fingerprint}`;
-      setStatus(`Report frozen from case revision ${result.case_revision}. The resource can be opened through the existing document workflow.`);
+      q("#report-result").textContent = `${result.complete ? "No recorded gaps" : "Partial / qualified"} · frozen revision ${result.case_revision}\nDocument: ${result.report_uri}\nMarkdown: ${result.markdown_uri}\nSources: ${result.source_manifest_uri}\n${result.content_fingerprint}${result.visualization_uris?.length ? `\nSnapshots:\n${result.visualization_uris.join("\n")}` : ""}`;
+      setStatus(`Structured report frozen from case revision ${result.case_revision}; open its document URI in the existing report editor or export flow.`);
+      await loadReports();
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function createOrOpen() {
@@ -277,16 +361,64 @@ if (!window.__investigationWorkspace) {
 
   q("#create-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").value = ""; });
   q("#browse-cases").addEventListener("click", () => void listCases());
+  q("#open-visualization").addEventListener("click", async () => {
+    const uri = q<HTMLInputElement>("#visualization-uri").value.trim();
+    if (!uri) { setStatus("Enter a saved visualization resource URI.", true); return; }
+    const token = ++generation;
+    try {
+      setStatus("Opening saved visualization…");
+      const result = await call("visualization.open", { visualization_uri: uri }, token);
+      if (result) showVisualization(result);
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+  });
+  q("#save-snapshot").addEventListener("click", async () => {
+    if (!graph || snapshotPending) return;
+    const visualizationUri = renderedVisualizationUri;
+    const projection = graph.snapshotProjection();
+    if (!visualizationUri && !projection) { setStatus("There is no validated graph projection to snapshot.", true); return; }
+    const token = generation;
+    const viewMetadata = { ...graph.snapshotViewMetadata(), graph_nodes: graph.counts().nodes,
+      graph_edges: graph.counts().edges, time_from: q<HTMLInputElement>("#filter-start").value,
+      time_to: q<HTMLInputElement>("#filter-end").value };
+    snapshotPending = true;
+    q<HTMLButtonElement>("#save-snapshot").disabled = true;
+    try {
+      const image = await graph.exportPng();
+      if (token !== generation) return;
+      if (image.size > 512 * 1024) throw new Error("The snapshot exceeds the 512 KiB persisted PNG limit.");
+      const bytes = new Uint8Array(await image.arrayBuffer());
+      if (token !== generation) return;
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 0x8000)
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 0x8000)));
+      const result = await call("visualization.snapshot", {
+        ...(visualizationUri ? { visualization_uri: visualizationUri } : { visualization: projection }),
+        image_base64: btoa(binary),
+        view_json: JSON.stringify(viewMetadata),
+      }, token);
+      if (!result || token !== generation) return;
+      const refs = q<HTMLTextAreaElement>("#snapshot-refs");
+      const existing = refs.value.split(/[\r\n,]+/).map((uri) => uri.trim()).filter(Boolean);
+      if (!existing.includes(result.snapshot_uri)) refs.value = [...existing, result.snapshot_uri].join("\n");
+      setStatus(`PNG snapshot persisted: ${result.snapshot_uri}`);
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally {
+      snapshotPending = false;
+      q<HTMLButtonElement>("#save-snapshot").disabled = !graph || graph.counts().nodes === 0;
+    }
+  });
   q("#case-list-more").addEventListener("click", () => { if (caseListCursor) void listCases(caseListCursor); });
   q("#open-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").focus(); });
   q("#case-submit").addEventListener("click", () => void createOrOpen());
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));
   q("#apply-filter").addEventListener("click", () => {
+    if (!currentCase) return;
     resetEvents(); selectedRelation = "";
     renderGraph({ nodes: [], edges: [] }, true);
     void expand();
   });
   q("#events-more").addEventListener("click", () => void loadEvents("", "", true));
+  q("#frozen-reports-more").addEventListener("click", () => void loadReports(true));
   q("#save-hypothesis").addEventListener("click", () => void saveHypothesis());
   q("#compose-report").addEventListener("click", () => void composeReport());
   q<HTMLTextAreaElement>("#hypothesis").addEventListener("input", (event) => {
@@ -315,15 +447,8 @@ if (!window.__investigationWorkspace) {
     if (message.method === "ui/notifications/tool-result") {
       const result = message.params?.structuredContent ?? message.params?.result?.structuredContent;
       if (result?.visualization?.kind === "relationship") {
-        ++generation;
-        currentCase = null;
-        selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
-        resetEvents(); renderClaims([]);
-        q<HTMLButtonElement>("#save-hypothesis").disabled = true;
-        q<HTMLButtonElement>("#compose-report").disabled = true;
-        renderGraph(result.visualization, true);
-        q("#case-summary").textContent = result.visualization.title ?? "Saved visualization";
-        setStatus(`Visualization saved as ${String(result.visualization_uri ?? "a resource")}.`);
+        try { showVisualization(result); }
+        catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
       } else if (result?.case_id && Date.now() - lastAppCallAt > 1000) {
         void openCase(result.case_id);
       }

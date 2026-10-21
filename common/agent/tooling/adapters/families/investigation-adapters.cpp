@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/families/investigation-adapters.h"
 
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "agent/artifact/artifact-contract.h"
 #include "hash/hash.h"
 
 #include <algorithm>
@@ -245,16 +246,36 @@ common_tool_execution_result execute_investigation_tool(
             return common_adapter_execution_failure("tool.investigation.cursor_invalid",
                 "case item cursor does not match this case revision and filter",
                 "The page cursor is invalid or stale; reopen the case and start again.");
-        const auto serialized = common_investigation_case_to_json(value);
-        const char * collection = nullptr;
-        if (item_type == "entities") collection = "entities";
-        else if (item_type == "events") collection = "events";
-        else if (item_type == "relations") collection = "relations";
-        else if (item_type == "claims") collection = "claims";
-        else if (item_type == "gaps") collection = "gaps";
-        else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
-            "type must be entities, events, relations, claims or gaps");
-        const auto & source = serialized.at(collection);
+        json source;
+        if (item_type == "reports") {
+            if (!bindings.data_store) return common_adapter_execution_failure(
+                "tool.investigation.report_index_unavailable", "investigation report index is unavailable",
+                "Frozen reports cannot be listed in this runtime.");
+            std::vector<common_investigation_report_index_entry> reports;
+            if (!bindings.data_store->list_investigation_reports(bindings.tool_scope, value.case_id,
+                    requested_revision, reports, error)) return common_adapter_execution_failure(
+                "tool.investigation.report_index_failed", std::move(error),
+                "Frozen reports could not be read from the case index.");
+            source = json::array();
+            for (const auto & report : reports) source.push_back({
+                {"case_id", report.case_id}, {"case_revision", report.case_revision},
+                {"source_id", report.source_id}, {"case_fingerprint", report.case_fingerprint},
+                {"content_fingerprint", report.content_fingerprint}, {"report_uri", report.report_uri},
+                {"markdown_uri", report.markdown_uri}, {"source_manifest_uri", report.source_manifest_uri},
+                {"visualization_uris", report.visualization_uris}, {"limitations", report.limitations},
+                {"complete", report.complete}, {"created_at_ms", report.created_at_ms}});
+        } else {
+            const auto serialized = common_investigation_case_to_json(value);
+            const char * collection = nullptr;
+            if (item_type == "entities") collection = "entities";
+            else if (item_type == "events") collection = "events";
+            else if (item_type == "relations") collection = "relations";
+            else if (item_type == "claims") collection = "claims";
+            else if (item_type == "gaps") collection = "gaps";
+            else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
+                "type must be entities, events, relations, claims, gaps or reports");
+            source = serialized.at(collection);
+        }
         json items = json::array();
         if (offset > source.size()) return common_adapter_execution_failure(
             "tool.investigation.cursor_invalid", "case item cursor offset exceeds the collection size",
@@ -277,12 +298,55 @@ common_tool_execution_result execute_investigation_tool(
             {"has_more", has_more}, {"total", source.size()}});
     }
     if (operation == "investigation.report.compose") {
+        for (auto it = arguments.begin(); it != arguments.end(); ++it) {
+            if (it.key() != "case_id" && it.key() != "expected_revision" && it.key() != "visualization_uris")
+                return common_adapter_validation_failure("tool.investigation.report_invalid_arguments",
+                    "unsupported report argument: " + it.key());
+        }
         if (arguments.value("expected_revision", uint64_t(0)) != value.revision) return
             common_adapter_execution_failure("tool.investigation.revision_conflict",
                 "case revision changed before report composition", "Reload the case before composing a report.");
         if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
             "tool.investigation.report_store_unavailable", "resource store is unavailable",
             "A durable report resource cannot be created.");
+        json attached_snapshots = json::array();
+        if (arguments.contains("visualization_uris")) {
+            if (!arguments["visualization_uris"].is_array() || arguments["visualization_uris"].size() > 8)
+                return common_adapter_validation_failure("tool.investigation.report_snapshot_list_invalid",
+                    "visualization_uris must be an array with at most eight snapshot references");
+            const auto authority = make_agent_resource_read_authority(
+                bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+            std::set<std::string> seen;
+            for (const auto & item : arguments["visualization_uris"]) {
+                if (!item.is_string() || item.get<std::string>().empty() || item.get<std::string>().size() > 512)
+                    return common_adapter_validation_failure("tool.investigation.report_snapshot_list_invalid",
+                        "each snapshot reference must be a non-empty resource URI of at most 512 bytes");
+                const auto uri = item.get<std::string>();
+                if (!seen.insert(uri).second) continue;
+                agent_resource_descriptor snapshot;
+                if (!bindings.resource_runtime.store->stat(uri, authority, snapshot, error))
+                    return common_adapter_not_found_failure("tool.investigation.report_snapshot_unavailable",
+                        std::move(error), "A selected snapshot is unavailable in the current runtime scope.");
+                if (snapshot.mime_type != "image/png" || snapshot.source_tool != "visualization.snapshot")
+                    return common_adapter_validation_failure("tool.investigation.report_snapshot_invalid",
+                        "selected resource is not a persisted visualization PNG snapshot");
+                std::string image;
+                if (!bindings.resource_runtime.store->read_bytes(snapshot.uri, authority, 4 * 1024 * 1024, image, error))
+                    return common_adapter_execution_failure("tool.investigation.report_snapshot_read_failed",
+                        std::move(error), "A selected snapshot could not be verified.");
+                static constexpr unsigned char signature[] = {137, 80, 78, 71, 13, 10, 26, 10};
+                if (image.size() < 45 ||
+                        !std::equal(std::begin(signature), std::end(signature),
+                            reinterpret_cast<const unsigned char *>(image.data())) ||
+                        image.compare(12, 4, "IHDR") != 0 || image.compare(image.size() - 8, 4, "IEND") != 0 ||
+                        snapshot.sha256 != hash_sha256_hex(image.data(), image.size()))
+                    return common_adapter_execution_failure("tool.investigation.report_snapshot_invalid",
+                        "snapshot bytes failed PNG signature or resource hash verification",
+                        "A selected snapshot failed integrity validation.");
+                attached_snapshots.push_back({{"uri", snapshot.uri}, {"sha256", snapshot.sha256},
+                    {"size_bytes", snapshot.size_bytes}, {"visualization_uri", snapshot.lineage.parent_uri}});
+            }
+        }
         const auto safe_text = [](std::string text) {
             for (auto & c : text) {
                 if (c == '\n' || c == '\r' || c == '\t') c = ' ';
@@ -355,34 +419,170 @@ common_tool_execution_result execute_investigation_tool(
             markdown += "- Event `" + safe_text(event.id) + "`: raw `" + safe_text(event.raw_resource_uri) +
                 "`; normalized `" + safe_text(event.normalized_resource_uri) + "`\n";
         }
+        if (!attached_snapshots.empty()) {
+            markdown += "\n## Visualization snapshots\n\n";
+            markdown += "The following PNG snapshots were explicitly selected as report attachments. Their relationships to the case are not inferred; inspect their recorded visualization source and revision separately.\n\n";
+            for (size_t i = 0; i < attached_snapshots.size(); ++i) {
+                const auto & snapshot = attached_snapshots[i];
+                markdown += "- [Snapshot " + std::to_string(i + 1) + "](" + safe_text(snapshot["uri"].get<std::string>()) +
+                    ") — SHA-256 `" + safe_text(snapshot["sha256"].get<std::string>()) + "`; visualization `" +
+                    safe_text(snapshot["visualization_uri"].get<std::string>()) + "`\n";
+            }
+        }
         if (markdown.size() > 2 * 1024 * 1024) return common_adapter_validation_failure(
             "tool.investigation.report_too_large", "frozen report exceeds the 2 MiB resource limit");
         const std::string fingerprint = "sha256:" + hash_sha256_hex(markdown.data(), markdown.size());
-        agent_resource_put_request put;
-        put.name = value.case_id + "-report-r" + std::to_string(value.revision) + ".md";
-        put.description = "Frozen investigation report for case revision " + std::to_string(value.revision);
-        put.mime_type = "text/markdown"; put.text = markdown;
-        put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
-        put.source_provider = value.source_id; put.source_tool = "investigation.report.compose";
-        apply_agent_resource_runtime(bindings.resource_runtime, put);
-        put.metadata.purpose = "Frozen investigation report";
-        put.metadata.content_summary = "Case " + value.case_id + " revision " + std::to_string(value.revision);
-        put.metadata.source_provider = value.source_id;
-        put.metadata.source_operation = "investigation.report.compose";
-        put.metadata.source_request_json = json{{"case_id", value.case_id},
-            {"case_revision", value.revision}, {"content_fingerprint", fingerprint}}.dump();
-        put.metadata.content_hash = fingerprint;
-        put.metadata.keywords = {"investigation", "report", value.case_id};
-        put.metadata.limitations = value.gaps.empty() ?
+        const json frozen_source{{"schema", "investigation-report-source.v1"}, {"case_id", value.case_id},
+            {"case_revision", value.revision}, {"source_id", value.source_id},
+            {"window_start_ms", value.window_start_ms}, {"window_end_ms", value.window_end_ms},
+            {"case_fingerprint", value.fingerprint},
+            {"content_fingerprint", fingerprint}, {"visualization_snapshots", attached_snapshots},
+            {"event_count", value.events.size()}, {"relation_count", value.relations.size()},
+            {"claim_count", value.claims.size()}, {"gaps", value.gaps}};
+        const auto source_json = frozen_source.dump();
+        const std::string source_fingerprint = "sha256:" + hash_sha256_hex(source_json.data(), source_json.size());
+        agent_resource_put_request source_put;
+        source_put.name = value.case_id + "-report-r" + std::to_string(value.revision) + "-sources.json";
+        source_put.description = "Frozen source and revision manifest for an investigation report.";
+        source_put.mime_type = "application/json"; source_put.text = source_json;
+        source_put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+        source_put.source_provider = value.source_id; source_put.source_tool = "investigation.report.compose";
+        apply_agent_resource_runtime(bindings.resource_runtime, source_put);
+        source_put.metadata.purpose = "Immutable case revision and explicitly selected snapshot references.";
+        source_put.metadata.content_summary = "Case " + value.case_id + " revision " + std::to_string(value.revision);
+        source_put.metadata.source_request_json = json{{"case_id", value.case_id},
+            {"case_revision", value.revision}, {"case_fingerprint", value.fingerprint},
+            {"report_fingerprint", fingerprint}, {"visualization_snapshots", attached_snapshots}}.dump();
+        source_put.metadata.source_operation = "investigation.report.compose";
+        source_put.metadata.content_hash = source_fingerprint;
+        agent_resource_descriptor source_manifest;
+        if (!bindings.resource_runtime.store->put_text(source_put, source_manifest, error)) return common_adapter_execution_failure(
+            "tool.investigation.report_source_store_failed", std::move(error), "The frozen report source manifest could not be persisted.");
+
+        common_agent_artifact_document document;
+        document.schema_version = 3;
+        document.kind = common_agent_artifact_document_kind::document;
+        document.id = "investigation-report-" + hash_sha256_hex(fingerprint.data(), fingerprint.size()).substr(0, 24);
+        document.title = "Investigation report: " + safe_text(value.title);
+        document.purpose = "Frozen report for case " + value.case_id + " revision " + std::to_string(value.revision);
+        document.revision = value.revision;
+        document.snapshot_uri = source_manifest.uri;
+        document.snapshot_fingerprint = source_fingerprint;
+        document.source_resource_uri = source_manifest.uri;
+        document.source_content_fingerprint = source_fingerprint;
+        document.importer_version = "investigation-report-projection-v1";
+        document.coverage_complete = false;
+        document.unresolved_gaps = value.gaps;
+        if (document.unresolved_gaps.empty())
+            document.unresolved_gaps.push_back("Exhaustive source coverage was not established.");
+        common_agent_artifact_section report_section;
+        report_section.id = "investigation-report";
+        report_section.title = "Investigation report";
+        common_agent_artifact_block report_block;
+        report_block.id = "frozen-report-body";
+        report_block.kind = common_agent_artifact_block_kind::observation;
+        report_block.text = markdown;
+        report_block.origin = "investigation.report.compose";
+        report_block.author = common_agent_artifact_author::host;
+        report_block.review_state = common_agent_artifact_review_state::unreviewed;
+        report_block.validation = common_agent_artifact_validation::unvalidated;
+        document.sections.push_back(std::move(report_section));
+        document.sections.back().blocks.push_back(std::move(report_block));
+        std::string editable_markdown;
+        if (!common_agent_artifact_render_editable_markdown(document, editable_markdown, error))
+            return common_adapter_execution_failure("tool.investigation.report_render_failed", std::move(error),
+                "The structured report could not be prepared.");
+        document.content_fingerprint = "sha256:" + hash_sha256_hex(editable_markdown.data(), editable_markdown.size());
+        agent_resource_put_request markdown_put;
+        markdown_put.name = value.case_id + "-report-r" + std::to_string(value.revision) + ".md";
+        markdown_put.description = "Rendered Markdown for frozen investigation report revision " + std::to_string(value.revision);
+        markdown_put.mime_type = "text/markdown"; markdown_put.text = markdown;
+        markdown_put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+        markdown_put.source_provider = value.source_id; markdown_put.source_tool = "investigation.report.compose";
+        apply_agent_resource_runtime(bindings.resource_runtime, markdown_put);
+        markdown_put.metadata.purpose = "Rendered view of the frozen investigation report.";
+        markdown_put.metadata.source_operation = "investigation.report.compose";
+        markdown_put.metadata.content_hash = fingerprint;
+        markdown_put.lineage.parent_uri = source_manifest.uri; markdown_put.lineage.chunk_count = 1;
+        markdown_put.lineage.byte_length = markdown.size(); markdown_put.lineage.derivation = "investigation.report.compose:markdown-v1";
+        agent_resource_descriptor markdown_resource;
+        if (!bindings.resource_runtime.store->put_text(markdown_put, markdown_resource, error))
+            return common_adapter_execution_failure("tool.investigation.report_markdown_store_failed", std::move(error),
+                "The frozen Markdown rendering could not be persisted.");
+        document.editor_markdown_uri = markdown_resource.uri;
+        std::string document_json;
+        if (!common_agent_artifact_document_to_json(document, document_json, error))
+            return common_adapter_execution_failure("tool.investigation.report_serialize_failed", std::move(error),
+                "The structured report could not be validated.");
+        agent_resource_put_request report_put;
+        report_put.name = value.case_id + "-report-r" + std::to_string(value.revision) + ".json";
+        report_put.description = "Structured frozen investigation report for case revision " + std::to_string(value.revision);
+        report_put.mime_type = "application/vnd.llama-agent.document+json"; report_put.text = document_json;
+        report_put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+        report_put.source_provider = value.source_id; report_put.source_tool = "investigation.report.compose";
+        apply_agent_resource_runtime(bindings.resource_runtime, report_put);
+        report_put.metadata.purpose = "Frozen investigation report using the shared document and export contract.";
+        report_put.metadata.content_summary = "Case " + value.case_id + " revision " + std::to_string(value.revision);
+        report_put.metadata.source_provider = value.source_id;
+        report_put.metadata.source_operation = "investigation.report.compose";
+        report_put.metadata.source_request_json = json{{"case_id", value.case_id},
+            {"case_revision", value.revision}, {"content_fingerprint", fingerprint},
+            {"source_manifest_uri", source_manifest.uri}, {"visualization_snapshots", attached_snapshots}}.dump();
+        report_put.metadata.content_hash = document.content_fingerprint;
+        report_put.metadata.keywords = {"investigation", "report", value.case_id};
+        report_put.metadata.limitations = value.gaps.empty() ?
             "No recorded gaps; this does not establish exhaustive source coverage." :
             [&]() { std::string text; for (const auto & gap : value.gaps) { if (!text.empty()) text += "; "; text += gap; } return text; }();
+        report_put.lineage.parent_uri = source_manifest.uri;
+        report_put.lineage.chunk_count = 1; report_put.lineage.byte_length = document_json.size();
+        report_put.lineage.derivation = "investigation.report.compose:structured-document-v1";
         agent_resource_descriptor report;
-        if (!bindings.resource_runtime.store->put_text(put, report, error)) return common_adapter_execution_failure(
-            "tool.investigation.report_store_failed", std::move(error), "The frozen report could not be persisted.");
+        if (!bindings.resource_runtime.store->put_text(report_put, report, error)) return common_adapter_execution_failure(
+            "tool.investigation.report_store_failed", std::move(error), "The frozen structured report could not be persisted.");
         const bool complete = value.gaps.empty();
-        return common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
-            {"report_uri", report.uri}, {"content_fingerprint", fingerprint}, {"complete", complete},
-            {"limitations", value.gaps}});
+        if (!bindings.data_store) return common_adapter_execution_failure(
+            "tool.investigation.report_index_unavailable", "investigation report index is unavailable",
+            "The report resources were stored, but cannot be attached to the case for later discovery.");
+        common_investigation_report_index_entry report_index;
+        report_index.case_id = value.case_id;
+        report_index.case_revision = value.revision;
+        report_index.source_id = value.source_id;
+        report_index.case_fingerprint = value.fingerprint;
+        report_index.content_fingerprint = fingerprint;
+        report_index.report_uri = report.uri;
+        report_index.markdown_uri = markdown_resource.uri;
+        report_index.source_manifest_uri = source_manifest.uri;
+        report_index.limitations = value.gaps;
+        report_index.complete = complete;
+        report_index.created_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        for (const auto & snapshot : attached_snapshots)
+            report_index.visualization_uris.push_back(snapshot.at("uri").get<std::string>());
+        common_investigation_report_index_entry published_report;
+        if (!bindings.data_store->publish_investigation_report(bindings.tool_scope, report_index,
+                published_report, error)) return common_adapter_execution_failure(
+            "tool.investigation.report_index_publish_failed", std::move(error),
+            "The frozen report was created but was not published in the case report index.");
+        auto result = common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
+            {"report_uri", published_report.report_uri}, {"markdown_uri", published_report.markdown_uri},
+            {"source_manifest_uri", published_report.source_manifest_uri},
+            {"content_fingerprint", published_report.content_fingerprint}, {"complete", published_report.complete},
+            {"limitations", published_report.limitations}, {"visualization_uris", [&]() {
+                json uris = json::array(); for (const auto & snapshot : attached_snapshots) uris.push_back(snapshot["uri"]); return uris;
+            }()}});
+        result.resource_refs = {source_manifest, markdown_resource, report};
+        if (published_report.report_uri != report.uri || published_report.markdown_uri != markdown_resource.uri ||
+                published_report.source_manifest_uri != source_manifest.uri) {
+            result.resource_refs.clear();
+            const auto authority = make_agent_resource_read_authority(
+                bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+            for (const auto & uri : {published_report.source_manifest_uri, published_report.markdown_uri, published_report.report_uri}) {
+                agent_resource_descriptor descriptor;
+                if (bindings.resource_runtime.store->stat(uri, authority, descriptor, error)) result.resource_refs.push_back(std::move(descriptor));
+                else error.clear();
+            }
+        }
+        return result;
     }
     if (operation == "investigation.collect") {
         if (arguments.value("expected_revision", uint64_t(0)) != value.revision) {
@@ -896,6 +1096,9 @@ bool common_try_register_investigation_tool_adapter(
         common_tool_registry & registry, bool & installed, std::string & error) {
     installed = false;
     if (definition.executor_id.rfind("builtin.investigation.", 0) != 0) return false;
+    const bool read_only = definition.risk_class == common_tool_risk_class::local_read ||
+        definition.risk_class == common_tool_risk_class::network_read;
+    const bool policy_gated = !read_only && definition.requires_confirmation;
     installed = common_adapter_register_definition(definition, registry,
         [bindings, operation = definition.name](const std::string & input) {
             std::string error;
@@ -905,6 +1108,6 @@ bool common_try_register_investigation_tool_adapter(
                     "tool.investigation.invalid_arguments", std::move(error));
             }
             return execute_investigation_tool(bindings, operation, arguments);
-        }, error);
+        }, error, read_only, policy_gated);
     return true;
 }

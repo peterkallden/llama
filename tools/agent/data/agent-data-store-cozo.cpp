@@ -310,6 +310,163 @@ bool common_agent_cozo_data_store::publish_investigation_case(
     return true;
 }
 
+bool common_agent_cozo_data_store::publish_investigation_report(
+        const common_agent_scope & scope,
+        const common_investigation_report_index_entry & input,
+        common_investigation_report_index_entry & published,
+        std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    published = {};
+    if (input.case_id.empty() || input.case_id.size() > 512 || input.case_revision == 0 ||
+            input.source_id.empty() || input.case_fingerprint.empty() || input.content_fingerprint.empty() ||
+            input.report_uri.empty() || input.markdown_uri.empty() || input.source_manifest_uri.empty() ||
+            input.report_uri.size() > 1024 || input.markdown_uri.size() > 1024 || input.source_manifest_uri.size() > 1024 ||
+            input.visualization_uris.size() > 8) {
+        error = "investigation report index entry is incomplete or exceeds its limits";
+        return false;
+    }
+    std::string authorization_error;
+    if (!authorize_investigation_source(input.source_id, scope, authorization_error)) {
+        error = "investigation report is unavailable under current source permissions";
+        return false;
+    }
+    const auto case_key = investigation_case_key(input.case_id, scope);
+    std::string case_raw;
+    if (!run("?[payload] := *agent_investigation_revisions[$case_key, $case_revision, payload, revision_uri]",
+            json{{"case_key", case_key}, {"case_revision", input.case_revision}}.dump(), case_raw, error)) return false;
+    const auto case_result = json::parse(case_raw, nullptr, false);
+    if (!case_result.is_object() || !case_result.contains("rows") || !case_result["rows"].is_array() ||
+            case_result["rows"].empty() || !case_result["rows"][0].is_array() ||
+            case_result["rows"][0].empty() || !case_result["rows"][0][0].is_string()) {
+        error = "investigation report does not reference a published case revision in this scope";
+        return false;
+    }
+    common_investigation_case_revision case_revision;
+    if (!common_investigation_case_from_json(json::parse(case_result["rows"][0][0].get<std::string>(), nullptr, false),
+            case_revision, error)) return false;
+    if (!scope_equal(case_revision.scope, scope) || case_revision.case_id != input.case_id ||
+            case_revision.fingerprint != input.case_fingerprint || case_revision.source_id != input.source_id) {
+        error = "investigation report provenance does not match its published case revision";
+        return false;
+    }
+    const auto lookup_params = json{{"case_key", case_key}, {"case_revision", input.case_revision},
+        {"content_fingerprint", input.content_fingerprint}};
+    std::string raw;
+    if (!run("?[payload] := *agent_investigation_report_index[$case_key, $case_revision, $content_fingerprint, payload]",
+            lookup_params.dump(), raw, error)) return false;
+    const auto current = json::parse(raw, nullptr, false);
+    if (!current.is_object() || !current.contains("rows") || !current["rows"].is_array()) {
+        error = "Cozo investigation report index lookup returned invalid data";
+        return false;
+    }
+    auto decode = [&](const json & payload, common_investigation_report_index_entry & out) -> bool {
+        if (!payload.is_object() || payload.value("case_id", std::string()) != input.case_id ||
+                payload.value("case_revision", uint64_t(0)) != input.case_revision ||
+                payload.value("source_id", std::string()) != input.source_id ||
+                payload.value("case_fingerprint", std::string()).empty() ||
+                payload.value("content_fingerprint", std::string()) != input.content_fingerprint ||
+                !payload.contains("report_uri") || !payload["report_uri"].is_string() ||
+                !payload.contains("markdown_uri") || !payload["markdown_uri"].is_string() ||
+                !payload.contains("source_manifest_uri") || !payload["source_manifest_uri"].is_string()) return false;
+        out.case_id = input.case_id;
+        out.case_revision = input.case_revision;
+        out.source_id = input.source_id;
+        out.case_fingerprint = payload.value("case_fingerprint", std::string());
+        out.content_fingerprint = payload.value("content_fingerprint", std::string());
+        out.report_uri = payload["report_uri"].get<std::string>();
+        out.markdown_uri = payload["markdown_uri"].get<std::string>();
+        out.source_manifest_uri = payload["source_manifest_uri"].get<std::string>();
+        out.visualization_uris = payload.value("visualization_uris", std::vector<std::string>{});
+        out.limitations = payload.value("limitations", std::vector<std::string>{});
+        out.complete = payload.value("complete", false);
+        out.created_at_ms = payload.value("created_at_ms", int64_t(0));
+        return true;
+    };
+    if (!current["rows"].empty()) {
+        const auto & row = current["rows"][0];
+        if (!row.is_array() || row.empty() || !row[0].is_string()) {
+            error = "Cozo investigation report index contains a malformed row";
+            return false;
+        }
+        const auto existing = json::parse(row[0].get<std::string>(), nullptr, false);
+        if (!decode(existing, published)) {
+            error = "Cozo investigation report index contains a conflicting entry";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    const json payload{{"case_id", input.case_id}, {"case_revision", input.case_revision},
+        {"source_id", input.source_id}, {"case_fingerprint", input.case_fingerprint},
+        {"content_fingerprint", input.content_fingerprint}, {"report_uri", input.report_uri},
+        {"markdown_uri", input.markdown_uri}, {"source_manifest_uri", input.source_manifest_uri},
+        {"visualization_uris", input.visualization_uris}, {"limitations", input.limitations},
+        {"complete", input.complete}, {"created_at_ms", input.created_at_ms}};
+    const json params{{"case_key", case_key}, {"case_revision", input.case_revision},
+        {"content_fingerprint", input.content_fingerprint}, {"payload", payload.dump()}};
+    if (!run("?[case_key, case_revision, content_fingerprint, payload] <- [[$case_key, $case_revision, $content_fingerprint, $payload]] :put agent_investigation_report_index { case_key, case_revision, content_fingerprint => payload }",
+            params.dump(), raw, error)) return false;
+    published = input;
+    error.clear();
+    return true;
+}
+
+bool common_agent_cozo_data_store::list_investigation_reports(
+        const common_agent_scope & scope, const std::string & case_id, uint64_t case_revision,
+        std::vector<common_investigation_report_index_entry> & out, std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    out.clear();
+    if (case_id.empty() || case_id.size() > 512 || case_revision == 0) {
+        error = "investigation report lookup requires a valid case and revision";
+        return false;
+    }
+    std::string raw;
+    if (!run("?[content_fingerprint, payload] := *agent_investigation_report_index[$case_key, $case_revision, content_fingerprint, payload]",
+            json{{"case_key", investigation_case_key(case_id, scope)}, {"case_revision", case_revision}}.dump(), raw, error)) return false;
+    const auto parsed = json::parse(raw, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || !parsed["rows"].is_array()) {
+        error = "Cozo investigation report index query returned invalid data";
+        return false;
+    }
+    for (const auto & row : parsed["rows"]) {
+        if (!row.is_array() || row.size() < 2 || !row[0].is_string() || !row[1].is_string()) {
+            error = "Cozo investigation report index contains a malformed row";
+            out.clear();
+            return false;
+        }
+        const auto payload = json::parse(row[1].get<std::string>(), nullptr, false);
+        if (!payload.is_object() || payload.value("case_id", std::string()) != case_id ||
+                payload.value("case_revision", uint64_t(0)) != case_revision ||
+                payload.value("content_fingerprint", std::string()) != row[0].get<std::string>()) {
+            error = "Cozo investigation report index payload does not match its key";
+            out.clear();
+            return false;
+        }
+        common_investigation_report_index_entry entry;
+        entry.case_id = case_id;
+        entry.case_revision = case_revision;
+        entry.source_id = payload.value("source_id", std::string());
+        entry.case_fingerprint = payload.value("case_fingerprint", std::string());
+        entry.content_fingerprint = payload.value("content_fingerprint", std::string());
+        entry.report_uri = payload.value("report_uri", std::string());
+        entry.markdown_uri = payload.value("markdown_uri", std::string());
+        entry.source_manifest_uri = payload.value("source_manifest_uri", std::string());
+        entry.visualization_uris = payload.value("visualization_uris", std::vector<std::string>{});
+        entry.limitations = payload.value("limitations", std::vector<std::string>{});
+        entry.complete = payload.value("complete", false);
+        entry.created_at_ms = payload.value("created_at_ms", int64_t(0));
+        std::string authorization_error;
+        if (!entry.source_id.empty() && authorize_investigation_source(entry.source_id, scope, authorization_error))
+            out.push_back(std::move(entry));
+    }
+    std::sort(out.begin(), out.end(), [](const auto & a, const auto & b) {
+        if (a.created_at_ms != b.created_at_ms) return a.created_at_ms > b.created_at_ms;
+        return a.content_fingerprint < b.content_fingerprint;
+    });
+    error.clear();
+    return true;
+}
+
 bool common_agent_cozo_data_store::set_virtual_dataset_source(
         common_agent_virtual_dataset_source * source) {
     virtual_dataset_source_ = source;
@@ -329,7 +486,7 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
     if (!run("::relations", "{}", relations, error)) { close(); return false; }
     const auto parsed = json::parse(relations, nullptr, false);
     bool rows_present = false, values_present = false, order_present = false, dataset_present = false,
-        investigation_present = false, investigation_index_present = false;
+        investigation_present = false, investigation_index_present = false, investigation_report_index_present = false;
     if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0].is_string()) {
         rows_present |= row[0] == "agent_data_rows";
         values_present |= row[0] == "agent_data_values";
@@ -337,6 +494,7 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         dataset_present |= row[0] == "agent_dataset_metadata";
         investigation_present |= row[0] == "agent_investigation_current";
         investigation_index_present |= row[0] == "agent_investigation_scope_index";
+        investigation_report_index_present |= row[0] == "agent_investigation_report_index";
     }
     if (!rows_present) { std::string ignored; if (!run(agent_cozo_schema_script(), "{}", ignored, error)) { close(); return false; } }
     else if (!values_present) { std::string ignored; if (!run(agent_cozo_values_schema_script(), "{}", ignored, error)) { close(); return false; } }
@@ -383,6 +541,10 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         }
         if (!index_rows.empty() && !run("?[scope_key, case_id, revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri] <- $rows :put agent_investigation_scope_index { scope_key, case_id => revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri }",
                 json{{"rows", index_rows}}.dump(), ignored, error)) { close(); return false; }
+    }
+    if (investigation_present && !investigation_report_index_present) {
+        std::string ignored;
+        if (!run(agent_cozo_investigation_report_index_schema_script(), "{}", ignored, error)) { close(); return false; }
     }
     return true;
 }

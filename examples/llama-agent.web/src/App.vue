@@ -239,6 +239,19 @@ async function editReport(uri: string) {
   finally { workspaceNavigating.value = false; }
 }
 
+async function openIndexedReport(uri: string) {
+  if (navigationLocked.value) return;
+  workspaceNavigating.value = true;
+  const sessionId = session.sessionId;
+  try {
+    // The normal read-only document tool remains the authority check; the app
+    // message is navigation intent, never a resource access grant.
+    const opened = structuredToolResult(await openReportRead(uri));
+    if (session.sessionId === sessionId) showOpenedDocument(opened, uri);
+  } catch (cause) { if (session.sessionId === sessionId) session.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { workspaceNavigating.value = false; }
+}
+
 function attachFiles(event: Event) {
   const input = event.target as HTMLInputElement;
   for (const file of Array.from(input.files ?? [])) void session.upload(file);
@@ -314,7 +327,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
       <div v-show="workspaceActive" class="workspace-main">
         <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" />
         <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" />
+        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" />
       </div>
       <div class="primary">
         <section class="card chat chat-panel">
@@ -322,9 +335,9 @@ function isArtifactEvent(event: Record<string, unknown>) {
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
           <div v-for="message in session.messages" :key="message.id" class="chat-entry">
             <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
-            <template v-if="message.role === 'assistant'"><ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" @edit="editReport" @inspect="inspection = $event" /></template>
+            <template v-if="message.role === 'assistant'"><ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" @edit="editReport" @inspect="inspection = $event" /></template>
           </div>
-          <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" @edit="editReport" @inspect="inspection = $event" />
+          <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" @edit="editReport" @inspect="inspection = $event" />
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />

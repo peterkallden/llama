@@ -3,6 +3,8 @@
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "agent/artifact/artifact-contract.h"
+#include "hash/hash.h"
+#include "base64.hpp"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 
@@ -31,6 +33,9 @@ public:
         out.mime_type = request.mime_type;
         out.scope = request.scope;
         out.metadata = request.metadata;
+        out.lineage = request.lineage;
+        out.source_provider = request.source_provider;
+        out.source_tool = request.source_tool;
         out.size_bytes = request.text.size();
         out.sha256 = std::to_string(request.text.size());
         resources[out.uri] = out;
@@ -42,7 +47,10 @@ public:
         auto text_request=request;
         text_request.text=request.bytes;
         text_request.bytes_are_authoritative=false;
-        return put_text(text_request,out,error);
+        if (!put_text(text_request,out,error)) return false;
+        out.sha256=hash_sha256_hex(request.bytes.data(),request.bytes.size());
+        resources[out.uri]=out;
+        return true;
     }
     bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t max_bytes,
             std::string & out, std::string & error) const override {
@@ -91,6 +99,7 @@ class test_investigation_store final : public common_agent_data_store {
 public:
     common_agent_dataset_descriptor source;
     std::map<std::string, common_investigation_case_revision> cases;
+    std::vector<common_investigation_report_index_entry> reports;
     std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
     bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
@@ -149,6 +158,36 @@ public:
             error = "investigation case revision conflict"; return false;
         }
         out = input; cases[input.case_id] = out; error.clear(); return true;
+    }
+    bool publish_investigation_report(const common_agent_scope & scope,
+            const common_investigation_report_index_entry & input,
+            common_investigation_report_index_entry & out, std::string & error) override {
+        const auto found = cases.find(input.case_id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "report is unavailable in this scope"; return false;
+        }
+        const auto existing = std::find_if(reports.begin(), reports.end(), [&](const auto & item) {
+            return item.case_id == input.case_id && item.case_revision == input.case_revision &&
+                item.content_fingerprint == input.content_fingerprint;
+        });
+        if (existing != reports.end()) { out = *existing; error.clear(); return true; }
+        reports.push_back(input); out = input; error.clear(); return true;
+    }
+    bool list_investigation_reports(const common_agent_scope & scope, const std::string & case_id,
+            uint64_t revision, std::vector<common_investigation_report_index_entry> & out,
+            std::string & error) override {
+        out.clear();
+        const auto found = cases.find(case_id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "report is unavailable in this scope"; return false;
+        }
+        for (const auto & item : reports) if (item.case_id == case_id && item.case_revision == revision)
+            out.push_back(item);
+        error.clear(); return true;
     }
     void seed(common_investigation_case_revision value) { cases[value.case_id] = std::move(value); }
 };
@@ -1200,6 +1239,16 @@ int main() {
     common_tool_registry investigation_registry;
     assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
         investigation_bindings, investigation_registry, adapters, error));
+    assert(!investigation_registry.is_read_only("investigation.case.create") &&
+        investigation_registry.is_policy_gated("investigation.case.create"));
+    assert(!investigation_registry.is_read_only("investigation.collect") &&
+        investigation_registry.is_policy_gated("investigation.collect"));
+    assert(!investigation_registry.is_read_only("investigation.claim.hypothesize") &&
+        investigation_registry.is_policy_gated("investigation.claim.hypothesize"));
+    assert(!investigation_registry.is_read_only("investigation.report.compose") &&
+        investigation_registry.is_policy_gated("investigation.report.compose"));
+    assert(investigation_registry.is_read_only("investigation.case.open") &&
+        !investigation_registry.is_policy_gated("investigation.case.open"));
     result = investigation_registry.execute({"investigation.case.open", R"({"case_id":"graph-case"})"});
     assert(result.ok && result.output.find("first_entity_id") != std::string::npos &&
         result.output.find("\"counts\"") != std::string::npos &&
@@ -1301,14 +1350,68 @@ int main() {
     assert(result.ok && result.output.find("hypothesis") != std::string::npos &&
         investigation_store.cases.at("graph-case").revision == 3 &&
         investigation_store.cases.at("graph-case").claims[0].state == common_investigation_claim_state::hypothesis);
-    result = investigation_registry.execute({"investigation.report.compose",
-        R"({"case_id":"graph-case","expected_revision":3})"});
+    agent_resource_put_request report_snapshot_request;
+    report_snapshot_request.name="selected-visualization.png";
+    report_snapshot_request.mime_type="image/png";
+    report_snapshot_request.bytes=base64::decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==");
+    report_snapshot_request.bytes_are_authoritative=true;
+    report_snapshot_request.scope=common_runtime_resource_scope::session;
+    report_snapshot_request.source_provider="native";
+    report_snapshot_request.source_tool="visualization.snapshot";
+    report_snapshot_request.lineage.parent_uri="resource://test/visualization.json";
+    report_snapshot_request.lineage.chunk_count=1;
+    report_snapshot_request.lineage.byte_length=report_snapshot_request.bytes.size();
+    report_snapshot_request.lineage.derivation="visualization.snapshot:png-v1";
+    agent_resource_descriptor report_snapshot;
+    assert(investigation_resources.put_bytes(report_snapshot_request,report_snapshot,error));
+    result = investigation_registry.execute({"investigation.report.compose", nlohmann::json{
+        {"case_id", "graph-case"}, {"expected_revision", 3},
+        {"visualization_uris", {report_snapshot.uri}}}.dump()});
     assert(result.ok && result.output.find("report_uri") != std::string::npos &&
-        investigation_resources.requests.size() == 3 &&
+        investigation_resources.requests.size() == 6 &&
         investigation_resources.requests.back().text.find("## Timeline") != std::string::npos &&
+        investigation_resources.requests.back().text.find("## Visualization snapshots") != std::string::npos &&
+        investigation_resources.requests.back().text.find(report_snapshot.uri) != std::string::npos &&
         investigation_resources.requests.back().text.find("authenticated_to") != std::string::npos &&
         investigation_resources.requests.back().text.find("Hypothesis:") != std::string::npos &&
         investigation_resources.requests.back().text.find("event:1") != std::string::npos);
+    const auto composed_report = nlohmann::json::parse(result.output);
+    assert(std::any_of(result.resource_refs.begin(), result.resource_refs.end(), [&](const auto & resource) {
+        return resource.uri == composed_report.at("report_uri").get<std::string>() &&
+            resource.mime_type == "application/vnd.llama-agent.document+json";
+    }));
+    common_agent_artifact_document reopened_investigation_report;
+    assert(common_agent_artifact_document_from_json(
+        investigation_resources.contents.at(composed_report.at("report_uri").get<std::string>()),
+        reopened_investigation_report, error));
+    assert(reopened_investigation_report.kind == common_agent_artifact_document_kind::document &&
+        reopened_investigation_report.snapshot_uri == composed_report.at("source_manifest_uri") &&
+        reopened_investigation_report.sections.size() == 1);
+    std::string reopened_report_markdown;
+    assert(common_agent_artifact_render_markdown(reopened_investigation_report, reopened_report_markdown, error) &&
+        reopened_report_markdown.find(report_snapshot.uri) != std::string::npos &&
+        reopened_report_markdown.find("## Timeline") != std::string::npos);
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 10}}.dump()});
+    assert(result.ok);
+    const auto indexed_reports = nlohmann::json::parse(result.output);
+    assert(indexed_reports.at("items").size() == 1 &&
+        indexed_reports.at("items")[0].at("report_uri") == composed_report.at("report_uri") &&
+        indexed_reports.at("items")[0].at("case_revision") == 3);
+    auto second_indexed_report = investigation_store.reports.front();
+    second_indexed_report.content_fingerprint = "sha256:second-report";
+    second_indexed_report.report_uri = "resource://reports/second.json";
+    investigation_store.reports.push_back(second_indexed_report);
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 1}}.dump()});
+    assert(result.ok);
+    const auto first_report_page = nlohmann::json::parse(result.output);
+    assert(first_report_page.at("items").size() == 1 && first_report_page.at("has_more") == true);
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 1},
+        {"cursor", first_report_page.at("next_cursor")}}.dump()});
+    assert(result.ok && nlohmann::json::parse(result.output).at("items").size() == 1 &&
+        nlohmann::json::parse(result.output).at("has_more") == false);
     auto foreign_scope = investigation_bindings;
     foreign_scope.tool_scope.namespace_id = "tenant-b";
     common_tool_registry foreign_investigation_registry;

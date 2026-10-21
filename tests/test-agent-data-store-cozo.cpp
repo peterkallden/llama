@@ -311,12 +311,44 @@ int main() {
     TEST_ASSERT(!store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[],"max_scan_rows":1,"materialize":true,"result_dataset":"dataset://derived/truncated"})", output, error));
     TEST_ASSERT(error.find("truncated") != std::string::npos);
 
+    common_investigation_report_index_entry report_entry;
+    report_entry.case_id = "case-persist-1";
+    report_entry.case_revision = 1; // Historical reports remain independently indexed.
+    report_entry.source_id = "elastic-a";
+    report_entry.case_fingerprint = first_case_fingerprint;
+    report_entry.content_fingerprint = "sha256:report-fixture";
+    report_entry.report_uri = "resource://reports/case-persist-1-r1.json";
+    report_entry.markdown_uri = "resource://reports/case-persist-1-r1.md";
+    report_entry.source_manifest_uri = "resource://reports/case-persist-1-r1-sources.json";
+    report_entry.visualization_uris = {"resource://snapshots/one.png"};
+    report_entry.complete = false;
+    report_entry.limitations = {"Coverage is partial."};
+    report_entry.created_at_ms = 1234;
+    common_investigation_report_index_entry indexed_report;
+    TEST_ASSERT(store.publish_investigation_report(investigation.scope, report_entry, indexed_report, error));
+    TEST_ASSERT(indexed_report.report_uri == report_entry.report_uri);
+    // Publishing the same content fingerprint is idempotent and returns the original frozen references.
+    auto retry_entry = report_entry;
+    retry_entry.report_uri = "resource://reports/retry-must-not-replace.json";
+    TEST_ASSERT(store.publish_investigation_report(investigation.scope, retry_entry, indexed_report, error));
+    TEST_ASSERT(indexed_report.report_uri == report_entry.report_uri);
+    std::vector<common_investigation_report_index_entry> indexed_reports;
+    TEST_ASSERT(store.list_investigation_reports(investigation.scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.size() == 1 && indexed_reports[0].content_fingerprint == report_entry.content_fingerprint);
+    auto report_other_scope = investigation.scope;
+    report_other_scope.namespace_id = "tenant-b";
+    TEST_ASSERT(store.list_investigation_reports(report_other_scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.empty());
+
     store.close();
     TEST_ASSERT(store.open((root / "data.cozo").string(), error));
     TEST_ASSERT(store.list_investigation_cases(investigation.scope, 10, "",
         listed_cases, case_cursor, error));
     TEST_ASSERT(listed_cases.size() == 2 && listed_cases[0].case_id == "case-persist-1" &&
         listed_cases[0].revision == 2 && listed_cases[1].case_id == "case-persist-2");
+    TEST_ASSERT(store.list_investigation_reports(investigation.scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.size() == 1 && indexed_reports[0].report_uri == report_entry.report_uri &&
+        indexed_reports[0].case_fingerprint == first_case_fingerprint);
     store.close();
     fs::remove_all(root, ec);
     return 0;

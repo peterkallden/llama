@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
-import { canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
 import { DocumentEditorAccess } from "./document-editor-access";
 
 const props = defineProps<{
@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   documentStatus: [status: Record<string, unknown>];
   documentClosed: [];
+  openReport: [uri: string];
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const proxyUrl = ref("");
@@ -174,6 +175,16 @@ async function onMessage(event: MessageEvent) {
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
     const action = String(params.action ?? "");
+    if (action === "open-investigation-report") {
+      const uriValue = authorizedInvestigationReportReference(uri.value, content.text);
+      if (!uriValue) {
+        reply(undefined, "The investigation workspace supplied an invalid frozen report reference.");
+        return;
+      }
+      emit("openReport", uriValue);
+      reply({ opened: true });
+      return;
+    }
     if (action === "close-document") {
       if (uri.value !== "ui://llama-agent/apps/document-editor") { reply(undefined, "Only the document editor may close its document view."); return; }
       reply({ closed: true });

@@ -112,3 +112,10 @@ export function isCurrentAppRequest(
 ): boolean {
   return request.generation === generation && request.target === target;
 }
+
+export function authorizedInvestigationReportReference(appUri: string, reference: unknown): string | null {
+  if (appUri !== "ui://llama-agent/apps/investigation-workspace" || typeof reference !== "string" ||
+      reference.length === 0 || reference.length > 512 ||
+      !/^(resource|agent-resource):\/\/[^\s\u0000-\u001f]+$/.test(reference)) return null;
+  return reference;
+}

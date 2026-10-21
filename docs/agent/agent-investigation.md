@@ -133,10 +133,53 @@ projection as a normal resource. The resource uses project scope when a project
 is active, otherwise session scope; the tool result contains its resource
 reference and the projection for the existing workspace app to render.
 
+`visualization.open` reopens that resource in the current host scope. It checks
+the resource authority and media type, reads within the visualization byte
+limit, validates the stored contract and returns the frozen projection. The
+workspace has an Open graph control for a saved resource URI, so reopening does
+not rerun the dataset query. A graph node in a case-backed view still expands
+through the existing scoped `investigation.graph.expand` operation.
+The workspace persists a PNG snapshot with `visualization.snapshot`. It can
+snapshot either an authorized saved visualization or the currently validated
+relationship projection; client-supplied projections are explicitly marked as
+presentation data, not independent evidence. The host checks the resource
+scope, relationship contract, PNG signature and content hash, and stores the
+image as an immutable `image/png` resource whose lineage points to the saved
+visualization projection. Persisted snapshots are limited to 512 KiB to fit the existing HTTP request limit together with the graph projection; the
+renderer caps image dimensions at 4096 pixels per side.
+
+To include a snapshot in an investigation report, add its resource URI to the
+workspace's snapshot attachment list before freezing the report. Report
+composition reauthorizes every URI, verifies its media type, source operation,
+PNG signature and resource hash, then records the selected snapshot URI,
+hash, size and source visualization URI in both the Markdown report and its
+provenance metadata. The report calls these explicitly selected attachments;
+it does not infer that they represent the case or establish a causal relation.
+Composition writes a frozen source manifest, a structured document resource
+using the existing document contract, and its Markdown rendering. The
+structured resource is accepted by `document.open` and `artifact.export`, so
+the existing editor and Markdown/DOCX export paths can be reused. Snapshot
+references retain explicit resource links and provenance. The interactive
+report reading view also renders the saved PNGs as figures with links to the
+snapshot and visualization source. It verifies the source manifest and each
+image hash, uses the existing scoped resource download path, and discards late
+loads when the report or session changes. Missing images appear as individual
+errors. Static DOCX image embedding remains separate.
+
+Frozen reports are discoverable through a separate Cozo report index keyed by
+case scope, case ID, evidence revision and report content fingerprint. The
+index points to the immutable document, Markdown and source-manifest resources;
+it does not alter or advance the case evidence revision. `investigation.case.items`
+accepts `type: "reports"` to read a bounded page for the opened revision. The
+workspace loads those entries when reopening a case and opens a selected report
+in the existing document editor through the normal read-only document access
+check. Recomposition with the same report fingerprint resolves to the existing
+indexed resource references.
+
 The current operation is limited to 100 source rows per call and reports source
 truncation, skipped identity rows, and non-exact dataset coverage. It creates a
-relationship view only; server-side expansion, snapshots, report embedding,
-and reopening a saved visualization directly in the app remain later steps.
+relationship view only. Generic dataset-backed node expansion and a renderer-
+independent snapshot format remain later steps.
 
 ## Verification
 
