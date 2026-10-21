@@ -29,6 +29,19 @@ bool mapped_field(const agent_host_investigation_source_config & source,
     return true;
 }
 
+json exact_match_filter(const std::string & field, const json & value) {
+    const json primary{{"term", {{field, value}}}};
+    // Dynamic Elasticsearch/OpenSearch mappings commonly index strings as
+    // `text` and add a `.keyword` multifield for exact matching. ECS mappings
+    // usually make identifier fields `keyword` directly. Query both exact
+    // representations so the configured logical field keeps exact equality
+    // semantics across either mapping without fetching the whole page first.
+    if (!value.is_string()) return primary;
+    return {{"bool", {{"should", json::array({primary,
+        json{{"term", {{field + ".keyword", value}}}}})},
+        {"minimum_should_match", 1}}}};
+}
+
 bool build_filter(const agent_host_investigation_source_config & source,
         const json & where, json & filters, std::string & error) {
     if (!where.is_array() || where.size() > 16) {
@@ -51,14 +64,21 @@ bool build_filter(const agent_host_investigation_source_config & source,
             error = "query predicate requires a value";
             return false;
         }
-        if (op == "=" || op == "==") filters.push_back({{"term", {{field, predicate["value"]}}}});
-        else if (op == "!=") filters.push_back({{"bool", {{"must_not", json::array({{{"term", {{field, predicate["value"]}}}}})}}}});
+        if (op == "=" || op == "==") filters.push_back(exact_match_filter(field, predicate["value"]));
+        else if (op == "!=") filters.push_back({{"bool", {{"must_not", json::array({exact_match_filter(field, predicate["value"])})}}}});
         else if (op == ">" || op == ">=" || op == "<" || op == "<=") {
             const std::string range_op = op == ">" ? "gt" : op == ">=" ? "gte" : op == "<" ? "lt" : "lte";
             filters.push_back({{"range", {{field, {{range_op, predicate["value"]}}}}}});
         } else if (op == "in" && predicate["value"].is_array() &&
                 !predicate["value"].empty() && predicate["value"].size() <= 128) {
-            filters.push_back({{"terms", {{field, predicate["value"]}}}});
+            const bool all_strings = std::all_of(predicate["value"].begin(), predicate["value"].end(),
+                [](const json & item) { return item.is_string(); });
+            const json primary{{"terms", {{field, predicate["value"]}}}};
+            filters.push_back(all_strings
+                ? json{{"bool", {{"should", json::array({primary,
+                    json{{"terms", {{field + ".keyword", predicate["value"]}}}}})},
+                    {"minimum_should_match", 1}}}}
+                : primary);
         } else if (op == "contains" && predicate["value"].is_string() &&
                 predicate["value"].get<std::string>().size() <= 256) {
             filters.push_back({{"match_phrase", {{field, predicate["value"]}}}});

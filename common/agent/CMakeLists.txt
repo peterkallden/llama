@@ -321,7 +321,8 @@ add_library(llama-agent-tooling ${AGENT_TOOLING_SOURCES})
 target_include_directories(llama-agent-tooling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-tooling
-    PUBLIC llama-common llama-agent-artifact llama-agent-dataset-contracts llama-agent-plan llama-agent-memory
+    PUBLIC llama-common llama-agent-artifact llama-agent-dataset-contracts llama-agent-visualization-contracts
+        llama-agent-plan llama-agent-memory
     PRIVATE cpp-httplib
 )
 if (LLAMA_AGENT_SANDBOX)

@@ -11,8 +11,10 @@ if (!template.includes("__INVESTIGATION_WORKSPACE_CSS__") || !template.includes(
 }
 const safeScript = bundle.replace(/<\/script/gi, "<\\/script");
 const html = template
-  .replace("__INVESTIGATION_WORKSPACE_CSS__", css)
-  .replace("__INVESTIGATION_WORKSPACE_BUNDLE__", safeScript)
+  // Replacement strings interpret `$&`, `$'`, and `$``. A minified bundle
+  // can contain those sequences, so insert generated assets through callbacks.
+  .replace("__INVESTIGATION_WORKSPACE_CSS__", () => css)
+  .replace("__INVESTIGATION_WORKSPACE_BUNDLE__", () => safeScript)
   .replace("</body>", `<details><summary>Third-party notice · Cytoscape.js MIT</summary><pre>${license.replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</pre></details></body>`);
 const bytes = Buffer.from(html, "utf8");
 if (bytes.length > 2 * 1024 * 1024) throw new Error("investigation workspace exceeds the MCP App host's 2 MiB limit");

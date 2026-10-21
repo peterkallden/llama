@@ -45,6 +45,7 @@ struct agent_daemon_jsonl_read_resource_request {
     std::string project_id;
     std::string turn_id;
     size_t max_bytes = 8192;
+    bool bytes_base64 = false;
 };
 
 struct agent_daemon_jsonl_put_resource_request {

@@ -2281,7 +2281,11 @@ void configure_agent_daemon_provider_probe(
                 native_tooling,
                 native_error,
                 probe_data_store,
-                std::nullopt,
+                // The readiness surface must retain host-authorized MCP App
+                // writes.  Otherwise it advertises the investigation UI but
+                // omits its create/snapshot/report tools, even though the
+                // authenticated execution path accepts those same calls.
+                true,
                 probe_semi_oracle_store,
                 lifecycle_store.get())) {
             retained_tooling = std::move(native_tooling);

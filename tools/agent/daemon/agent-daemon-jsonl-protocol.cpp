@@ -229,7 +229,7 @@ json make_agent_daemon_jsonl_list_plans_request(
 
 json make_agent_daemon_jsonl_read_resource_request(
         const agent_daemon_jsonl_read_resource_request & request) {
-    return {
+    json message = {
         {"command", "read_resource"},
         {"uri", request.uri},
         {"session_id", request.session_id},
@@ -238,6 +238,8 @@ json make_agent_daemon_jsonl_read_resource_request(
         {"turn_id", request.turn_id},
         {"max_bytes", request.max_bytes},
     };
+    if (request.bytes_base64) message["encoding"] = "base64";
+    return message;
 }
 
 json make_agent_daemon_jsonl_put_resource_request(
@@ -621,6 +623,14 @@ bool parse_agent_daemon_jsonl_resource_response(
         return false;
     }
     response.content = message.value("content", std::string());
+    if (message.contains("content_encoding")) {
+        if (!message["content_encoding"].is_string() || message["content_encoding"] != "base64") {
+            error = "unsupported daemon resource content encoding";
+            return false;
+        }
+        try { response.content = base64::decode(response.content); }
+        catch (const std::exception &) { error = "invalid daemon resource byte encoding"; return false; }
+    }
     response.payload = message;
     response.error = message.value("error", std::string());
     if (message.contains("resource")) {

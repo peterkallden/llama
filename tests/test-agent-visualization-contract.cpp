@@ -37,6 +37,17 @@ int main() {
     check(!common_agent_visualization_relationship_validate(invalid, error), "node limit must be enforced");
 
     auto hostile = serialized;
+    hostile.erase("view");
+    check(common_agent_visualization_relationship_from_json(hostile, decoded, error),
+        "omitted view must use the same defaults as the client contract");
+    hostile = serialized; hostile["schema_version"] = 4294967297ULL;
+    check(!common_agent_visualization_relationship_from_json(hostile, decoded, error),
+        "large schema version must not wrap to version one");
+    hostile = serialized; hostile["complete"] = true; hostile["truncated"] = true;
+    hostile["limitations"] = {"bounded"};
+    check(!common_agent_visualization_relationship_from_json(hostile, decoded, error),
+        "truncated projection cannot claim completeness");
+    hostile = serialized;
     hostile["nodes"][0]["html"] = "<script>run()</script>";
     check(!common_agent_visualization_relationship_from_json(hostile, decoded, error),
         "unknown node fields must be rejected");

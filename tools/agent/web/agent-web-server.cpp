@@ -1,4 +1,5 @@
 #include "agent-web-server.h"
+#include "../../../common/base64.hpp"
 
 #include "../../../common/agent/protocol/agent-jsonl.h"
 #include "../../../common/agent/protocol/agent-sse.h"
@@ -476,6 +477,7 @@ bool run_agent_web_server(
         const auto uri = request.get_param_value("uri");
         const json command = {
             {"command", "read_resource"},
+            {"encoding", "base64"},
             {"uri", uri},
             {"namespace_id", request_param_or(request, "namespace_id", "default-namespace")},
             {"session_id", request_param_or(request, "session_id", "default-session")},
@@ -495,7 +497,20 @@ bool run_agent_web_server(
         }
         const auto & resource = result["resource"];
         response.set_header("Content-Disposition", "attachment; filename=\"" + safe_download_filename(resource, uri) + "\"");
-        response.set_content(result["content"].get<std::string>(), resource.value("mime_type", "application/octet-stream"));
+        if (result.value("content_encoding", std::string()) != "base64") {
+            set_json_error(response, 502, "resource download did not return byte-safe content");
+            return;
+        }
+        try {
+            const auto bytes = base64::decode(result["content"].get<std::string>());
+            if (bytes.size() > options.max_download_bytes) {
+                set_json_error(response, 502, "resource download exceeds its byte limit");
+                return;
+            }
+            response.set_content(bytes, resource.value("mime_type", "application/octet-stream"));
+        } catch (const std::exception &) {
+            set_json_error(response, 502, "resource download returned invalid byte encoding");
+        }
     });
 
     server.Get("/api/v1/status", [&options, authorize](const httplib::Request & request, httplib::Response & response) {

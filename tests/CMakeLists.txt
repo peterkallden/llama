@@ -809,7 +809,7 @@ test-agent-flydelta-alpha-response-search.cpp
         add_test(NAME test-agent-web-workspace
             COMMAND "${LLAMA_AGENT_WEB_TEST_NODE_EXECUTABLE}"
                 "${LLAMA_AGENT_WEB_TEST_DIR}/node_modules/vitest/vitest.mjs" run
-                src/components/report-view.test.ts src/components/app-invocation.test.ts
+                src/components/report-view.test.ts src/components/report-snapshots.test.ts src/components/app-invocation.test.ts
                 src/visualization/contract.test.ts
                 src/components/dataset-table.test.ts src/components/document-editor-access.test.ts
                 src/api/agent-api.test.ts src/session.test.ts)

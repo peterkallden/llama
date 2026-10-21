@@ -96,6 +96,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .report-block:focu
 .report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .report-actions button:disabled { opacity: .45; cursor: default; }
 .report-section { margin: 24px 0; }
+.report-snapshots figure { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; }
+.report-snapshots img { display: block; max-width: 100%; height: auto; margin: 0 auto 10px; }
+.report-snapshots figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; overflow-wrap: anywhere; }
 .report-section h4 { font-size: 18px; border-bottom: 1px solid #263951; padding-bottom: 8px; }
 .report-block { position: relative; margin: 16px 0; border-radius: 6px; }
 .report-block-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 7px; font-size: 11px; }

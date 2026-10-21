@@ -155,7 +155,7 @@ bool bind_tcp_policy(
     if (!policy.allowed_tools.empty() && command == "run_turn") {
         request["_caller_allowed_tools"] = policy.allowed_tools;
     }
-    if (command == "run_turn") {
+    if (command == "run_turn" || command == "execute_tool") {
         request["_caller_allow_policy_gated_writes"] = policy.allow_writes;
     }
     return true;

@@ -106,8 +106,10 @@ bool prepare_unix_request(
         return false;
     }
     common_agent_daemon_bind_caller_scope(request, policy);
-    if (command == "run_turn") {
+    if (command == "run_turn" || command == "execute_tool") {
         request["_caller_allow_policy_gated_writes"] = policy.allow_writes;
+    }
+    if (command == "run_turn") {
         if (!policy.allowed_tools.empty()) request["_caller_allowed_tools"] = policy.allowed_tools;
     }
     return true;

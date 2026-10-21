@@ -48,12 +48,21 @@ int main() {
         {"tool_name", "document.open"},
         {"mcp_app_call", true},
         {"mcp_app_tool_name", "document.open"},
+        {"_caller_allow_policy_gated_writes", true},
         {"arguments", nlohmann::ordered_json::object()},
     };
     assert(parse_agent_daemon_command(app_call, options,
         common_agent_runtime_host_mode::chat, parsed_app_call, error));
     assert(parsed_app_call.tool.has_value());
     assert(parsed_app_call.tool->allow_policy_gated_writes);
+
+    common_agent_daemon_command parsed_read_only_app_call;
+    auto read_only_app_call = app_call;
+    read_only_app_call["_caller_allow_policy_gated_writes"] = false;
+    assert(parse_agent_daemon_command(read_only_app_call, options,
+        common_agent_runtime_host_mode::chat, parsed_read_only_app_call, error));
+    assert(parsed_read_only_app_call.tool.has_value());
+    assert(!parsed_read_only_app_call.tool->allow_policy_gated_writes);
 
     common_agent_daemon_command parsed_direct_call;
     const nlohmann::ordered_json direct_call = {
@@ -65,6 +74,14 @@ int main() {
         common_agent_runtime_host_mode::chat, parsed_direct_call, error));
     assert(parsed_direct_call.tool.has_value());
     assert(!parsed_direct_call.tool->allow_policy_gated_writes);
+
+    common_agent_daemon_command parsed_authorized_direct_call;
+    auto authorized_direct_call = direct_call;
+    authorized_direct_call["_caller_allow_policy_gated_writes"] = true;
+    assert(parse_agent_daemon_command(authorized_direct_call, options,
+        common_agent_runtime_host_mode::chat, parsed_authorized_direct_call, error));
+    assert(parsed_authorized_direct_call.tool.has_value());
+    assert(parsed_authorized_direct_call.tool->allow_policy_gated_writes);
 
     common_agent_daemon_command orientation;
     const nlohmann::ordered_json orientation_request = {

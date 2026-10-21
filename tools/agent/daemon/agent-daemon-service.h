@@ -266,6 +266,7 @@ struct common_agent_daemon_resource_payload {
     std::string uri;
     agent_resource_read_authority authority;
     size_t max_bytes = 8192;
+    bool bytes_base64 = false;
 };
 
 struct common_agent_daemon_resource_put_payload {
@@ -440,6 +441,7 @@ enum class common_agent_daemon_response_kind {
 struct common_agent_daemon_resource_read_result {
     agent_resource_descriptor resource;
     std::string content;
+    bool bytes_base64 = false;
 };
 
 struct common_agent_daemon_memory_summary {

@@ -113,11 +113,13 @@ bool parse_agent_daemon_command_name(
         payload.mcp_app_call = parsed.value("mcp_app_call", false);
         payload.mcp_app_tool_name = parsed.value("mcp_app_tool_name", "");
         payload.mcp_app_resource_uri = parsed.value("mcp_app_resource_uri", "");
-        // An MCP App call is still restricted by the provider's app/UI
-        // binding and per-tool authorization. Let that scoped authorization
-        // reach the provider instead of rejecting every policy-gated app tool
-        // here before those checks can run.
-        payload.allow_policy_gated_writes = payload.mcp_app_call;
+        // Policy-gated writes require authority from the authenticated
+        // transport. The private field is added by the TCP/Unix policy
+        // binders; a client cannot grant itself write authority by setting it.
+        // MCP App calls have the additional app/UI binding checked by the
+        // provider before the operation is invoked.
+        const bool caller_allows_writes = parsed.value("_caller_allow_policy_gated_writes", false);
+        payload.allow_policy_gated_writes = caller_allows_writes;
         const auto arguments = parsed.value("arguments", json::object());
         if (payload.tool_name.empty() || (!arguments.is_object() && payload.mcp_app_resource_uri.empty()) ||
                 (payload.mcp_app_call && payload.mcp_app_tool_name.empty()) ||
@@ -204,6 +206,12 @@ bool parse_agent_daemon_command_name(
             return false;
         }
         command.resource->max_bytes = static_cast<size_t>(max_bytes);
+        if (parsed.contains("encoding") && (!parsed["encoding"].is_string() ||
+                (parsed["encoding"] != "text" && parsed["encoding"] != "base64"))) {
+            error = "read_resource encoding must be text or base64";
+            return false;
+        }
+        command.resource->bytes_base64 = parsed.value("encoding", std::string("text")) == "base64";
         if (command.resource->uri.empty()) {
             error = "read_resource requires uri";
             return false;
@@ -906,6 +914,7 @@ json make_agent_daemon_resource_response(
     response["resource"] =
         common_tool_resource_descriptor_to_json(result.resource_result.resource);
     response["content"] = result.resource_result.content;
+    if (result.resource_result.bytes_base64) response["content_encoding"] = "base64";
     if (!result.error.empty()) {
         response["error"] = result.error;
     }

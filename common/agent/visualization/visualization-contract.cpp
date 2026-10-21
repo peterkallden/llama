@@ -61,12 +61,19 @@ bool common_agent_visualization_relationship_validate(
     for (const auto & limitation : value.limitations) {
         if (!bounded_text(limitation, 512)) { error = "visualization limitation is invalid"; return false; }
     }
+    if (value.complete && value.truncated) {
+        error = "truncated visualization cannot be complete"; return false;
+    }
     if ((!value.complete || value.truncated) && value.limitations.empty()) {
         error = "incomplete visualization must state at least one limitation"; return false;
     }
-    const auto serialized = common_agent_visualization_relationship_to_json(value).dump();
-    if (serialized.size() > COMMON_AGENT_VISUALIZATION_MAX_BYTES) {
-        error = "visualization exceeds its serialized byte limit"; return false;
+    try {
+        const auto serialized = common_agent_visualization_relationship_to_json(value).dump();
+        if (serialized.size() > COMMON_AGENT_VISUALIZATION_MAX_BYTES) {
+            error = "visualization exceeds its serialized byte limit"; return false;
+        }
+    } catch (const std::exception &) {
+        error = "visualization contains invalid text encoding"; return false;
     }
     error.clear(); return true;
 }
@@ -101,10 +108,11 @@ bool common_agent_visualization_relationship_from_json(const nlohmann::json & in
     }
     const auto required = [&](const char * key) { return input.contains(key); };
     if (!required("schema_version") || !required("kind") || !required("title") ||
-            !required("nodes") || !required("edges") || !required("view") ||
+            !required("nodes") || !required("edges") ||
             (!input["schema_version"].is_number_unsigned() && !input["schema_version"].is_number_integer()) ||
             !input["kind"].is_string() || !input["title"].is_string() ||
-            !input["nodes"].is_array() || !input["edges"].is_array() || !input["view"].is_object()) {
+            !input["nodes"].is_array() || !input["edges"].is_array() ||
+            (required("view") && !input["view"].is_object())) {
         error = "visualization is missing required fields or has invalid JSON types"; return false;
     }
     if (input["nodes"].size() > COMMON_AGENT_VISUALIZATION_MAX_NODES ||
@@ -112,7 +120,8 @@ bool common_agent_visualization_relationship_from_json(const nlohmann::json & in
         error = "visualization exceeds its node or edge limit"; return false;
     }
     try {
-        out.schema_version = input.at("schema_version").get<unsigned>();
+        if (input.at("schema_version") != 1) throw std::domain_error("unsupported schema version");
+        out.schema_version = 1;
         out.kind = input.at("kind").get<std::string>();
         out.title = input.at("title").get<std::string>();
         if (input.contains("data_revision")) {
@@ -160,7 +169,7 @@ bool common_agent_visualization_relationship_from_json(const nlohmann::json & in
                 item.at("target").get<std::string>(), item.value("label", std::string()),
                 item.value("directed", true)});
         }
-        const auto & view = input.at("view");
+        const auto view = input.value("view", json::object());
         for (auto it = view.begin(); it != view.end(); ++it)
             if (it.key() != "layout" && it.key() != "selected_nodes" && it.key() != "selected_edges")
                 throw std::domain_error("view contains an unsupported field");

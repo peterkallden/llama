@@ -20,7 +20,8 @@ export const VISUALIZATION_LIMITS = { bytes: 1024 * 1024, nodes: 500, edges: 100
 const layouts = new Set(["cose", "circle", "grid", "breadthfirst"]);
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every((key) => allowed.includes(key));
 const text = (value: unknown, maximum: number, optional = false): value is string =>
-  typeof value === "string" && (optional || value.length > 0) && value.length <= maximum && !value.includes("\0");
+  typeof value === "string" && (optional || value.length > 0) &&
+  new TextEncoder().encode(value).byteLength <= maximum && !value.includes("\0");
 
 export function parseRelationshipVisualization(input: unknown): RelationshipVisualization {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Visualization must be an object.");
@@ -88,6 +89,7 @@ export function parseRelationshipVisualization(input: unknown): RelationshipVisu
   const complete = spec.complete !== false;
   const truncated = spec.truncated === true;
   const limitations = (spec.limitations ?? []) as string[];
+  if (complete && truncated) throw new Error("Truncated visualization cannot be complete.");
   if ((!complete || truncated) && limitations.length === 0) throw new Error("Incomplete visualization must state a limitation.");
   const result: RelationshipVisualization = { schema_version: 1, kind: "relationship", title: spec.title,
     data_revision: spec.data_revision as string | undefined, nodes, edges, complete, truncated, limitations, view };

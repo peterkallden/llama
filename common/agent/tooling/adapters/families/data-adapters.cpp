@@ -487,27 +487,8 @@ bool validate_dataset_reference_scope(
         const common_native_tool_bindings & bindings,
         const std::string & dataset_uri,
         common_tool_execution_result & failure) {
-    if (dataset_uri.rfind("dataset://", 0) != 0) {
-        failure = common_adapter_validation_failure(
-            "tool.dataset.invalid_reference",
-            "dataset references must use the canonical dataset:// scheme");
-        return false;
-    }
-    if (bindings.data_store == nullptr) {
-        failure = common_adapter_execution_failure(
-            "tool.dataset.backend_unavailable", "dataset backend is unavailable",
-            "The dataset backend is unavailable.");
-        return false;
-    }
     common_agent_dataset_descriptor descriptor;
-    std::string error;
-    if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, error)) {
-        failure = common_adapter_not_found_failure(
-            "tool.dataset.unavailable", std::move(error),
-            "The dataset reference is unavailable in the current host scope.");
-        return false;
-    }
-    return validate_dataset_descriptor_scope(bindings, descriptor, failure);
+    return common_authorize_dataset_reference(bindings, dataset_uri, descriptor, failure);
 }
 
 common_tool_execution_result execute_data_backend(

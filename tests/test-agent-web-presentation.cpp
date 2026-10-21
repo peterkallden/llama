@@ -1,5 +1,7 @@
 #include "tools/agent/daemon/agent-daemon-event-json.h"
 #include "tools/agent/daemon/agent-daemon-jsonl-protocol.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+#include "base64.hpp"
 #include "agent/protocol/agent-sse.h"
 
 #ifdef NDEBUG
@@ -46,5 +48,34 @@ int main() {
     assert(!make_agent_daemon_jsonl_event_message("browser", delivery)["event"].contains("tool_result"));
     delivery.event.app_context_available = false;
     assert(!make_agent_daemon_jsonl_event_message("browser", delivery)["event"].contains("tool_input"));
+    agent_daemon_jsonl_read_resource_request byte_request;
+    byte_request.uri = "agent-resource://snapshot";
+    byte_request.bytes_base64 = true;
+    const auto byte_command = make_agent_daemon_jsonl_read_resource_request(byte_request);
+    assert(byte_command.at("encoding") == "base64");
+    common_agent_daemon_command parsed_bytes;
+    std::string byte_error;
+    assert(parse_agent_daemon_command(byte_command, daemon_options{}, common_agent_runtime_host_mode::agent,
+        parsed_bytes, byte_error) && parsed_bytes.resource->bytes_base64);
+    auto invalid_encoding = byte_command;
+    invalid_encoding["encoding"] = "executable";
+    assert(!parse_agent_daemon_command(invalid_encoding, daemon_options{}, common_agent_runtime_host_mode::agent,
+        parsed_bytes, byte_error));
+
+    const std::string binary_png("\x89PNG\r\n\x1a\n\0\xff", 10);
+    common_agent_daemon_command_result binary_result;
+    binary_result.ok = true;
+    binary_result.event = "resource_read";
+    binary_result.response_kind = common_agent_daemon_response_kind::resource;
+    binary_result.resource_result.resource.uri = byte_request.uri;
+    binary_result.resource_result.resource.mime_type = "image/png";
+    binary_result.resource_result.resource.size_bytes = binary_png.size();
+    binary_result.resource_result.content = base64::encode(binary_png);
+    binary_result.resource_result.bytes_base64 = true;
+    const auto byte_response = make_agent_daemon_jsonl_command_response(binary_result);
+    assert(byte_response.at("content_encoding") == "base64");
+    assert(base64::decode(byte_response.at("content").get<std::string>()) == binary_png);
+    // The response must be valid JSON even with non-UTF8 source bytes and NULs.
+    assert(!byte_response.dump().empty());
     return 0;
 }

@@ -25,4 +25,10 @@ describe("relationship visualization contract", () => {
     const input = valid(); (input.nodes[0] as Record<string, unknown>).html = "<script>";
     expect(() => parseRelationshipVisualization(input)).toThrow(/node/);
   });
+  it("rejects contradictory completeness and measures UTF-8 bytes", () => {
+    expect(() => parseRelationshipVisualization({ ...valid(), complete: true, truncated: true,
+      limitations: ["bounded"] })).toThrow(/complete/);
+    const input = valid(); input.nodes[0].label = "€".repeat(171);
+    expect(() => parseRelationshipVisualization(input)).toThrow(/node/);
+  });
 });

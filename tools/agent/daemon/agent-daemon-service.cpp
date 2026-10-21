@@ -5,6 +5,7 @@
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
 #include "hash/hash.h"
+#include "base64.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -1822,7 +1823,9 @@ bool common_agent_daemon_service::execute_outcome(
                 command_events.emit(common_agent_daemon_event_type::resource_not_found, error);
                 return false;
             }
-            if (!runtime.resource_store->read_text(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error)) {
+            if (!(command.resource->bytes_base64
+                    ? runtime.resource_store->read_bytes(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error)
+                    : runtime.resource_store->read_text(command.resource->uri, command.resource->authority, command.resource->max_bytes, outcome.resource_result.content, error))) {
                 outcome.ok = false;
                 outcome.event = "resource_read_failed";
                 outcome.error = error;
@@ -1830,6 +1833,10 @@ bool common_agent_daemon_service::execute_outcome(
                 return false;
             }
             outcome.ok = true;
+            if (command.resource->bytes_base64) {
+                outcome.resource_result.content = base64::encode(outcome.resource_result.content);
+                outcome.resource_result.bytes_base64 = true;
+            }
             outcome.event = "resource_read";
             command_events.emit(common_agent_daemon_event_type::resource_read, outcome.resource_result.resource.uri);
             error.clear();

@@ -410,7 +410,16 @@ public:
         const auto it=std::find_if(chat_tool_list.begin(),chat_tool_list.end(),[&](const common_chat_tool & tool){return tool.name==name;});
         if(it==chat_tool_list.end()||!it->mcp_app_write_authorized)return false;
         const auto metadata=json::parse(it->mcp_ui_metadata,nullptr,false);
-        if(!metadata.is_object()||metadata.value("resourceUri",std::string{})!="ui://llama-agent/apps/document-editor")return false;
+        if(!metadata.is_object())return false;
+        const auto resource_uri = metadata.value("resourceUri",std::string{});
+        const bool document_write = name=="document.import"||name=="document.save"||
+            name=="document.propose_patch"||name=="document.apply_patch";
+        const bool investigation_write = name=="investigation.case.create"||
+            name=="investigation.claim.hypothesize"||name=="investigation.report.compose"||
+            name=="visualization.snapshot";
+        if ((document_write && resource_uri!="ui://llama-agent/apps/document-editor") ||
+                (investigation_write && resource_uri!="ui://llama-agent/apps/investigation-workspace") ||
+                (!document_write && !investigation_write)) return false;
         const auto visibility=metadata.value("visibility",json::array());
         return visibility.is_array()&&std::find(visibility.begin(),visibility.end(),"app")!=visibility.end();
     }
@@ -1470,6 +1479,8 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         } else if (definition.name == "plan.get") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/workflow-inspector","visibility":["model","app"]})";
 #ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
+        } else if (definition.name == "visualization.snapshot") {
+            chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["app"]})";
         } else if (definition.name.rfind("investigation.", 0) == 0 ||
                 definition.name.rfind("visualization.", 0) == 0) {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["model","app"]})";
