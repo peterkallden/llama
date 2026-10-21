@@ -275,6 +275,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/adapters/families/repository-adapters.cpp
     tooling/adapters/families/diagnostics-adapters.cpp
     tooling/adapters/families/resource-adapters.cpp
+    tooling/adapters/families/visualization-adapters.cpp
     tooling/catalog/tool-catalog.cpp
     tooling/bridge/tool-chat-bridge.cpp
     tooling/registry/tool-registry.cpp

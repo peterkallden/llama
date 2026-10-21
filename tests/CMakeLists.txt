@@ -785,6 +785,11 @@ test-agent-flydelta-alpha-response-search.cpp
     add_test(NAME test-agent-visualization-contract COMMAND test-agent-visualization-contract)
     set_property(TEST test-agent-visualization-contract PROPERTY LABELS "agent;visualization;model-free")
 
+    add_executable(test-agent-visualization-tool test-agent-visualization-tool.cpp)
+    target_link_libraries(test-agent-visualization-tool PRIVATE llama-agent-core)
+    add_test(NAME test-agent-visualization-tool COMMAND test-agent-visualization-tool)
+    set_property(TEST test-agent-visualization-tool PROPERTY LABELS "agent;visualization;model-free")
+
     add_executable(test-agent-event-queue test-agent-event-queue.cpp)
     target_include_directories(test-agent-event-queue PRIVATE
         ${PROJECT_SOURCE_DIR}

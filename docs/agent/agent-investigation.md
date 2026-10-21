@@ -121,6 +121,23 @@ scope, rejects stale revisions and unknown IDs, and sends only the selected
 projection to the runtime. Selected event values are untrusted data and are
 explicitly marked as such in the runtime prompt.
 
+## Dataset visualizations
+
+The analysis and investigation tool profiles also expose `visualization.create`
+for a first host-integrated relationship renderer. Select a registered
+`dataset://` reference, map its source and target columns, and optionally map
+node labels and an edge label. The host authorizes the dataset in the current
+scope, runs a bounded `data.query` with deterministic ordering, validates the
+result against the shared relationship contract, and stores the frozen JSON
+projection as a normal resource. The resource uses project scope when a project
+is active, otherwise session scope; the tool result contains its resource
+reference and the projection for the existing workspace app to render.
+
+The current operation is limited to 100 source rows per call and reports source
+truncation, skipped identity rows, and non-exact dataset coverage. It creates a
+relationship view only; server-side expansion, snapshots, report embedding,
+and reopening a saved visualization directly in the app remain later steps.
+
 ## Verification
 
 The deterministic CTests cover configuration, connector bounds, Cozo case

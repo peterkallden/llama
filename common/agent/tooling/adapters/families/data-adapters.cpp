@@ -624,6 +624,33 @@ common_tool_execution_result execute_dataset_descriptor_tool(
 
 } // namespace
 
+bool common_authorize_dataset_reference(
+        const common_native_tool_bindings & bindings,
+        const std::string & dataset_uri,
+        common_agent_dataset_descriptor & descriptor,
+        common_tool_execution_result & failure) {
+    if (dataset_uri.rfind("dataset://", 0) != 0) {
+        failure = common_adapter_validation_failure(
+            "tool.dataset.invalid_reference",
+            "dataset references must use the canonical dataset:// scheme");
+        return false;
+    }
+    if (bindings.data_store == nullptr) {
+        failure = common_adapter_execution_failure(
+            "tool.dataset.backend_unavailable", "structured data backend is unavailable",
+            "The dataset backend is unavailable.");
+        return false;
+    }
+    std::string error;
+    if (!bindings.data_store->get_dataset_descriptor(dataset_uri, descriptor, error)) {
+        failure = common_adapter_not_found_failure(
+            "tool.dataset.unavailable", std::move(error),
+            "The dataset reference is unavailable in the current host scope.");
+        return false;
+    }
+    return validate_dataset_descriptor_scope(bindings, descriptor, failure);
+}
+
 bool common_try_register_data_tool_adapter(
         const common_tool_definition & definition,
         const common_native_tool_bindings & bindings,

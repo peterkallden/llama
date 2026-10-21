@@ -129,6 +129,7 @@ if (!window.__investigationWorkspace) {
   function renderGraph(value: Json, replace = false) {
     if (!graph) {
       graph = new RelationshipRenderer(q<HTMLDivElement>("#graph"), { onSelect: (selection) => {
+        if (!currentCase) return;
         resetEvents();
         if (selection.kind === "node") {
           selectedEntity = selection.id; selectedRelation = ""; void expand(selectedEntity);
@@ -140,7 +141,8 @@ if (!window.__investigationWorkspace) {
     const limitations = Array.isArray(value.limitations) ? value.limitations.map(String) : [];
     const truncated = value.truncated === true;
     if (truncated && limitations.length === 0) limitations.push("The host truncated this graph to its configured bounds.");
-    graph.update({ schema_version: 1, kind: "relationship", title: "Investigation relations",
+    const isVisualization = value.schema_version === 1 && value.kind === "relationship";
+    graph.update(isVisualization ? value : { schema_version: 1, kind: "relationship", title: "Investigation relations",
       data_revision: String(value.case_revision ?? currentCase?.revision ?? ""),
       nodes: (value.nodes ?? []).map((node: Json) => ({ id: String(node.id),
         label: String(node.label ?? node.display_name ?? node.id), kind: String(node.type ?? "") })),
@@ -310,8 +312,21 @@ if (!window.__investigationWorkspace) {
       const args = message.params?.arguments ?? {};
       if (typeof args.case_id === "string") { q<HTMLInputElement>("#case-id").value = args.case_id; void openCase(args.case_id); }
     }
-    if (message.method === "ui/notifications/tool-result" && message.params?.structuredContent?.case_id) {
-      if (Date.now() - lastAppCallAt > 1000) void openCase(message.params.structuredContent.case_id);
+    if (message.method === "ui/notifications/tool-result") {
+      const result = message.params?.structuredContent ?? message.params?.result?.structuredContent;
+      if (result?.visualization?.kind === "relationship") {
+        ++generation;
+        currentCase = null;
+        selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
+        resetEvents(); renderClaims([]);
+        q<HTMLButtonElement>("#save-hypothesis").disabled = true;
+        q<HTMLButtonElement>("#compose-report").disabled = true;
+        renderGraph(result.visualization, true);
+        q("#case-summary").textContent = result.visualization.title ?? "Saved visualization";
+        setStatus(`Visualization saved as ${String(result.visualization_uri ?? "a resource")}.`);
+      } else if (result?.case_id && Date.now() - lastAppCallAt > 1000) {
+        void openCase(result.case_id);
+      }
     }
   });
   void rpc("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "llama-agent-investigation-workspace", version: "0.1" }, appCapabilities: { tools: {} } })
