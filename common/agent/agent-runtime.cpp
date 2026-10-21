@@ -1517,10 +1517,21 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return result;
     }
     if (!completed_plan_resume && !activate_next_ready_step()) {
-        if (result.error.empty()) result.error = error.empty()
-            ? "initial plan dependency scheduling failed"
-            : error;
-        return result;
+        // A resumed plan with a failed mandatory tool step has a valid next
+        // action even when the deterministic scheduler cannot activate any
+        // pending step: reflection owns repairing that failed step.  Let the
+        // normal bounded repair path run instead of failing before it starts.
+        if (result.error.empty() && error.empty() && plan_has_failed_mandatory_tool_step(plan)) {
+            append_trace(result, common_runtime_trace_stage::step,
+                common_runtime_trace_kind::decided,
+                "initial scheduling deferred so reflection can repair a failed mandatory tool step",
+                plan.id);
+        } else {
+            if (result.error.empty()) result.error = error.empty()
+                ? "initial plan dependency scheduling failed"
+                : error;
+            return result;
+        }
     }
 
     std::vector<std::string> guidance;

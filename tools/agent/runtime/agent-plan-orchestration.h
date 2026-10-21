@@ -40,6 +40,12 @@ struct common_agent_orchestration_build_config {
 common_agent_orchestration_config make_agent_orchestration_config(
     common_agent_orchestration_build_config config);
 
+// Auto-resume is only considered when the new request is an explicit
+// continuation or shares a meaningful term with the saved plan.
+bool common_agent_plan_candidate_relevant_to_request(
+    const std::string & prompt,
+    const common_plan_state & plan);
+
 struct common_agent_bootstrap_runtime_config {
     std::function<bool(const std::string & text, std::vector<float> & embedding, std::string & error)> embed_procedure;
 };

@@ -509,6 +509,18 @@ int main() {
     assert(failed_plan->observations.front().summary.find("tool.lookup.not_found") != std::string::npos);
     assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
 
+    // Resuming a failed plan must reach reflection's bounded repair path. The
+    // dependency scheduler has no ready pending step in this state, but that
+    // does not mean the plan has no valid continuation.
+    common_agent_request failed_tool_resume_request = failure_request;
+    failed_tool_resume_request.plan_id = "turn-1";
+    const auto failed_tool_resume = failure_runtime.run(failed_tool_resume_request);
+    assert(failed_tool_resume.error.find("initial plan dependency scheduling failed") == std::string::npos);
+    assert(failed_tool_resume.error.find("unrepaired failed tool step: lookup") != std::string::npos);
+    assert(std::any_of(failed_tool_resume.trace.begin(), failed_tool_resume.trace.end(), [](const auto & trace) {
+        return trace.detail.find("initial scheduling deferred so reflection can repair") != std::string::npos;
+    }));
+
     common_plan_in_memory_store failed_pending_store;
     assert(failed_pending_store.open("", error));
     failed_then_pending_planner failed_pending_p;
