@@ -84,6 +84,7 @@ export type TurnRequest = {
   include_summary: boolean;
   resource_refs?: string[];
   document_context?: { document_uri: string; revision: number; block_ids: string[]; base_document_uri?: string };
+  investigation_context?: { case_id: string; revision: number; entity_ids: string[]; relation_ids: string[]; event_ids: string[] };
   /** Fixed, read-only host task for a single newly uploaded attachment. */
   attachment_orientation?: true;
   /** Keep the user's question, but require tool-grounded use of attachments. */

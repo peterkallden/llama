@@ -18,6 +18,7 @@ int main() {
     configured["stores"]["data"] = {{"backend", "cozo"}, {"path", "var/investigation.cozo"}};
     configured["investigation"] = {
         {"enabled", true},
+        {"workflow_package", "docs/examples/agent-investigation-workflows-v1.json"},
         {"max_events_per_query", 2500},
         {"sources", json::array({{{"id", "security-logs"}, {"dialect", "elasticsearch"},
             {"base_url", "https://elastic.example.invalid:9200"},
@@ -41,13 +42,18 @@ int main() {
             configured_roundtrip.investigation.sources.size() != 1 ||
             configured_roundtrip.investigation.sources[0].allowed_indices[0] != "logs-security-2026.10" ||
             configured_roundtrip.investigation.sources[0].allowed_namespaces[0] != "tenant-a" ||
-            configured_roundtrip.investigation.max_events_per_query != 2500) return 4;
+            configured_roundtrip.investigation.max_events_per_query != 2500 ||
+            configured_roundtrip.investigation.workflow_package != "docs/examples/agent-investigation-workflows-v1.json") return 4;
+    auto missing_workflow_package = configured;
+    missing_workflow_package["investigation"].erase("workflow_package");
+    if (parse_agent_host_config_json(missing_workflow_package, configured_roundtrip, error) ||
+            error.find("requires investigation.workflow_package") == std::string::npos) return 5;
     configured["investigation"]["sources"][0]["allowed_indices"][0] = "*";
     if (parse_agent_host_config_json(configured, configured_roundtrip, error) ||
-            error.find("without wildcards") == std::string::npos) return 5;
+            error.find("without wildcards") == std::string::npos) return 6;
 #else
     if (parse_agent_host_config_json(configured, defaults, error) ||
-            error.find("requires a build with LLAMA_MEMORY_COZO") == std::string::npos) return 6;
+            error.find("requires a build with LLAMA_MEMORY_COZO") == std::string::npos) return 7;
 #endif
     return 0;
 }

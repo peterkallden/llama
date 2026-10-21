@@ -856,6 +856,7 @@ bool parse_agent_host_config_json(
             return false;
         }
         read_optional(investigation, "enabled", config.investigation.enabled);
+        read_optional(investigation, "workflow_package", config.investigation.workflow_package);
         read_optional(investigation, "max_events_per_query", config.investigation.max_events_per_query);
         read_optional(investigation, "max_nodes_per_expansion", config.investigation.max_nodes_per_expansion);
         read_optional(investigation, "max_edges_per_expansion", config.investigation.max_edges_per_expansion);
@@ -1290,6 +1291,17 @@ bool load_agent_host_config(
 
     const std::filesystem::path config_directory =
         std::filesystem::absolute(std::filesystem::path(path)).parent_path();
+    if (!config.investigation.workflow_package.empty()) {
+        auto package_path = std::filesystem::path(config.investigation.workflow_package);
+        if (!package_path.is_absolute()) package_path = config_directory / package_path;
+        package_path = package_path.lexically_normal();
+        std::error_code package_error;
+        if (!std::filesystem::is_regular_file(package_path, package_error)) {
+            error = "investigation.workflow_package is not a readable regular file: " + package_path.string();
+            return false;
+        }
+        config.investigation.workflow_package = package_path.string();
+    }
     for (auto & provider : config.openapi_providers) {
         provider.source_directory = config_directory.string();
     }
@@ -1715,7 +1727,8 @@ nlohmann::ordered_json agent_host_config_to_json(
                 });
             }
             return json{
-                {"enabled", config.investigation.enabled}, {"sources", std::move(sources)},
+                {"enabled", config.investigation.enabled}, {"workflow_package", config.investigation.workflow_package},
+                {"sources", std::move(sources)},
                 {"max_events_per_query", config.investigation.max_events_per_query},
                 {"max_nodes_per_expansion", config.investigation.max_nodes_per_expansion},
                 {"max_edges_per_expansion", config.investigation.max_edges_per_expansion},
@@ -2074,6 +2087,10 @@ bool validate_agent_host_config(
         }
         if (investigation.sources.empty()) {
             error = "investigation.enabled requires at least one configured search source";
+            return false;
+        }
+        if (investigation.workflow_package.empty()) {
+            error = "investigation.enabled requires investigation.workflow_package";
             return false;
         }
 #endif

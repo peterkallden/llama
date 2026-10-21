@@ -1553,6 +1553,67 @@ bool resolve_agent_daemon_tooling(
         tooling.tool_view = shared_view.get();
         tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
     }
+    if (request.investigation_context) {
+        if (data_store == nullptr) {
+            error = "investigation context is unavailable because the host data store is not configured";
+            return false;
+        }
+        const auto & binding = *request.investigation_context;
+        common_agent_scope scope;
+        scope.namespace_id = request.namespace_id;
+        scope.session_id = request.session_id;
+        scope.project_id = request.project_id;
+        scope.memory_scope = common_memory_scope::session;
+        scope.plan_scope = common_plan_scope::turn;
+        common_investigation_case_revision case_value;
+        if (!data_store->get_investigation_case(binding.case_id, scope, case_value, error)) {
+            error = error.empty() ? "investigation context case is unavailable in the current scope" : error;
+            return false;
+        }
+        if (case_value.revision != binding.revision) {
+            error = "investigation context revision is stale; reopen the case and retry";
+            return false;
+        }
+        auto projection = common_investigation_case_to_json(case_value);
+        auto select_refs = [&](const std::vector<std::string> & refs, const char * key,
+                const char * field, std::string & select_error) {
+            auto & output = projection[key];
+            output = nlohmann::ordered_json::array();
+            const auto & all = projection[field];
+            for (const auto & ref : refs) {
+                auto found = std::find_if(all.begin(), all.end(), [&](const auto & item) {
+                    return item.is_object() && item.value("id", std::string{}) == ref;
+                });
+                if (found == all.end()) {
+                    select_error = std::string("investigation context contains an unknown ") + key + " reference";
+                    return false;
+                }
+                output.push_back(*found);
+            }
+            return true;
+        };
+        std::string context_error;
+        if (!select_refs(binding.entity_ids, "selected_entities", "entities", context_error) ||
+                !select_refs(binding.relation_ids, "selected_relations", "relations", context_error) ||
+                !select_refs(binding.event_ids, "selected_events", "events", context_error)) {
+            error = std::move(context_error);
+            return false;
+        }
+        projection.erase("entities");
+        projection.erase("relations");
+        projection.erase("events");
+        projection.erase("claims");
+        projection.erase("fingerprint");
+        projection.erase("previous_revision_uri");
+        projection.erase("scope");
+        auto rendered = projection.dump(2);
+        constexpr size_t max_context_bytes = 16 * 1024;
+        if (rendered.size() > max_context_bytes) {
+            error = "selected investigation context exceeds the host limit; select fewer evidence references";
+            return false;
+        }
+        tooling.investigation_context_text = std::move(rendered);
+    }
     error.clear();
     return true;
 }
@@ -1973,6 +2034,15 @@ bool initialize_agent_daemon_environment(
     if (!import_daemon_bootstrap_package(
             options, *runtime.memory_store, *runtime.plan_store, error)) {
         return false;
+    }
+    if (options.investigation.enabled && !options.investigation.workflow_package.empty()) {
+        daemon_options workflow_options = options;
+        workflow_options.bootstrap_package = options.investigation.workflow_package;
+        if (!import_daemon_bootstrap_package(
+                workflow_options, *runtime.memory_store, *runtime.plan_store, error)) {
+            error = "investigation workflow package import failed: " + error;
+            return false;
+        }
     }
     if (!open_daemon_data_store(options, runtime.data_store, error)) {
         return false;

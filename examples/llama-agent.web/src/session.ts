@@ -104,11 +104,16 @@ export type PendingUserTurn = {
   resource_refs: string[];
   display_prompt: string;
   document_context?: TurnRequest["document_context"];
+  investigation_context?: TurnRequest["investigation_context"];
   attachment_context_required?: true;
   attachment_orientation?: true;
   state: "queued" | "running" | "failed";
   error?: string;
 };
+function copyInvestigationContext(context: NonNullable<TurnRequest["investigation_context"]>) {
+  return { case_id: context.case_id, revision: context.revision,
+    entity_ids: [...context.entity_ids], relation_ids: [...context.relation_ids], event_ids: [...context.event_ids] };
+}
 function userTurnQueueKey(id = sessionId.value) { return `llama-agent-web.pending-user-turns:${id}`; }
 function restorePendingUserTurns(): PendingUserTurn[] {
   try {
@@ -119,7 +124,10 @@ function restorePendingUserTurns(): PendingUserTurn[] {
       Array.isArray(item.resource_refs) && item.resource_refs.every((uri: unknown) => typeof uri === "string") &&
       typeof item.display_prompt === "string" &&
       (!item.document_context || (typeof item.document_context.document_uri === "string" &&
-        Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))))
+        Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))) &&
+      (!item.investigation_context || (typeof item.investigation_context.case_id === "string" &&
+        Number.isSafeInteger(item.investigation_context.revision) && Array.isArray(item.investigation_context.entity_ids) &&
+        Array.isArray(item.investigation_context.relation_ids) && Array.isArray(item.investigation_context.event_ids))))
       .map((item) => ({ ...item, state: item.state === "failed" ? "failed" as const : "queued" as const }));
   } catch { return []; }
 }
@@ -274,7 +282,8 @@ async function connect() {
 
 async function submit(prompt: string, additionalResourceRefs: string[] = [], propagateFailure = false,
     documentContext?: TurnRequest["document_context"], stableTurnId?: string,
-    resourceRefsOverride?: string[], displayPrompt?: string, attachmentOrientation = false) {
+    resourceRefsOverride?: string[], displayPrompt?: string, attachmentOrientation = false,
+    investigationContext?: TurnRequest["investigation_context"]) {
   const turnId = stableTurnId ?? crypto.randomUUID();
   const visiblePrompt = displayPrompt ?? prompt;
   const turnResourceRefs = [...new Set(resourceRefsOverride ??
@@ -301,6 +310,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     pendingUserTurns.value.push({ turn_id: turnId, session_id: sessionId.value, prompt,
       resource_refs: turnResourceRefs, display_prompt: visiblePrompt,
       ...(documentContext ? { document_context: { ...documentContext, block_ids: [...documentContext.block_ids] } } : {}),
+      ...(investigationContext ? { investigation_context: copyInvestigationContext(investigationContext) } : {}),
       ...(attachmentContextRequired ? { attachment_context_required: true as const } : {}),
       ...(attachmentOrientation ? { attachment_orientation: true as const } : {}), state: "queued" });
     if (!persistPendingUserTurns()) {
@@ -331,6 +341,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     turn_id: turnId, mode: "agent", n_predict: 0, include_summary: true,
     ...(turnResourceRefs.length ? { resource_refs: [...new Set(turnResourceRefs)] } : {}),
     ...(documentContext ? { document_context: documentContext } : {}),
+    ...(investigationContext ? { investigation_context: copyInvestigationContext(investigationContext) } : {}),
     ...(attachmentOrientation ? { attachment_orientation: true } : {}),
     ...(attachmentContextRequired
       ? { attachment_context_required: true } : {}),
@@ -412,7 +423,7 @@ async function drainDocumentReviews() {
     try {
       const sent = await submit(queuedTurn.prompt, [], false, queuedTurn.document_context,
         queuedTurn.turn_id, queuedTurn.resource_refs, queuedTurn.display_prompt,
-        Boolean(queuedTurn.attachment_orientation));
+        Boolean(queuedTurn.attachment_orientation), queuedTurn.investigation_context);
       if (drainEpoch !== sessionEpoch) return;
       if (sent) {
         pendingUserTurns.value = pendingUserTurns.value.filter((turn) => turn.turn_id !== queuedTurn.turn_id);

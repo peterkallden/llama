@@ -3,6 +3,7 @@
 #include "agent/agent-continuation.h"
 #include "agent/agent-generation.h"
 #include "agent/agent-scope.h"
+#include "agent/investigation-contracts.h"
 #include "agent/agent-working-state.h"
 #include "agent/dataset-contracts.h"
 #include "agent/contracts/agent-events.h"
@@ -129,6 +130,8 @@ struct common_agent_request {
     std::string prompt;
     std::vector<common_agent_input_resource> input_resources;
     std::optional<common_agent_resource_read_binding> resource_read_binding;
+    // Reference-only case context; the host resolves it under current scope.
+    std::optional<common_investigation_context_binding> investigation_context;
     // Host-owned candidates discovered from the scoped resource store. These
     // are available for selection but are not current-turn inputs.
     std::vector<common_agent_input_resource> available_resources;

@@ -133,7 +133,7 @@ if (!window.__investigationWorkspace) {
   }
   async function expand(center = selectedEntity) {
     if (!currentCase) return;
-    const token = generation;
+    const token = ++generation;
     try {
       const value = await call("investigation.graph.expand", {
         case_id: currentCase.case_id, case_revision: currentCase.revision,
@@ -148,7 +148,7 @@ if (!window.__investigationWorkspace) {
   }
   async function loadEvents(entityId: string, relationId = "") {
     if (!currentCase) return;
-    const token = generation;
+    const token = ++generation;
     try {
       setStatus("Loading source events…");
       const args: Json = { case_id: currentCase.case_id, limit: 200,
@@ -183,6 +183,13 @@ if (!window.__investigationWorkspace) {
       normalized_resource_uri: event.normalized_resource_uri,
       note: "This is a source-linked observation. It does not by itself establish causality.",
     }, null, 2);
+  }
+  function selectedContext() {
+    if (!currentCase) throw new Error("Open an investigation case before adding it to chat.");
+    return { case_id: String(currentCase.case_id), revision: Number(currentCase.revision),
+      entity_ids: selectedEntity ? [selectedEntity] : [],
+      relation_ids: selectedRelation ? [selectedRelation] : [],
+      event_ids: selectedEvent ? [selectedEvent] : [] };
   }
   function renderClaims(claims: Json[]) {
     const target = q<HTMLDivElement>("#claims"); target.replaceChildren();
@@ -254,6 +261,12 @@ if (!window.__investigationWorkspace) {
     if (event.source !== parent) return;
     const message = event.data;
     if (message?.jsonrpc !== "2.0") return;
+    if (message.method === "ui/llama-agent/prepare-investigation-context" && typeof message.id === "number") {
+      try { parent.postMessage({ jsonrpc: "2.0", id: message.id, result: selectedContext() }, "*"); }
+      catch (error) { parent.postMessage({ jsonrpc: "2.0", id: message.id,
+        error: { code: -32000, message: error instanceof Error ? error.message : String(error) } }, "*"); }
+      return;
+    }
     if (typeof message.id === "number" && pending.has(message.id)) {
       const request = pending.get(message.id)!; pending.delete(message.id);
       if (message.error) request.reject(new Error(String(message.error.message ?? "Host request failed.")));

@@ -107,5 +107,29 @@ int main() {
     assert(!parse_agent_daemon_command(multi_resource_orientation, options,
         common_agent_runtime_host_mode::agent, rejected_orientation, error));
 
+    const nlohmann::ordered_json investigation_request = {
+        {"command", "run_turn"}, {"mode", "agent"}, {"prompt", "Follow this evidence."},
+        {"session_id", "s1"}, {"namespace_id", "local"}, {"turn_id", "investigation-1"},
+        {"investigation_context", {{"case_id", "case-1"}, {"revision", 3},
+            {"entity_ids", nlohmann::ordered_json::array({"host:one"})},
+            {"relation_ids", nlohmann::ordered_json::array({"rel:one"})},
+            {"event_ids", nlohmann::ordered_json::array({"event:one"})}}},
+    };
+    common_agent_daemon_command investigation;
+    assert(parse_agent_daemon_command(investigation_request, options,
+        common_agent_runtime_host_mode::agent, investigation, error));
+    assert(investigation.turn && investigation.turn->request.turn.investigation_context);
+    assert(investigation.turn->request.turn.investigation_context->case_id == "case-1");
+    assert(investigation.turn->request.turn.investigation_context->revision == 3);
+    assert(investigation.turn->request.turn.investigation_context->entity_ids == std::vector<std::string>{"host:one"});
+    auto invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = 0;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["event_ids"] = nlohmann::ordered_json::array({"event:one", "event:one"});
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+
     return 0;
 }

@@ -471,6 +471,43 @@ bool parse_agent_daemon_turn_request(
         read_binding.selected_block_ids = request.document_context->block_ids;
         request.resource_read_binding = std::move(read_binding);
     }
+    if (parsed.contains("investigation_context")) {
+        const auto & binding = parsed["investigation_context"];
+        if (!binding.is_object() || !binding.contains("case_id") ||
+                !binding["case_id"].is_string() || binding["case_id"].get<std::string>().empty() ||
+                binding["case_id"].get<std::string>().size() > 512 ||
+                !binding.contains("revision") || !binding["revision"].is_number_unsigned() ||
+                binding["revision"].get<uint64_t>() == 0) {
+            error = "investigation_context requires a case_id and positive revision";
+            return false;
+        }
+        common_investigation_context_binding context;
+        context.case_id = binding["case_id"].get<std::string>();
+        context.revision = binding["revision"].get<uint64_t>();
+        for (const auto & field : {"entity_ids", "relation_ids", "event_ids"}) {
+            if (!binding.contains(field)) continue;
+            const auto & values = binding[field];
+            if (!values.is_array() || values.size() > 64) {
+                error = std::string("investigation_context.") + field + " must be an array with at most 64 references";
+                return false;
+            }
+            auto & output = std::string(field) == "entity_ids" ? context.entity_ids :
+                std::string(field) == "relation_ids" ? context.relation_ids : context.event_ids;
+            for (const auto & value : values) {
+                if (!value.is_string() || value.get<std::string>().empty() || value.get<std::string>().size() > 512) {
+                    error = std::string("investigation_context.") + field + " must contain bounded non-empty strings";
+                    return false;
+                }
+                output.push_back(value.get<std::string>());
+            }
+            std::sort(output.begin(), output.end());
+            if (std::adjacent_find(output.begin(), output.end()) != output.end()) {
+                error = std::string("investigation_context.") + field + " must contain unique references";
+                return false;
+            }
+        }
+        request.investigation_context = std::move(context);
+    }
     if (parsed.contains("_caller_allow_policy_gated_writes") &&
             parsed["_caller_allow_policy_gated_writes"].is_boolean()) {
         request.allow_policy_gated_writes = parsed["_caller_allow_policy_gated_writes"].get<bool>();

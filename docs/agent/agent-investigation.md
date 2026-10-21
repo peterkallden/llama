@@ -22,6 +22,7 @@ index administration requests.
   },
   "investigation": {
     "enabled": true,
+    "workflow_package": "docs/examples/agent-investigation-workflows-v1.json",
     "max_events_per_query": 2500,
     "sources": [
       {
@@ -44,6 +45,16 @@ index administration requests.
   }
 }
 ```
+
+When enabled, `workflow_package` is imported through the existing bootstrap
+and plan-store path. The checked-in package declares identity, communication,
+event-chain, integration-trace, hypothesis-testing and report-composition
+workflows; it does not add a second workflow engine. Relative paths resolve
+against the daemon config file's directory, and the file is checked while the
+config loads. Use an absolute path when the deployment layout is managed
+outside the config directory. The package's procedures use the existing
+bootstrap embedding path, so configure `model.embedding_model` when the
+package contains procedures.
 
 Use `"dialect": "opensearch"` for OpenSearch. Index names must be explicit
 and wildcard-free in the current implementation; list each permitted index or
@@ -74,6 +85,12 @@ This version performs bounded historical search. It does not yet provide
 collector/Kafka subscriptions, PIT/search-after cursors, a live event stream,
 formal evidence chain-of-custody, or model-supported smoke coverage. Case
 listing and evidence reads are scope-checked on every request.
+
+The workspace can bind a selected case revision and selected entity, relation
+and event IDs to the next chat turn. The daemon reloads the case in the active
+scope, rejects stale revisions and unknown IDs, and sends only the selected
+projection to the runtime. Selected event values are untrusted data and are
+explicitly marked as such in the runtime prompt.
 
 ## Verification
 

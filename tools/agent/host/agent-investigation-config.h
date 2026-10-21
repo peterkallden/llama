@@ -26,6 +26,9 @@ struct agent_host_investigation_source_config {
 
 struct agent_host_investigation_config {
     bool enabled = false;
+    // Optional JSON starter package imported through the existing plan-store
+    // bootstrap path when investigations are enabled.
+    std::string workflow_package;
     std::vector<agent_host_investigation_source_config> sources;
     size_t max_events_per_query = 5000;
     size_t max_nodes_per_expansion = 100;

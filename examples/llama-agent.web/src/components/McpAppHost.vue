@@ -283,10 +283,13 @@ async function onMessage(event: MessageEvent) {
   } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
 }
 
-function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/close-document"): Promise<unknown> {
+function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/close-document" | "ui/llama-agent/prepare-investigation-context"): Promise<unknown> {
   const target = frame.value?.contentWindow;
-  if (!target || !initialized || uri.value !== "ui://llama-agent/apps/document-editor") {
-    return Promise.reject(new Error("The document editor is not ready."));
+  const editorRequest = method !== "ui/llama-agent/prepare-investigation-context";
+  if (!target || !initialized || (editorRequest
+      ? uri.value !== "ui://llama-agent/apps/document-editor"
+      : uri.value !== "ui://llama-agent/apps/investigation-workspace")) {
+    return Promise.reject(new Error(editorRequest ? "The document editor is not ready." : "The investigation workspace is not ready."));
   }
   const id = hostRequestId++;
   return new Promise((resolve, reject) => {
@@ -310,7 +313,23 @@ async function prepareForChat(): Promise<{ document_uri: string; revision: numbe
 }
 
 async function closeDocument() { await requestEditor("ui/llama-agent/close-document"); }
-defineExpose({ prepareForChat, closeDocument });
+async function prepareInvestigationContext(): Promise<NonNullable<import("../types/agent").TurnRequest["investigation_context"]>> {
+  const result = await requestEditor("ui/llama-agent/prepare-investigation-context");
+  if (!result || typeof result !== "object") throw new Error("The workspace returned no case selection.");
+  const value = result as Record<string, unknown>;
+  const refs = (key: string) => {
+    const list = value[key];
+    if (!Array.isArray(list) || list.length > 64 || !list.every((item) => typeof item === "string" && item.length > 0 && item.length <= 512)) {
+      throw new Error(`The workspace returned an invalid ${key} selection.`);
+    }
+    return [...new Set(list as string[])];
+  };
+  if (typeof value.case_id !== "string" || !value.case_id || value.case_id.length > 512 ||
+      !Number.isSafeInteger(value.revision) || Number(value.revision) <= 0) throw new Error("The workspace returned an invalid case binding.");
+  return { case_id: value.case_id, revision: Number(value.revision), entity_ids: refs("entity_ids"),
+    relation_ids: refs("relation_ids"), event_ids: refs("event_ids") };
+}
+defineExpose({ prepareForChat, closeDocument, prepareInvestigationContext });
 
 watch(() => [props.tool.name, props.tool.provider_id, uri.value, props.sessionId], () => { initialized = false; void load(); }, { flush: "sync" });
 watch(() => props.invocation, publishInvocation, { deep: true });

@@ -7,6 +7,7 @@
 #include <memory>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,4 +40,7 @@ struct common_agent_runtime_tooling {
     // unless the planner explicitly uses the documented host inventory form.
     std::vector<common_agent_dataset_descriptor> available_datasets;
     std::function<bool(const std::string &, nlohmann::ordered_json &, std::string &)> grounding_dataset_reader;
+    // Sanitized host projection of a typed investigation binding. This is
+    // request-scoped and contains only case metadata and selected evidence.
+    std::optional<std::string> investigation_context_text;
 };

@@ -67,7 +67,8 @@ public:
             std::shared_ptr<const common_flydelta_activation_result> activation);
     void set_turn_inputs(std::vector<common_agent_input_resource> input_resources,
             bool require_tool_execution,
-            std::optional<common_agent_resource_read_binding> resource_read_binding = std::nullopt);
+            std::optional<common_agent_resource_read_binding> resource_read_binding = std::nullopt,
+            std::optional<common_investigation_context_binding> investigation_context = std::nullopt);
     void set_current_plan_id(std::string plan_id) { resident_current_plan_id = std::move(plan_id); }
 
     // Load the configured inference model without executing a user turn.

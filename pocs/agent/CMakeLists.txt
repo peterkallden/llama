@@ -1790,7 +1790,7 @@ if (BUILD_TESTING)
 
     add_test(NAME llama-agent-config-discovery-ctest
         COMMAND $<TARGET_FILE:llama-agent-config-discovery-smoke>)
-    set_property(TEST llama-agent-config-discovery-ctest PROPERTY LABELS agent)
+    set_property(TEST llama-agent-config-discovery-ctest PROPERTY LABELS "agent;investigation;model-free")
 
     add_test(NAME llama-agent-resource-store-ctest
         COMMAND $<TARGET_FILE:llama-agent-resource-store-smoke>)

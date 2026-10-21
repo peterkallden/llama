@@ -10,6 +10,7 @@
 #include "agent/adaptation/flydelta/flydelta-deployment.h"
 #include "tools/agent/resource/agent-resource-store.h"
 #include "agent/context/conversation-context.h"
+#include "agent/investigation-contracts.h"
 
 #include <functional>
 #include <memory>
@@ -76,6 +77,7 @@ struct common_agent_runtime_session_host_turn_request {
     // Typed editor binding. The daemon validates its shape; the session host
     // re-authorizes the resource and checks the immutable revision/block IDs.
     std::optional<document_context_binding> document_context;
+    std::optional<common_investigation_context_binding> investigation_context;
     common_agent_event_sink event_sink;
     // Daemon request identity is kept separate from the model turn identity,
     // but travels with the host-owned turn for checkpoint validation.

@@ -119,10 +119,12 @@ void common_agent_runtime_resident_runtime::set_flydelta_activation(
 void common_agent_runtime_resident_runtime::set_turn_inputs(
         std::vector<common_agent_input_resource> input_resources,
         bool require_tool_execution,
-        std::optional<common_agent_resource_read_binding> resource_read_binding) {
+        std::optional<common_agent_resource_read_binding> resource_read_binding,
+        std::optional<common_investigation_context_binding> investigation_context) {
     base_turn_request.request.input_resources = std::move(input_resources);
     base_turn_request.request.require_tool_execution = require_tool_execution;
     base_turn_request.request.resource_read_binding = std::move(resource_read_binding);
+    base_turn_request.request.investigation_context = std::move(investigation_context);
 }
 
 bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {

@@ -160,15 +160,18 @@ it("persists document context on a queued user turn and keeps failed turns retry
   const session = useAgentSession();
   const first = session.submit("first");
   const documentContext = { document_uri: "resource://doc", revision: 3, block_ids: ["b1"] };
+  const investigationContext = { case_id: "case-7", revision: 4, entity_ids: ["host:7"], relation_ids: [], event_ids: ["event:9"] };
   const queued = await session.submit("review this", [], false, documentContext, "queued-review",
-    ["resource://attachment"], "Review draft");
+    ["resource://attachment"], "Review draft", false, investigationContext);
   expect(queued).toBe(true);
   expect(session.pendingUserTurns[0].document_context).toEqual(documentContext);
+  expect(session.pendingUserTurns[0].investigation_context).toEqual(investigationContext);
   expect(session.pendingUserTurns[0].attachment_context_required).toBe(true);
   transport.replies[0]({ ok: true, response: "first done" });
   await first;
   for (let i = 0; i < 20; i++) await Promise.resolve();
   expect(transport.calls[1].document_context).toEqual(documentContext);
+  expect(transport.calls[1].investigation_context).toEqual(investigationContext);
   expect(transport.calls[1].resource_refs).toEqual(["resource://attachment"]);
   transport.replies[1]({ ok: false, error: "turn deadline exceeded" });
   for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -178,6 +181,7 @@ it("persists document context on a queued user turn and keeps failed turns retry
   for (let i = 0; i < 20; i++) await Promise.resolve();
   expect(transport.calls).toHaveLength(3);
   expect(transport.calls[2].document_context).toEqual(documentContext);
+  expect(transport.calls[2].investigation_context).toEqual(investigationContext);
 });
 
 it("ignores late upload and turn completions after the user starts a new session", async () => {

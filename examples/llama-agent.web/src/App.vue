@@ -93,18 +93,23 @@ let sendGeneration = 0;
 async function send() {
   const draftAtSubmit = prompt.value;
   const value = draftAtSubmit.trim();
-  if ((!value && !session.selectedResourceRefs.length) || chatSending.value) return;
+  const investigationAppSelected = activeView.value === "app" &&
+    activeMcpApp()?._meta?.ui?.resourceUri === "ui://llama-agent/apps/investigation-workspace";
+  if ((!value && !session.selectedResourceRefs.length && !investigationAppSelected) || chatSending.value) return;
   const generation = ++sendGeneration;
   chatSending.value = true;
   const sendingSession = session.sessionId;
   const sendingResources = [...session.selectedResourceRefs];
   try {
-    if (documentMode.value && !editorHost.value) throw new Error("The document editor is not ready. Your message is preserved.");
+    const workspaceUri = activeMcpApp()?._meta?.ui?.resourceUri;
+    const investigationMode = activeView.value === "app" && workspaceUri === "ui://llama-agent/apps/investigation-workspace";
+    if ((documentMode.value || investigationMode) && !editorHost.value) throw new Error("The active workspace app is not ready. Your message is preserved.");
     const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
+    const investigationContext = investigationMode ? await editorHost.value!.prepareInvestigationContext() : undefined;
     if (session.sessionId !== sendingSession) throw new Error("The session changed before the message could be sent.");
     const turnId = crypto.randomUUID();
-    const response = session.submit(value || "Please inspect the selected attachments.", [], false, context,
-      turnId, sendingResources, undefined);
+    const response = session.submit(value || (investigationMode ? "Investigate the selected case context." : "Please inspect the selected attachments."), [], false, context,
+      turnId, sendingResources, undefined, false, investigationContext);
     // submit registers the message/queue synchronously before awaiting HTTP.
     // Only the save/registration operation owns the composer, not model runtime.
     if (session.messages.some((message) => message.id === `${turnId}-user`)) {

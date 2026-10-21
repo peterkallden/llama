@@ -117,6 +117,16 @@ struct common_investigation_case_summary {
     int64_t window_end_ms = 0;
 };
 
+// A compact UI-to-runtime binding. It carries stable references only; the
+// daemon reauthorizes the case and resolves every reference before prompting.
+struct common_investigation_context_binding {
+    std::string case_id;
+    uint64_t revision = 0;
+    std::vector<std::string> entity_ids;
+    std::vector<std::string> relation_ids;
+    std::vector<std::string> event_ids;
+};
+
 struct common_investigation_graph_query {
     std::string case_id;
     uint64_t case_revision = 0;

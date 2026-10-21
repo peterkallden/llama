@@ -398,6 +398,10 @@ int main() {
     const auto bootstrap_path = std::filesystem::temp_directory_path() /
         ("llama-agent-bootstrap-smoke-" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
+    const auto investigation_bootstrap_path = bootstrap_path.parent_path() /
+        (bootstrap_path.stem().string() + "-investigation.json");
+    const auto investigation_store_path = bootstrap_path.parent_path() /
+        (bootstrap_path.stem().string() + ".cozo");
     {
         std::ofstream bootstrap(bootstrap_path);
         bootstrap << R"({"schema_version":1,"name":"daemon-startup-smoke","version":"v1","procedures":[],"blueprints":[],"workflows":[{"id":"startup-smoke","workflow_ref":"workflow://startup-smoke","workflow_revision":"v1","family":"test","graph_revision":"test-v1","required_capabilities":["test.run"]}]})";
@@ -406,28 +410,58 @@ int main() {
             return 1;
         }
     }
+    {
+        std::ofstream bootstrap(investigation_bootstrap_path);
+        bootstrap << R"({"schema_version":1,"name":"investigation-startup-smoke","version":"v1","procedures":[],"blueprints":[],"workflows":[{"id":"investigation-startup-smoke","workflow_ref":"workflow://investigation/startup-smoke","workflow_revision":"v1","family":"investigation","graph_revision":"test-v1","required_capabilities":["investigation.case"]}]})";
+        if (!bootstrap) {
+            std::fprintf(stderr, "failed to write investigation workflow fixture\n");
+            std::filesystem::remove(bootstrap_path);
+            return 1;
+        }
+    }
     daemon_options bootstrap_options;
     bootstrap_options.bootstrap_package = bootstrap_path.string();
     bootstrap_options.backend = "in-memory";
     bootstrap_options.plan_backend = "in-memory";
-    bootstrap_options.data_backend = "disabled";
+    bootstrap_options.data_backend = "cozo";
+    bootstrap_options.data_db = investigation_store_path.string();
+    bootstrap_options.investigation.enabled = true;
+    bootstrap_options.investigation.workflow_package = investigation_bootstrap_path.string();
+    agent_host_investigation_source_config smoke_source;
+    smoke_source.id = "smoke-source";
+    smoke_source.dialect = "elasticsearch";
+    smoke_source.base_url = "http://127.0.0.1:1";
+    smoke_source.allowed_indices = {"smoke-index"};
+    smoke_source.allowed_namespaces = {"local"};
+    smoke_source.fields = {{"event_time", "@timestamp"}};
+    bootstrap_options.investigation.sources.push_back(smoke_source);
     bootstrap_options.resource_blob_backend = "in-memory";
     bootstrap_options.resource_metadata_backend = "in-memory";
     common_agent_daemon_runtime bootstrap_runtime;
     if (!initialize_agent_daemon_environment(bootstrap_options, bootstrap_runtime, error)) {
         std::filesystem::remove(bootstrap_path);
+        std::filesystem::remove(investigation_bootstrap_path);
+        std::filesystem::remove_all(investigation_store_path);
         std::fprintf(stderr, "daemon startup did not import its configured package: %s\n", error.c_str());
         return 1;
     }
     const auto installed_plans = bootstrap_runtime.plan_store->list(error);
     std::filesystem::remove(bootstrap_path);
+    std::filesystem::remove(investigation_bootstrap_path);
     if (!error.empty() || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
             return plan.id == "bootstrap:llama-agent-host:global:workflow:startup-smoke" &&
                 plan.workflow_definition.has_value();
+        }) || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
+            return plan.id == "bootstrap:llama-agent-host:global:workflow:investigation-startup-smoke" &&
+                plan.workflow_definition.has_value();
         })) {
+        bootstrap_runtime.data_store.reset();
+        std::filesystem::remove_all(investigation_store_path);
         std::fprintf(stderr, "daemon bootstrap package workflow was not persisted: %s\n", error.c_str());
         return 1;
     }
+    bootstrap_runtime.data_store.reset();
+    std::filesystem::remove_all(investigation_store_path);
 
     std::printf("config_discovery=passed\n");
     return 0;
