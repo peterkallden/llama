@@ -57,6 +57,18 @@ int main() {
         std::cerr << "virtual dataset adapter did not enforce the configured namespace: " << error << '\n';
         return 6;
     }
+    context.scope.namespace_id = "tenant-a";
+    const auto rejects_request = [&](const char * request_json, const char * expected_error) {
+        return !virtual_source.execute(descriptor, "data.query", request_json, context.scope,
+            true, response, error) && error.find(expected_error) != std::string::npos;
+    };
+    if (!rejects_request(R"({"dataset":7})", "dataset identity is invalid") ||
+            !rejects_request(R"({"dataset":"dataset://investigation/logs/logs-2026.10","distinct":"false"})", "distinct flag must be boolean") ||
+            !rejects_request(R"({"dataset":"dataset://investigation/logs/logs-2026.10","limit":"2"})", "'limit' must be a nonnegative integer") ||
+            !rejects_request(R"({"dataset":"dataset://investigation/logs/logs-2026.10","offset":-1})", "'offset' must be a nonnegative integer")) {
+        std::cerr << "virtual dataset adapter did not return controlled errors for malformed JSON field types: " << error << '\n';
+        return 10;
+    }
 
     // Optional real-service smoke. The regular CTest contract remains offline;
     // setting this endpoint exercises the same virtual-dataset adapter against

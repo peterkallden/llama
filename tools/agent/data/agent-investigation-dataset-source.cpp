@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <limits>
 #include <set>
 
 namespace {
@@ -87,6 +88,33 @@ json * lookup_path(json & value, const std::string & path) {
 bool parse_request(const std::string & raw, json & value, std::string & error) {
     value = json::parse(raw, nullptr, false);
     if (!value.is_object()) { error = "virtual dataset query must be a JSON object"; return false; }
+    return true;
+}
+
+bool read_nonnegative_size(const json & object, const char * key, size_t fallback,
+        size_t & value, std::string & error) {
+    value = fallback;
+    if (!object.contains(key)) return true;
+    const auto & field = object[key];
+    if (!field.is_number_integer() && !field.is_number_unsigned()) {
+        error = std::string("virtual query field '") + key + "' must be a nonnegative integer";
+        return false;
+    }
+    if (!field.is_number_unsigned()) {
+        const int64_t signed_value = field.get<int64_t>();
+        if (signed_value < 0) {
+            error = std::string("virtual query field '") + key + "' must be a nonnegative integer";
+            return false;
+        }
+        value = static_cast<size_t>(signed_value);
+        return true;
+    }
+    const uint64_t unsigned_value = field.get<uint64_t>();
+    if (unsigned_value > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+        error = std::string("virtual query field '") + key + "' exceeds the host size bound";
+        return false;
+    }
+    value = static_cast<size_t>(unsigned_value);
     return true;
 }
 }
@@ -185,8 +213,16 @@ bool agent_investigation_virtual_dataset_source::execute(
     }
     json request;
     if (!parse_request(request_json, request, error)) return false;
-    if (request.value("dataset", std::string()) != descriptor.ref.uri ||
-            request.value("distinct", false)) {
+    if (!request.contains("dataset") || !request["dataset"].is_string() ||
+            request["dataset"].get<std::string>() != descriptor.ref.uri) {
+        error = "virtual query dataset identity is invalid";
+        return false;
+    }
+    if (request.contains("distinct") && !request["distinct"].is_boolean()) {
+        error = "virtual query distinct flag must be boolean";
+        return false;
+    }
+    if (request.value("distinct", false)) {
         error = "virtual query dataset identity is invalid or requests unsupported distinct rows";
         return false;
     }
@@ -217,14 +253,21 @@ bool agent_investigation_virtual_dataset_source::execute(
             if (!item.is_object() || !item.contains("field")) { error = "query sort needs a field"; return false; }
             std::string actual;
             if (!mapped_field(*source, item["field"], actual, error)) return false;
+            if (item.contains("direction") && !item["direction"].is_string()) {
+                error = "query sort direction must be a string"; return false;
+            }
             const auto direction = item.value("direction", std::string("asc"));
             if (direction != "asc" && direction != "desc") { error = "query sort direction must be asc or desc"; return false; }
             sort.push_back({{actual, direction}});
         }
     }
-    const size_t limit = std::min({request.value("limit", source->max_page_size),
-        request.value("max_result_rows", source->max_page_size), source->max_page_size});
-    const size_t offset = request.value("offset", size_t(0));
+    size_t requested_limit = source->max_page_size;
+    size_t requested_result_rows = source->max_page_size;
+    size_t offset = 0;
+    if (!read_nonnegative_size(request, "limit", source->max_page_size, requested_limit, error) ||
+            !read_nonnegative_size(request, "max_result_rows", source->max_page_size, requested_result_rows, error) ||
+            !read_nonnegative_size(request, "offset", 0, offset, error)) return false;
+    const size_t limit = std::min({requested_limit, requested_result_rows, source->max_page_size});
     if (limit == 0 || offset > config_.max_materialized_rows || limit > config_.max_materialized_rows - offset) {
         error = "virtual query page exceeds configured investigation bounds"; return false;
     }
