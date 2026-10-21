@@ -79,6 +79,7 @@ struct common_agent_plan_selection_result {
     std::optional<std::string> plan_id;
     float confidence = 0.0f;
     std::string reason;
+    bool invalid_selection = false;
     std::optional<common_agent_generated_text_result> generation;
 };
 

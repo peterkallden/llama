@@ -1236,7 +1236,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             "explicit user-taught concept recorded", plan.id, {}, {}, observation_id);
     }
 
-    const auto activate_next_ready_step = [&]() -> bool {
+    enum class activation_outcome { runnable, blocked, complete, inactive, failed };
+    const auto activate_next_ready_step = [&]() -> activation_outcome {
         // A plan revision or an externally restored plan can leave a
         // dependent step active while its producer is failed/pending.  Do
         // not let active_step_id bypass the same dependency predicate used by
@@ -1257,7 +1258,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             reset.expected_version = plan.version;
             reset.step_id = stale.first;
             reset.reason_summary = "dependent tool step deferred until its dependency is completed";
-            if (!store.apply(reset, plan, error)) return false;
+            if (!store.apply(reset, plan, error)) return activation_outcome::failed;
             append_event(result, request, {common_agent_event_type::plan_updated,
                 "dependent plan step deferred until dependency repair completes", {}, plan.id});
             append_trace(result, common_runtime_trace_stage::step,
@@ -1268,7 +1269,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
 
         bool has_active_step = false;
         for (const auto & step : plan.steps) if (step.status == common_plan_step_status::active) { has_active_step = true; break; }
-        if (has_active_step) return true;
+        if (has_active_step) return activation_outcome::runnable;
 
         const auto schedule = common_plan_schedule(plan);
         if (schedule.complete && plan.status == common_plan_status::active) {
@@ -1278,18 +1279,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (!evaluation.evidence_sufficient) {
                 result.error = "plan goal is not sufficiently evidenced";
                 if (!evaluation.unmet_criteria.empty()) result.error += ": " + evaluation.unmet_criteria.front();
-                return false;
+                return activation_outcome::failed;
             }
             common_plan_operation complete_plan;
             complete_plan.kind = common_plan_operation_kind::complete_plan;
             complete_plan.plan_id = plan.id;
             complete_plan.expected_version = plan.version;
             complete_plan.reason_summary = "all mandatory plan steps completed";
-            if (!store.apply(complete_plan, plan, error)) return false;
+            if (!store.apply(complete_plan, plan, error)) return activation_outcome::failed;
             append_event(result, request, {common_agent_event_type::plan_updated, "plan completed by scheduler", {}, plan.id});
-            return false;
+            return activation_outcome::complete;
         }
-        if (schedule.ready_step_ids.empty()) return false;
+        if (schedule.ready_step_ids.empty()) {
+            switch (schedule.state) {
+                case common_plan_schedule_state::runnable: return activation_outcome::runnable;
+                case common_plan_schedule_state::blocked: return activation_outcome::blocked;
+                case common_plan_schedule_state::complete: return activation_outcome::complete;
+                case common_plan_schedule_state::inactive: return activation_outcome::inactive;
+            }
+            return activation_outcome::failed;
+        }
 
         common_plan_operation activate;
         activate.kind = common_plan_operation_kind::activate_step;
@@ -1297,11 +1306,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         activate.expected_version = plan.version;
         activate.step_id = schedule.ready_step_ids.front();
         activate.reason_summary = "scheduler selected dependency-ready step";
-        if (!store.apply(activate, plan, error)) return false;
+        if (!store.apply(activate, plan, error)) return activation_outcome::failed;
         append_event(result, request, {common_agent_event_type::plan_updated, "scheduler activated plan step", {}, plan.id});
         append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::started,
             "scheduler activated plan step", plan.id, *activate.step_id);
-        return true;
+        return activation_outcome::runnable;
     };
 
     const auto block_unrepaired_tool_failure = [&]() -> bool {
@@ -1392,8 +1401,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_event(result, request, {common_agent_event_type::plan_updated, "final synthesis step completed", {}, plan.id});
         append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
             "final synthesis step completed", plan.id, completed_step_id);
-        activate_next_ready_step();
-        return error.empty();
+        const auto activation = activate_next_ready_step();
+        if (activation == activation_outcome::failed && error.empty()) {
+            error = result.error.empty() ? "plan scheduling failed after final synthesis" : result.error;
+        }
+        return activation != activation_outcome::failed && error.empty();
     };
 
     const auto ensure_artifact_continuation = [&](const common_plan_step & completed_step,
@@ -1516,20 +1528,33 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         result.error = "invalid cognitive-mode transition before plan execution";
         return result;
     }
-    if (!completed_plan_resume && !activate_next_ready_step()) {
+    if (!completed_plan_resume) {
+        const auto activation = activate_next_ready_step();
+        if (activation == activation_outcome::failed) {
+            if (result.error.empty()) result.error = error.empty()
+                ? "initial plan scheduling failed" : error;
+            return result;
+        }
+        if (activation == activation_outcome::inactive) {
+            result.error = "plan is inactive and has no runnable steps";
+            append_trace(result, common_runtime_trace_stage::plan,
+                common_runtime_trace_kind::failed, result.error, plan.id);
+            return result;
+        }
         // A resumed plan with a failed mandatory tool step has a valid next
         // action even when the deterministic scheduler cannot activate any
         // pending step: reflection owns repairing that failed step.  Let the
         // normal bounded repair path run instead of failing before it starts.
-        if (result.error.empty() && error.empty() && plan_has_failed_mandatory_tool_step(plan)) {
+        if (activation == activation_outcome::blocked &&
+                plan_has_failed_mandatory_tool_step(plan)) {
             append_trace(result, common_runtime_trace_stage::step,
                 common_runtime_trace_kind::decided,
                 "initial scheduling deferred so reflection can repair a failed mandatory tool step",
                 plan.id);
-        } else {
-            if (result.error.empty()) result.error = error.empty()
-                ? "initial plan dependency scheduling failed"
-                : error;
+        } else if (activation == activation_outcome::blocked) {
+            result.error = "plan is blocked on unmet dependencies or required evidence; saved plan remains resumable";
+            append_trace(result, common_runtime_trace_stage::plan,
+                common_runtime_trace_kind::decided, result.error, plan.id);
             return result;
         }
     }
@@ -1821,7 +1846,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, active_step_id, {}, observation_id);
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
                     artifact_step ? "artifact composition section completed" : "reasoning step completed", plan.id, active_step_id);
-                if (!activate_next_ready_step()) break;
+                const auto activation = activate_next_ready_step();
+                if (activation == activation_outcome::failed) {
+                    if (result.error.empty()) result.error = error.empty()
+                        ? "plan scheduling failed after non-tool step" : error;
+                    return result;
+                }
+                if (activation != activation_outcome::runnable) break;
                 // This code is inside the range-for over plan.steps. A bare
                 // continue would inspect the rest of the old snapshot rather
                 // than restart the scheduler loop for the newly activated
@@ -1864,7 +1895,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (!tool_call && request.tool_call && !executed_request_tool) tool_call = request.tool_call;
             if (!tool_call) {
-                if (plan.active_step_id || !activate_next_ready_step()) break;
+                if (plan.active_step_id) break;
+                const auto activation = activate_next_ready_step();
+                if (activation == activation_outcome::failed) {
+                    if (result.error.empty()) result.error = error.empty()
+                        ? "plan scheduling failed before tool execution" : error;
+                    return result;
+                }
+                if (activation != activation_outcome::runnable) break;
                 continue;
             }
             if (tool_batches >= request.max_tool_batches) break;
@@ -2240,8 +2278,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         }
                     }
                 }
-                activate_next_ready_step();
-                if (!error.empty()) { result.error = error; return result; }
+                const auto activation = activate_next_ready_step();
+                if (activation == activation_outcome::failed) {
+                    if (result.error.empty()) result.error = error.empty()
+                        ? "plan scheduling failed after tool execution" : error;
+                    return result;
+                }
             }
             ++tool_batches;
             append_event(result, request, {common_agent_event_type::tool_executed, "registered tool result recorded", {}, plan.id});
@@ -3027,7 +3069,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     "final answer dependency added for reflection repair", plan.id,
                     *active_final_step_id, {}, work_step_id);
             }
-            if (!activate_next_ready_step()) {
+            const auto activation = activate_next_ready_step();
+            if (activation != activation_outcome::runnable) {
                 result.error = error.empty() ? "reflection repair step could not be scheduled" : error;
                 return result;
             }
@@ -3103,8 +3146,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             const auto before_version = plan.version;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             if (plan.status != common_plan_status::active) break;
-            activate_next_ready_step();
-            if (!error.empty()) { result.error = error; return result; }
+            const auto activation = activate_next_ready_step();
+            if (activation == activation_outcome::failed) {
+                if (result.error.empty()) result.error = error.empty()
+                    ? "plan scheduling failed after final synthesis" : error;
+                return result;
+            }
+            if (activation != activation_outcome::runnable) break;
             if (plan.version == before_version) break;
         }
     }

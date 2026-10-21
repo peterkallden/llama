@@ -35,7 +35,8 @@ bool common_agent_select_tool_families(
     common_agent_inference & inference,
     const common_agent_request & request,
     const common_agent_generation_options & generation_options,
-    const std::vector<common_tool_family_index> & families,
-    bool required_family_selection,
-    common_tool_family_selection & selection,
-    std::string & error);
+        const std::vector<common_tool_family_index> & families,
+        bool required_family_selection,
+        common_tool_family_selection & selection,
+        std::string & error,
+        bool * invalid_selection = nullptr);

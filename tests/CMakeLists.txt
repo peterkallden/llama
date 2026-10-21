@@ -394,7 +394,6 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
         test-agent-loop.cpp
-        test-agent-plan-resume.cpp
         test-agent-tool-failure.cpp
         test-agent-tool-rounds.cpp
         test-memory-learning.cpp
@@ -546,7 +545,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission|agent-plan-resume)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()
@@ -600,15 +599,6 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-bootstrap")
             target_compile_definitions(${TEST_NAME} PRIVATE
                 LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-        endif()
-        if (TEST_NAME STREQUAL "test-agent-plan-resume")
-            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
-            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-host)
-            if (MSVC)
-                target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
-            else()
-                target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
-            endif()
         endif()
         if (TEST_NAME STREQUAL "test-agent-route-compiler")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})

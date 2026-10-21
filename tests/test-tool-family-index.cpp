@@ -50,6 +50,18 @@ int main() {
     assert(prediction_family && prediction_family->tool_names ==
         std::vector<std::string>{"prediction.predict"});
     assert(prediction_family->description.find("predictions from verified history") != std::string::npos);
+    const auto investigation_families = common_generate_tool_family_index({
+        {"investigation.case.list", "list cases", "{}", "{}"},
+        {"visualization.create", "create view", "{}", "{}"},
+    });
+    const auto investigation_view = common_render_tool_family_index(investigation_families);
+    assert(investigation_view.find("List and open scoped investigation cases") != std::string::npos);
+    assert(investigation_view.find("Create and open visualizations from approved datasets") != std::string::npos);
+    const auto family_tools = common_filter_tools_by_families(
+        { {"investigation.case.list", "list", "{}", "{}"},
+          {"visualization.create", "create", "{}", "{}"} },
+        {"investigation", "visualization"});
+    assert(family_tools.size() == 2);
     const auto configured = common_generate_tool_family_index(
         tools, {{"data", "Query approved datasets from the configured API"}});
     const auto configured_data = [&configured]() -> const common_tool_family_index * {
@@ -80,7 +92,8 @@ int main() {
     assert(prediction_tools.size() == 1 && prediction_tools.front().name == "prediction.predict");
 
     const auto bounded = common_render_tool_family_index(families, 32);
-    assert(bounded.size() <= 32);
+    assert(bounded.size() > 32);
+    assert(bounded.find("prediction: Inspect predictions from verified history") != std::string::npos);
 
     common_tool_family_selection selection;
     std::string error;

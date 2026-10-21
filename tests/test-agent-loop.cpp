@@ -156,6 +156,25 @@ public:
     }
 };
 
+class blocked_evidence_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        proposal.plan.id = "blocked-evidence-turn";
+        proposal.plan.session_id = request.session_id;
+        proposal.plan.goal = request.prompt;
+        proposal.plan.success_criteria = "answer";
+        proposal.plan.status = common_plan_status::active;
+        common_plan_step step{"lookup", "Lookup", "Read the required source"};
+        step.selected_tool = "lookup";
+        step.tool_call = common_plan_tool_call{"lookup", "{}"};
+        step.required_evidence = {"source-observation"};
+        proposal.plan.steps.push_back(std::move(step));
+        return proposal;
+    }
+};
+
 class invalid_tool_arguments_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
@@ -533,6 +552,17 @@ int main() {
     assert(counting_r.calls == 1);
     assert(failed_pending_run.response.empty());
     assert(failed_pending_run.error == "final synthesis is blocked by an unrepaired failed tool step: lookup");
+
+    common_plan_in_memory_store blocked_store;
+    assert(blocked_store.open("", error));
+    blocked_evidence_planner blocked_planner;
+    common_agent_runtime blocked_runtime(blocked_store, blocked_planner, e, r);
+    const auto blocked_result = blocked_runtime.run(failure_request);
+    assert(blocked_result.response.empty());
+    assert(blocked_result.error.find("plan is blocked on unmet dependencies or required evidence") != std::string::npos);
+    const auto saved_blocked_plan = blocked_store.get("blocked-evidence-turn", error);
+    assert(saved_blocked_plan && saved_blocked_plan->status == common_plan_status::active);
+    assert(saved_blocked_plan->steps.front().status == common_plan_step_status::pending);
 
     common_plan_in_memory_store reflection_failure_store;
     assert(reflection_failure_store.open("", error));

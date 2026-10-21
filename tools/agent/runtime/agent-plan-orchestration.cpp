@@ -10,10 +10,8 @@
 #include "agent/learning/blueprint-selector.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <ctime>
-#include <set>
 #include <sstream>
 #include <nlohmann/json.hpp>
 
@@ -38,128 +36,29 @@ common_agent_request make_orchestration_selection_request(
     return request;
 }
 
-std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-std::set<std::string> meaningful_words(const std::string & text) {
-    static const std::set<std::string> ignored{
-        "a", "about", "after", "all", "an", "and", "are", "as", "at", "be", "because",
-        "before", "but", "by", "can", "could", "did", "do", "does", "for", "from", "had",
-        "has", "have", "hello", "help", "hey", "hi", "how", "i", "in", "is", "it", "me",
-        "my", "of", "on", "or", "our", "please", "the", "this", "that", "to", "was", "we",
-        "were", "what", "when", "where", "which", "who", "with", "would", "yes", "you", "your",
-        "af", "att", "bara", "de", "den", "det", "du", "en", "ett", "fran", "for", "hej",
-        "hur", "i", "inte", "ja", "jag", "kan", "lite", "med", "men", "nej", "nu", "och",
-        "okej", "om", "pa", "sa", "som", "tack", "till", "var", "vad", "vi", "vill", "ar",
-        "ok", "okay", "thanks", "thank", "morning", "afternoon", "evening"
-    };
-    const auto normalized = lowercase(text);
-    std::set<std::string> words;
-    std::string word;
-    const auto finish_word = [&]() {
-        if (word.size() > 2 && ignored.count(word) == 0) words.insert(word);
-        word.clear();
-    };
-    for (const unsigned char ch : normalized) {
-        if (std::isalnum(ch) || ch >= 0x80) word.push_back(static_cast<char>(ch));
-        else finish_word();
-    }
-    finish_word();
-    return words;
-}
-
-bool explicit_plan_continuation(const std::string & prompt) {
-    const auto text = lowercase(prompt);
-    static const char * const cues[] = {
-        "continue", "carry on", "keep going", "pick up", "resume", "proceed with", "next step",
-        "same task", "that task", "go on", "continue with", "fortsatt", "fortsätt", "fortsätter", "fortsatta",
-        "ga vidare", "gå vidare", "kor vidare", "kör vidare", "ta vid", "ateruppta", "återuppta",
-        "nasta steg", "nästa steg", "samma uppgift", "samma spar", "samma spår", "jobba vidare"
-    };
-    return std::any_of(std::begin(cues), std::end(cues), [&](const char * cue) {
-        return text.find(cue) != std::string::npos;
-    });
-}
-
-std::vector<common_chat_tool> task_relevant_workflow_tools_impl(
+std::vector<common_chat_tool> workflow_action_candidates_impl(
         const std::vector<common_chat_tool> & route_tools,
-        const common_agent_route_candidate & route,
-        const std::string & prompt) {
+        const common_agent_route_candidate & route) {
     const bool dataset_workflow = route.workflow_definition &&
         route.workflow_definition->family == "dataset";
-    const auto text = lowercase(prompt);
-    std::vector<std::pair<int, common_chat_tool>> ranked;
+    std::vector<common_chat_tool> selected;
     for (const auto & tool : route_tools) {
-        const auto name = lowercase(tool.name);
-        if (dataset_workflow && name.rfind("dataset.", 0) == 0) {
+        if (dataset_workflow && tool.name.rfind("dataset.", 0) == 0) {
             // Dataset resolution and inspection are deterministic A* prefix
             // transitions; the model chooses the requested terminal operation.
             continue;
         }
-        std::vector<std::string> cues;
-        if (name == "data.join") cues = {"join", "merge", "combine"};
-        else if (name == "data.aggregate") cues = {"aggregate", "sum", "total", "group", "average"};
-        else if (name == "data.query") cues = {"query", "select rows", "show rows"};
-        else if (name == "data.filter") cues = {"filter", "where", "only rows"};
-        else if (name == "data.transform") cues = {"transform", "derive", "new column"};
-        else if (name == "statistics.describe") cues = {"describe", "statistics", "distribution", "summary"};
-        else if (name == "statistics.outliers") cues = {"outlier", "anomaly"};
-        else if (name == "statistics.value_counts") cues = {"frequency", "value counts", "category counts"};
-        else if (name == "artifact.export") cues = {"export", "download", "save as", "csv file"};
-        int score = 0;
-        for (const auto & cue : cues) {
-            if (text.find(cue) != std::string::npos) score += cue.find(' ') == std::string::npos ? 2 : 3;
-        }
-        if (score > 0) ranked.emplace_back(score, tool);
-    }
-    std::stable_sort(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
-        return left.first > right.first;
-    });
-    std::vector<common_chat_tool> selected;
-    if (!ranked.empty()) {
-        for (const auto & item : ranked) {
-            if (selected.size() == 5) break;
-            selected.push_back(item.second);
-        }
-        return selected;
-    }
-    for (const auto & tool : route_tools) {
-        if (dataset_workflow && lowercase(tool.name).rfind("dataset.", 0) == 0) continue;
         selected.push_back(tool);
-        if (selected.size() == 5) break;
     }
     return selected;
 }
 
 } // namespace
 
-bool common_agent_plan_candidate_relevant_to_request(
-        const std::string & prompt,
-        const common_plan_state & plan) {
-    if (explicit_plan_continuation(prompt)) return true;
-    auto request_words = meaningful_words(prompt);
-    if (request_words.empty()) return false;
-
-    std::string plan_text = plan.purpose + " " + plan.goal + " " +
-        plan.selection_description + " " + plan.next_action.value_or("");
-    for (const auto & step : plan.steps) {
-        plan_text += " " + step.title + " " + step.objective + " " + step.intended_contribution;
-    }
-    const auto plan_words = meaningful_words(plan_text);
-    return std::any_of(request_words.begin(), request_words.end(), [&](const auto & word) {
-        return plan_words.count(word) != 0;
-    });
-}
-
-std::vector<common_chat_tool> common_agent_task_relevant_workflow_tools(
+std::vector<common_chat_tool> common_agent_workflow_action_candidates(
         const std::vector<common_chat_tool> & route_tools,
-        const common_agent_route_candidate & route,
-        const std::string & prompt) {
-    return task_relevant_workflow_tools_impl(route_tools, route, prompt);
+        const common_agent_route_candidate & route) {
+    return workflow_action_candidates_impl(route_tools, route);
 }
 
 common_agent_orchestration_config make_agent_orchestration_config(
@@ -313,9 +212,6 @@ bool maybe_auto_select_plan(
         if (!common_plan_scope_matches(plan, context.scope.plan_scope, context.scope.namespace_id, context.scope.session_id, context.scope.project_id, context.scope.turn_id)) {
             continue;
         }
-        if (!common_agent_plan_candidate_relevant_to_request(context.config.prompt, plan)) {
-            continue;
-        }
         candidates.push_back(plan);
     }
 
@@ -329,23 +225,31 @@ bool maybe_auto_select_plan(
         candidates.resize(8);
     }
 
-    if (candidates.empty()) {
-        fprintf(stderr, "agent plan auto-selection skipped: no active plan is relevant to the request\n");
-        error.clear();
-        return true;
-    }
-
-    const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
-    std::string selection_error;
-    const auto selection_result = select_llama_cli_plan_result(
-        context.inference, context.generation_config, selection_request, candidates, selection_error);
-    if (selection_result.plan_id) {
-        context.current_plan_id = *selection_result.plan_id;
-        fprintf(stderr, "agent plan auto-selected: %s\n", context.current_plan_id.c_str());
-    } else if (!selection_error.empty()) {
-        fprintf(stderr, "agent plan auto-selection failed safely: %s; creating a new plan\n", selection_error.c_str());
+    if (!candidates.empty()) {
+        const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+        std::string selection_error;
+        const auto selection_result = select_llama_cli_plan_result(
+            context.inference, context.generation_config, selection_request, candidates, selection_error);
+        if (selection_result.plan_id) {
+            context.current_plan_id = *selection_result.plan_id;
+            fprintf(stderr, "agent plan auto-selected: %s\n", context.current_plan_id.c_str());
+            context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+                common_runtime_trace_kind::decided, "plan selection outcome=resume", context.current_plan_id});
+        } else if (selection_result.invalid_selection) {
+            context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+                common_runtime_trace_kind::decided,
+                "plan selection outcome=invalid_fallback_new_task; prior plans left unchanged", {}});
+        } else if (!selection_error.empty()) {
+            error = "plan selection failed before a decision: " + selection_error;
+            return false;
+        } else {
+            fprintf(stderr, "agent plan auto-selection declined; creating a new plan\n");
+            context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+                common_runtime_trace_kind::decided, "plan selection outcome=new_task", {}});
+        }
     } else {
-        fprintf(stderr, "agent plan auto-selection declined; creating a new plan\n");
+        context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+            common_runtime_trace_kind::decided, "plan selection outcome=no_compatible_candidate_new_task", {}});
     }
 
     error.clear();
@@ -673,8 +577,8 @@ bool maybe_select_agent_route(
                 resolved_route_tools.push_back(tool);
             }
         }
-        const auto route_tools = common_agent_task_relevant_workflow_tools(
-            resolved_route_tools, selected_route, request.prompt);
+        const auto route_tools = common_agent_workflow_action_candidates(
+            resolved_route_tools, selected_route);
         std::vector<common_chat_tool> graph_entry_tools;
         if (selected_route.workflow_definition && !selected_route.workflow_definition->transitions.empty()) {
             for (const auto & transition : selected_route.workflow_definition->transitions) {

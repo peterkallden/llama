@@ -282,11 +282,22 @@ bool select_model_tool_families(
     const auto families = common_generate_tool_family_index(
         execution.tooling.tools, execution.tooling.family_descriptions);
     common_tool_family_selection selection;
+    bool invalid_family_selection = false;
     common_agent_generation_options family_options;
     family_options.n_threads = generation_config.n_threads;
     family_options.generation_trace = generation_config.generation_trace;
     if (!common_agent_select_tool_families(execution.inference, request, family_options,
-            families, caller_requires_tool_execution, selection, error)) return false;
+            families, caller_requires_tool_execution, selection, error,
+            &invalid_family_selection)) {
+        if (!invalid_family_selection) return false;
+        execution.model_tools = execution.tooling.tools;
+        execution.require_tool_execution = true;
+        execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+            common_runtime_trace_kind::decided,
+            "tool family selection outcome=invalid_fallback_normal_plan; using host-authorized catalog", {}});
+        error.clear();
+        return true;
+    }
     if (!selection.needs_tools) {
         if (execution.require_tool_execution) {
             error = "tool family selection declined tools for a tool-required request";
@@ -1352,8 +1363,8 @@ static bool transition_to_workflow(
             route_tools.push_back(tool);
         }
     }
-    const auto relevant_tools = common_agent_task_relevant_workflow_tools(
-        route_tools, selected, original_prompt);
+    const auto relevant_tools = common_agent_workflow_action_candidates(
+        route_tools, selected);
     std::vector<std::string> host_resolved_dataset_tools;
     if (selected.workflow_definition->family == "dataset") for (const auto & tool : relevant_tools) {
         if (tool.name == "data.query" || tool.name == "data.filter" ||

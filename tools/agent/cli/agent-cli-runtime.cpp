@@ -98,8 +98,10 @@ std::string render_planner_tool_contracts(
             schema.dump(),
             tool.result_schema.empty() ? "{}" : tool.result_schema,
             error);
-        const std::string entry = "\n- " + (compact.empty() ? tool.name : compact);
-        if (rendered.size() + entry.size() > 8192) break;
+        const std::string entry = compact.empty()
+            ? "\n- " + tool.name + " " + tool.description + " parameters=" + schema.dump() +
+                " results=" + (tool.result_schema.empty() ? "{}" : tool.result_schema)
+            : "\n- " + compact;
         rendered += entry;
     }
     return rendered;
@@ -108,11 +110,16 @@ std::string render_planner_tool_contracts(
 std::string render_planner_host_argument_bindings(
         const common_agent_request & request) {
     std::string rendered;
-    size_t count = 0;
     for (const auto & binding : request.tool_argument_bindings) {
-        if (++count > 32 || binding.tool_name.empty() || binding.arguments_json.size() > 16384) continue;
+        if (binding.tool_name.empty()) {
+            rendered += "\n- [invalid host binding: missing tool name]";
+            continue;
+        }
         const auto arguments = json::parse(binding.arguments_json, nullptr, false);
-        if (arguments.is_discarded() || !arguments.is_object()) continue;
+        if (arguments.is_discarded() || !arguments.is_object()) {
+            rendered += "\n- [invalid host binding JSON for " + binding.tool_name + "]";
+            continue;
+        }
         std::string description;
         if (binding.model_visible) {
             description = arguments.dump();
@@ -127,7 +134,6 @@ std::string render_planner_host_argument_bindings(
             description += "}";
         }
         const std::string entry = "\n- " + binding.tool_name + " fixed args: " + description;
-        if (rendered.size() + entry.size() > 4096) break;
         rendered += entry;
     }
     return rendered;

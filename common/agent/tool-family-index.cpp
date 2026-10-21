@@ -33,6 +33,8 @@ std::string family_description_for_id(const std::string & id) {
         {"document",   "Extract structured content from documents"},
         {"mcp",        "Discover and invoke MCP resources and tools"},
         {"repository", "Search and inspect repository-backed content"},
+        {"investigation", "List and open scoped investigation cases, collect source events, explore evidence graphs and timelines, analyze findings and compose reports"},
+        {"visualization", "Create and open visualizations from approved datasets and save snapshots"},
         {"math",       "Perform bounded arithmetic calculations"},
         {"memory",     "Search and manage scoped runtime memory"},
         {"openapi",    "Load a fetched OpenAPI spec and expose its permitted API operations"},
@@ -83,13 +85,13 @@ std::vector<common_tool_family_index> common_generate_tool_family_index(
 std::string common_render_tool_family_index(
         const std::vector<common_tool_family_index> & families,
         size_t max_chars) {
+    (void) max_chars;
     std::string rendered = "tool families:";
     for (const auto & family : families) {
         // Keep tool_names available for host-side family filtering, but do not
         // expose individual tools in the first routing context. Exact names
         // and contracts are rendered only after family selection.
         const std::string entry = "\n- " + family.id + ": " + family.description;
-        if (rendered.size() + entry.size() > max_chars) break;
         rendered += entry;
     }
     return rendered;
