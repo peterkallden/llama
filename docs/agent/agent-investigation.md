@@ -118,4 +118,16 @@ LLAMA_AGENT_INVESTIGATION_REAL_ENDPOINT=http://127.0.0.1:19201 \
 ```
 
 Without `LLAMA_AGENT_INVESTIGATION_REAL_ENDPOINT`, this CTest remains an
-offline contract test and does not contact a search service.
+offline contract test and does not contact a search service. To run the
+repeatable Podman smoke against both engines, build the HTTP contract target
+first, then run:
+
+```bash
+tests/smoke/agent-investigation-search-engines.sh build-agent-vulkan-cozo
+```
+
+The live smoke has been exercised against Elasticsearch 8.17.3 and OpenSearch
+2.19.2. It creates a temporary mapped index with synthetic authentication and
+network events, checks a typed filter, deterministic sort and bounded first
+page, then removes the containers. It does not yet exercise PIT continuation,
+case publication/restart or daemon-backed collection.
