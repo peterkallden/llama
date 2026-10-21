@@ -158,6 +158,18 @@ int main() {
             role_bound_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 1 &&
             rebuilt_again[0].evidence_event_ids == std::vector<std::string>({"event:2"}),
           "role-bound profiles must leave ambiguous legacy events unlinked rather than create cross-product edges");
+    auto missing_roles = value.events;
+    missing_roles[0].entity_roles = {{"unrelated_role", "host:1"}};
+    check(common_investigation_build_relations("elastic-a", value.entities, missing_roles,
+            role_bound_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 1 &&
+            rebuilt_again[0].evidence_event_ids == std::vector<std::string>({"event:2"}) && !limitations.empty(),
+          "modern events with missing declared roles must not infer new role bindings");
+    auto arbitrary_roles = role_bound_rules;
+    arbitrary_roles[0].from_role = "actor";
+    arbitrary_roles[0].to_role = "target";
+    check(common_investigation_build_relations("elastic-a", value.entities, value.events,
+            arbitrary_roles, rebuilt_again, limitations, error) && rebuilt_again.empty(),
+          "legacy migration must not invent bindings for arbitrary configured roles");
     check(common_investigation_build_relations("elastic-a", value.entities, value.events,
             relation_rules, rebuilt_again, limitations, error) &&
             rebuilt_again.size() == rebuilt.size() && rebuilt_again[0].id == rebuilt[0].id,

@@ -1335,6 +1335,40 @@ int main() {
             return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), collision_events[1].id) !=
                 relation.evidence_event_ids.end();
         }));
+    const auto & collision_gaps = investigation_store.cases.at("index-id-collision-case").gaps;
+    if (std::find(collision_gaps.begin(), collision_gaps.end(),
+            "one_or_more_events_have_no_declared_relation_profile_and_remain_unlinked_observations") == collision_gaps.end() ||
+            result.output.find("unlinked_observations") == std::string::npos) {
+        std::cerr << "unmatched profile limitations must survive relation building and publication\n";
+        return 22;
+    }
+    auto logical_case = collision_case;
+    logical_case.case_id = "logical-field-case";
+    investigation_store.seed(logical_case);
+    investigation_store.source.columns = {{"event_id", common_agent_dataset_column_type::string, false},
+        {"event_type", common_agent_dataset_column_type::string, false},
+        {"event_time", common_agent_dataset_column_type::string, false},
+        {"user_id", common_agent_dataset_column_type::string, false},
+        {"host_name", common_agent_dataset_column_type::string, false},
+        {"process_id", common_agent_dataset_column_type::string, false},
+        {"process_start_time", common_agent_dataset_column_type::string, false}};
+    investigation_store.virtual_page = R"({"columns":["event_id","event_type","event_time","user_id","host_name","process_id","process_start_time"],"rows":[["logical-doc","authentication",300,"alice","app-logical","42","start-1"]],"complete":false,"scan_truncated":true,"result_truncated":true})";
+    result = investigation_registry.execute({"investigation.collect", R"({"case_id":"logical-field-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user_id","identifier_value":"alice","limit":20})"});
+    const auto & logical_events = investigation_store.cases.at("logical-field-case").events;
+    if (!result.ok || logical_events.size() != 1 ||
+            logical_events[0].entity_roles.at("host") != "entity:logs:host:app-logical" ||
+            logical_events[0].entity_roles.at("process") != "entity:logs:process:app-logical:42@start-1" ||
+            result.output.find("source page is partial") == std::string::npos) {
+        std::cerr << "logical source mappings and partial collection limitations must reach the published case\n";
+        return 23;
+    }
+    const auto normalized_evidence = nlohmann::json::parse(investigation_resources.requests.back().text);
+    if (normalized_evidence.at("events")[0].at("entity_roles").at("host") !=
+            logical_events[0].entity_roles.at("host") ||
+            normalized_evidence.at("events")[0].at("collected_time_ms") != logical_events[0].time.collected_time_ms) {
+        std::cerr << "immutable normalization evidence must preserve endpoint roles and collection time\n";
+        return 24;
+    }
     std::filesystem::remove_all(repository);
     return 0;
 }

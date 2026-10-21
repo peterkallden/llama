@@ -490,6 +490,7 @@ bool common_investigation_build_relations(
     }
     std::map<key_type, common_investigation_relation> aggregated;
     bool missing_time = false;
+    bool missing_endpoints = false;
     for (const auto & event : events) {
         for (const auto & rule : rules) {
             if (rule.event_type != event.event_type) continue;
@@ -497,6 +498,18 @@ bool common_investigation_build_relations(
             if (!rule.from_role.empty() || !rule.to_role.empty()) {
                 const auto from_role = event.entity_roles.find(rule.from_role);
                 const auto to_role = event.entity_roles.find(rule.to_role);
+                // Only legacy authentication events have an unambiguous role migration.
+                // Missing roles in newer or other event profiles must remain missing.
+                const bool legacy_authentication = event.entity_roles.empty() &&
+                    rule.from_role == "user" && rule.to_role == "host" &&
+                    rule.from_kind == common_investigation_entity_kind::user &&
+                    rule.to_kind == common_investigation_entity_kind::host &&
+                    rule.relation_kind == common_investigation_relation_kind::authenticated_to;
+                if (!legacy_authentication &&
+                        (from_role == event.entity_roles.end() || to_role == event.entity_roles.end())) {
+                    missing_endpoints = true;
+                    continue;
+                }
                 const auto unique_kind_entity = [&](common_investigation_entity_kind kind)
                         -> const common_investigation_entity * {
                     const common_investigation_entity * match = nullptr;
@@ -512,7 +525,10 @@ bool common_investigation_build_relations(
                     ? unique_kind_entity(rule.from_kind) : by_id.at(from_role->second);
                 const auto * right = to_role == event.entity_roles.end()
                     ? unique_kind_entity(rule.to_kind) : by_id.at(to_role->second);
-                if (left == nullptr || right == nullptr) continue;
+                if (left == nullptr || right == nullptr) {
+                    missing_endpoints = true;
+                    continue;
+                }
                 if (left->kind == rule.from_kind && right->kind == rule.to_kind) {
                     from.push_back(left); to.push_back(right);
                 }
@@ -521,6 +537,7 @@ bool common_investigation_build_relations(
                 if (entity->kind == rule.from_kind) from.push_back(entity);
                 if (entity->kind == rule.to_kind) to.push_back(entity);
             }
+            if (from.empty() || to.empty()) missing_endpoints = true;
             for (const auto * left : from) for (const auto * right : to) {
                 if (left->id == right->id) continue;
                 const key_type key{source_id, rule.id, left->id, rule.relation_kind, right->id};
@@ -576,5 +593,6 @@ bool common_investigation_build_relations(
         relations.push_back(std::move(relation));
     }
     if (missing_time) limitations.push_back("one_or_more_relation_events_have_unknown_event_time");
+    if (missing_endpoints) limitations.push_back("one_or_more_relation_profiles_have_missing_or_ambiguous_endpoints");
     return true;
 }

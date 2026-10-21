@@ -541,12 +541,12 @@ common_tool_execution_result execute_investigation_tool(
             event_time.collected_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
             const std::string user_id = entity_id(common_investigation_entity_kind::user, get_alias(row, {"user.id", "user_id", "user.name"}));
-            const std::string host_value = get_alias(row, {"host.id", "host_id", "host.name", "host"});
+            const std::string host_value = get_alias(row, {"host.id", "host_id", "host.name", "host_name", "host"});
             const std::string host_id = entity_id(common_investigation_entity_kind::host, host_value);
             const std::string source_ip = entity_id(common_investigation_entity_kind::ip, get_alias(row, {"source.ip", "source_ip"}));
             const std::string destination_ip = entity_id(common_investigation_entity_kind::ip, get_alias(row, {"destination.ip", "destination_ip"}));
-            const std::string process_value = get_alias(row, {"process.entity_id", "process_entity_id", "process.pid", "process_pid"});
-            const std::string process_start = get_alias(row, {"process.start", "process_start", "process.start_time"});
+            const std::string process_value = get_alias(row, {"process.entity_id", "process_entity_id", "process.pid", "process_pid", "process_id"});
+            const std::string process_start = get_alias(row, {"process.start", "process_start", "process.start_time", "process_start_time"});
             const std::string process_identity = process_value.empty() ? std::string() :
                 process_start.empty() ? process_value + "@" + event_id : process_value + "@" + process_start;
             if (!process_value.empty() && process_start.empty()) limitations.push_back(
@@ -588,7 +588,8 @@ common_tool_execution_result execute_investigation_tool(
             normalized_rows.push_back({{"event_id", event_id}, {"source_index", source_index},
                 {"source_document_id", source_document_id}, {"event_type", event_type},
                 {"event_time_ms", event_time.event_time_ms}, {"has_event_time", event_time.has_event_time},
-                {"entity_ids", refs}});
+                {"collected_time_ms", event_time.collected_time_ms},
+                {"entity_ids", refs}, {"entity_roles", collected_events.back().entity_roles}});
         }
         json raw_page = {{"source_id", value.source_id}, {"dataset", dataset_uri},
             {"query", query}, {"result", page}, {"collected_at_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -621,7 +622,6 @@ common_tool_execution_result execute_investigation_tool(
             if (std::none_of(value.entities.begin(), value.entities.end(), [&](const auto & old) { return old.id == item.first; }))
                 value.entities.push_back(std::move(item.second));
         }
-        value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
         std::vector<common_investigation_relation_rule> rules;
         std::unordered_set<std::string> newly_collected_event_ids;
         for (const auto & event : collected_events) newly_collected_event_ids.insert(event.id);
@@ -685,9 +685,11 @@ common_tool_execution_result execute_investigation_tool(
         std::sort(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id < b.id; });
         rules.erase(std::unique(rules.begin(), rules.end(), [](const auto & a, const auto & b) { return a.id == b.id && a.event_type == b.event_type; }), rules.end());
         std::vector<common_investigation_relation> relations;
+        std::vector<std::string> relation_limitations;
         if (!common_investigation_build_relations(value.source_id, value.entities, value.events,
-                rules, relations, limitations, error)) return common_adapter_validation_failure(
+                rules, relations, relation_limitations, error)) return common_adapter_validation_failure(
             "tool.investigation.normalization_failed", std::move(error));
+        limitations.insert(limitations.end(), relation_limitations.begin(), relation_limitations.end());
         value.relations = std::move(relations);
         value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
         const uint64_t expected = value.revision++;

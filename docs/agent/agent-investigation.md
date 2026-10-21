@@ -103,6 +103,11 @@ profiles, a small built-in exact event-type profile set is used. Unknown or
 near-matching event types remain unlinked observations and add a case
 limitation.
 
+Declared endpoint roles must be present. Older authentication events without any
+role metadata can resolve `user` and `host` only when each kind has one endpoint;
+missing or ambiguous endpoints remain unlinked and add a coverage limitation.
+Normalized evidence preserves the endpoint roles and host collection time.
+
 This version performs bounded historical search. Case-page cursors paginate
 already published case contents; they do not yet provide PIT/search-after
 continuation against Elasticsearch or OpenSearch. It also does not provide
