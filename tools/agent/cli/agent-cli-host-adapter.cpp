@@ -1,3 +1,4 @@
+#include "agent/tooling/contracts/tool-budget.h"
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
 #include "../openapi/agent-openapi-catalog.h"
@@ -73,7 +74,7 @@ agent_tool_context make_agent_cli_tool_context(
     tool_context.repository_root = repository_root;
     tool_context.allow_network = !options.mcp_tool_command.empty();
     agent_tool_context_apply_policy_gated_writes(tool_context, false);
-    tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    tool_context.max_calls = common_agent_resolve_tool_round_limit(options.max_tool_rounds);
     tool_context.default_timeout_ms = options.tool_timeout_ms > 0 ? options.tool_timeout_ms : tool_context.default_timeout_ms;
     tool_context.execution_control = make_common_agent_runtime_execution_control({
         options.turn_timeout_ms,

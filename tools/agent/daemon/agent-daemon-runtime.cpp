@@ -1,3 +1,4 @@
+#include "agent/tooling/contracts/tool-budget.h"
 #include "agent-daemon-adapter.h"
 #include "../adaptation/semi-oracle-store-factory.h"
 #include "agent/adaptation/semi-oracle-tool.h"
@@ -223,9 +224,7 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     // A zero value in host/bootstrap configuration means "use the safe
     // default". Keep daemon turns consistent with the CLI/runtime policy;
     // callers can still select a smaller positive budget explicitly.
-    policy.max_tool_rounds = options.max_tool_rounds > 0
-        ? options.max_tool_rounds
-        : 16;
+    policy.max_tool_rounds = common_agent_resolve_tool_round_limit(options.max_tool_rounds);
     common_tool_profile_snapshot profile_snapshot;
     std::string profile_error;
     if (resolve_common_tool_profile_snapshot(
@@ -395,7 +394,7 @@ agent_host_tool_selection_request make_daemon_tool_request(
     }
     agent_tool_context_apply_policy_gated_writes(
         tool_request.tool_context, policy_gated_writes);
-    tool_request.tool_context.max_calls = options.max_tool_rounds > 0 ? options.max_tool_rounds : 1;
+    tool_request.tool_context.max_calls = common_agent_resolve_tool_round_limit(options.max_tool_rounds);
     tool_request.tool_context.execution_control = request.execution_control;
     tool_request.tool_context.default_timeout_ms =
         options.tool_timeout_ms > 0

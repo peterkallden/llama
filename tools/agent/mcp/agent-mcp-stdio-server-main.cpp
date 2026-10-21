@@ -1,3 +1,4 @@
+#include "agent/tooling/contracts/tool-budget.h"
 #include "agent-mcp-stdio-server.h"
 #include "agent-mcp-http-server.h"
 #include "agent-mcp-protocol.h"
@@ -562,7 +563,7 @@ agent_tool_context make_tool_context(
     context.allow_policy_gated_writes = false;
     context.allow_memory_proposals = context.allow_policy_gated_writes;
     context.allow_plan_proposals = context.allow_policy_gated_writes;
-    context.max_calls = std::max<size_t>(options.max_tool_rounds, 1);
+    context.max_calls = common_agent_resolve_tool_round_limit(options.max_tool_rounds);
     context.default_timeout_ms = options.tool_timeout_ms > 0
         ? options.tool_timeout_ms : context.default_timeout_ms;
     context.execution_control = make_common_agent_runtime_execution_control({

@@ -3,6 +3,8 @@
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "json-schema-to-grammar.h"
+#include "tools/agent/cli/agent-cli-host-adapter.h"
+#include "agent/tooling/contracts/tool-budget.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
 #include <cstdlib>
@@ -39,6 +41,32 @@ struct routing_inference final : common_agent_inference {
     }
 };
 int main() {
+    require(common_agent_resolve_tool_round_limit(0) == 16, "zero must resolve to the shared default");
+    require(common_agent_resolve_tool_round_limit(1) == 1, "explicit one-call limit changed");
+    for (const size_t budget : {size_t(0), size_t(1)}) {
+        args options;
+        options.tool_profile = "memory-read";
+        options.max_tool_rounds = budget;
+        options.memory_namespace = "budget-test";
+        options.memory_session = "session";
+        common_memory_in_memory_store store;
+        common_plan_in_memory_store plan_store;
+        common_memory_query query;
+        query.scope = common_memory_scope::session;
+        common_agent_cli_tool_selection selected;
+        std::string current_plan, error;
+        require(resolve_agent_cli_tool_selection(store, &plan_store, nullptr, &current_plan,
+            options, query, false, selected, error), "tool budget fixture resolution failed");
+        require(selected.tool_view != nullptr, "tool budget fixture has no executor");
+        agent_tool_call call;
+        call.name = "time.now";
+        call.arguments_json = "{}";
+        require(selected.tool_view->call(call, error).ok, "first authorized read failed");
+        const auto second = selected.tool_view->call(call, error);
+        require(second.ok == (budget == 0), "provider default disagrees with runtime budget");
+        if (budget == 1) require(second.failure_code == "tool_call_limit_reached", "explicit budget failed for another reason");
+    }
+
     common_tool_catalog catalog;
     common_tool_bootstrap_result bootstrap;
     std::string bootstrap_error;

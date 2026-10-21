@@ -691,3 +691,26 @@ now each receive one repair, bounded by the model plan's step limit and the
 shared turn deadline. A failed repair of the same step remains terminal;
 structural regeneration retains its single retry. This avoids discarding a
 repaired multistep candidate merely because the next step needs its own args.
+
+A subsequent live run read the virtual dataset successfully with
+`dataset.inspect`, then stopped at `dataset.schema` with
+`tool_call_limit_reached`. The host's omitted/zero `max_tool_rounds` resolved
+to 16 in runtime policy but to 1 in native/MCP provider contexts. A shared
+host budget resolver now applies the 16-round default consistently in CLI,
+daemon and stdio MCP assembly; explicit positive limits remain unchanged.
+The regression exercises two real native provider calls through CLI assembly
+for both the default and an explicit one-call budget.
+
+The preview also exposed an independent continuation problem: automatic plan
+selection can reuse a still-active plan containing a failed tool step after
+reflection abort, then report dependency scheduling failure. A fresh session
+avoids reusing that plan; this observation is not a verified continuation fix.
+
+With an explicit 16-call budget in a fresh session, the preview completed
+`dataset.inspect`, `dataset.schema`, `dataset.select` and `dataset.sample`
+against the real Elasticsearch source and delivered an answer to the web UI.
+This proves the acquisition path, not answer quality: the 128-token draft
+budget truncated the response, and the answer confused seven columns with
+seven rows although the preserved sample contained five rows. These remain
+model-facing evidence/synthesis issues. The local preview's next-start draft
+budget is 256; that setting alone is not proof of corrected factual output.

@@ -1,3 +1,4 @@
+#include "agent/tooling/contracts/tool-budget.h"
 #include "agent-runtime-execution.h"
 #include "common/agent/resource-chunk-extraction.h"
 #include "agent/context-compaction.h"
@@ -879,9 +880,7 @@ common_agent_runtime_policy make_agent_runtime_policy(common_agent_runtime_polic
     // Zero in host/bootstrap configuration means "use the safe default", not
     // "disable every tool round". A caller that wants a smaller budget can
     // still provide an explicit positive value.
-    policy.max_tool_rounds = options.max_tool_rounds > 0
-        ? options.max_tool_rounds
-        : 16;
+    policy.max_tool_rounds = common_agent_resolve_tool_round_limit(options.max_tool_rounds);
     common_tool_profile_snapshot profile_snapshot;
     std::string profile_error;
     if (resolve_common_tool_profile_snapshot(
