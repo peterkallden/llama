@@ -1628,15 +1628,16 @@ public:
         size_t planner_attempt = 0;
         bool parsed = false;
         std::optional<planner_argument_repair_target> pending_argument_repair;
-        bool argument_repair_attempted = false;
+        std::set<size_t> attempted_argument_repairs;
         const int planner_n_predict = generation_config.planner_n_predict > 0
             ? generation_config.planner_n_predict
             : std::max(generation_config.n_predict, 512);
         auto generate_plan = [&](bool regeneration) {
             if (regeneration && pending_argument_repair.has_value() &&
-                    !argument_repair_attempted) {
-                argument_repair_attempted = true;
-                const auto & target = *pending_argument_repair;
+                    !attempted_argument_repairs.count(pending_argument_repair->step_index)) {
+                const auto target = *pending_argument_repair;
+                pending_argument_repair.reset();
+                attempted_argument_repairs.insert(target.step_index);
                 std::string selected_contract;
                 for (const auto & tool : tool_definitions) {
                     if (tool.name == target.tool_name) {
@@ -1657,7 +1658,7 @@ public:
                     "Do not choose a different tool, add a plan step, or return a complete plan. "
                     "The host will validate the repaired args against the tool contract. "
                     "Use only values explicitly present in the user request or already present in "
-                    "the existing args; the host will not invent semantic values. Selected tool: " +
+                    "the existing args or the host-authorized dataset inventory; the host will not invent semantic values. Selected tool: " +
                     target.tool_name + ". " + repair_rule +
                     "Use only fields from that tool's registered model-facing schema. "
                     "Tool contract:" + selected_contract,
@@ -1665,6 +1666,8 @@ public:
                 common_chat_msg repair_user{
                     "user",
                     "[Original user request]\n" + request.prompt +
+                    common_agent_render_dataset_inventory(request.available_datasets,
+                        generation_config.context_budgets.input_resources_chars) +
                     "\n[Existing selected step]\ntool: " + target.tool_name +
                     "\nargs: " + target.base_arguments_json +
                     "\n[Host validation error]\n" + target.validation_error +
@@ -1776,7 +1779,7 @@ public:
                         request, model_candidate_operations, tool_definitions,
                         &detected_repair, parse_error, false, true);
                     if (!parsed && !detected_repair.tool_name.empty() &&
-                            !argument_repair_attempted) {
+                            !attempted_argument_repairs.count(detected_repair.step_index)) {
                         detected_repair.candidate_plan_json = model_normalized_candidate;
                         pending_argument_repair = std::move(detected_repair);
                     }
@@ -1823,7 +1826,7 @@ public:
                         request, candidate_operations, tool_definitions, &detected_repair,
                         parse_error, true, false);
                     if (!parsed && !detected_repair.tool_name.empty() &&
-                            !argument_repair_attempted) {
+                            !attempted_argument_repairs.count(detected_repair.step_index)) {
                         detected_repair.candidate_plan_json = normalized_candidate;
                         pending_argument_repair = std::move(detected_repair);
                     }
@@ -1838,16 +1841,17 @@ public:
                 }
                 return parsed;
             },
-            2,
+            model_max_steps + 1,
             [&](const size_t regeneration_index) {
-                // The first retry may repair any rejected planner object.
-                // A second retry is reserved for the staged case where that
-                // retry produced a parseable tool step with a missing required
-                // argument. Other planner failures retain the old one-retry
-                // budget, and a failed argument repair remains terminal.
+                // Retain one structural retry. A valid multistep object may
+                // need a separate bounded argument repair for each tool step.
+                // Never retry the same step twice or regenerate the whole plan
+                // after a failed targeted repair. Turn cancellation still
+                // bounds all generations together.
                 return regeneration_index == 0 ||
-                    (regeneration_index == 1 && pending_argument_repair.has_value() &&
-                        !argument_repair_attempted);
+                    (pending_argument_repair.has_value() &&
+                        attempted_argument_repairs.size() < model_max_steps &&
+                        !attempted_argument_repairs.count(pending_argument_repair->step_index));
             });
         proposal.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (parsed) {

@@ -660,6 +660,49 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     assert(inference.seen[2].messages[1].content.find("Selected tool: openalex.listWorks") != std::string::npos);
 }
 
+static void test_planner_repairs_distinct_steps_once() {
+    const std::vector<common_chat_tool> tools = {
+        {"first.read", "Read first source", R"({"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string"}}})"},
+        {"second.read", "Read second source", R"({"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string"}}})"},
+    };
+    const std::string plan = R"({"goal":"Read both sources","steps":[{"id":"first","tool":"first.read","args":{},"mode":"tool"},{"id":"second","tool":"second.read","args":{},"mode":"tool"}]})";
+    common_agent_request request = make_request();
+    request.prompt = "Read source alpha and source beta.";
+    request.require_tool_execution = true;
+    common_agent_dataset_descriptor dataset;
+    dataset.ref.name = "authorized-source";
+    dataset.ref.uri = "dataset://local/authorized-source";
+    request.available_datasets = {dataset};
+    for (const bool valid_repair : {true, false}) {
+        fake_agent_inference inference;
+        inference.queued = {make_success(plan), make_success(valid_repair
+            ? R"({"args":{"name":"alpha"}})" : R"({"args":{}})")};
+        if (valid_repair) inference.queued.push_back(make_success(R"({"args":{"name":"beta"}})"));
+        auto planner = make_llama_cli_planner(inference, make_agent_generation_config(make_test_args()), tools);
+        std::string error;
+        const auto proposal = planner->create_plan_result(request, error);
+        assert(inference.queued.empty());
+        assert(inference.seen.size() == (valid_repair ? 3 : 2));
+        if (!valid_repair) {
+            assert(error.find("first.read.name") != std::string::npos);
+            continue;
+        }
+        assert(error.empty());
+        size_t tool_count = 0;
+        for (const auto & operation : proposal.operations) {
+            if (!operation.step || !operation.step->tool_call) continue;
+            const auto & call = *operation.step->tool_call;
+            assert(call.arguments_json == (tool_count == 0
+                ? R"({"name":"alpha"})" : R"({"name":"beta"})"));
+            ++tool_count;
+        }
+        assert(tool_count == 2);
+        assert(inference.seen[1].messages[1].content.find("Selected tool: first.read") != std::string::npos);
+        assert(inference.seen[1].messages[2].content.find("authorized-source") != std::string::npos);
+        assert(inference.seen[2].messages[1].content.find("Selected tool: second.read") != std::string::npos);
+    }
+}
+
 static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
     fake_agent_inference inference;
     inference.queued = {
@@ -2742,6 +2785,8 @@ static bool run_named_test(const std::string & name) {
         test_runtime_generation_metadata();
     } else if (name == "planner-regeneration") {
         test_planner_regenerates_truncated_json();
+    } else if (name == "planner-multistep-argument-repair") {
+        test_planner_repairs_distinct_steps_once();
     } else if (name == "planner-final-only-repair") {
         test_planner_repairs_final_only_plan_without_binding_noise();
     } else if (name == "planner-missing-tool-arguments") {
@@ -2834,6 +2879,7 @@ int main(int argc, char ** argv) {
         "runtime-assembly",
         "runtime-metadata",
         "planner-regeneration",
+        "planner-multistep-argument-repair",
         "planner-final-only-repair",
         "planner-missing-tool-arguments",
         "planner-missing-tool-arguments-after-regeneration",

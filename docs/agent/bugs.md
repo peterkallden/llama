@@ -684,3 +684,10 @@ pre-turn events/trace and any partial conversation decode metadata. Previously,
 returning before the main execution loop discarded those records. A zero turn
 `total_decoded_tokens` is not proof that route/family selection performed no
 model work; use the per-generation trace for those internal phases.
+
+Targeted planner argument repairs preserve the bounded host-authorized dataset
+inventory from the original planning context. Distinct invalid tool steps may
+now each receive one repair, bounded by the model plan's step limit and the
+shared turn deadline. A failed repair of the same step remains terminal;
+structural regeneration retains its single retry. This avoids discarding a
+repaired multistep candidate merely because the next step needs its own args.
