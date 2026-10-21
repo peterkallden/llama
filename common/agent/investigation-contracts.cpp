@@ -211,13 +211,16 @@ bool common_investigation_graph_expand(
             if (!query.relation_kinds.empty() && std::find(query.relation_kinds.begin(), query.relation_kinds.end(), relation.kind) == query.relation_kinds.end()) continue;
             if (query.window_start_ms && relation.has_time && relation.last_seen_ms < query.window_start_ms) continue;
             if (query.window_end_ms && relation.has_time && relation.first_seen_ms >= query.window_end_ms) continue;
+            const auto next = relation.from_entity_id == current.first ? relation.to_entity_id : relation.from_entity_id;
+            if (!visible.count(next) && visible.size() >= query.max_nodes) {
+                result.truncated = true;
+                break;
+            }
             if (emitted_relations.insert(relation.id).second) {
                 if (result.edges.size() >= query.max_edges) { result.truncated = true; break; }
                 result.edges.push_back(relation);
             }
-            const auto next = relation.from_entity_id == current.first ? relation.to_entity_id : relation.from_entity_id;
             if (visible.insert(next).second) {
-                if (visible.size() > query.max_nodes) { visible.erase(next); result.truncated = true; break; }
                 queue.emplace_back(next, current.second + 1);
             }
         }

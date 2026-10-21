@@ -92,6 +92,12 @@ int main() {
     check(common_investigation_graph_expand(value, query, graph, error), "graph expansion must succeed");
     check(graph.nodes.size() == 2 && graph.edges.size() == 1 && graph.edges[0].id == "rel:2",
           "graph expansion must respect time filter and be bounded");
+    query.case_revision = value.revision; query.window_start_ms = 0; query.window_end_ms = 0;
+    query.max_nodes = 1;
+    check(common_investigation_graph_expand(value, query, graph, error) && graph.truncated &&
+        graph.nodes.size() == 1 && graph.edges.empty(),
+        "graph expansion must not return edges with an endpoint omitted by the node limit");
+    query.max_nodes = 100;
     query.case_revision++;
     check(!common_investigation_graph_expand(value, query, graph, error), "stale graph revision must fail closed");
 
