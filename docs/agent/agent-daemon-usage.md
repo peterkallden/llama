@@ -1123,8 +1123,14 @@ The initial web surface is intentionally small:
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET/POST /api/v1/projects` | List and create projects in the configured web namespace |
+| `GET/POST /api/v1/chats` | List chats by project and register a chat session |
+| `GET /api/v1/chats/{id}/messages` | Read persisted transcript messages for an authorized chat |
+| `POST /api/v1/chats/migrate-legacy` | Explicitly migrate a legacy browser session once |
+| `GET /api/v1/resources` | Browse bounded resources in an authorized chat or project scope |
+| `POST /api/v1/chats/{id}/resources` | Attach or detach a resource after scope validation |
 | `POST /api/v1/turns` | Forward a JSON turn request |
-| `POST /api/v1/turns/{id}/cancel` | Forward `cancel_turn` |
+| `POST /api/v1/chats/{id}/turns/{turn_id}/cancel` | Cancel a turn registered to that chat |
 | `POST /api/v1/resources` | Forward `put_resource` for text or bounded `bytes_base64` payloads |
 | `GET /api/v1/resources/download?uri=...` | Read an authenticated bounded resource download through the daemon |
 | `GET /api/v1/status` | Return the daemon status response |
@@ -1139,6 +1145,16 @@ JSONL event payload. Event IDs mirror the daemon sequence for client-side
 correlation. Replay/resume from `Last-Event-ID` is deliberately left for a
 later protocol extension; the initial adapter does not pretend to provide
 replay when a client reconnects.
+
+The Vue example keeps project/chat navigation state in daemon-backed resources
+under a reserved host-owned project in the configured `web` namespace. This is
+shared by callers authorized for that namespace and does not implement per-user
+project ACLs. Chat messages are read from persisted session-context resources;
+the adapter reports unavailable history when those resources are absent rather
+than reconstructing a transcript from a summary. After SSE reconnect, the
+client reloads the selected chat history and status without resubmitting its
+last turn. Legacy sessions created by the old `web-example` client are migrated
+through the explicit migration route; new clients do not bind to that project.
 
 Resource uploads preserve the existing daemon contract. Text files use the
 `text` field; binary files use `bytes_base64` and are decoded into the

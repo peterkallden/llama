@@ -944,6 +944,34 @@ continues to use the same tool. The exported resource carries a lineage parent
 of the dataset URI, while the dataset remains authoritative. XLSX export,
 larger streaming exports and chart artifacts are intentionally later work.
 
+### Persistent research and visualization
+
+Research identity is stable within its owning scope: project research is
+shared by chats in that project, while projectless research is session-scoped.
+Each chat has its own persisted draft based on a published revision. Turns
+resume that draft, and publication uses a Cozo compare-and-swap revision head;
+stale drafts remain available and return a conflict instead of overwriting a
+newer project revision. The `research.workspace.publish` tool is a
+confirmation-gated host operation, not a model-authored revision update.
+
+Draft payloads and published revisions are immutable resource-store objects.
+Turn-scoped source resources are retained at chat scope when a draft is saved;
+session-scoped sources are promoted to project scope when a project revision is
+published. Retention is bounded by per-resource and aggregate byte limits and
+records the original URI as lineage. Source references are checked against
+host metadata and current read authority before retention. This keeps
+published project revisions readable without granting the project access to
+the original chat-scoped resource.
+
+`visualization.research_graph` is a read-only host projection over either an
+authorized active research resource or a saved report and its exact frozen
+snapshot. It returns the shared relationship visualization contract; the Vue
+client renders the projection with the existing Cytoscape renderer. Report
+block selections use explicit block IDs and frozen evidence references. The
+host does not infer claim links from report prose, and graph proximity is not
+causal evidence. Resource hashes and report/snapshot fingerprints are checked
+before projection. Local graph navigation requires no model generation.
+
 Report export is another mode of the same host tool. Workflow
 `artifact_compose` transitions create one resumable model step per declared
 section. The host freezes a versioned snapshot before the first section and
@@ -953,7 +981,7 @@ objective, source records, evidence relations and locations, comparisons,
 gaps and source coverage. Plan observations retain resource and dataset
 references, timestamps and confidence. Later sections reuse this snapshot.
 
-New snapshots use schema v4 and a versioned SHA-256 fingerprint; v1/v2/v3
+New snapshots use schema v5 and a versioned SHA-256 fingerprint; v1/v2/v3/v4
 snapshots retain their historical fingerprint verification and identity when
 read. Snapshot creation persists a real validated Research Workspace
 checkpoint reference before freezing the snapshot; it does not manufacture a

@@ -23,10 +23,14 @@ struct common_agent_research_objective {
 };
 
 enum class common_agent_research_gap_status { open, investigating, sufficiently_answered, contradicted, blocked, abandoned };
+// Workflow progress and evidence assessment are independent dimensions. Keep
+// the legacy workflow status values stable for persisted workspace readers.
+enum class common_agent_research_gap_assessment { unknown, sufficient, insufficient, inconclusive, contradicted };
 struct common_agent_research_gap {
     std::string gap_id, question, reason, completion_criterion;
     int priority = 0;
     common_agent_research_gap_status status = common_agent_research_gap_status::open;
+    common_agent_research_gap_assessment assessment = common_agent_research_gap_assessment::unknown;
     std::vector<std::string> evidence_ids, child_gap_ids;
 };
 
@@ -92,7 +96,11 @@ struct common_agent_research_coverage {
 };
 
 struct common_agent_research_workspace {
-    std::string workspace_id, request_id, turn_id, session_id, plan_id, plan_step_id;
+    // workspace_id identifies a runtime execution. research_id is stable over
+    // project revisions; draft_id identifies this chat's isolated changes.
+    std::string workspace_id, research_id, draft_id;
+    uint64_t revision = 0, base_revision = 0;
+    std::string request_id, turn_id, session_id, plan_id, plan_step_id;
     common_agent_scope scope;
     common_agent_research_objective objective;
     common_agent_research_budget budget;
@@ -105,6 +113,29 @@ struct common_agent_research_workspace {
     int iterations_completed = 0;
     int tool_calls = 0;
     int no_progress_iterations = 0;
+};
+
+// Resource payloads hold immutable workspace JSON. The data store keeps only
+// these bounded identities and the authoritative project/session revision head.
+struct common_agent_research_revision_ref {
+    std::string research_id;
+    uint64_t revision = 0;
+    uint64_t parent_revision = 0;
+    std::string payload_uri;
+    std::string payload_fingerprint;
+    std::string publication_id;
+    int64_t published_at_ms = 0;
+};
+
+struct common_agent_research_draft_ref {
+    std::string research_id;
+    std::string draft_id;
+    std::string owner_session_id;
+    uint64_t base_revision = 0;
+    uint64_t draft_revision = 0;
+    std::string payload_uri;
+    std::string payload_fingerprint;
+    int64_t updated_at_ms = 0;
 };
 
 // A bounded snapshot of the active research workspace. This is execution
@@ -243,7 +274,12 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
         return false;
     }
     std::unordered_set<std::string> ids;
-    for (const auto & gap : workspace.gaps) if (gap.gap_id.empty() || gap.question.empty() || gap.completion_criterion.empty() || !ids.insert(gap.gap_id).second) {
+    for (const auto & gap : workspace.gaps) if (gap.gap_id.empty() || gap.question.empty() || gap.completion_criterion.empty() ||
+            static_cast<int>(gap.status) < static_cast<int>(common_agent_research_gap_status::open) ||
+            static_cast<int>(gap.status) > static_cast<int>(common_agent_research_gap_status::abandoned) ||
+            static_cast<int>(gap.assessment) < static_cast<int>(common_agent_research_gap_assessment::unknown) ||
+            static_cast<int>(gap.assessment) > static_cast<int>(common_agent_research_gap_assessment::contradicted) ||
+            !ids.insert(gap.gap_id).second) {
         error = "research workspace contains an invalid or duplicate gap"; return false;
     }
     ids.clear();

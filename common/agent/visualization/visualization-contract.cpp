@@ -47,11 +47,15 @@ bool common_agent_visualization_relationship_validate(
     for (const auto & edge : value.edges) {
         if (!bounded_text(edge.id, 256) || !bounded_text(edge.source, 256) ||
                 !bounded_text(edge.target, 256) || !bounded_text(edge.label, 512, true) ||
+                !bounded_text(edge.relation, 64, true) || edge.provenance_refs.size() > 64 ||
                 !all_ids.insert(edge.id).second || node_ids.count(edge.source) == 0 ||
                 node_ids.count(edge.target) == 0) {
             error = "visualization contains an invalid edge or a missing endpoint"; return false;
         }
         edge_ids.insert(edge.id);
+        for (const auto & ref : edge.provenance_refs) if (!bounded_text(ref, 512)) {
+            error = "visualization relation provenance reference is invalid"; return false;
+        }
     }
     if (!unique_values(value.view.selected_nodes, node_ids) ||
             !unique_values(value.view.selected_edges, edge_ids)) {
@@ -93,7 +97,8 @@ nlohmann::ordered_json common_agent_visualization_relationship_to_json(
         out["nodes"].push_back({{"id", node.id}, {"label", node.label}, {"kind", node.kind}});
     for (const auto & edge : value.edges)
         out["edges"].push_back({{"id", edge.id}, {"source", edge.source}, {"target", edge.target},
-            {"label", edge.label}, {"directed", edge.directed}});
+            {"label", edge.label}, {"directed", edge.directed}, {"relation", edge.relation},
+            {"provenance_refs", edge.provenance_refs}});
     return out;
 }
 
@@ -159,15 +164,20 @@ bool common_agent_visualization_relationship_from_json(const nlohmann::json & in
                     !item.contains("source") || !item["source"].is_string() ||
                     !item.contains("target") || !item["target"].is_string() ||
                     (item.contains("label") && !item["label"].is_string()) ||
-                    (item.contains("directed") && !item["directed"].is_boolean()))
+                    (item.contains("directed") && !item["directed"].is_boolean()) ||
+                    (item.contains("relation") && !item["relation"].is_string()) ||
+                    (item.contains("provenance_refs") && !item["provenance_refs"].is_array()))
                 throw std::domain_error("edge fields have invalid JSON types");
             for (auto it = item.begin(); it != item.end(); ++it)
                 if (it.key() != "id" && it.key() != "source" && it.key() != "target" &&
-                        it.key() != "label" && it.key() != "directed")
+                        it.key() != "label" && it.key() != "directed" && it.key() != "relation" &&
+                        it.key() != "provenance_refs")
                     throw std::domain_error("edge contains an unsupported field");
-            out.edges.push_back({item.at("id").get<std::string>(), item.at("source").get<std::string>(),
+            common_agent_visualization_edge edge{item.at("id").get<std::string>(), item.at("source").get<std::string>(),
                 item.at("target").get<std::string>(), item.value("label", std::string()),
-                item.value("directed", true)});
+                item.value("directed", true), item.value("relation", std::string{}),
+                item.value("provenance_refs", std::vector<std::string>{})};
+            out.edges.push_back(std::move(edge));
         }
         const auto view = input.value("view", json::object());
         for (auto it = view.begin(); it != view.end(); ++it)

@@ -1,9 +1,9 @@
 import { computed, reactive, ref } from "vue";
-import { AgentApi } from "./api/agent-api";
+import { AgentApi, AgentApiError, type WebChat, type WebProject } from "./api/agent-api";
 import type { AgentEvent, ChatMessage, DaemonStatus, DaemonToolStatus, PutResourceResult, TurnRequest, TurnResult, UploadedResource } from "./types/agent";
 
 const apiBase = import.meta.env.VITE_AGENT_WEB_BASE_URL || "/api/v1";
-const token = ref("");
+const token = ref(import.meta.env.VITE_AGENT_WEB_TOKEN || "");
 const api = computed(() => new AgentApi(apiBase, token.value));
 const events = ref<AgentEvent[]>([]);
 const status = ref<DaemonStatus>({ state: "unknown" });
@@ -28,8 +28,20 @@ const abortController = ref<AbortController | null>(null);
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 const sessionStorageKey = "llama-agent-web.session-id";
-const sessionId = ref(sessionStorage.getItem(sessionStorageKey) || `web-${crypto.randomUUID()}`);
+const navigationSchemaKey = "llama-agent-web.navigation-schema";
+const storedSessionId = sessionStorage.getItem(sessionStorageKey);
+let legacyMigrationPending = Boolean(storedSessionId && sessionStorage.getItem(navigationSchemaKey) !== "1");
+const sessionId = ref(storedSessionId || `web-${crypto.randomUUID()}`);
 sessionStorage.setItem(sessionStorageKey, sessionId.value);
+const projectId = ref(sessionStorage.getItem("llama-agent-web.project-id") || "");
+const chatTitle = ref(sessionStorage.getItem("llama-agent-web.chat-title") || "New chat");
+const historyAvailable = ref(true);
+const historyCursor = ref("");
+const projects = ref<WebProject[]>([]);
+const chats = ref<WebChat[]>([]);
+const chatCursor = ref("");
+const navigationLoading = ref(false);
+const runningChats = ref<Record<string, string>>({});
 export type DocumentReviewState = "queued" | "running" | "failed" | "completed";
 export type PendingDocumentReview = {
   operation_id: string;
@@ -59,6 +71,8 @@ let turnRequestController: AbortController | null = null;
 let turnRequestFailure = "";
 let sessionEpoch = 0;
 let disposed = false;
+let navigationGeneration = 0;
+let chatOpenGeneration = 0;
 
 function reviewQueueKey(id = sessionId.value) { return `llama-agent-web.document-reviews:${id}`; }
 function restoreDocumentReviews(): PendingDocumentReview[] {
@@ -69,7 +83,11 @@ function restoreDocumentReviews(): PendingDocumentReview[] {
       typeof item.operation_id === "string" && typeof item.turn_id === "string" && item.session_id === sessionId.value &&
       typeof item.prompt === "string" && item.document_context && typeof item.document_context.document_uri === "string" &&
       Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))
-      .map((item) => ({ ...item, state: item.state === "completed" || item.state === "failed" ? item.state : "queued" }));
+      .map((item) => item.state === "completed" || item.state === "failed"
+        ? item
+        : item.state === "running"
+          ? { ...item, state: "failed" as const, error: "This review may have reached the daemon. Check the chat history before retrying." }
+          : { ...item, state: "queued" as const });
   } catch { return []; }
 }
 function persistDocumentReviews(): boolean {
@@ -89,7 +107,11 @@ function restoreAttachmentOrientations(): PendingAttachmentOrientation[] {
     return stored.filter((item): item is PendingAttachmentOrientation => item && typeof item === "object" &&
       typeof item.operation_id === "string" && typeof item.turn_id === "string" && item.session_id === sessionId.value &&
       typeof item.resource_uri === "string" && typeof item.name === "string")
-      .map((item) => ({ ...item, state: item.state === "completed" || item.state === "failed" ? item.state : "queued" }));
+      .map((item) => item.state === "completed" || item.state === "failed"
+        ? item
+        : item.state === "running"
+          ? { ...item, state: "failed" as const, error: "This orientation may have reached the daemon. Check the chat history before retrying." }
+          : { ...item, state: "queued" as const });
   } catch { return []; }
 }
 function persistAttachmentOrientations() {
@@ -128,7 +150,11 @@ function restorePendingUserTurns(): PendingUserTurn[] {
       (!item.investigation_context || (typeof item.investigation_context.case_id === "string" &&
         Number.isSafeInteger(item.investigation_context.revision) && Array.isArray(item.investigation_context.entity_ids) &&
         Array.isArray(item.investigation_context.relation_ids) && Array.isArray(item.investigation_context.event_ids))))
-      .map((item) => ({ ...item, state: item.state === "failed" ? "failed" as const : "queued" as const }));
+      .map((item) => item.state === "failed"
+        ? item
+        : item.state === "running"
+          ? { ...item, state: "failed" as const, error: "This message may have reached the daemon. Check the chat history before retrying." }
+          : { ...item, state: "queued" as const });
   } catch { return []; }
 }
 function persistPendingUserTurns(): boolean {
@@ -167,9 +193,18 @@ function observe(event: AgentEvent) {
   // Daemon events do not consistently carry a presentation timestamp. Keep
   // the server payload intact while recording when the browser received it.
   events.value.unshift({ ...event, client_received_at: Date.now() });
-  if (event.session_id && event.session_id !== sessionId.value) return;
   const kind = eventType(event);
   const turnId = String(event.turn_id ?? activeTurnId.value);
+  const eventSession = String(event.session_id ?? sessionId.value);
+  if (kind === "turn.started" || kind === "turn.queued") runningChats.value[eventSession] = turnId;
+  if (kind === "turn.completed" || kind === "turn.failed" || kind === "turn.cancelled") {
+    if (runningChats.value[eventSession] === turnId) {
+      const next = { ...runningChats.value };
+      delete next[eventSession];
+      runningChats.value = next;
+    }
+  }
+  if (eventSession !== sessionId.value) return;
   if (event.turn_id && turnId !== activeTurnId.value && kind.startsWith("turn.")) return;
   const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
   if (kind === "response.delta" && assistant) assistant.content += String(event.text ?? event.response ?? "");
@@ -188,11 +223,65 @@ function observe(event: AgentEvent) {
   } else if (kind.startsWith("turn.")) busy.value = true;
 }
 
+function finishTrackedTurn(chatId: string, turnId: string) {
+  if (runningChats.value[chatId] !== turnId) return;
+  const next = { ...runningChats.value };
+  delete next[chatId];
+  runningChats.value = next;
+}
+
 async function refreshStatus() {
   const requestApi = api.value;
   const requestEpoch = sessionEpoch;
   const result = await requestApi.status();
   if (!disposed && requestApi === api.value && requestEpoch === sessionEpoch) status.value = result;
+}
+
+async function refreshCurrentHistory() {
+  const requestSession = sessionId.value;
+  const requestProject = projectId.value;
+  const requestEpoch = sessionEpoch;
+  const history = await api.value.chatMessages(requestSession, requestProject);
+  if (disposed || requestEpoch !== sessionEpoch || requestSession !== sessionId.value || requestProject !== projectId.value) return;
+  chatTitle.value = history.chat.title;
+  historyAvailable.value = history.history_available;
+  const currentById = new Map(messages.value.map((message) => [message.id, message]));
+  const restored = new Map(messages.value.filter((message) => !message.pending).map((message) => [message.id, message]));
+  for (const item of history.messages) {
+    const current = currentById.get(item.id);
+    restored.set(item.id, current?.pending ? current : {
+      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence,
+    });
+  }
+  for (const item of messages.value) if (item.pending) restored.set(item.id, item);
+  messages.value = [...restored.values()].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
+  if (!historyCursor.value) historyCursor.value = history.next_cursor ?? "";
+  sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+}
+
+async function loadOlderMessages() {
+  const cursor = historyCursor.value;
+  if (!cursor || navigationLoading.value) return;
+  const requestSession = sessionId.value;
+  const requestProject = projectId.value;
+  const requestEpoch = sessionEpoch;
+  navigationLoading.value = true;
+  try {
+    const page = await api.value.chatMessages(requestSession, requestProject, cursor);
+    if (disposed || requestEpoch !== sessionEpoch || requestSession !== sessionId.value || requestProject !== projectId.value) return;
+    const known = new Map(messages.value.map((message) => [message.id, message]));
+    for (const item of page.messages) if (!known.has(item.id)) known.set(item.id, {
+      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence,
+    });
+    messages.value = [...known.values()].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
+    historyCursor.value = page.next_cursor ?? "";
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/stale/i.test(message)) {
+      historyCursor.value = "";
+      await refreshCurrentHistory();
+    } else throw cause;
+  } finally { if (requestEpoch === sessionEpoch) navigationLoading.value = false; }
 }
 
 async function callReadOnlyTool(toolName: string, args: Record<string, unknown>) {
@@ -204,16 +293,16 @@ async function callReadOnlyTool(toolName: string, args: Record<string, unknown>)
     arguments: args,
     namespace_id: "web",
     session_id: sessionId.value,
-    project_id: "web-example",
+    project_id: projectId.value,
   });
 }
 
 async function readMcpAppResource(appToolName: string, uri: string) {
-  return api.value.readMcpAppResource({ tool_name: appToolName, resource_uri: uri, session_id: sessionId.value });
+  return api.value.readMcpAppResource({ tool_name: appToolName, resource_uri: uri, session_id: sessionId.value, project_id: projectId.value });
 }
 
 async function callMcpAppTool(appToolName: string, toolName: string, args: Record<string, unknown>) {
-  return api.value.callMcpAppTool({ app_tool_name: appToolName, tool_name: toolName, arguments: args, session_id: sessionId.value });
+  return api.value.callMcpAppTool({ app_tool_name: appToolName, tool_name: toolName, arguments: args, session_id: sessionId.value, project_id: projectId.value });
 }
 
 async function importDocument(sourceUri: string) {
@@ -225,11 +314,12 @@ async function importDocument(sourceUri: string) {
 
 async function readResourceBlob(uri: string): Promise<Blob> {
   const requestSession = sessionId.value;
+  const requestProject = projectId.value;
   const requestEpoch = sessionEpoch;
   const blob = await api.value.downloadResource(uri, {
-    namespace_id: "web", project_id: "web-example", session_id: requestSession,
+    namespace_id: "web", project_id: requestProject, session_id: requestSession,
   });
-  if (requestEpoch !== sessionEpoch || requestSession !== sessionId.value) throw new Error("The document session changed.");
+  if (requestEpoch !== sessionEpoch || requestSession !== sessionId.value || requestProject !== projectId.value) throw new Error("The document session changed.");
   return blob;
 }
 
@@ -257,6 +347,8 @@ async function connect() {
       connectionState.value = "connected";
       void refreshStatus().then(() => { if (current()) void drainDocumentReviews(); })
         .catch((cause) => { if (current()) connectionError.value = cause instanceof Error ? cause.message : String(cause); });
+      void refreshNavigation(projectId.value).catch((cause) => { if (current()) connectionError.value = cause instanceof Error ? cause.message : String(cause); });
+      void refreshCurrentHistory().catch(() => { /* A chat created during initial connection is loaded by ensureActiveChat. */ });
     });
   } catch (cause) {
     if (current()) {
@@ -329,6 +421,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   error.value = ""; busy.value = true; turnRequestInFlight = true;
   turnRequestController = new AbortController(); turnRequestFailure = "";
   activeTurnId.value = turnId;
+  runningChats.value = { ...runningChats.value, [sessionId.value]: turnId };
   if (!messages.value.some((message) => message.id === `${turnId}-user`)) {
     messages.value.push({ id: `${turnId}-user`, turnId, role: "user", content: visiblePrompt });
     messages.value.push({ id: `${turnId}-assistant`, turnId, role: "assistant", content: "", pending: true });
@@ -337,7 +430,7 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     if (assistant) { assistant.content = ""; assistant.pending = true; }
   }
   const turn: TurnRequest = {
-    prompt, session_id: sessionId.value, namespace_id: "web", project_id: "web-example",
+    prompt, session_id: sessionId.value, namespace_id: "web", project_id: projectId.value,
     turn_id: turnId, mode: "agent", n_predict: 0, include_summary: true,
     ...(turnResourceRefs.length ? { resource_refs: [...new Set(turnResourceRefs)] } : {}),
     ...(documentContext ? { document_context: documentContext } : {}),
@@ -348,7 +441,17 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
   };
   try {
     const result = await api.value.submitTurn(turn, turnRequestController.signal) as TurnResult;
-    if (requestEpoch !== sessionEpoch || requestSessionId !== sessionId.value) return false;
+    finishTrackedTurn(requestSessionId, turnId);
+    if (requestEpoch !== sessionEpoch || requestSessionId !== sessionId.value) {
+      if (requestSessionId === sessionId.value) {
+        busy.value = false;
+        activeTurnId.value = "";
+        void refreshCurrentHistory().catch((cause) => {
+          if (requestSessionId === sessionId.value) error.value = String(cause);
+        });
+      }
+      return false;
+    }
     // Recover command-owned events when SSE was disconnected or overflowed.
     // A repeated streamed event must not create another report card or effect.
     if (Array.isArray(result.events)) for (const value of result.events) {
@@ -510,25 +613,26 @@ function dismissPendingUserTurn(turnId: string) {
 
 async function cancel() {
   if (!activeTurnId.value) return;
-  try { await api.value.cancelTurn(activeTurnId.value); } catch (cause) { error.value = String(cause); }
+  try { await api.value.cancelTurn(activeTurnId.value, sessionId.value, projectId.value); } catch (cause) { error.value = String(cause); }
 }
 
 async function upload(file: File) {
   const uploadEpoch = sessionEpoch;
   const uploadSessionId = sessionId.value;
+  const uploadProjectId = projectId.value;
   try {
     const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|txt|xml|html?)$/i.test(file.name);
     const resource: UploadedResource = {
       name: file.name, mime_type: file.type || (isText ? "text/plain" : "application/octet-stream"), scope: "session",
       description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
-      namespace_id: "web", project_id: "web-example",
+      namespace_id: "web", project_id: uploadProjectId,
       ...(isText
         ? { text: await file.text() }
         : { bytes_base64: base64Encode(new Uint8Array(await file.arrayBuffer())) }),
     };
-    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value) return;
+    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value || uploadProjectId !== projectId.value) return;
     const result = await api.value.putResource(resource) as PutResourceResult;
-    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value) return;
+    if (disposed || uploadEpoch !== sessionEpoch || uploadSessionId !== sessionId.value || uploadProjectId !== projectId.value) return;
     const uri = result.resource?.uri;
     if (!uri) throw new Error("The daemon returned no resource URI for the attachment");
     // The resource store owns the content after upload. Keep only attachment
@@ -612,10 +716,23 @@ function toggleRecording() {
   else void startRecording();
 }
 
-function removeAttachment(index: number) {
+async function removeAttachment(index: number) {
   const removed = attachments.value[index];
-  attachments.value.splice(index, 1);
-  resourceRefs.value.splice(index, 1);
+  if (!removed) return;
+  const epoch = sessionEpoch;
+  const requestSession = sessionId.value;
+  if (removed.uri) {
+    try { await api.value.setChatResource({ sessionId: requestSession, projectId: projectId.value, uri: removed.uri, scope: "session", action: "detach" }); }
+    catch (cause) {
+      if (epoch === sessionEpoch) error.value = cause instanceof Error ? cause.message : String(cause);
+      return;
+    }
+  }
+  if (epoch !== sessionEpoch || requestSession !== sessionId.value) return;
+  const currentIndex = attachments.value.indexOf(removed);
+  if (currentIndex < 0) return;
+  attachments.value.splice(currentIndex, 1);
+  resourceRefs.value = resourceRefs.value.filter((uri) => uri !== removed.uri);
   if (removed?.uri) selectedResourceRefs.value = selectedResourceRefs.value.filter((uri) => uri !== removed.uri);
   if (removed?.uri) {
     const previousLength = attachmentOrientations.value.length;
@@ -637,8 +754,8 @@ async function downloadArtifact(event: AgentEvent) {
   }
   try {
     const blob = await api.value.downloadResource(uri, {
-      namespace_id: String(event.namespace_id ?? ""),
-      project_id: String(event.project_id ?? ""),
+      namespace_id: String(event.namespace_id ?? "web"),
+      project_id: String(event.project_id ?? projectId.value),
       session_id: String(event.session_id ?? sessionId.value),
       turn_id: String(event.turn_id ?? ""),
     });
@@ -653,32 +770,189 @@ async function downloadArtifact(event: AgentEvent) {
   }
 }
 
-function newSession() {
-  sessionEpoch++;
-  drainingDocumentReviews = false;
-  turnRequestController?.abort();
-  turnRequestController = null;
-  turnRequestInFlight = false;
-  if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
-  attachmentOrientationTimer = undefined;
-  sessionId.value = `web-${crypto.randomUUID()}`;
-  sessionStorage.setItem(sessionStorageKey, sessionId.value);
-  messages.value = [];
-  events.value = [];
-  attachments.value = [];
-  resourceRefs.value = [];
-  selectedResourceRefs.value = [];
-  if (recording.value) stopRecording();
-  activeTurnId.value = "";
-  busy.value = false;
-  error.value = "";
+async function refreshNavigation(forProject = projectId.value) {
+  const request = ++navigationGeneration;
+  navigationLoading.value = true;
+  try {
+    const [projectResult, chatResult] = await Promise.all([
+      api.value.projects(), api.value.chats(forProject),
+    ]);
+    if (request !== navigationGeneration) return;
+    projects.value = projectResult.projects;
+    chats.value = chatResult.chats;
+    chatCursor.value = chatResult.next_cursor || "";
+    for (const chat of chatResult.chats) {
+      if (chat.active_turn_id) runningChats.value[chat.id] = chat.active_turn_id;
+      else if (runningChats.value[chat.id]) {
+        const next = { ...runningChats.value };
+        delete next[chat.id];
+        runningChats.value = next;
+      }
+    }
+  } finally { if (request === navigationGeneration) navigationLoading.value = false; }
+}
+
+async function loadMoreChats(forProject = projectId.value) {
+  const cursor = chatCursor.value;
+  if (!cursor || navigationLoading.value) return;
+  const request = ++navigationGeneration;
+  navigationLoading.value = true;
+  try {
+    const result = await api.value.chats(forProject, cursor);
+    if (request !== navigationGeneration) return;
+    const known = new Set(chats.value.map((chat) => chat.id));
+    chats.value = [...chats.value, ...result.chats.filter((chat) => !known.has(chat.id))];
+    chatCursor.value = result.next_cursor || "";
+  } finally { if (request === navigationGeneration) navigationLoading.value = false; }
+}
+
+async function createProject(name: string) {
+  const result = await api.value.createProject(name);
+  projects.value = [result.project, ...projects.value];
+  return result.project;
+}
+
+function restoreActiveQueues() {
   documentReviews.value = restoreDocumentReviews();
   attachmentOrientations.value = restoreAttachmentOrientations();
   pendingUserTurns.value = restorePendingUserTurns();
 }
 
+async function activateChat(chat: WebChat) {
+  const request = ++chatOpenGeneration;
+  navigationLoading.value = true;
+  try {
+    const history = await api.value.chatMessages(chat.id, chat.project_id);
+    if (request !== chatOpenGeneration || disposed) return;
+    ++sessionEpoch;
+    drainingDocumentReviews = false;
+    turnRequestController = null;
+    turnRequestInFlight = false;
+    if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
+    attachmentOrientationTimer = undefined;
+    if (recording.value) stopRecording();
+    sessionId.value = chat.id;
+    projectId.value = chat.project_id;
+    chatTitle.value = history.chat.title || chat.title;
+    historyAvailable.value = history.history_available;
+    sessionStorage.setItem(sessionStorageKey, sessionId.value);
+    sessionStorage.setItem(navigationSchemaKey, "1");
+    sessionStorage.setItem("llama-agent-web.project-id", projectId.value);
+    sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence }));
+    historyCursor.value = history.next_cursor ?? "";
+    events.value = [];
+    attachments.value = [];
+    resourceRefs.value = [];
+    selectedResourceRefs.value = [];
+    activeTurnId.value = runningChats.value[chat.id] || chat.active_turn_id || "";
+    busy.value = Boolean(activeTurnId.value);
+    error.value = "";
+    restoreActiveQueues();
+    attachments.value = (history.chat.attachments ?? []).map((item) => ({
+      name: item.name, mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
+      session_id: chat.id, namespace_id: "web", project_id: chat.project_id, uri: item.uri,
+    }));
+    resourceRefs.value = attachments.value.map((item) => item.uri ?? "").filter(Boolean);
+  } finally { if (request === chatOpenGeneration) navigationLoading.value = false; }
+}
+
+async function newSession(forProject = projectId.value) {
+  const request = ++chatOpenGeneration;
+  const nextSessionId = `web-${crypto.randomUUID()}`;
+  const priorEpoch = sessionEpoch;
+  error.value = "";
+  try {
+    await api.value.createChat(nextSessionId, forProject);
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+    return;
+  }
+  if (priorEpoch !== sessionEpoch || request !== chatOpenGeneration) return;
+  sessionEpoch++;
+  drainingDocumentReviews = false;
+  // A session switch detaches the browser view; it does not cancel an accepted daemon turn.
+  turnRequestController = null;
+  turnRequestInFlight = false;
+  if (attachmentOrientationTimer !== undefined) globalThis.clearTimeout(attachmentOrientationTimer);
+  attachmentOrientationTimer = undefined;
+  projectId.value = forProject;
+  chatTitle.value = "New chat";
+  sessionStorage.setItem("llama-agent-web.project-id", projectId.value);
+  sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+  sessionId.value = nextSessionId;
+  sessionStorage.setItem(sessionStorageKey, sessionId.value);
+  legacyMigrationPending = false;
+  sessionStorage.setItem(navigationSchemaKey, "1");
+  messages.value = [];
+  historyCursor.value = "";
+  historyAvailable.value = true;
+  events.value = [];
+  attachments.value = [];
+  resourceRefs.value = [];
+  selectedResourceRefs.value = [];
+  if (recording.value) stopRecording();
+  recording.value = false;
+  activeTurnId.value = "";
+  busy.value = false;
+  error.value = "";
+  restoreActiveQueues();
+  await refreshNavigation(forProject);
+}
+
+async function ensureActiveChat() {
+  try {
+    const history = await api.value.chatMessages(sessionId.value, projectId.value);
+    chatTitle.value = history.chat.title;
+    historyAvailable.value = history.history_available;
+    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence }));
+    historyCursor.value = history.next_cursor ?? "";
+    attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
+      mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
+      session_id: sessionId.value, namespace_id: "web", project_id: projectId.value, uri: item.uri }));
+    resourceRefs.value = attachments.value.map((item) => item.uri ?? "").filter(Boolean);
+    sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+    legacyMigrationPending = false;
+    sessionStorage.setItem(navigationSchemaKey, "1");
+  } catch (cause) {
+    if (!(cause instanceof AgentApiError) || cause.status !== 404) throw cause;
+    if (legacyMigrationPending) {
+      const migrated = await api.value.migrateLegacyChat(sessionId.value);
+      projectId.value = migrated.chat.project_id;
+      const history = await api.value.chatMessages(sessionId.value, projectId.value);
+      chatTitle.value = history.chat.title;
+      historyAvailable.value = history.history_available;
+      messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence }));
+      historyCursor.value = history.next_cursor ?? "";
+      attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
+        mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
+        session_id: sessionId.value, namespace_id: "web", project_id: projectId.value, uri: item.uri }));
+      resourceRefs.value = attachments.value.map((item) => item.uri ?? "").filter(Boolean);
+      sessionStorage.setItem("llama-agent-web.project-id", projectId.value);
+      sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+      sessionStorage.setItem(navigationSchemaKey, "1");
+      legacyMigrationPending = false;
+    } else {
+      const result = await api.value.createChat(sessionId.value, projectId.value, chatTitle.value);
+      chatTitle.value = result.chat.title;
+      sessionStorage.setItem(navigationSchemaKey, "1");
+    }
+  }
+}
+
+async function listResources(input: { scope: "project" | "session"; query?: string; mimeType?: string; cursor?: string; limit?: number }) {
+  return api.value.resources({ ...input, projectId: projectId.value, ...(input.scope === "session" ? { sessionId: sessionId.value } : {}) });
+}
+
+async function cancelChat(chatId: string) {
+  const turnId = runningChats.value[chatId];
+  if (!turnId) return;
+  try { await api.value.cancelTurn(turnId, chatId, chats.value.find((chat) => chat.id === chatId)?.project_id ?? ""); }
+  catch (cause) { if (chatId === sessionId.value) error.value = cause instanceof Error ? cause.message : String(cause); }
+}
+
 export function useAgentSession() {
-  return reactive({ apiBase, token, sessionId, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, resourceRefs, selectedResourceRefs, activeTurnId, recording, documentReviews, attachmentOrientations, pendingUserTurns, refreshStatus, connect, submit, submitReview, retryDocumentReview, retryPendingUserTurn, dismissPendingUserTurn, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, readJsonResource, readResourceBlob, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
+  return reactive({ apiBase, token, sessionId, projectId, chatTitle, historyAvailable, historyCursor, projects, chats, chatCursor, navigationLoading, runningChats, messages, events, status, capabilities, tools, connected, connectionState, connectionError, busy, error, attachments, resourceRefs, selectedResourceRefs, activeTurnId, recording, documentReviews, attachmentOrientations, pendingUserTurns, refreshStatus, refreshCurrentHistory, loadOlderMessages, refreshNavigation, loadMoreChats, createProject, activateChat, ensureActiveChat, listResources, cancelChat, connect, submit, submitReview, retryDocumentReview, retryPendingUserTurn, dismissPendingUserTurn, callReadOnlyTool, readMcpAppResource, callMcpAppTool, importDocument, readJsonResource, readResourceBlob, cancel, upload, removeAttachment, downloadArtifact, newSession, eventType, toggleRecording });
 }
 
 // Replacing this module during Vite development must release its long-lived

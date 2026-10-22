@@ -393,6 +393,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-chat-routing.cpp
         test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
+        test-agent-resource-retention.cpp
         test-agent-loop.cpp
         test-agent-tool-failure.cpp
         test-agent-tool-rounds.cpp
@@ -545,7 +546,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|agent-resource-retention|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()
@@ -581,6 +582,10 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-resource-chunker")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-resource-retention")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
+            set_property(TEST ${TEST_NAME} PROPERTY LABELS "agent;resources;model-free")
         endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-oracles")
             target_include_directories(${TEST_NAME} PRIVATE

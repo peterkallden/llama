@@ -6,8 +6,13 @@ resources, policy and capabilities.
 
 The client uses:
 
+- `GET/POST /api/v1/projects` for project navigation;
+- `GET/POST /api/v1/chats` and `GET /api/v1/chats/{id}/messages` for chat navigation and persisted transcript history;
+- `POST /api/v1/chats/migrate-legacy` for one-time import of an existing browser session;
+- `GET /api/v1/resources` for a bounded, scope-filtered resource browser;
+- `POST /api/v1/chats/{id}/resources` to attach or detach a resource from a chat;
 - `POST /api/v1/turns` for questions;
-- `POST /api/v1/turns/{id}/cancel` for cancellation;
+- `POST /api/v1/chats/{id}/turns/{turn_id}/cancel` for chat-bound cancellation;
 - `POST /api/v1/resources` for text and binary attachments;
 - `GET /api/v1/resources/download?uri=...` for authenticated artifact downloads;
 - `GET /api/v1/status` for status;
@@ -120,10 +125,26 @@ llama-agent-daemon  --TCP-->  llama-agent-web  --HTTP/SSE-->  Nginx/browser
 Nginx and the web adapter must not take over sessions, planning, tool
 selection, MCP, resource policy or capability decisions from the daemon.
 
-The client is intentionally an example and does not yet provide production
-features such as login, event replay or full routing. Artifact downloads are
-supported through the authenticated daemon endpoint, but deployment-specific
-authorization and retention remain outside this example.
+The client is intentionally an example and does not provide production login
+or SSE event replay. Project and chat navigation metadata is stored through the
+daemon resource API under a reserved host-owned project in the configured
+`web` namespace. A project is available to callers authorized for that
+namespace; this metadata is not a user directory or a per-user ACL system.
+Transcript messages are rebuilt from the daemon's persisted session-context
+resources. If older context was not retained, the history endpoint reports that
+history is unavailable instead of reconstructing it from a model summary.
+Chat and transcript listings are paginated; transcript pages are ordered by
+stored sequence and the UI loads older pages on demand. The adapter uses the
+daemon's session snapshot to report active turns and supplements it with turns
+currently being forwarded by this adapter. The client refreshes the selected
+chat's authoritative history after reconnect; it does not resend the turn. Accepted work remains daemon-owned when the browser
+changes chats, while a browser reload marks uncertain in-flight local queue
+items for review instead of replaying them automatically.
+
+Existing browser sessions that used the former `web-example` project are
+imported once through the explicit migration endpoint. New clients do not use
+that project identifier. Resource and transcript reads continue through the
+daemon's scope checks; navigation metadata does not grant access to resources.
 
 ## Data and MCP Apps
 
@@ -133,6 +154,16 @@ runtime events. Direct data calls go through `POST /api/v1/tools/call`; the web
 adapter asks the daemon to resolve and execute the selected tool and forces
 read-only policy. Tool input/output schemas and MCP UI metadata are carried in
 `/api/v1/status`.
+
+The Chat menu lists recent chats or chats in a selected project, starts new
+chats, and creates projects. The Resources workspace browses chat/project
+resources, registered datasets, available MCP App workspaces and saved
+investigation cases through existing host operations. The browser passes only
+the selected context; each resource or tool operation is independently
+authorized by the adapter and daemon. Resources can be previewed, opened in
+Data Explorer, or selected as chat references. Large resources remain bounded
+and should be inspected through Data Explorer rather than loaded into the
+navigation list.
 
 Both Data Explorer views (the web panel and the sandboxed MCP App) accept exactly
 one source: a dataset reference, an authorized resource reference, or a path

@@ -1,4 +1,5 @@
 #include "agent/artifact/artifact-contract.h"
+#include "agent/artifact/research-view-projection.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -39,7 +40,7 @@ int main() {
     common_agent_artifact_snapshot snapshot;
     assert(common_agent_artifact_snapshot_from_plan(plan, profile, snapshot, error));
     assert(snapshot.plan_version == 7 && snapshot.observations.size() == 1);
-    assert(snapshot.schema_version==4&&snapshot.fingerprint.rfind("sha256:",0)==0);
+    assert(snapshot.schema_version==5&&snapshot.fingerprint.rfind("sha256:",0)==0);
     std::string serialized;
     assert(common_agent_artifact_snapshot_to_json(snapshot, serialized, error));
     const std::string original_snapshot_json=serialized;
@@ -103,6 +104,30 @@ int main() {
     assert(research_restored.research_evidence.front().source_location == "Results, paragraph 2");
     assert(research_restored.research_sources.front().resource_ref->metadata.source_request_json==
         research.sources.front().resource_ref->metadata.source_request_json);
+    assert(research_restored.schema_version == 5 && research_restored.research_objective_record.question == research.objective.question);
+    common_agent_artifact_document graph_document;
+    graph_document.id = "report:research-1";
+    graph_document.title = "Research report";
+    graph_document.revision = 3;
+    graph_document.snapshot_fingerprint = research_snapshot.fingerprint;
+    common_agent_artifact_block graph_block;
+    graph_block.id = "findings:block-1";
+    graph_block.text = "The article reports a measured result.";
+    graph_block.claim_id = "claim-1";
+    graph_block.evidence_ids = {"evidence-1"};
+    graph_document.sections.push_back({"findings", "Findings", false, {graph_block}, {}});
+    common_agent_visualization_relationship frozen_graph;
+    assert(common_agent_research_report_evidence_graph(graph_document, research_snapshot,
+        {"findings:block-1"}, frozen_graph, error));
+    assert(frozen_graph.data_revision.size() <= 64 && frozen_graph.data_revision.find("report:") == 0);
+    assert(std::any_of(frozen_graph.edges.begin(), frozen_graph.edges.end(), [](const auto & edge) {
+        return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-1"};
+    }));
+    common_agent_visualization_relationship active_graph;
+    assert(common_agent_research_workspace_evidence_graph(research, active_graph, error));
+    assert(std::any_of(active_graph.nodes.begin(), active_graph.nodes.end(), [](const auto & node) {
+        return node.kind == "evidence" && node.id.find("evidence:") == 0;
+    }));
     auto provenance_tampered=json::parse(serialized);
     provenance_tampered["research_sources"][0]["resource_ref"]["source_request_json"]="{}";
     assert(!common_agent_artifact_snapshot_from_json(provenance_tampered.dump(),research_restored,error));

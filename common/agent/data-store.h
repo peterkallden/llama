@@ -2,6 +2,7 @@
 
 #include "agent/dataset-contracts.h"
 #include "agent/investigation-contracts.h"
+#include "agent/thinking/research/research-contract.h"
 
 #include <string>
 #include <utility>
@@ -181,6 +182,24 @@ public:
     }
     virtual bool list_investigation_reports(const common_agent_scope &, const std::string &,
             uint64_t, std::vector<common_investigation_report_index_entry> &, std::string &) {
+        return false;
+    }
+    virtual bool get_research_revision(const std::string &, uint64_t,
+            const common_agent_scope &, common_agent_research_revision_ref &, std::string &) {
+        return false;
+    }
+    virtual bool publish_research_revision(const common_agent_scope &,
+            const common_agent_research_revision_ref &, uint64_t,
+            common_agent_research_revision_ref &, bool &, std::string &) {
+        return false;
+    }
+    virtual bool get_research_draft(const std::string &, const common_agent_scope &,
+            common_agent_research_draft_ref &, std::string &) {
+        return false;
+    }
+    virtual bool save_research_draft(const common_agent_scope &,
+            const common_agent_research_draft_ref &, uint64_t,
+            common_agent_research_draft_ref &, bool &, std::string &) {
         return false;
     }
     virtual bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) { return false; }

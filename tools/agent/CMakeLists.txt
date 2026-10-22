@@ -945,6 +945,9 @@ endif()
 if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
     set(AGENT_PACKAGE_LIBRARY_TARGETS
         llama-agent-dataset-contracts
+        llama-agent-artifact
+        llama-agent-visualization-contracts
+        llama-agent-research-contracts
         llama-agent-memory
         llama-agent-plan
         llama-agent-tooling

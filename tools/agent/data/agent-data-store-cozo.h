@@ -42,6 +42,14 @@ public:
             common_investigation_report_index_entry &, std::string &) override;
     bool list_investigation_reports(const common_agent_scope &, const std::string &,
             uint64_t, std::vector<common_investigation_report_index_entry> &, std::string &) override;
+    bool get_research_revision(const std::string &, uint64_t, const common_agent_scope &,
+            common_agent_research_revision_ref &, std::string &) override;
+    bool publish_research_revision(const common_agent_scope &, const common_agent_research_revision_ref &,
+            uint64_t, common_agent_research_revision_ref &, bool &, std::string &) override;
+    bool get_research_draft(const std::string &, const common_agent_scope &,
+            common_agent_research_draft_ref &, std::string &) override;
+    bool save_research_draft(const common_agent_scope &, const common_agent_research_draft_ref &,
+            uint64_t, common_agent_research_draft_ref &, bool &, std::string &) override;
     bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) override;
     bool authorize_investigation_source(const std::string & source_id,
         const common_agent_scope & scope, std::string & error) const override;

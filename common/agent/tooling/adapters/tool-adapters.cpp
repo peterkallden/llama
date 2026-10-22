@@ -6,6 +6,7 @@
 #include "agent/tooling/adapters/families/memory-adapters.h"
 #include "agent/tooling/adapters/families/oracle-adapters.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
+#include "agent/tooling/adapters/families/research-workspace-adapters.h"
 #include "agent/tooling/adapters/families/resource-adapters.h"
 #include "agent/tooling/adapters/families/visualization-adapters.h"
 #include "agent/tooling/adapters/support/processing-output.h"
@@ -1284,6 +1285,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_visualization_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // Visualization projections use authorized datasets and resource storage.
+        } else if (common_try_register_research_workspace_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // Research publication is host-authorized and revision-checked.
         } else if (common_try_register_document_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The document family owns document table projection adapters.

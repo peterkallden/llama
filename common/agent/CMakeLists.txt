@@ -41,12 +41,43 @@ endif()
 # Shared report contracts are consumed by both the runtime core and native
 # artifact adapters. Keep them in a small dependency below both targets rather
 # than introducing a core <-> tooling link cycle.
+add_library(llama-agent-visualization-contracts
+    visualization/visualization-contract.cpp visualization/visualization-contract.h)
+target_include_directories(llama-agent-visualization-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-visualization-contracts PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-visualization-contracts PUBLIC llama-common)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-visualization-contracts PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
+# Research serialization and stable identity are shared by the runtime core,
+# daemon and native tool adapters. Keep these host-neutral contracts below both
+# core and tooling so the shared libraries do not depend on one another.
+add_library(llama-agent-research-contracts
+    thinking/research/research-identity.cpp thinking/research/research-identity.h
+    thinking/research/research-workspace-serialization.cpp
+    thinking/research/research-workspace-serialization.h)
+target_include_directories(llama-agent-research-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_features(llama-agent-research-contracts PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-research-contracts PUBLIC llama-common PRIVATE vendor::hash)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-research-contracts PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-artifact artifact/artifact-contract.cpp artifact/artifact-contract.h
-    artifact/artifact-sources.cpp artifact/artifact-sources.h)
+    artifact/artifact-sources.cpp artifact/artifact-sources.h
+    artifact/research-view-projection.cpp artifact/research-view-projection.h)
 target_include_directories(llama-agent-artifact PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_features(llama-agent-artifact PUBLIC cxx_std_17)
 target_include_directories(llama-agent-artifact PRIVATE ${LLAMA_AGENT_CMARK_INCLUDE_DIRS})
 target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan
+    llama-agent-visualization-contracts
     PRIVATE vendor::hash ${LLAMA_AGENT_CMARK_TARGETS})
 
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
@@ -92,18 +123,6 @@ target_compile_features(llama-agent-dataset-contracts PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-dataset-contracts PUBLIC llama-common)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-dataset-contracts PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        WINDOWS_EXPORT_ALL_SYMBOLS ON
-    )
-endif()
-
-add_library(llama-agent-visualization-contracts
-    visualization/visualization-contract.cpp visualization/visualization-contract.h)
-target_include_directories(llama-agent-visualization-contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_compile_features(llama-agent-visualization-contracts PUBLIC cxx_std_17)
-target_link_libraries(llama-agent-visualization-contracts PUBLIC llama-common)
-if (BUILD_SHARED_LIBS)
-    set_target_properties(llama-agent-visualization-contracts PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
@@ -276,6 +295,8 @@ set(AGENT_TOOLING_SOURCES
     tooling/adapters/families/diagnostics-adapters.cpp
     tooling/adapters/families/resource-adapters.cpp
     tooling/adapters/families/visualization-adapters.cpp
+    tooling/adapters/families/research-workspace-adapters.cpp
+    tooling/adapters/families/research-workspace-adapters.h
     tooling/catalog/tool-catalog.cpp
     tooling/bridge/tool-chat-bridge.cpp
     tooling/registry/tool-registry.cpp
@@ -322,7 +343,7 @@ target_include_directories(llama-agent-tooling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-tooling
     PUBLIC llama-common llama-agent-artifact llama-agent-dataset-contracts llama-agent-visualization-contracts
-        llama-agent-plan llama-agent-memory
+        llama-agent-research-contracts llama-agent-plan llama-agent-memory
     PRIVATE cpp-httplib
 )
 if (LLAMA_AGENT_SANDBOX)
@@ -362,6 +383,7 @@ target_link_libraries(${TARGET}
         llama-agent-artifact
         llama-agent-dataset-contracts
         llama-agent-visualization-contracts
+        llama-agent-research-contracts
         llama-agent-plan
         llama-agent-memory
         llama-agent-tooling

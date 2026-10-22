@@ -98,6 +98,21 @@ json snapshot_material(const common_agent_artifact_snapshot & s) {
         {"omitted_source_refs",s.omitted_source_refs},{"observations",json::array()},
         {"assumptions",json::array()},{"research_sources",json::array()},{"research_evidence",json::array()},
         {"research_comparisons",json::array()},{"research_gaps",json::array()}};
+    if (s.schema_version >= 5) {
+        material["research_revision"] = s.research_revision;
+        material["research_objective_record"] = {{"objective_id",s.research_objective_record.objective_id},
+            {"question",s.research_objective_record.question},{"purpose",s.research_objective_record.purpose},
+            {"expected_output",s.research_objective_record.expected_output},
+            {"success_criteria",s.research_objective_record.success_criteria},
+            {"constraints",s.research_objective_record.constraints},
+            {"excluded_topics",s.research_objective_record.excluded_topics}};
+        material["research_tasks"] = json::array();
+        for (const auto & task : s.research_tasks) material["research_tasks"].push_back({{"id",task.task_id},
+            {"gap_id",task.gap_id},{"instruction",task.instruction},{"kind",static_cast<int>(task.kind)},
+            {"preferred_tools",task.preferred_tools},{"dependency_ids",task.dependency_ids},
+            {"priority",task.priority},{"attempt",task.attempt},{"max_attempts",task.max_attempts},
+            {"status",static_cast<int>(task.status)}});
+    }
     for (const auto & o : s.observations) {
         json refs=json::array(); for (const auto & r:o.resource_refs) refs.push_back({{"uri",r.uri},{"name",r.name},
             {"description",r.description},{"mime_type",r.mime_type},{"size_bytes",r.size_bytes},
@@ -155,6 +170,10 @@ json snapshot_material(const common_agent_artifact_snapshot & s) {
     for (const auto & g:s.research_gaps) material["research_gaps"].push_back({{"id",g.gap_id},{"question",g.question},
         {"reason",g.reason},{"completion_criterion",g.completion_criterion},{"priority",g.priority},
         {"status",static_cast<int>(g.status)},{"evidence_ids",g.evidence_ids},{"child_gap_ids",g.child_gap_ids}});
+    if (s.schema_version >= 5) {
+        for (size_t i = 0; i < s.research_gaps.size(); ++i)
+            material["research_gaps"][i]["assessment"] = static_cast<int>(s.research_gaps[i].assessment);
+    }
     return material;
 }
 std::string snapshot_fingerprint(const common_agent_artifact_snapshot & snapshot) {
@@ -318,7 +337,7 @@ bool common_agent_artifact_snapshot_from_plan(const common_plan_state & plan,
         return true;
     }
     out = {};
-    out.schema_version = 4;
+    out.schema_version = 5;
     out.id = "snapshot:" + plan.id;
     out.source_plan_id = plan.id; out.plan_version = plan.version;
     out.profile_id = profile.id; out.profile_revision = profile.revision;
@@ -331,7 +350,10 @@ bool common_agent_artifact_snapshot_from_plan(const common_plan_state & plan,
         }
         out.research_workspace_id = research->workspace_id;
         out.research_checkpoint_id = research_checkpoint_id;
+        out.research_revision = research->revision;
         out.research_objective = research->objective.question;
+        out.research_objective_record = research->objective;
+        out.research_tasks = research->tasks;
         out.research_coverage = research->coverage;
         out.research_sources = research->sources;
         out.research_evidence = research->evidence;
@@ -417,7 +439,11 @@ bool common_agent_artifact_validate_block(const common_agent_artifact_block & bl
     }
     for (const auto & item : snapshot.research_evidence) {
         evidence.insert(item.evidence_id);
-        if (!item.claim_id.empty()) evidence.insert(item.claim_id);
+    }
+    std::set<std::string> claim_ids;
+    for (const auto & item : snapshot.research_evidence) if (!item.claim_id.empty()) claim_ids.insert(item.claim_id);
+    if (!block.claim_id.empty() && claim_ids.count(block.claim_id) == 0) {
+        error = "artifact claim anchor is not present in the frozen research evidence"; return false;
     }
     for (const auto & item : snapshot.research_sources) {
         sources.insert(item.source_id);
@@ -560,6 +586,7 @@ bool common_agent_artifact_section_from_stored_json(const std::string & text,
     for(const auto & item:value["blocks"]){
         if(!item.is_object()){error="stored artifact block is malformed";return false;}
         common_agent_artifact_block block;block.id=item.value("id",std::string{});block.text=item.value("text",std::string{});
+        block.claim_id=item.value("claim_id",std::string{});
         block.validation_note=item.value("validation_note",std::string{});block.origin="host";
         if(!parse_kind(item.value("kind",std::string{}),block.kind)||
                 std::find(profile.allowed_block_kinds.begin(),profile.allowed_block_kinds.end(),block_kind(block.kind))==profile.allowed_block_kinds.end()){
@@ -602,7 +629,7 @@ bool common_agent_artifact_document_to_json(const common_agent_artifact_document
         json section={{"id",s.id},{"title",s.title},{"no_findings",s.no_findings},
             {"out_of_scope_refs",s.out_of_scope_refs},{"blocks",json::array()}};
         for (const auto & b : s.blocks) section["blocks"].push_back({{"id",b.id},{"kind",block_kind(b.kind)},
-            {"text",b.text},{"evidence_ids",b.evidence_ids},{"source_refs",b.source_refs},
+            {"text",b.text},{"claim_id",b.claim_id},{"evidence_ids",b.evidence_ids},{"source_refs",b.source_refs},
             {"validation",validation_name(b.validation)},{"validation_note",b.validation_note},{"support",support_name(b.support)},{"origin",b.origin},
             {"author",author_name(b.author)},{"review_state",review_state_name(b.review_state)}});
         value["sections"].push_back(std::move(section));
@@ -841,7 +868,7 @@ bool common_agent_artifact_snapshot_from_json(const std::string & text,
         common_agent_artifact_snapshot & s, std::string & error) {
     const auto value = json::parse(text, nullptr, false);
     const int schema_version=value.is_object()?value.value("schema_version",0):0;
-    if (!value.is_object() || (schema_version != 1 && schema_version != 2 && schema_version != 3 && schema_version != 4) ||
+    if (!value.is_object() || (schema_version != 1 && schema_version != 2 && schema_version != 3 && schema_version != 4 && schema_version != 5) ||
             !value.contains("observations") || !value["observations"].is_array() ||
             !value.contains("assumptions") || !value["assumptions"].is_array()) {
         error = "unsupported or malformed artifact snapshot";
@@ -856,7 +883,29 @@ bool common_agent_artifact_snapshot_from_json(const std::string & text,
     s.profile_revision = value.value("profile_revision", std::string{});
     s.research_workspace_id=value.value("research_workspace_id",std::string{});
     s.research_checkpoint_id=value.value("research_checkpoint_id",std::string{});
+    s.research_revision=value.value("research_revision",uint64_t(0));
     s.research_objective=value.value("research_objective",std::string{});
+    if (value.contains("research_objective_record") && value["research_objective_record"].is_object()) {
+        const auto & objective=value["research_objective_record"];
+        s.research_objective_record.objective_id=objective.value("objective_id",std::string{});
+        s.research_objective_record.question=objective.value("question",std::string{});
+        s.research_objective_record.purpose=objective.value("purpose",std::string{});
+        s.research_objective_record.expected_output=objective.value("expected_output",std::string{});
+        s.research_objective_record.success_criteria=objective.value("success_criteria",std::vector<std::string>{});
+        s.research_objective_record.constraints=objective.value("constraints",std::vector<std::string>{});
+        s.research_objective_record.excluded_topics=objective.value("excluded_topics",std::vector<std::string>{});
+    }
+    for (const auto & item : value.value("research_tasks",json::array())) {
+        if (!item.is_object()) { error="artifact research task is malformed"; return false; }
+        common_agent_research_task task; task.task_id=item.value("id",std::string{});
+        task.gap_id=item.value("gap_id",std::string{}); task.instruction=item.value("instruction",std::string{});
+        const int kind=item.value("kind",0), status=item.value("status",0);
+        if (kind<0||kind>static_cast<int>(common_agent_research_task_kind::summarize_material)||
+                status<0||status>static_cast<int>(common_agent_research_task_status::cancelled)) { error="artifact research task enum is invalid"; return false; }
+        task.kind=static_cast<common_agent_research_task_kind>(kind);task.status=static_cast<common_agent_research_task_status>(status);
+        task.preferred_tools=item.value("preferred_tools",std::vector<std::string>{});task.dependency_ids=item.value("dependency_ids",std::vector<std::string>{});
+        task.priority=item.value("priority",0);task.attempt=item.value("attempt",0);task.max_attempts=item.value("max_attempts",1);s.research_tasks.push_back(std::move(task));
+    }
     if (value.contains("source_coverage") && value["source_coverage"].is_object()) {
         const auto & c=value["source_coverage"];
         s.research_coverage.total_gaps=c.value("total_gaps",0);s.research_coverage.answered_gaps=c.value("answered_gaps",0);
@@ -964,7 +1013,7 @@ bool common_agent_artifact_snapshot_from_json(const std::string & text,
         e.supporting_excerpt=item.value("supporting_excerpt",std::string{});e.supporting_excerpt_host_verified=item.value("excerpt_host_verified",item.value("supporting_excerpt_host_verified",false));s.research_evidence.push_back(std::move(e));
     }
     for(const auto & item:value.value("research_comparisons",json::array())) if(item.is_object()) {common_agent_research_source_comparison c;c.comparison_id=item.value("id",std::string{});c.gap_id=item.value("gap_id",std::string{});c.source_ids=item.value("source_ids",std::vector<std::string>{});c.evidence_ids=item.value("evidence_ids",std::vector<std::string>{});c.relation=static_cast<common_agent_research_comparison_relation>(item.value("relation",0));c.summary=item.value("summary",std::string{});s.research_comparisons.push_back(std::move(c));}
-    for(const auto & item:value.value("research_gaps",json::array())) if(item.is_object()) {common_agent_research_gap g;g.gap_id=item.value("id",std::string{});g.question=item.value("question",std::string{});g.reason=item.value("reason",std::string{});g.completion_criterion=item.value("completion_criterion",std::string{});g.priority=item.value("priority",0);g.status=static_cast<common_agent_research_gap_status>(item.value("status",0));g.evidence_ids=item.value("evidence_ids",std::vector<std::string>{});g.child_gap_ids=item.value("child_gap_ids",std::vector<std::string>{});s.research_gaps.push_back(std::move(g));}
+    for(const auto & item:value.value("research_gaps",json::array())) if(item.is_object()) {common_agent_research_gap g;g.gap_id=item.value("id",std::string{});g.question=item.value("question",std::string{});g.reason=item.value("reason",std::string{});g.completion_criterion=item.value("completion_criterion",std::string{});g.priority=item.value("priority",0);const int status=item.value("status",0),assessment=item.value("assessment",0);if(status<0||status>static_cast<int>(common_agent_research_gap_status::abandoned)||assessment<0||assessment>static_cast<int>(common_agent_research_gap_assessment::contradicted)){error="artifact research gap enum is invalid";return false;}g.status=static_cast<common_agent_research_gap_status>(status);g.assessment=static_cast<common_agent_research_gap_assessment>(assessment);g.evidence_ids=item.value("evidence_ids",std::vector<std::string>{});g.child_gap_ids=item.value("child_gap_ids",std::vector<std::string>{});s.research_gaps.push_back(std::move(g));}
     if (s.id.empty() || s.source_plan_id.empty() || s.plan_version == 0 || s.profile_id.empty() ||
             s.profile_revision.empty() || s.fingerprint.empty()) {
         error = "artifact snapshot identity is incomplete";
@@ -1067,13 +1116,13 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
 
 bool common_agent_artifact_document_from_json(const std::string & text, common_agent_artifact_document & d, std::string & error) {
     const auto v=json::parse(text,nullptr,false);
-    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>3 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
+    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>4 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
     d={}; d.id=v.value("id",std::string{}); d.title=v.value("title",std::string{}); d.purpose=v.value("purpose",std::string{});
     if(v.contains("markdown_renderer_version")&&!v["markdown_renderer_version"].is_number_unsigned()){
         error="artifact Markdown renderer version is malformed";return false;
     }
     d.schema_version=v.value("schema_version",uint32_t(1));
-    if(d.schema_version<1||d.schema_version>3){error="unsupported artifact document schema version";return false;}
+    if(d.schema_version<1||d.schema_version>4){error="unsupported artifact document schema version";return false;}
     if(d.schema_version>=3&&!parse_document_kind(v.value("kind",std::string{}),d.kind)){error="artifact document kind is invalid";return false;}
     d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
     if(d.markdown_renderer_version<1||d.markdown_renderer_version>4){
@@ -1101,7 +1150,7 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
         for(const auto & ref:sj.value("out_of_scope_refs",json::array())){if(!ref.is_string()){error="artifact out-of-scope reference is not text";return false;}s.out_of_scope_refs.push_back(ref.get<std::string>());}
         for (const auto & bj : sj["blocks"]) {
             if (!bj.is_object() || !bj.contains("evidence_ids") || !bj["evidence_ids"].is_array() || !bj.contains("source_refs") || !bj["source_refs"].is_array()) { error="artifact block is malformed"; return false; }
-            common_agent_artifact_block b; b.id=bj.value("id",std::string{}); b.text=bj.value("text",std::string{});
+            common_agent_artifact_block b; b.id=bj.value("id",std::string{}); b.text=bj.value("text",std::string{});b.claim_id=bj.value("claim_id",std::string{});
             b.origin=bj.value("origin",std::string("model")); b.validation_note=bj.value("validation_note",std::string{});
             if (!parse_kind(bj.value("kind",std::string{}),b.kind) || !parse_validation(bj.value("validation",std::string("unvalidated")),b.validation) || !parse_support(bj.value("support",std::string("unverified")),b.support)||!parse_author(bj.value("author",std::string("model")),b.author)||!parse_review_state(bj.value("review_state",std::string("reviewed")),b.review_state)) { error="artifact block enum is invalid"; return false; }
             for (const auto & x:bj["evidence_ids"]) { if(!x.is_string()){error="artifact evidence id is not text";return false;} b.evidence_ids.push_back(x.get<std::string>()); }

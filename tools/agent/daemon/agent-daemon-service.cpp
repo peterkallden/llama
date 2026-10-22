@@ -1,9 +1,12 @@
 #include "agent-daemon-service.h"
 #include "agent-daemon-adapter.h"
+#include "agent/thinking/research/research-identity.h"
+#include "agent/thinking/research/research-workspace-serialization.h"
 #include "../mcp/agent-mcp-server-tool-registry.h"
 #include "../runtime/agent-server-context-host.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-sideband-review-store.h"
+#include "resource/resource-retention.h"
 #include "hash/hash.h"
 #include "base64.hpp"
 
@@ -12,8 +15,203 @@
 #include <set>
 #include <chrono>
 #include <algorithm>
+#include <ctime>
 
 using json = nlohmann::ordered_json;
+
+namespace {
+
+common_agent_scope research_scope(const common_agent_runtime_session_host_turn_request & request) {
+    common_agent_scope scope;
+    scope.namespace_id = request.namespace_id;
+    scope.session_id = request.session_id;
+    scope.project_id = request.project_id;
+    scope.turn_id = request.turn_id;
+    return scope;
+}
+
+bool read_research_workspace(agent_resource_store & resources, const std::string & uri,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_research_workspace & workspace, std::string & error,
+        const std::string & expected_fingerprint = {}) {
+    agent_resource_read_authority authority;
+    authority.namespace_id = request.namespace_id;
+    authority.session_id = request.session_id;
+    authority.project_id = request.project_id;
+    authority.turn_id = request.turn_id;
+    authority.now = static_cast<int64_t>(std::time(nullptr));
+    std::string text;
+    if (!resources.read_text(uri, authority, 4 * 1024 * 1024, text, error)) return false;
+    if (!expected_fingerprint.empty() && hash_sha256_hex(text.data(), text.size()) != expected_fingerprint) {
+        error = "saved research payload fingerprint does not match its revision index";
+        return false;
+    }
+    const auto parsed = json::parse(text, nullptr, false);
+    if (parsed.is_discarded() || !common_agent_research_workspace_from_json(parsed, workspace, error)) return false;
+    if (workspace.scope.namespace_id != request.namespace_id || workspace.scope.project_id != request.project_id ||
+            (request.project_id.empty() && workspace.scope.session_id != request.session_id)) {
+        error = "saved research payload scope does not match the active chat";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool prepare_research_workspace(common_agent_daemon_runtime & runtime,
+        common_agent_runtime_session_host_turn_request & request, std::string & error) {
+    if (runtime.data_store == nullptr || runtime.resource_store == nullptr) return true;
+    if (request.session_id.empty() || request.namespace_id.empty()) {
+        error = "persistent research requires a session and namespace scope";
+        return false;
+    }
+    const auto scope = research_scope(request);
+    const std::string research_id = common_agent_research_identity(scope);
+    const std::string draft_id = common_agent_research_draft_identity(research_id, request.session_id);
+    common_agent_research_draft_ref draft;
+    const bool has_draft = runtime.data_store->get_research_draft(draft_id, scope, draft, error);
+    // Older/in-memory data-store implementations may not support persistent
+    // research yet. Keep ordinary turns usable there; configured Cozo errors
+    // remain explicit and are not treated as an empty draft.
+    if (!has_draft && error.empty()) return true;
+    if (!has_draft && error != "research draft was not found in this scope") return false;
+    error.clear();
+    common_agent_research_workspace seed;
+    bool has_seed = false;
+    if (has_draft) {
+        if (draft.research_id != research_id || draft.owner_session_id != request.session_id ||
+                !read_research_workspace(*runtime.resource_store, draft.payload_uri, request, seed, error,
+                    draft.payload_fingerprint)) return false;
+        if (seed.research_id != research_id || seed.draft_id != draft_id || seed.base_revision != draft.base_revision ||
+                seed.revision != draft.draft_revision) {
+            error = "saved research draft metadata does not match its payload";
+            return false;
+        }
+        has_seed = true;
+    } else {
+        common_agent_research_revision_ref current;
+        if (runtime.data_store->get_research_revision(research_id, 0, scope, current, error)) {
+            if (!read_research_workspace(*runtime.resource_store, current.payload_uri, request, seed, error,
+                    current.payload_fingerprint)) return false;
+            if (seed.research_id != research_id || seed.revision != current.revision) {
+                error = "published research metadata does not match its payload";
+                return false;
+            }
+            has_seed = true;
+            draft.research_id = research_id;
+            draft.draft_id = draft_id;
+            draft.owner_session_id = request.session_id;
+            draft.base_revision = current.revision;
+            draft.draft_revision = 0;
+        } else if (error == "research workspace was not found in this scope" || error.empty()) {
+            error.clear();
+            draft.research_id = research_id;
+            draft.draft_id = draft_id;
+            draft.owner_session_id = request.session_id;
+            draft.base_revision = 0;
+            draft.draft_revision = 0;
+        } else return false;
+    }
+    request.research_draft = draft;
+    if (has_seed) request.research_workspace_seed = std::move(seed);
+    error.clear();
+    return true;
+}
+
+bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_research_workspace & workspace, std::string & error) {
+    agent_resource_read_authority authority;
+    authority.namespace_id = request.namespace_id;
+    authority.session_id = request.session_id;
+    authority.project_id = request.project_id;
+    authority.turn_id = request.turn_id;
+    authority.now = static_cast<int64_t>(std::time(nullptr));
+    size_t copied_bytes = 0;
+    constexpr size_t max_total_bytes = 16 * 1024 * 1024;
+    for (auto & source : workspace.sources) {
+        if (!source.resource_ref) continue;
+        agent_resource_retention_target target;
+        target.scope = common_runtime_resource_scope::session;
+        target.namespace_id = request.namespace_id;
+        target.session_id = request.session_id;
+        target.project_id = request.project_id;
+        target.turn_id = request.turn_id;
+        target.source_tool = "research.workspace.persist";
+        target.max_bytes = std::min<size_t>(4 * 1024 * 1024, max_total_bytes - copied_bytes);
+        agent_resource_descriptor retained;
+        bool copied = false;
+        if (!retain_agent_resource(*runtime.resource_store, *source.resource_ref, authority,
+                target, retained, copied, error)) return false;
+        static_cast<common_runtime_resource_ref &>(*source.resource_ref) = retained;
+        if (!retained.sha256.empty()) source.content_hash = "sha256:" + retained.sha256;
+        if (copied) copied_bytes += retained.size_bytes;
+    }
+    error.clear();
+    return true;
+}
+
+bool persist_research_workspace(common_agent_daemon_runtime & runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_session_host_turn_result & result, std::string & error) {
+    if (!result.research_workspace_checkpoint) return true;
+    if (!request.research_draft) {
+        error = "research checkpoint was produced without a persistent host draft binding";
+        return false;
+    }
+    if (runtime.data_store == nullptr || runtime.resource_store == nullptr) {
+        error = "research completed without its persistent host binding";
+        return false;
+    }
+    auto workspace = result.research_workspace_checkpoint->workspace;
+    const auto & current = *request.research_draft;
+    if (workspace.research_id != current.research_id || workspace.draft_id != current.draft_id ||
+            workspace.base_revision != current.base_revision || workspace.session_id != request.session_id) {
+        error = "research checkpoint does not belong to the active persistent draft";
+        return false;
+    }
+    if (!retain_research_sources_for_chat(runtime, request, workspace, error)) return false;
+    workspace.revision = current.draft_revision + 1;
+    const std::string payload = common_agent_research_workspace_to_json(workspace).dump();
+    const std::string fingerprint = hash_sha256_hex(payload.data(), payload.size());
+    agent_resource_put_request put;
+    put.name = "research-draft-" + current.draft_id + "-" + std::to_string(workspace.revision) + ".json";
+    put.description = "Immutable chat-owned research workspace draft revision.";
+    put.mime_type = "application/vnd.llama-agent.research-workspace+json";
+    put.text = payload;
+    put.scope = common_runtime_resource_scope::session;
+    put.namespace_id = request.namespace_id;
+    put.project_id = request.project_id;
+    put.session_id = request.session_id;
+    put.turn_id = request.turn_id;
+    put.source_provider = "native";
+    put.source_tool = "research.workspace.persist";
+    put.created_at = static_cast<int64_t>(std::time(nullptr));
+    put.metadata.purpose = "research_workspace_draft";
+    put.metadata.content_summary = "Persistent active research draft.";
+    put.metadata.content_hash = fingerprint;
+    put.metadata.processing_cache_key = current.research_id + ":" + current.draft_id + ":" + fingerprint;
+    put.lineage.parent_uri = current.payload_uri;
+    put.lineage.derivation = "research-workspace-draft:v1";
+    agent_resource_descriptor stored;
+    if (!runtime.resource_store->put_text(put, stored, error) || stored.uri.empty()) {
+        if (error.empty()) error = "research draft resource store returned an empty reference";
+        return false;
+    }
+    common_agent_research_draft_ref next = current;
+    next.draft_revision = workspace.revision;
+    next.payload_uri = stored.uri;
+    next.payload_fingerprint = fingerprint;
+    next.updated_at_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
+    common_agent_research_draft_ref saved;
+    bool already_saved = false;
+    if (!runtime.data_store->save_research_draft(research_scope(request), next,
+            current.draft_revision, saved, already_saved, error)) return false;
+    result.research_workspace_checkpoint->workspace = std::move(workspace);
+    error.clear();
+    return true;
+}
+
+} // namespace
 
 common_agent_daemon_config_store::common_agent_daemon_config_store(
         std::shared_ptr<const daemon_options> initial)
@@ -2071,10 +2269,25 @@ bool common_agent_daemon_service::execute_outcome(
             }
 
             error.clear();
-            runtime.host->run_turn(command.turn->request, outcome.turn_result, error);
+            // Research context is host-resolved per turn. Keep the incoming
+            // command immutable and pass the enriched request through the
+            // existing session manager/runtime path.
+            auto turn_request = command.turn->request;
+            if (!prepare_research_workspace(runtime, turn_request.turn, error)) {
+                return fail_turn_result(command, outcome, events, error, "research_context_failed",
+                    common_agent_daemon_event_type::turn_failed);
+            }
+            runtime.host->run_turn(turn_request, outcome.turn_result, error);
+            std::string persistence_error;
+            if (!persist_research_workspace(runtime, turn_request.turn,
+                    outcome.turn_result, persistence_error)) {
+                outcome.turn_result.ok = false;
+                outcome.turn_result.error = "research draft persistence failed: " + persistence_error;
+                if (error.empty()) error = outcome.turn_result.error;
+            }
             if (command.turn->include_summary) {
                 outcome.turn_summary = make_turn_summary(
-                    command.turn->request.turn,
+                    turn_request.turn,
                     outcome.turn_result);
             }
             outcome.response_kind = common_agent_daemon_response_kind::turn;

@@ -22,6 +22,8 @@ struct common_agent_artifact_block {
     std::string id;
     common_agent_artifact_block_kind kind = common_agent_artifact_block_kind::observation;
     std::string text;
+    // Optional explicit semantic anchor; never inferred from block text.
+    std::string claim_id;
     std::vector<std::string> evidence_ids;
     std::vector<std::string> source_refs;
     common_agent_artifact_validation validation = common_agent_artifact_validation::unvalidated;
@@ -53,7 +55,7 @@ struct common_agent_artifact_section_context {
 };
 
 struct common_agent_artifact_snapshot {
-    int schema_version = 4;
+    int schema_version = 5;
     std::string id;
     std::string source_plan_id;
     uint64_t plan_version = 0;
@@ -61,7 +63,10 @@ struct common_agent_artifact_snapshot {
     std::string profile_revision;
     std::string research_workspace_id;
     std::string research_checkpoint_id;
+    uint64_t research_revision = 0;
     std::string research_objective;
+    common_agent_research_objective research_objective_record;
+    std::vector<common_agent_research_task> research_tasks;
     common_agent_research_coverage research_coverage;
     std::vector<common_agent_research_source> research_sources;
     std::vector<common_agent_research_evidence> research_evidence;
@@ -76,7 +81,7 @@ struct common_agent_artifact_snapshot {
 };
 
 struct common_agent_artifact_document {
-    uint32_t schema_version = 3;
+    uint32_t schema_version = 4;
     common_agent_artifact_document_kind kind = common_agent_artifact_document_kind::report;
     // Stored documents retain their renderer semantics for manifest readback.
     uint32_t markdown_renderer_version = 3;

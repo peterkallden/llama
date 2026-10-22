@@ -10,6 +10,8 @@ import { structuredToolResult } from "./components/structured-tool-result";
 import StatusFloater from "./components/StatusFloater.vue";
 import ReportCard from "./components/ReportCard.vue";
 import SourceInspector from "./components/SourceInspector.vue";
+import ChatMenu from "./components/ChatMenu.vue";
+import ResourceBrowser from "./components/ResourceBrowser.vue";
 import { reportReferences, type InspectionTarget } from "./components/report-view";
 
 const session = useAgentSession();
@@ -17,7 +19,7 @@ const prompt = ref("");
 const expanded = ref<Set<number>>(new Set());
 const eventsExpanded = ref(false);
 const eventsViewport = ref<HTMLElement | null>(null);
-const activeView = ref<"chat" | "data" | "workflow" | "app">("chat");
+const activeView = ref<"chat" | "data" | "workflow" | "resources" | "app">("chat");
 const activeAppTool = ref("");
 const documentMode = ref(false);
 const chatSending = ref(false);
@@ -27,6 +29,8 @@ const editorHost = ref<InstanceType<typeof McpAppHost> | null>(null);
 const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string } | null>(null);
 const localDocumentEvent = ref<AgentEvent>();
 const openingAttachmentUri = ref("");
+const selectedExplorerSource = ref("");
+const selectedExplorerKind = ref<"dataset" | "resource" | "path">("resource");
 const attachmentEditorError = ref("");
 const inspection = ref<InspectionTarget>();
 const workspaceActive = computed(() => activeView.value !== "chat");
@@ -38,6 +42,19 @@ const sessionEvents = computed(() => session.events.filter((event) => !event.ses
 function reportsForTurn(turnId: string) { return reports.value.filter((report) => report.turnId === turnId); }
 function openReportRead(uri: string) { return session.callReadOnlyTool("document.open", { document_uri: uri }); }
 function handoff(text: string) { prompt.value = text; void navigateWorkspace("chat"); }
+function openSelectedResource(uri: string, kind: "dataset" | "resource" | "path" = "resource") {
+  selectedExplorerSource.value = uri;
+  selectedExplorerKind.value = kind;
+  void navigateWorkspace("data");
+}
+function openWorkspaceApp(tool: (typeof session.tools)[number]) {
+  void navigateWorkspace("app", mcpAppKey(tool));
+}
+function toggleResourceRef(uri: string) {
+  session.selectedResourceRefs = session.selectedResourceRefs.includes(uri)
+    ? session.selectedResourceRefs.filter((item) => item !== uri)
+    : [...session.selectedResourceRefs, uri];
+}
 const mcpApps = () => {
   const apps = new Map<string, (typeof session.tools)[number]>();
   for (const tool of session.tools) {
@@ -79,9 +96,18 @@ watch(() => session.sessionId, () => {
   inspection.value = undefined;
 });
 
-onMounted(() => { void session.connect(); void session.refreshStatus().catch((cause) => {
+onMounted(() => { void session.connect(); void session.ensureActiveChat().catch((cause) => {
+  session.error = cause instanceof Error ? cause.message : String(cause);
+}); void session.refreshStatus().catch((cause) => {
   session.error = cause instanceof Error ? cause.message : String(cause);
 }); });
+
+watch(prompt, (value) => {
+  try { localStorage.setItem(`llama-agent-web.draft:${session.sessionId}`, value); } catch { /* Keep the current draft in memory if browser storage is unavailable. */ }
+});
+watch(() => session.sessionId, (id) => {
+  try { prompt.value = localStorage.getItem(`llama-agent-web.draft:${id}`) ?? ""; } catch { prompt.value = ""; }
+}, { immediate: true });
 
 watch(() => session.events.length, () => {
   void nextTick(() => {
@@ -169,11 +195,7 @@ async function startNewSession() {
   if (navigationLocked.value) return;
   workspaceNavigating.value = true;
   try {
-    if (session.busy || session.documentReviews.some((item) => item.state !== "completed")) {
-      session.error = "The current session still has an active turn or document review. It will remain available here; start a new session after it finishes.";
-      return;
-    }
-    session.newSession();
+    await session.newSession(session.projectId);
   } finally { workspaceNavigating.value = false; }
 }
 
@@ -301,9 +323,11 @@ function isArtifactEvent(event: Record<string, unknown>) {
     <header class="topbar"><div><p class="eyebrow">WORKSPACE</p><h1>llama-agent</h1></div><span class="session-caption">{{ !session.connected ? 'Disconnected' : session.busy ? 'Agent working' : 'Ready for your next question' }}</span></header>
     <div class="workspace-toolbar">
       <nav class="workspace-nav" aria-label="Workspace">
-        <button type="button" :class="{ selected: activeView === 'chat' }" :disabled="navigationLocked" :title="documentMode ? 'Close the document tab to return to chat' : undefined" @click="navigateWorkspace('chat')">Chat</button>
+        <ChatMenu :locked="navigationLocked" />
+        <span class="active-chat-context"><strong>{{ session.projects.find((item) => item.id === session.projectId)?.name ?? 'Personal' }}</strong><span>/</span><span>{{ session.chatTitle }}</span></span>
+        <button type="button" :class="{ selected: activeView === 'resources' }" :disabled="navigationLocked" @click="navigateWorkspace('resources')">Resources</button>
         <div v-if="workspaceActive" class="workspace-tab" :aria-busy="workspaceNavigating">
-          <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeMcpApp()?.name || 'Application' }}</span>
+          <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeView === 'resources' ? 'Resources' : activeMcpApp()?.name || 'Application' }}</span>
           <button type="button" class="workspace-close" :disabled="workspaceNavigating || Boolean(openingAttachmentUri)" :title="documentMode ? 'Save, review and close' : 'Close workspace'" :aria-label="documentMode ? 'Save, review and close document' : 'Close workspace'" @click="navigateWorkspace('chat', '', true)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
         </div>
       </nav>
@@ -325,19 +349,22 @@ function isArtifactEvent(event: Record<string, unknown>) {
     </div>
     <section class="grid" :class="{ 'workspace-layout': workspaceActive, 'chat-layout': !workspaceActive }">
       <div v-show="workspaceActive" class="workspace-main">
-        <DataExplorer v-if="activeView === 'data'" :key="session.sessionId" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" />
+        <ResourceBrowser v-if="activeView === 'resources'" :project-id="session.projectId" :session-id="session.sessionId" :tools="session.tools" :list-resources="session.listResources" :call-tool="session.callReadOnlyTool" :read-resource="session.readResourceBlob" @open-data="openSelectedResource" @attach="toggleResourceRef" @open-app="openWorkspaceApp" />
+        <DataExplorer v-if="activeView === 'data'" :key="`${session.sessionId}:${selectedExplorerSource}`" :initial-source="selectedExplorerSource || undefined" :initial-kind="selectedExplorerKind" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" @browse="navigateWorkspace('resources')" />
         <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
         <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" />
       </div>
       <div class="primary">
         <section class="card chat chat-panel">
           <div class="card-title chat-heading"><h2>Chat</h2><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
+          <p v-if="!session.historyAvailable && !session.messages.length" class="muted history-unavailable">This chat has no saved message transcript in the resource store.</p>
+          <button v-if="session.historyCursor" type="button" class="quiet history-more" :disabled="session.navigationLoading" @click="session.loadOlderMessages()">{{ session.navigationLoading ? 'Loading…' : 'Load older messages' }}</button>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
           <div v-for="message in session.messages" :key="message.id" class="chat-entry">
             <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
-            <template v-if="message.role === 'assistant'"><ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" @edit="editReport" @inspect="inspection = $event" /></template>
+            <template v-if="message.role === 'assistant'"><ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" /></template>
           </div>
-          <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" @edit="editReport" @inspect="inspection = $event" />
+          <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />
           <p v-if="session.error" class="error">{{ session.error }}</p>
           <form class="composer" @submit.prevent="send">
             <textarea v-model="prompt" rows="3" placeholder="Write a message…" @keydown.ctrl.enter="send" />

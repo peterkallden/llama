@@ -56,6 +56,13 @@ int main() {
     assert(common_agent_artifact_snapshot_to_json(frozen,text,error));
     auto legacy=nlohmann::ordered_json::parse(text);
     legacy.erase("fingerprint");legacy["schema_version"]=3;
+    // Schema 3 predates the revision-bound research objective/task/assessment
+    // fields introduced in schema 5. Remove them before computing its legacy
+    // fingerprint, just as an actual persisted v3 artifact would.
+    legacy.erase("research_revision");
+    legacy.erase("research_objective_record");
+    legacy.erase("research_tasks");
+    for (auto & gap : legacy["research_gaps"]) gap.erase("assessment");
     for(auto & item:legacy["research_sources"]){
         item["resource_ref"].erase("source_provider");
         item["resource_ref"].erase("source_operation");

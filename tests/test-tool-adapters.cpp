@@ -417,6 +417,9 @@ int main() {
         return fetched;
     };
     assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
+    assert(repository_registry.contains("research.workspace.publish"));
+    assert(!repository_registry.is_read_only("research.workspace.publish"));
+    assert(repository_registry.is_policy_gated("research.workspace.publish"));
     result = repository_registry.execute({"repository.list", R"({"path":"src","depth":1})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src"})"});

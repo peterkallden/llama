@@ -1,6 +1,9 @@
 import type { AgentEvent, DaemonStatus, ToolCallResult, TurnRequest, UploadedResource } from "../types/agent";
 
 export type EventSink = (event: AgentEvent) => void;
+export type WebProject = { id: string; name: string; created_at: number; last_active_at: number };
+export type WebChat = { id: string; project_id: string; title: string; created_at: number; last_active_at: number; active_turn_id?: string; attachments?: Array<{ uri: string; name: string; mime_type?: string }> };
+export type WebChatMessage = { id: string; turn_id: string; role: "user" | "assistant"; content: string; recorded_at: number; sequence?: number; evidence_refs?: string[] };
 
 export class AgentApiError extends Error {
   constructor(message: string, readonly status: number, readonly payload: unknown) {
@@ -69,6 +72,44 @@ export class AgentApi {
 
   status(): Promise<DaemonStatus> { return this.request<DaemonStatus>("/status"); }
 
+  projects(): Promise<{ projects: WebProject[] }> { return this.request("/projects"); }
+
+  createProject(name: string): Promise<{ project: WebProject }> {
+    return this.request("/projects", { method: "POST", body: JSON.stringify({ name }) });
+  }
+
+  chats(projectId = "", cursor = "", limit = 30): Promise<{ chats: WebChat[]; next_cursor: string }> {
+    const query = new URLSearchParams({ project_id: projectId, limit: String(limit), ...(cursor ? { cursor } : {}) });
+    return this.request(`/chats?${query}`);
+  }
+
+  createChat(sessionId: string, projectId = "", title = "New chat"): Promise<{ chat: WebChat }> {
+    return this.request("/chats", { method: "POST", body: JSON.stringify({ session_id: sessionId, project_id: projectId, title }) });
+  }
+
+  migrateLegacyChat(sessionId: string): Promise<{ chat: WebChat; migrated?: boolean }> {
+    return this.request("/chats/migrate-legacy", { method: "POST", body: JSON.stringify({ session_id: sessionId }) });
+  }
+
+  setChatResource(input: { sessionId: string; projectId: string; uri: string; scope: "project" | "session"; action: "attach" | "detach" }): Promise<{ chat: WebChat }> {
+    return this.request(`/chats/${encodeURIComponent(input.sessionId)}/resources`, {
+      method: "POST", body: JSON.stringify({ project_id: input.projectId, resource_uri: input.uri, scope: input.scope, action: input.action }),
+    });
+  }
+
+  chatMessages(sessionId: string, projectId = "", cursor = "", limit = 50): Promise<{ chat: WebChat; messages: WebChatMessage[]; history_available: boolean; next_cursor?: string }> {
+    const query = new URLSearchParams({ project_id: projectId, ...(cursor ? { cursor } : {}), limit: String(limit) });
+    return this.request(`/chats/${encodeURIComponent(sessionId)}/messages?${query}`);
+  }
+
+  resources(input: { scope: "project" | "session"; projectId: string; sessionId?: string; query?: string; mimeType?: string; cursor?: string; limit?: number }): Promise<{ resources: Array<Record<string, unknown>>; next_cursor: string }> {
+    const query = new URLSearchParams({ scope: input.scope, project_id: input.projectId,
+      ...(input.sessionId ? { session_id: input.sessionId } : {}), ...(input.query ? { q: input.query } : {}),
+      ...(input.mimeType ? { mime_type: input.mimeType } : {}), ...(input.cursor ? { cursor: input.cursor } : {}),
+      limit: String(input.limit ?? 30) });
+    return this.request(`/resources?${query}`);
+  }
+
   submitTurn(turn: TurnRequest, signal?: AbortSignal): Promise<unknown> {
     return this.request("/turns", { method: "POST", body: JSON.stringify(turn), ...(signal ? { signal } : {}) });
   }
@@ -83,16 +124,18 @@ export class AgentApi {
     return this.request("/tools/call", { method: "POST", body: JSON.stringify(input) });
   }
 
-  readMcpAppResource(input: { tool_name: string; resource_uri: string; session_id: string }): Promise<ToolCallResult> {
+  readMcpAppResource(input: { tool_name: string; resource_uri: string; session_id: string; project_id: string }): Promise<ToolCallResult> {
     return this.request("/mcp-apps/resource", { method: "POST", body: JSON.stringify(input) });
   }
 
-  callMcpAppTool(input: { app_tool_name: string; tool_name: string; arguments: Record<string, unknown>; session_id: string }): Promise<ToolCallResult> {
+  callMcpAppTool(input: { app_tool_name: string; tool_name: string; arguments: Record<string, unknown>; session_id: string; project_id: string }): Promise<ToolCallResult> {
     return this.request("/mcp-apps/call", { method: "POST", body: JSON.stringify(input) });
   }
 
-  cancelTurn(turnId: string): Promise<unknown> {
-    return this.request(`/turns/${encodeURIComponent(turnId)}/cancel`, { method: "POST", body: "{}" });
+  cancelTurn(turnId: string, sessionId: string, projectId = ""): Promise<unknown> {
+    return this.request(`/chats/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/cancel`, {
+      method: "POST", body: JSON.stringify({ project_id: projectId }),
+    });
   }
 
   putResource(resource: UploadedResource): Promise<unknown> {

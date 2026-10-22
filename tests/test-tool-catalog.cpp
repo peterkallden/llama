@@ -144,13 +144,16 @@ int main() {
     const auto * artifact_export = catalog.find_definition("artifact.export");
     const auto * document_import = catalog.find_definition("document.import");
     const auto * value_counts = catalog.find_definition("statistics.value_counts");
+    const auto * research_publish = catalog.find_definition("research.workspace.publish");
     const auto * native_crash = catalog.find_definition("diagnostics.native_crash");
-    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && document_import && value_counts && native_crash);
+    assert(document_tables && document_table && data_aggregate && dataset_schema && dataset_sample && dataset_validate && artifact_export && document_import && value_counts && native_crash && research_publish);
     assert(document_import->risk_class == common_tool_risk_class::artifact_write && document_import->requires_confirmation);
     assert(document_import->mcp_app_write_authorized);
     const auto * document_patch = catalog.find_definition("document.propose_patch");
     assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
-    for (const auto * name : {"investigation.case.create", "investigation.claim.hypothesize", "investigation.report.compose", "visualization.snapshot"}) {
+    assert(research_publish->risk_class == common_tool_risk_class::artifact_write &&
+        research_publish->requires_confirmation && !research_publish->mcp_app_write_authorized);
+    for (const auto * name : {"investigation.case.create", "investigation.collect", "investigation.claim.hypothesize", "investigation.report.compose", "visualization.snapshot"}) {
         const auto * definition = catalog.find_definition(name);
         assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
             definition->requires_confirmation && definition->mcp_app_write_authorized);
@@ -483,7 +486,13 @@ int main() {
     const auto research = catalog.load_profile("research", error);
     assert(error.empty());
     assert(std::any_of(research.begin(), research.end(), [](const auto & definition) {
+        return definition.name == "research.workspace.publish" && definition.requires_confirmation;
+    }));
+    assert(std::any_of(research.begin(), research.end(), [](const auto & definition) {
         return definition.name == "artifact.export";
+    }));
+    assert(std::any_of(research.begin(), research.end(), [](const auto & definition) {
+        return definition.name == "research.workspace.publish" && definition.requires_confirmation;
     }));
     const auto developer_read = catalog.load_profile("developer-read", error);
     assert(error.empty());

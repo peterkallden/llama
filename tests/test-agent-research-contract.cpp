@@ -1,9 +1,11 @@
 #include "agent/thinking/research/research-contract.h"
 #include "agent/thinking/research/research-controller.h"
 #include "agent/thinking/research/research-workspace-factory.h"
+#include "agent/thinking/research/research-identity.h"
 #include "agent/thinking/research/research-assessor.h"
 #include "agent/thinking/research/research-workspace.h"
 #include "agent/thinking/research/research-runner.h"
+#include "agent/thinking/research/research-workspace-serialization.h"
 #include "agent/input-resources.h"
 
 #ifdef NDEBUG
@@ -85,6 +87,19 @@ public:
 };
 
 int main() {
+    common_agent_scope research_scope_a;
+    research_scope_a.namespace_id = "research-test";
+    research_scope_a.project_id = "project-shared";
+    research_scope_a.session_id = "chat-a";
+    common_agent_scope research_scope_b = research_scope_a;
+    research_scope_b.session_id = "chat-b";
+    const auto project_research_id = common_agent_research_identity(research_scope_a);
+    assert(project_research_id == common_agent_research_identity(research_scope_b));
+    assert(common_agent_research_draft_identity(project_research_id, "chat-a") !=
+        common_agent_research_draft_identity(project_research_id, "chat-b"));
+    research_scope_b.project_id.clear();
+    assert(project_research_id != common_agent_research_identity(research_scope_b));
+
     common_agent_request factory_request;
     factory_request.prompt = "Research the bounded runtime contract";
     factory_request.turn_id = "factory-turn";
@@ -111,10 +126,41 @@ int main() {
     std::string factory_error;
     assert(common_agent_research_create_workspace(factory_request, factory_workspace, factory_error));
     assert(factory_workspace.workspace_id == "research:factory-turn");
+    assert(factory_workspace.research_id == factory_workspace.workspace_id && factory_workspace.draft_id.empty());
     assert(factory_workspace.gaps.size() == 1);
     assert(factory_workspace.budget.max_iterations == 4);
     assert(factory_workspace.budget.max_tool_calls == 2);
     assert(factory_workspace.sources.size() == 2);
+    common_agent_research_draft_ref draft_ref;
+    draft_ref.research_id = "research-project-1";
+    draft_ref.draft_id = "draft-chat-1";
+    draft_ref.owner_session_id = "factory-session";
+    draft_ref.base_revision = 3;
+    draft_ref.draft_revision = 2;
+    auto persisted_seed = factory_workspace;
+    persisted_seed.research_id = draft_ref.research_id;
+    persisted_seed.draft_id = draft_ref.draft_id;
+    persisted_seed.base_revision = draft_ref.base_revision;
+    persisted_seed.revision = draft_ref.draft_revision;
+    persisted_seed.sources.front().source_id = "persisted-source";
+    const auto old_workspace_id = persisted_seed.workspace_id;
+    common_agent_request resumed_request = factory_request;
+    resumed_request.turn_id = "factory-followup";
+    resumed_request.prompt = "Check the follow-up question";
+    resumed_request.research_draft = draft_ref;
+    resumed_request.research_workspace_seed = persisted_seed;
+    resumed_request.objective.reset();
+    common_agent_research_workspace resumed_workspace;
+    assert(common_agent_research_create_workspace(resumed_request, resumed_workspace, factory_error));
+    assert(resumed_workspace.research_id == draft_ref.research_id && resumed_workspace.draft_id == draft_ref.draft_id);
+    assert(resumed_workspace.workspace_id != old_workspace_id && resumed_workspace.revision == draft_ref.draft_revision);
+    assert(resumed_workspace.objective.question == persisted_seed.objective.question);
+    assert(std::any_of(resumed_workspace.sources.begin(), resumed_workspace.sources.end(), [](const auto & source) {
+        return source.source_id == "persisted-source";
+    }));
+    assert(std::any_of(resumed_workspace.gaps.begin(), resumed_workspace.gaps.end(), [](const auto & gap) {
+        return gap.question == "Check the follow-up question";
+    }));
     assert(factory_workspace.sources.front().kind == common_agent_research_source_kind::user_supplied);
     assert(factory_workspace.sources.front().resource_ref &&
         factory_workspace.sources.front().resource_ref->uri == input_resource.resource.uri);
@@ -128,6 +174,25 @@ int main() {
     assert(factory_workspace.sources.back().availability ==
         common_agent_research_source_availability::materialized_context);
     assert(factory_workspace.sources.back().role == "method_context");
+
+    auto draft_request = factory_request;
+    draft_request.research_draft = common_agent_research_draft_ref{
+        "research:shared", "draft:factory-session", "factory-session", 3, 2,
+        "agent-resource://project/draft", "sha256:draft", 100};
+    common_agent_research_workspace draft_workspace;
+    assert(common_agent_research_create_workspace(draft_request, draft_workspace, factory_error));
+    assert(draft_workspace.research_id == "research:shared" &&
+        draft_workspace.draft_id == "draft:factory-session" && draft_workspace.base_revision == 3);
+    draft_workspace.sources.front().resource_ref->metadata.content_hash = "sha256:source";
+    draft_workspace.gaps.front().assessment = common_agent_research_gap_assessment::inconclusive;
+    const auto workspace_json = common_agent_research_workspace_to_json(draft_workspace);
+    common_agent_research_workspace restored_workspace;
+    assert(common_agent_research_workspace_from_json(workspace_json, restored_workspace, factory_error));
+    assert(restored_workspace.research_id == draft_workspace.research_id &&
+        restored_workspace.draft_id == draft_workspace.draft_id && restored_workspace.base_revision == 3);
+    assert(restored_workspace.objective.success_criteria == draft_workspace.objective.success_criteria &&
+        restored_workspace.sources.front().resource_ref->metadata.content_hash == "sha256:source" &&
+        restored_workspace.gaps.front().assessment == common_agent_research_gap_assessment::inconclusive);
 
     common_agent_research_workspace chunk_workspace;
     chunk_workspace.workspace_id = "research:chunk-turn";

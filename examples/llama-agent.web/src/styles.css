@@ -45,6 +45,9 @@ dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 16px 
 /* One mounted chat and editor; layout changes never recreate their state. */
 .workspace-toolbar { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin: 18px 0; position: relative; z-index: 20; }
 .workspace-nav { flex: 1; min-width: 0; align-items: center; margin: 0; min-height: 40px; }
+.active-chat-context { display: inline-flex; align-items: center; gap: 8px; min-width: 0; margin: 0 8px; padding: 4px 10px; color: #a8bad0; font-size: .82rem; }
+.active-chat-context strong { color: #dce9f8; font-weight: 650; }
+.active-chat-context span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(34vw, 280px); }
 .workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a9bdd5; }
 .workspace-tab { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: min(60vw, 480px); padding: 4px 5px 4px 12px; border: 1px solid #385b7d; border-bottom-color: #7dd3fc; border-radius: 7px 7px 0 0; background: #142237; }
 .workspace-tab .workspace-title { color: #e7edf7; }
@@ -96,6 +99,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .report-block:focu
 .report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .report-actions button:disabled { opacity: .45; cursor: default; }
 .report-section { margin: 24px 0; }
+.research-evidence-graph { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; background: #101d2d; }
+.research-evidence-graph-canvas { position: relative; width: 100%; height: min(54vh, 520px); min-height: 280px; }
+.research-evidence-graph small { display: block; margin-top: 8px; }
 .report-snapshots figure { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; }
 .report-snapshots img { display: block; max-width: 100%; height: auto; margin: 0 auto 10px; }
 .report-snapshots figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; overflow-wrap: anywhere; }

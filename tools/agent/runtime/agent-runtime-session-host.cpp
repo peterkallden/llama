@@ -626,6 +626,8 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
             static_cast<size_t>(std::max(0, request.deliberation_policy_override->max_tool_rounds)));
     }
     turn_request.request.input_resources = request.input_resources;
+    turn_request.request.research_draft = request.research_draft;
+    turn_request.request.research_workspace_seed = request.research_workspace_seed;
     turn_request.request.resource_read_binding = request.resource_read_binding;
     turn_request.request.investigation_context = request.investigation_context;
     turn_request.request.flydelta_activation = request.flydelta_activation;
@@ -1233,6 +1235,7 @@ bool common_agent_runtime_session_host::run_turn(
     result.runtime_reused = runtime_reused;
     result.limit_reached = agent_result.limit_reached;
     result.continuation_checkpoint = agent_result.continuation_checkpoint;
+    result.research_workspace_checkpoint = agent_result.research_workspace_checkpoint;
     result.reflected = agent_result.reflected;
     result.revised = agent_result.revised;
     result.failure_class = classify_turn_failure(agent_result, request.execution_control);

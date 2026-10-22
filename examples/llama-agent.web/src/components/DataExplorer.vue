@@ -12,7 +12,7 @@ const props = defineProps<{
   initialKind?: "dataset" | "resource" | "path";
   hideHandoff?: boolean;
 }>();
-const emit = defineEmits<{ handoff: [prompt: string] }>();
+const emit = defineEmits<{ handoff: [prompt: string]; browse: [] }>();
 const dataset = ref("");
 const source = ref<"dataset" | "resource" | "path">("dataset");
 const rows = ref(8);
@@ -59,6 +59,7 @@ watch(() => [props.initialSource, props.initialKind], () => {
   <section class="card explorer-card">
     <div class="card-title"><h2>Data Explorer</h2><span class="muted">read-only</span></div>
     <p class="muted">Browse a dataset, uploaded resource or repository file.</p>
+    <button type="button" class="explorer-toggle" @click="emit('browse')">Choose from Resources</button>
     <label class="field">Source type<select v-model="source"><option value="dataset">Dataset reference</option><option value="resource">Resource reference</option><option value="path">Repository-relative path</option></select></label>
     <label class="field">Source<input v-model="dataset" :placeholder="source === 'path' ? 'datasets/example.csv' : source === 'resource' ? 'agent-resource://resource/…' : 'dataset://local/example'" /></label>
     <div class="explorer-actions">

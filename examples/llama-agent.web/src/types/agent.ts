@@ -70,6 +70,7 @@ export type ChatMessage = {
   turnId: string;
   role: "user" | "assistant";
   content: string;
+  sequence?: number;
   pending?: boolean;
 };
 

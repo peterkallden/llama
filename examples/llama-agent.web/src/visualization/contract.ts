@@ -1,6 +1,7 @@
 export type RelationshipNode = { id: string; label?: string; kind?: string };
 export type RelationshipEdge = {
   id: string; source: string; target: string; label?: string; directed?: boolean;
+  relation?: string; provenance_refs?: string[];
 };
 export type RelationshipLayout = "cose" | "circle" | "grid" | "breadthfirst";
 export type RelationshipVisualization = {
@@ -56,16 +57,20 @@ export function parseRelationshipVisualization(input: unknown): RelationshipVisu
   const edges = spec.edges.map((raw): RelationshipEdge => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Visualization edge must be an object.");
     const edge = raw as Record<string, unknown>;
-    if (!keys(edge, ["id", "source", "target", "label", "directed"]) || !text(edge.id, 256) ||
+    if (!keys(edge, ["id", "source", "target", "label", "directed", "relation", "provenance_refs"]) || !text(edge.id, 256) ||
         !text(edge.source, 256) || !text(edge.target, 256) ||
         (edge.label !== undefined && !text(edge.label, 512, true)) ||
-        (edge.directed !== undefined && typeof edge.directed !== "boolean") || allIds.has(edge.id) ||
+        (edge.directed !== undefined && typeof edge.directed !== "boolean") ||
+        (edge.relation !== undefined && !text(edge.relation, 64, true)) ||
+        (edge.provenance_refs !== undefined && (!Array.isArray(edge.provenance_refs) || edge.provenance_refs.length > 64 ||
+          !edge.provenance_refs.every((ref) => text(ref, 512)))) || allIds.has(edge.id) ||
         !nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
       throw new Error("Visualization contains an invalid edge or a missing endpoint.");
     }
     allIds.add(edge.id); edgeIds.add(edge.id);
     return { id: edge.id, source: edge.source, target: edge.target,
-      label: edge.label as string | undefined, directed: edge.directed as boolean | undefined };
+      label: edge.label as string | undefined, directed: edge.directed as boolean | undefined,
+      relation: edge.relation as string | undefined, provenance_refs: edge.provenance_refs as string[] | undefined };
   });
   let view: RelationshipVisualization["view"];
   if (spec.view !== undefined) {

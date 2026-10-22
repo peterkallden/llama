@@ -112,6 +112,12 @@ struct common_agent_request {
     std::string project_id;
     std::string turn_id;
     std::optional<std::string> plan_id;
+    // Host-owned research binding. When present, the workspace is a draft
+    // based on a published revision; model input cannot select its identity.
+    std::optional<common_agent_research_draft_ref> research_draft;
+    // Host-loaded immutable base for the current chat's persistent draft.
+    // This is never accepted from model or client tool arguments.
+    std::optional<common_agent_research_workspace> research_workspace_seed;
     // Provenance for a host-selected route when ordinary planning is used
     // instead of a host-materialized blueprint/workflow instance.
     std::optional<common_plan_route_binding> route_binding;

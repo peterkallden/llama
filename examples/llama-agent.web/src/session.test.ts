@@ -2,13 +2,25 @@ import { afterEach, expect, it, vi } from "vitest";
 
 const transport = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>,
+  signals: [] as Array<AbortSignal | undefined>,
   replies: [] as Array<(value: unknown) => void>,
+  history: undefined as ((id: string, project: string) => Promise<unknown>) | undefined,
+  detach: undefined as (() => Promise<unknown>) | undefined,
   upload: undefined as (() => Promise<unknown>) | undefined,
   sink: (_event: Record<string, unknown>) => {},
 }));
 
-vi.mock("./api/agent-api", () => ({ AgentApi: class {
+vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constructor(message: string, readonly status: number) { super(message); } }, AgentApi: class {
   status() { return Promise.resolve({}); }
+  projects() { return Promise.resolve({ projects: [] }); }
+  chats() { return Promise.resolve({ chats: [], next_cursor: "" }); }
+  chatMessages(session_id: string, project_id = "") { return transport.history?.(session_id, project_id) ?? Promise.resolve({ chat: { id: session_id, project_id, title: "New chat" }, messages: [], history_available: true }); }
+  createChat(session_id: string, project_id = "", title = "New chat") { return Promise.resolve({ chat: { id: session_id, project_id, title } }); }
+  migrateLegacyChat(session_id: string) { return Promise.resolve({ chat: { id: session_id, project_id: "legacy-project", title: "Imported chat" }, migrated: true }); }
+  createProject(name: string) { return Promise.resolve({ project: { id: "project-test", name, created_at: 1, last_active_at: 1 } }); }
+  resources() { return Promise.resolve({ resources: [], next_cursor: "" }); }
+  setChatResource() { return transport.detach?.() ?? Promise.resolve({ chat: {} }); }
+  cancelTurn() { return Promise.resolve({ ok: true }); }
   putResource() { return transport.upload?.() ?? Promise.resolve({ resource: { uri: "resource://upload/test" } }); }
   connectEvents(sink: typeof transport.sink, _signal: AbortSignal, connected: () => void) {
     transport.sink = sink; connected();
@@ -16,6 +28,7 @@ vi.mock("./api/agent-api", () => ({ AgentApi: class {
   }
   submitTurn(turn: Record<string, unknown>, signal?: AbortSignal) {
     transport.calls.push(turn);
+    transport.signals.push(signal);
     return new Promise((resolve, reject) => {
       transport.replies.push(resolve);
       signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
@@ -23,7 +36,7 @@ vi.mock("./api/agent-api", () => ({ AgentApi: class {
   }
 } }));
 
-afterEach(() => { transport.upload = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
   transport.calls.length = 0;
@@ -186,6 +199,7 @@ it("persists document context on a queued user turn and keeps failed turns retry
 
 it("ignores late upload and turn completions after the user starts a new session", async () => {
   transport.calls.length = 0;
+  transport.signals.length = 0;
   transport.replies.length = 0;
   const values = new Map<string, string>();
   vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
@@ -199,7 +213,7 @@ it("ignores late upload and turn completions after the user starts a new session
     text: async () => "late" } as File);
   await Promise.resolve();
   await Promise.resolve();
-  session.newSession();
+  await session.newSession();
   finishUpload({ resource: { uri: "resource://old-session/upload" } });
   await upload;
   expect(session.attachments).toHaveLength(0);
@@ -207,12 +221,36 @@ it("ignores late upload and turn completions after the user starts a new session
   transport.upload = undefined;
   const oldSessionTurn = session.submit("old session question");
   const oldSessionId = session.sessionId;
-  session.newSession();
+  await session.newSession();
   expect(session.sessionId).not.toBe(oldSessionId);
   transport.replies[0]({ ok: true, response: "late response" });
   await oldSessionTurn;
   expect(session.messages).toHaveLength(0);
   expect(session.busy).toBe(false);
+});
+
+it("keeps an accepted turn alive when navigating to another chat and isolates its completion", async () => {
+  transport.calls.length = 0; transport.replies.length = 0; transport.signals.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const firstSession = session.sessionId;
+  const firstTurn = session.submit("long investigation");
+  await session.newSession("project-1");
+  expect(session.sessionId).not.toBe(firstSession);
+  expect(transport.signals[0]?.aborted).toBe(false);
+  const secondTurn = session.submit("separate question");
+  expect(transport.calls).toHaveLength(2);
+  transport.replies[0]({ ok: true, response: "The earlier work finished." });
+  expect(await firstTurn).toBe(false);
+  expect(session.busy).toBe(true);
+  transport.replies[1]({ ok: true, response: "The current chat response." });
+  expect(await secondTurn).toBe(true);
+  expect(session.messages.at(-1)?.content).toBe("The current chat response.");
+  expect(session.runningChats[firstSession]).toBeUndefined();
 });
 
 it("cancels a queued orientation when its attachment is removed", async () => {
@@ -228,7 +266,7 @@ it("cancels a queued orientation when its attachment is removed", async () => {
   await session.upload({ name: "notes.txt", type: "text/plain", size: 8,
     text: async () => "some text" } as File);
   expect(session.attachmentOrientations).toHaveLength(1);
-  session.removeAttachment(0);
+  await session.removeAttachment(0);
   expect(session.attachmentOrientations).toHaveLength(0);
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.calls).toHaveLength(0);
@@ -266,7 +304,7 @@ it("isolates a draining review from a new session and ignores unrelated turn eve
   const session = useAgentSession();
   void session.connect();
   await session.submitReview("old review", { document_uri: "resource://old", revision: 1, block_ids: [] }, "old-review");
-  session.newSession();
+  await session.newSession();
   await session.submitReview("new review", { document_uri: "resource://new", revision: 1, block_ids: [] }, "new-review");
   expect(transport.calls).toHaveLength(2);
   for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -314,4 +352,72 @@ it("waits for the active HTTP turn before dispatching a queued review, despite a
   await cancelled;
   expect(session.busy).toBe(false);
   expect(session.error).toBe("turn deadline exceeded");
+});
+
+it("does not automatically replay operations that were running when the browser session was restored", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const sessionId = "web-restored";
+  const values = new Map<string, string>([
+    ["llama-agent-web.session-id", sessionId],
+    ["llama-agent-web.navigation-schema", "1"],
+    [`llama-agent-web.document-reviews:${sessionId}`, JSON.stringify([{
+      operation_id: "review-1", turn_id: "review-1", session_id: sessionId, prompt: "Review",
+      document_context: { document_uri: "resource://doc", revision: 1, block_ids: [] }, state: "running",
+    }])],
+    [`llama-agent-web.attachment-orientations:${sessionId}`, JSON.stringify([{
+      operation_id: "orientation-1", turn_id: "orientation-1", session_id: sessionId,
+      resource_uri: "resource://attachment", name: "notes.txt", state: "running",
+    }])],
+    [`llama-agent-web.pending-user-turns:${sessionId}`, JSON.stringify([{
+      turn_id: "turn-1", session_id: sessionId, prompt: "Question", resource_refs: [],
+      display_prompt: "Question", state: "running",
+    }])],
+  ]);
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  expect(session.documentReviews[0].state).toBe("failed");
+  expect(session.documentReviews[0].error).toMatch(/check the chat history/i);
+  expect(session.attachmentOrientations[0].state).toBe("failed");
+  expect(session.pendingUserTurns[0].state).toBe("failed");
+  expect(transport.calls).toHaveLength(0);
+});
+
+
+it("keeps the current turn attached when loading another chat fails", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  const original = session.sessionId;
+  const turn = session.submit("Keep working");
+  transport.history = async () => { throw new Error("History unavailable"); };
+  await expect(session.activateChat({ id: "web-other", project_id: "", title: "Other", created_at: 1, last_active_at: 1 })).rejects.toThrow("History unavailable");
+  expect(session.sessionId).toBe(original);
+  expect(session.busy).toBe(true);
+  transport.replies[0]({ ok: true, response: "Finished original task" });
+  expect(await turn).toBe(true);
+  expect(session.messages.at(-1)?.content).toBe("Finished original task");
+});
+
+it("does not remove an attachment from a new chat after a late detach response", async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  session.attachments.push({ name: "old.txt", mime_type: "text/plain", scope: "session", uri: "resource://old" });
+  let resolveDetach!: (value: unknown) => void;
+  transport.detach = () => new Promise((resolve) => { resolveDetach = resolve; });
+  const removal = session.removeAttachment(0);
+  await session.newSession();
+  session.attachments.push({ name: "new.txt", mime_type: "text/plain", scope: "session", uri: "resource://new" });
+  resolveDetach({ chat: {} });
+  await removal;
+  expect(session.attachments.map((item) => item.uri)).toEqual(["resource://new"]);
 });

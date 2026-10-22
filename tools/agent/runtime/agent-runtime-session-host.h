@@ -58,6 +58,10 @@ struct common_agent_runtime_session_host_turn_request {
     std::vector<std::string> allowed_exposed_tool_names;
     std::optional<common_agent_deliberation_policy> deliberation_policy_override;
     std::vector<common_agent_input_resource> input_resources;
+    // Prepared by the daemon from an authorized research draft resource.
+    // Client JSON cannot provide this object directly.
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
     // Preferred typed contract. The booleans below remain accepted only as
     // legacy daemon-wire inputs and are normalized into this binding.
     std::optional<common_agent_resource_read_binding> resource_read_binding;
@@ -108,6 +112,7 @@ struct common_agent_runtime_session_host_turn_result {
     bool runtime_reused = false;
     bool limit_reached = false;
     std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
+    std::optional<common_agent_research_workspace_checkpoint> research_workspace_checkpoint;
     bool reflected = false;
     bool revised = false;
     common_agent_failure_class failure_class = common_agent_failure_class::execution;

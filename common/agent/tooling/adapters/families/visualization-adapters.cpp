@@ -2,6 +2,9 @@
 
 #include "agent/tooling/adapters/families/data-adapters.h"
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "agent/artifact/artifact-contract.h"
+#include "agent/artifact/research-view-projection.h"
+#include "agent/thinking/research/research-workspace-serialization.h"
 #include "agent/visualization/visualization-contract.h"
 #include "base64.hpp"
 #include "hash/hash.h"
@@ -288,7 +291,7 @@ common_tool_execution_result create_relationship(
         const std::string edge_id = "edge:" + hash_sha256_hex(serialized_key.data(), serialized_key.size());
         spec.edges.push_back({edge_id, source, target,
             bounded_edge_label.empty() ? (count == 1 ? "observed relation" : "observed relation (" + std::to_string(count) + ")") : bounded_edge_label,
-            true});
+            true, "observed", {}});
         ++emitted_edges;
     }
     if (spec.truncated && std::find(spec.limitations.begin(), spec.limitations.end(),
@@ -393,6 +396,105 @@ common_tool_execution_result open_relationship(
     return common_adapter_success_json({{"visualization_uri", descriptor.uri},
         {"visualization", common_agent_visualization_relationship_to_json(spec)},
         {"complete", spec.complete}, {"truncated", spec.truncated}, {"limitations", spec.limitations}});
+}
+
+common_tool_execution_result project_research_graph(
+        const common_native_tool_bindings & bindings, const std::string & input) {
+    json arguments;
+    std::string error;
+    if (!common_adapter_parse_object(input, arguments, error))
+        return common_adapter_validation_failure("tool.visualization.research_graph.invalid_arguments", std::move(error));
+    static const std::set<std::string> allowed{"source_uri", "block_ids"};
+    for (auto it = arguments.begin(); it != arguments.end(); ++it) if (!allowed.count(it.key()))
+        return common_adapter_validation_failure("tool.visualization.research_graph.invalid_arguments",
+            "unsupported research graph argument: " + it.key());
+    if (!arguments.contains("source_uri") || !arguments["source_uri"].is_string() ||
+            arguments["source_uri"].get<std::string>().empty() || arguments["source_uri"].get<std::string>().size() > 512)
+        return common_adapter_validation_failure("tool.visualization.research_graph.invalid_arguments",
+            "source_uri must be a non-empty resource reference of at most 512 bytes");
+    std::vector<std::string> block_ids;
+    if (arguments.contains("block_ids")) {
+        if (!arguments["block_ids"].is_array() || arguments["block_ids"].size() > 100)
+            return common_adapter_validation_failure("tool.visualization.research_graph.invalid_arguments",
+                "block_ids must be an array containing at most 100 report block IDs");
+        for (const auto & item : arguments["block_ids"]) {
+            if (!item.is_string() || item.get<std::string>().empty() || item.get<std::string>().size() > 256)
+                return common_adapter_validation_failure("tool.visualization.research_graph.invalid_arguments",
+                    "each report block ID must be a non-empty string of at most 256 bytes");
+            block_ids.push_back(item.get<std::string>());
+        }
+    }
+    auto * store = bindings.resource_runtime.store;
+    if (store == nullptr)
+        return common_adapter_execution_failure("tool.visualization.research_graph.store_unavailable",
+            "resource store is unavailable", "The research view could not be read.");
+    const auto authority = make_agent_resource_read_authority(
+        bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    const auto source_uri = arguments["source_uri"].get<std::string>();
+    agent_resource_descriptor descriptor;
+    if (!store->stat(source_uri, authority, descriptor, error))
+        return common_adapter_not_found_failure("tool.visualization.research_graph.source_unavailable", std::move(error),
+            "The research source is unavailable in the current scope.");
+    std::string source_json;
+    if (!store->read_text(source_uri, authority, 4 * 1024 * 1024, source_json, error))
+        return common_adapter_execution_failure("tool.visualization.research_graph.source_read_failed", std::move(error),
+            "The research source could not be read.");
+    if (!descriptor.sha256.empty() && hash_sha256_hex(source_json.data(), source_json.size()) != descriptor.sha256)
+        return common_adapter_execution_failure("tool.visualization.research_graph.source_hash_mismatch",
+            "research source bytes do not match the authorized resource descriptor hash",
+            "The research source failed integrity validation.");
+    common_agent_visualization_relationship graph;
+    if (descriptor.mime_type == "application/vnd.llama-agent.research-workspace+json") {
+        const auto payload = json::parse(source_json, nullptr, false);
+        common_agent_research_workspace workspace;
+        if (payload.is_discarded() || !common_agent_research_workspace_from_json(payload, workspace, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.invalid_workspace", std::move(error),
+                "The saved research workspace is invalid.");
+        if (workspace.scope.namespace_id != bindings.tool_scope.namespace_id ||
+                workspace.scope.project_id != bindings.tool_scope.project_id ||
+                (bindings.tool_scope.project_id.empty() && workspace.scope.session_id != bindings.tool_scope.session_id))
+            return common_adapter_validation_failure("tool.visualization.research_graph.workspace_scope_mismatch",
+                "the research workspace payload does not belong to the active host scope");
+        if (!common_agent_research_workspace_evidence_graph(workspace, graph, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.projection_failed", std::move(error),
+                "The active research graph could not be projected.");
+    } else if (descriptor.mime_type == "application/vnd.llama-agent.document+json" ||
+            descriptor.mime_type == "application/vnd.llama-agent.report+json") {
+        common_agent_artifact_document document;
+        if (!common_agent_artifact_document_from_json(source_json, document, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.invalid_document", std::move(error),
+                "The saved report is invalid.");
+        if (document.snapshot_uri.empty())
+            return common_adapter_validation_failure("tool.visualization.research_graph.snapshot_missing",
+                "the saved report has no immutable research snapshot");
+        agent_resource_descriptor snapshot_descriptor;
+        if (!store->stat(document.snapshot_uri, authority, snapshot_descriptor, error) ||
+                snapshot_descriptor.mime_type != "application/json")
+            return common_adapter_not_found_failure("tool.visualization.research_graph.snapshot_unavailable", std::move(error),
+                "The report's frozen research snapshot is unavailable in the current scope.");
+        std::string snapshot_json;
+        if (!store->read_text(document.snapshot_uri, authority, 4 * 1024 * 1024, snapshot_json, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.snapshot_read_failed", std::move(error),
+                "The report's frozen research snapshot could not be read.");
+        if (!snapshot_descriptor.sha256.empty() &&
+                hash_sha256_hex(snapshot_json.data(), snapshot_json.size()) != snapshot_descriptor.sha256)
+            return common_adapter_execution_failure("tool.visualization.research_graph.snapshot_hash_mismatch",
+                "frozen report snapshot bytes do not match the authorized resource descriptor hash",
+                "The report's frozen research snapshot failed integrity validation.");
+        common_agent_artifact_snapshot snapshot;
+        if (!common_agent_artifact_snapshot_from_json(snapshot_json, snapshot, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.invalid_snapshot", std::move(error),
+                "The report's frozen research snapshot is invalid.");
+        if (!common_agent_research_report_evidence_graph(document, snapshot, block_ids, graph, error))
+            return common_adapter_execution_failure("tool.visualization.research_graph.projection_failed", std::move(error),
+                "The report evidence graph could not be projected.");
+    } else {
+        return common_adapter_validation_failure("tool.visualization.research_graph.source_type_invalid",
+            "source_uri must refer to a saved research workspace or report document");
+    }
+    return common_adapter_success_json({{"source_uri", source_uri},
+        {"visualization", common_agent_visualization_relationship_to_json(graph)},
+        {"complete", graph.complete}, {"truncated", graph.truncated}, {"limitations", graph.limitations}});
 }
 
 common_tool_execution_result save_relationship_snapshot(
@@ -549,6 +651,12 @@ bool common_try_register_visualization_tool_adapter(
     if (definition.executor_id == "builtin.visualization.open") {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             return open_relationship(bindings, input);
+        }, error);
+        return true;
+    }
+    if (definition.executor_id == "builtin.visualization.research_graph") {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            return project_research_graph(bindings, input);
         }, error);
         return true;
     }

@@ -2119,6 +2119,7 @@ bool initialize_agent_daemon_environment(
             runtime.model_residency,
             session_manager_build_config.flydelta_deployment_resolver,
             session_manager_build_config.context_resource_store,
+            session_manager_build_config.context_resource_store_persistent,
         }));
 
     common_memory_store * memory_store = runtime.memory_store.get();

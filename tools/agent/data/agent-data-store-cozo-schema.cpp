@@ -160,6 +160,45 @@ const char * investigation_report_index_schema = R"COZO(
     }
 )COZO";
 
+const char * research_schema = R"COZO(
+    {
+        ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [['__probe__', '__probe__', 1, '', '', '']]
+        :create agent_research_current {
+            scope_key: String,
+            research_id: String =>
+            revision: Int,
+            payload_uri: String,
+            fingerprint: String,
+            publication_id: String
+        }
+    }
+    {
+        ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [['__probe__', '__probe__', 1, '', '', '']]
+        :create agent_research_revisions {
+            scope_key: String,
+            research_id: String,
+            revision: Int =>
+            payload_uri: String,
+            fingerprint: String,
+            publication_id: String
+        }
+    }
+    {
+        ?[scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] <- [['__probe__', '__probe__', '__probe__', '__probe__', 0, 1, '', '', 0]]
+        :create agent_research_drafts {
+            scope_key: String,
+            research_id: String,
+            draft_id: String =>
+            owner_session_id: String,
+            base_revision: Int,
+            draft_revision: Int,
+            payload_uri: String,
+            fingerprint: String,
+            updated_at_ms: Int
+        }
+    }
+)COZO";
+
 } // namespace
 
 const char * agent_cozo_schema_script() { return schema; }
@@ -169,3 +208,4 @@ const char * agent_cozo_dataset_schema_script() { return dataset_schema; }
 const char * agent_cozo_investigation_schema_script() { return investigation_schema; }
 const char * agent_cozo_investigation_scope_index_schema_script() { return investigation_scope_index_schema; }
 const char * agent_cozo_investigation_report_index_schema_script() { return investigation_report_index_schema; }
+const char * agent_cozo_research_schema_script() { return research_schema; }

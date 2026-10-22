@@ -170,6 +170,12 @@ std::string investigation_scope_key(const common_agent_scope & scope) {
         : json{{"project_id", scope.project_id}};
     return json{{"namespace_id", scope.namespace_id}, {"owner", owner}}.dump();
 }
+std::string research_scope_key(const common_agent_scope & scope) {
+    const auto owner = scope.project_id.empty()
+        ? json{{"session_id", scope.session_id}}
+        : json{{"project_id", scope.project_id}};
+    return json{{"namespace_id", scope.namespace_id}, {"owner", owner}}.dump();
+}
 bool scope_equal(const common_agent_scope & a, const common_agent_scope & b) {
     return a.namespace_id == b.namespace_id && a.project_id == b.project_id &&
         (a.project_id.empty() ? a.session_id == b.session_id : true);
@@ -467,6 +473,156 @@ bool common_agent_cozo_data_store::list_investigation_reports(
     return true;
 }
 
+bool common_agent_cozo_data_store::get_research_revision(
+        const std::string & research_id, uint64_t revision, const common_agent_scope & scope,
+        common_agent_research_revision_ref & out, std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    out = {};
+    if (research_id.empty() || research_id.size() > 512 || scope.namespace_id.empty() ||
+            scope.session_id.empty()) { error = "research revision lookup identity is invalid"; return false; }
+    const std::string key = research_scope_key(scope);
+    std::string raw;
+    const bool latest = revision == 0;
+    const std::string query = latest
+        ? "?[revision, payload_uri, fingerprint, publication_id] := *agent_research_current[$scope_key, $research_id, revision, payload_uri, fingerprint, publication_id]"
+        : "?[revision, payload_uri, fingerprint, publication_id] := *agent_research_revisions[$scope_key, $research_id, $revision, payload_uri, fingerprint, publication_id]";
+    if (!run(query, json{{"scope_key", key}, {"research_id", research_id}, {"revision", revision}}.dump(), raw, error)) return false;
+    const auto parsed = json::parse(raw, nullptr, false);
+    if (!parsed.is_object() || !parsed.contains("rows") || !parsed["rows"].is_array()) {
+        error = "Cozo research revision lookup returned invalid data"; return false;
+    }
+    if (parsed["rows"].empty()) { error = "research workspace was not found in this scope"; return false; }
+    const auto & row = parsed["rows"][0];
+    if (!row.is_array() || row.size() < 4 || !row[0].is_number_integer() ||
+            !row[1].is_string() || !row[2].is_string() || !row[3].is_string()) {
+        error = "Cozo research revision record is malformed"; return false;
+    }
+    out.research_id = research_id;
+    out.revision = row[0].get<uint64_t>();
+    out.parent_revision = out.revision > 0 ? out.revision - 1 : 0;
+    out.payload_uri = row[1].get<std::string>();
+    out.payload_fingerprint = row[2].get<std::string>();
+    out.publication_id = row[3].get<std::string>();
+    error.clear(); return true;
+}
+
+bool common_agent_cozo_data_store::publish_research_revision(
+        const common_agent_scope & scope, const common_agent_research_revision_ref & input,
+        uint64_t expected_revision, common_agent_research_revision_ref & published,
+        bool & already_published, std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    published = {}; already_published = false;
+    if (scope.namespace_id.empty() || scope.session_id.empty() || input.research_id.empty() ||
+            input.research_id.size() > 512 || input.payload_uri.empty() || input.payload_uri.size() > 1024 ||
+            input.payload_fingerprint.empty() || input.payload_fingerprint.size() > 128 ||
+            input.publication_id.empty() || input.publication_id.size() > 256 ||
+            input.revision != expected_revision + 1 || input.parent_revision != expected_revision) {
+        error = "research revision publication is incomplete or has an invalid sequence"; return false;
+    }
+    const std::string key = research_scope_key(scope);
+    std::string raw;
+    if (!run("?[revision, payload_uri, fingerprint, publication_id] := *agent_research_current[$scope_key, $research_id, revision, payload_uri, fingerprint, publication_id]",
+            json{{"scope_key", key}, {"research_id", input.research_id}}.dump(), raw, error)) return false;
+    auto current = json::parse(raw, nullptr, false);
+    if (!current.is_object() || !current.contains("rows") || !current["rows"].is_array()) {
+        error = "Cozo research revision lookup returned invalid data"; return false;
+    }
+    uint64_t actual = 0;
+    std::string old_uri, old_fingerprint, old_publication;
+    if (!current["rows"].empty()) {
+        const auto & row = current["rows"][0];
+        if (!row.is_array() || row.size() < 4 || !row[0].is_number_integer() ||
+                !row[1].is_string() || !row[2].is_string() || !row[3].is_string()) {
+            error = "Cozo research revision head is malformed"; return false;
+        }
+        actual = row[0].get<uint64_t>(); old_uri = row[1].get<std::string>();
+        old_fingerprint = row[2].get<std::string>(); old_publication = row[3].get<std::string>();
+        if (old_publication == input.publication_id && actual == input.revision &&
+                old_fingerprint == input.payload_fingerprint) {
+            published = input;
+            published.payload_uri = old_uri;
+            already_published = true;
+            error.clear(); return true;
+        }
+    }
+    if (actual != expected_revision) { error = "research workspace revision conflict"; return false; }
+    const json params{{"scope_key", key}, {"research_id", input.research_id},
+        {"revision", input.revision}, {"expected_revision", expected_revision},
+        {"payload_uri", input.payload_uri}, {"fingerprint", input.payload_fingerprint},
+        {"publication_id", input.publication_id}, {"old_uri", old_uri},
+        {"old_fingerprint", old_fingerprint}, {"old_publication", old_publication}};
+    const std::string guard = expected_revision == 0
+        ? "{ ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [[$scope_key, $research_id, -1, '', '', '']] :ensure_not agent_research_current { scope_key, research_id, revision, payload_uri, fingerprint, publication_id } }\n"
+        : "{ ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [[$scope_key, $research_id, $expected_revision, $old_uri, $old_fingerprint, $old_publication]] :ensure agent_research_current { scope_key, research_id, revision, payload_uri, fingerprint, publication_id } }\n";
+    const std::string script = guard +
+        "{ ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [[$scope_key, $research_id, $revision, $payload_uri, $fingerprint, $publication_id]] :put agent_research_revisions { scope_key, research_id, revision => payload_uri, fingerprint, publication_id } }\n"
+        "{ ?[scope_key, research_id, revision, payload_uri, fingerprint, publication_id] <- [[$scope_key, $research_id, $revision, $payload_uri, $fingerprint, $publication_id]] :put agent_research_current { scope_key, research_id => revision, payload_uri, fingerprint, publication_id } }";
+    if (!run(script, params.dump(), raw, error)) {
+        if (error.find("ensure") != std::string::npos || error.find("concurrent") != std::string::npos)
+            error = "research workspace revision conflict";
+        return false;
+    }
+    published = input; error.clear(); return true;
+}
+
+bool common_agent_cozo_data_store::get_research_draft(
+        const std::string & draft_id, const common_agent_scope & scope,
+        common_agent_research_draft_ref & out, std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    out = {};
+    if (draft_id.empty() || draft_id.size() > 512 || scope.namespace_id.empty() || scope.session_id.empty()) {
+        error = "research draft lookup identity is invalid"; return false;
+    }
+    std::string raw;
+    if (!run("?[research_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] := *agent_research_drafts[$scope_key, research_id, $draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms]",
+            json{{"scope_key", research_scope_key(scope)}, {"draft_id", draft_id}}.dump(), raw, error)) return false;
+    const auto parsed=json::parse(raw,nullptr,false);
+    if(!parsed.is_object()||!parsed.contains("rows")||!parsed["rows"].is_array()){error="Cozo research draft lookup returned invalid data";return false;}
+    if(parsed["rows"].empty()){error="research draft was not found in this scope";return false;}
+    const auto & row=parsed["rows"][0];
+    if(!row.is_array()||row.size()<7||!row[0].is_string()||!row[1].is_string()||!row[2].is_number_integer()||!row[3].is_number_integer()||!row[4].is_string()||!row[5].is_string()||!row[6].is_number_integer()) {error="Cozo research draft record is malformed";return false;}
+    if(row[1].get<std::string>()!=scope.session_id){error="research draft belongs to a different chat session";return false;}
+    out.research_id=row[0].get<std::string>();out.draft_id=draft_id;out.owner_session_id=row[1].get<std::string>();
+    out.base_revision=row[2].get<uint64_t>();out.draft_revision=row[3].get<uint64_t>();out.payload_uri=row[4].get<std::string>();
+    out.payload_fingerprint=row[5].get<std::string>();out.updated_at_ms=row[6].get<int64_t>();error.clear();return true;
+}
+
+bool common_agent_cozo_data_store::save_research_draft(
+        const common_agent_scope & scope, const common_agent_research_draft_ref & input,
+        uint64_t expected_draft_revision, common_agent_research_draft_ref & saved,
+        bool & already_saved, std::string & error) {
+    std::lock_guard<std::mutex> lock(investigation_mutex_);
+    saved={};already_saved=false;
+    if(scope.namespace_id.empty()||scope.session_id.empty()||input.research_id.empty()||input.draft_id.empty()||
+            input.owner_session_id!=scope.session_id||input.payload_uri.empty()||input.payload_fingerprint.empty()||
+            input.draft_revision!=expected_draft_revision+1||input.research_id.size()>512||input.draft_id.size()>512||input.payload_uri.size()>1024) {
+        error="research draft publication is incomplete or not owned by this chat";return false;
+    }
+    const auto key=research_scope_key(scope);std::string raw;
+    if(!run("?[owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] := *agent_research_drafts[$scope_key, $research_id, $draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms]",
+            json{{"scope_key",key},{"research_id",input.research_id},{"draft_id",input.draft_id}}.dump(),raw,error))return false;
+    const auto current=json::parse(raw,nullptr,false);if(!current.is_object()||!current.contains("rows")||!current["rows"].is_array()){error="Cozo research draft lookup returned invalid data";return false;}
+    uint64_t actual=0;std::string old_owner,old_uri,old_fingerprint;uint64_t old_base=0;int64_t old_updated=0;
+    if(!current["rows"].empty()){
+        const auto & row=current["rows"][0];if(!row.is_array()||row.size()<6||!row[0].is_string()||!row[1].is_number_integer()||!row[2].is_number_integer()||!row[3].is_string()||!row[4].is_string()||!row[5].is_number_integer()){error="Cozo research draft head is malformed";return false;}
+        old_owner=row[0].get<std::string>();old_base=row[1].get<uint64_t>();actual=row[2].get<uint64_t>();old_uri=row[3].get<std::string>();old_fingerprint=row[4].get<std::string>();old_updated=row[5].get<int64_t>();
+        if(actual==input.draft_revision&&old_owner==input.owner_session_id&&old_base==input.base_revision&&old_uri==input.payload_uri&&old_fingerprint==input.payload_fingerprint){saved=input;already_saved=true;error.clear();return true;}
+    }
+    if(actual!=expected_draft_revision){error="research draft revision conflict";return false;}
+    const json params{{"scope_key",key},{"research_id",input.research_id},{"draft_id",input.draft_id},
+        {"owner_session_id",input.owner_session_id},{"base_revision",input.base_revision},
+        {"draft_revision",input.draft_revision},{"payload_uri",input.payload_uri},
+        {"fingerprint",input.payload_fingerprint},{"updated_at_ms",input.updated_at_ms},
+        {"expected_revision",expected_draft_revision},{"old_owner",old_owner},{"old_base",old_base},
+        {"old_uri",old_uri},{"old_fingerprint",old_fingerprint},{"old_updated",old_updated}};
+    const std::string guard=expected_draft_revision==0
+        ? "{ ?[scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] <- [[$scope_key, $research_id, $draft_id, '', -1, -1, '', '', 0]] :ensure_not agent_research_drafts { scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms } }\n"
+        : "{ ?[scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] <- [[$scope_key, $research_id, $draft_id, $old_owner, $old_base, $expected_revision, $old_uri, $old_fingerprint, $old_updated]] :ensure agent_research_drafts { scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms } }\n";
+    const auto script=guard+"{ ?[scope_key, research_id, draft_id, owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms] <- [[$scope_key, $research_id, $draft_id, $owner_session_id, $base_revision, $draft_revision, $payload_uri, $fingerprint, $updated_at_ms]] :put agent_research_drafts { scope_key, research_id, draft_id => owner_session_id, base_revision, draft_revision, payload_uri, fingerprint, updated_at_ms } }";
+    if(!run(script,params.dump(),raw,error)){if(error.find("ensure")!=std::string::npos||error.find("concurrent")!=std::string::npos)error="research draft revision conflict";return false;}
+    saved=input;error.clear();return true;
+}
+
 bool common_agent_cozo_data_store::set_virtual_dataset_source(
         common_agent_virtual_dataset_source * source) {
     virtual_dataset_source_ = source;
@@ -486,7 +642,8 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
     if (!run("::relations", "{}", relations, error)) { close(); return false; }
     const auto parsed = json::parse(relations, nullptr, false);
     bool rows_present = false, values_present = false, order_present = false, dataset_present = false,
-        investigation_present = false, investigation_index_present = false, investigation_report_index_present = false;
+        investigation_present = false, investigation_index_present = false, investigation_report_index_present = false,
+        research_current_present = false, research_revisions_present = false, research_drafts_present = false;
     if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0].is_string()) {
         rows_present |= row[0] == "agent_data_rows";
         values_present |= row[0] == "agent_data_values";
@@ -495,6 +652,9 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         investigation_present |= row[0] == "agent_investigation_current";
         investigation_index_present |= row[0] == "agent_investigation_scope_index";
         investigation_report_index_present |= row[0] == "agent_investigation_report_index";
+        research_current_present |= row[0] == "agent_research_current";
+        research_revisions_present |= row[0] == "agent_research_revisions";
+        research_drafts_present |= row[0] == "agent_research_drafts";
     }
     if (!rows_present) { std::string ignored; if (!run(agent_cozo_schema_script(), "{}", ignored, error)) { close(); return false; } }
     else if (!values_present) { std::string ignored; if (!run(agent_cozo_values_schema_script(), "{}", ignored, error)) { close(); return false; } }
@@ -541,6 +701,13 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         }
         if (!index_rows.empty() && !run("?[scope_key, case_id, revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri] <- $rows :put agent_investigation_scope_index { scope_key, case_id => revision, title, question, source_id, window_start_ms, window_end_ms, revision_uri }",
                 json{{"rows", index_rows}}.dump(), ignored, error)) { close(); return false; }
+    }
+    if (!research_current_present && !research_revisions_present && !research_drafts_present) {
+        std::string ignored;
+        if (!run(agent_cozo_research_schema_script(), "{}", ignored, error)) { close(); return false; }
+    } else if (!(research_current_present && research_revisions_present && research_drafts_present)) {
+        error = "Cozo research workspace schema is incomplete";
+        close(); return false;
     }
     if (investigation_present && !investigation_report_index_present) {
         std::string ignored;

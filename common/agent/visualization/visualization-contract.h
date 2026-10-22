@@ -20,6 +20,8 @@ struct common_agent_visualization_edge {
     std::string target;
     std::string label;
     bool directed = true;
+    std::string relation;
+    std::vector<std::string> provenance_refs;
 };
 
 struct common_agent_visualization_view {

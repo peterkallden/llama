@@ -1,5 +1,7 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/artifact/artifact-contract.h"
+#include "agent/thinking/research/research-workspace-serialization.h"
 #include "agent/visualization/visualization-contract.h"
 #include "base64.hpp"
 #include "hash/hash.h"
@@ -8,9 +10,11 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <string>
+#include <utility>
 
 class visualization_data_store final : public common_agent_data_store {
 public:
@@ -187,6 +191,135 @@ int main() {
     const auto extra_argument = registry.execute({"visualization.open",
         R"({"visualization_uri":"resource://session/visualization-1","dataset":"dataset://scope/links"})"});
     assert(!extra_argument.ok);
+
+    common_agent_research_workspace active_research;
+    active_research.workspace_id = "research-workspace-test";
+    active_research.research_id = "research-project-test";
+    active_research.draft_id = "research-draft-test";
+    active_research.scope.namespace_id = scope.namespace_id;
+    active_research.scope.session_id = scope.session_id;
+    active_research.objective.objective_id = "question-test";
+    active_research.objective.question = "What supports this conclusion?";
+    common_agent_research_source active_source;
+    active_source.source_id = "source-test";
+    active_source.title = "Test source";
+    active_source.origin = "fixture";
+    active_source.authority = "test";
+    active_source.content_hash = "sha256:test";
+    active_research.sources.push_back(std::move(active_source));
+    common_agent_research_evidence active_evidence;
+    active_evidence.evidence_id = "evidence-test";
+    active_evidence.source_id = "source-test";
+    active_evidence.claim_id = "claim-test";
+    active_evidence.statement = "The source records a test observation.";
+    active_evidence.source_location = "line 1";
+    active_evidence.relation = common_agent_research_evidence_relation::supports;
+    active_research.evidence.push_back(active_evidence);
+    auto active_json = common_agent_research_workspace_to_json(active_research).dump();
+    agent_resource_descriptor active_descriptor;
+    active_descriptor.uri = "resource://session/research-workspace";
+    active_descriptor.name = "Research workspace";
+    active_descriptor.mime_type = "application/vnd.llama-agent.research-workspace+json";
+    active_descriptor.size_bytes = active_json.size();
+    active_descriptor.scope = common_runtime_resource_scope::session;
+    active_descriptor.namespace_id = scope.namespace_id;
+    active_descriptor.session_id = scope.session_id;
+    active_descriptor.sha256 = hash_sha256_hex(active_json.data(), active_json.size());
+    resources.resources[active_descriptor.uri] = active_descriptor;
+    resources.text_resources[active_descriptor.uri] = active_json;
+    const auto evidence_graph = registry.execute({"visualization.research_graph",
+        R"({"source_uri":"resource://session/research-workspace"})"});
+    assert(evidence_graph.ok);
+    const auto evidence_graph_json = nlohmann::json::parse(evidence_graph.output);
+    common_agent_visualization_relationship projected_research;
+    assert(common_agent_visualization_relationship_from_json(
+        evidence_graph_json.at("visualization"), projected_research, error));
+    assert(std::any_of(projected_research.edges.begin(), projected_research.edges.end(), [](const auto & edge) {
+        return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
+    }));
+    resources.resources[active_descriptor.uri].sha256 = "tampered";
+    const auto invalid_research_graph = registry.execute({"visualization.research_graph",
+        R"({"source_uri":"resource://session/research-workspace"})"});
+    assert(!invalid_research_graph.ok && invalid_research_graph.failure_code ==
+        "tool.visualization.research_graph.source_hash_mismatch");
+    resources.resources[active_descriptor.uri].sha256 = active_descriptor.sha256;
+
+    common_agent_artifact_profile profile;
+    profile.id = "research";
+    profile.revision = "v1";
+    profile.title = "Research report";
+    profile.purpose = "Test report evidence graph";
+    common_agent_artifact_section_profile findings_section;
+    findings_section.id = "findings";
+    findings_section.title = "Findings";
+    findings_section.purpose = "Evidence-linked findings";
+    profile.sections.push_back(std::move(findings_section));
+    common_plan_state plan;
+    plan.id = "research-plan-test";
+    plan.version = 1;
+    common_agent_artifact_snapshot frozen_snapshot;
+    if (!common_agent_artifact_snapshot_from_plan(plan, profile, frozen_snapshot, error,
+            &active_research, "research-checkpoint-test")) {
+        std::cerr << "research snapshot projection failed: " << error << '\n';
+        return 1;
+    }
+    std::string frozen_json;
+    assert(common_agent_artifact_snapshot_to_json(frozen_snapshot, frozen_json, error));
+    agent_resource_descriptor frozen_descriptor;
+    frozen_descriptor.uri = "resource://session/research-snapshot";
+    frozen_descriptor.mime_type = "application/json";
+    frozen_descriptor.size_bytes = frozen_json.size();
+    frozen_descriptor.scope = common_runtime_resource_scope::session;
+    frozen_descriptor.namespace_id = scope.namespace_id;
+    frozen_descriptor.session_id = scope.session_id;
+    frozen_descriptor.sha256 = hash_sha256_hex(frozen_json.data(), frozen_json.size());
+    resources.resources[frozen_descriptor.uri] = frozen_descriptor;
+    resources.text_resources[frozen_descriptor.uri] = frozen_json;
+    common_agent_artifact_document report_document;
+    report_document.schema_version = 1;
+    report_document.id = "report-test";
+    report_document.title = "Test report";
+    report_document.revision = 2;
+    report_document.snapshot_uri = frozen_descriptor.uri;
+    report_document.snapshot_fingerprint = frozen_snapshot.fingerprint;
+    common_agent_artifact_block report_block;
+    report_block.id = "findings:block-test";
+    report_block.text = "The source records a test observation.";
+    report_block.claim_id = "claim-test";
+    report_block.evidence_ids = {"evidence-test"};
+    report_document.sections.push_back({"findings", "Findings", false, {report_block}, {}});
+    std::string report_json;
+    assert(common_agent_artifact_document_to_json(report_document, report_json, error));
+    agent_resource_descriptor report_descriptor;
+    report_descriptor.uri = "resource://session/report-test";
+    report_descriptor.mime_type = "application/vnd.llama-agent.report+json";
+    report_descriptor.size_bytes = report_json.size();
+    report_descriptor.scope = common_runtime_resource_scope::session;
+    report_descriptor.namespace_id = scope.namespace_id;
+    report_descriptor.session_id = scope.session_id;
+    report_descriptor.sha256 = hash_sha256_hex(report_json.data(), report_json.size());
+    resources.resources[report_descriptor.uri] = report_descriptor;
+    resources.text_resources[report_descriptor.uri] = report_json;
+    const auto report_graph = registry.execute({"visualization.research_graph", nlohmann::json{
+        {"source_uri", report_descriptor.uri}, {"block_ids", {"findings:block-test"}}}.dump()});
+    if (!report_graph.ok) {
+        std::cerr << "frozen report graph projection failed: " << report_graph.failure_code
+                  << ": " << report_graph.raw_diagnostic << '\n';
+        return 1;
+    }
+    assert(report_graph.ok);
+    const auto report_graph_json = nlohmann::json::parse(report_graph.output);
+    common_agent_visualization_relationship projected_report;
+    assert(common_agent_visualization_relationship_from_json(
+        report_graph_json.at("visualization"), projected_report, error));
+    assert(std::any_of(projected_report.edges.begin(), projected_report.edges.end(), [](const auto & edge) {
+        return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
+    }));
+    resources.resources[frozen_descriptor.uri].sha256 = "tampered";
+    const auto invalid_report_graph = registry.execute({"visualization.research_graph",
+        nlohmann::json{{"source_uri", report_descriptor.uri}}.dump()});
+    assert(!invalid_report_graph.ok && invalid_report_graph.failure_code ==
+        "tool.visualization.research_graph.snapshot_hash_mismatch");
 
     const auto saved_spec = resources.saved;
     const auto invalid_reference = registry.execute({"visualization.create",
