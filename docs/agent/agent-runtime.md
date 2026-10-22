@@ -1671,24 +1671,25 @@ create or select the source dataset first, for example with
 The host reports this as `plan.binding.self_alias`; it does not silently turn
 the circular reference into a literal or guess a dataset name.
 
-When a request is marked as requiring tool execution, a rejected planner JSON
-object is a bounded planner failure. The runtime must not turn it into an
-answer-only fallback, because that would make an ungrounded answer look like a
+When a request is marked as requiring tool execution, a rejected planner
+proposal in the configured format is a bounded planner failure. The runtime
+must not turn it into an answer-only fallback, because that would make an ungrounded answer look like a
 successful tool-backed turn. Callers that allow ordinary conversational
 fallback may retain the old bounded answer step.
 
 If the rejected plan contains a `plan.binding.*` error, the planner gets one
 bounded regeneration with a host-generated repair hint. For current-turn
-attachments the hint lists only the available handles (`r1`, `r2`, and so on)
-and their names. The model must select one of those handles explicitly, for
+attachments the hint refers to the source inventory already present in the
+prompt, without repeating its handles or names. The model must select one of
+those handles (`r1`, `r2`, and so on) explicitly, for
 example `resource: "r1"`; it must not invent `$datasets` aliases or turn the
 attachment list into a dataset registry. With exactly one attachment the host
 may still apply the deterministic default for dataset inspection tools. With
 multiple attachments the host does not guess. If there are no current
-attachments, the repair hint directs the model to the registered-dataset
-flow (`dataset.list` followed by `dataset.select`) when the user asked for a
-registered dataset; otherwise the host must first run a separate scoped
-resource-list flow, or ask the user for an attachment. The existing
+attachments, the repair hint does not invent an attachment or a dataset
+alias. Additional source discovery must use the existing authorized
+registered-dataset or scoped resource-list flow, or request an attachment.
+The existing
 daemon/admin `resources/list` operation is not silently exposed as a planner
 tool by this repair. This repair is local to the failed planner attempt; it
 does not rerun the entire orchestration plan and it does not fabricate missing

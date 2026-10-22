@@ -55,6 +55,12 @@ common_agent_generation_request make_agent_cli_generation_request(
     cognitive_mode.content = common_agent_cognitive_mode_instruction(
         request.cognitive_state.mode);
     generation.messages.insert(generation.messages.begin(), std::move(cognitive_mode));
+    // Default to per-message cost diagnostics. Planner callers can replace
+    // these spans with finer contract/context sections after composition.
+    for (size_t index = 0; index < generation.messages.size(); ++index) {
+        generation.prompt_sections.push_back({index == 0 ? "cognitive_mode" : "message_" + std::to_string(index),
+            index, 0, generation.messages[index].content.size()});
+    }
     generation.input_resources.reserve(request.input_resources.size());
     for (const auto & input : request.input_resources) {
         generation.input_resources.push_back({input.resource, input.role, input.required});

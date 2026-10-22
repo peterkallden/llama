@@ -330,6 +330,19 @@ private:
             const common_agent_prepared_generation & prepared, std::string & error) const {
         if (!vocab) { error = "server generation has no tokenizer for context validation"; return false; }
         const size_t prompt_tokens = common_tokenize(vocab, prepared.prompt, true, true).size();
+        if (resident_trace_enabled()) for (const auto & section : request.prompt_sections) {
+            if (section.message_index >= request.messages.size()) continue;
+            const auto & content = request.messages[section.message_index].content;
+            if (section.byte_offset > content.size() ||
+                    section.byte_length > content.size() - section.byte_offset) continue;
+            const auto text = content.substr(section.byte_offset, section.byte_length);
+            // Standalone section counts exclude template overhead and may not
+            // add up to the exact rendered-prompt admission count below.
+            const size_t tokens = text.empty() ? 0 : common_tokenize(vocab, text, false, true).size();
+            resident_trace("context-section", request,
+                ("section=" + section.name + " bytes=" + std::to_string(section.byte_length) +
+                 " standalone_tokens=" + std::to_string(tokens)).c_str());
+        }
         resident_trace("context-budget", request,
             ("tools=" + std::to_string(request.tools.size()) + " prompt_tokens=" + std::to_string(prompt_tokens) +
              " reserved_output=" + std::to_string(request.options.n_predict) + " context_tokens=" + std::to_string(context_tokens)).c_str());

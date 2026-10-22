@@ -273,10 +273,35 @@ bool select_model_tool_families(
         return true;
     }
 
+    const auto run_tool_free_conversation = [&]() {
+        common_agent_runtime_tooling chat_tooling = execution.tooling;
+        chat_tooling.tools.clear();
+        common_agent_generation_options chat_options;
+        chat_options.n_predict = generation_config.n_predict;
+        chat_options.n_threads = generation_config.n_threads;
+        chat_options.generation_trace = generation_config.generation_trace;
+        common_agent_chat_runtime_execution chat_execution{
+            execution.inference, request, chat_options,
+            {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
+            chat_tooling, execution.execution_control,
+        };
+        execution.family_chat_routed = true;
+        return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
+    };
     if (!generation_config.enable_tool_family_routing ||
-            execution.tooling.tools.empty() ||
             (!execution.current_plan_id.empty() && !request.resource_read_binding)) {
         return true;
+    }
+    if (execution.tooling.tools.empty()) {
+        if (caller_requires_tool_execution || request.tool_call ||
+                (request.resource_read_binding && request.resource_read_binding->require_content_read)) {
+            error = "required tool execution has no host-authorized tools";
+            return false;
+        }
+        execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+            common_runtime_trace_kind::decided,
+            "tool routing outcome=empty_authorized_catalog; using existing conversation driver", {}});
+        return run_tool_free_conversation();
     }
 
     const auto families = common_generate_tool_family_index(
@@ -303,22 +328,7 @@ bool select_model_tool_families(
             error = "tool family selection declined tools for a tool-required request";
             return false;
         }
-        common_agent_runtime_tooling chat_tooling = execution.tooling;
-        chat_tooling.tools.clear();
-        common_agent_generation_options chat_options;
-        chat_options.n_predict = generation_config.n_predict;
-        chat_options.n_threads = generation_config.n_threads;
-        chat_options.generation_trace = generation_config.generation_trace;
-        common_agent_chat_runtime_execution chat_execution{
-            execution.inference,
-            request,
-            chat_options,
-            {execution.policy.max_tool_rounds, execution.runtime_config.max_continuations},
-            chat_tooling,
-            execution.execution_control,
-        };
-        execution.family_chat_routed = true;
-        return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
+        return run_tool_free_conversation();
     }
     execution.model_tools = common_expand_tool_family_prerequisites(
         execution.tooling.tools, selection.family_ids);

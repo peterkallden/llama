@@ -7,6 +7,7 @@
 #include "resource/resource-text-view.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -114,6 +115,14 @@ inline common_agent_generation_options common_agent_generation_options_with_n_pr
     return options;
 }
 
+// Transient host-owned spans for content-free prompt cost diagnostics.
+struct common_agent_prompt_section {
+    std::string name;
+    size_t message_index = 0;
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+};
+
 struct common_agent_generation_request {
     common_agent_generation_purpose purpose = common_agent_generation_purpose::draft;
     std::optional<std::string> trace_id;
@@ -136,6 +145,7 @@ struct common_agent_generation_request {
     // It is request-scoped and never participates in FlyDelta lifecycle.
     std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
     std::shared_ptr<const common_flydelta_device_diagnostics_request> flydelta_device_diagnostics;
+    std::vector<common_agent_prompt_section> prompt_sections;
 };
 
 inline common_agent_generation_request common_agent_make_generation_request(

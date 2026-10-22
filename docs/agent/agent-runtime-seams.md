@@ -475,6 +475,28 @@ Selecting a family means that the request needs external evidence. The host
 sets the existing `require_tool_execution` contract, so an answer-only model
 response cannot silently replace the required tool work.
 
+With automatic family routing enabled, a new unbound normal task whose
+authorized catalog is empty uses the existing conversation driver directly.
+There is no family to select and no executable DSL tool plan to generate.
+Required tool calls and host-bound content reads fail when their tools are
+unavailable; an existing plan is not diverted through this path. A direct
+DSL planner invocation with an empty catalog fails before inference instead
+of switching to JSON or asking the model to invent a tool.
+
+Planner prompts retain the configured output format. A short base instruction
+is combined with each exposed tool contract once, fixed host bindings, and
+syntax guidance derived from the available input schemas. Array syntax and
+resource/dataset distinctions are included only when those contracts need
+them. Structural repair adds the validation diagnostic, not another copy of
+the planner tutorial or source inventory.
+
+With `LLAMA_AGENT_RESIDENT_TRACE=1`, `context-section` diagnostics report byte
+counts and standalone token counts for instructions, tool contracts, fixed
+bindings, turn context, source inventory, memory/policy and repair. These
+transient spans contain no new persisted state and log no source text.
+Standalone counts exclude chat-template overhead and tokenizer boundary
+effects; the complete rendered prompt remains the exact admission check.
+
 The singleton fast path is limited to one authorized operation when the host
 has already resolved its required arguments. It uses a bounded native
 operation-selection generation and immediately materializes the result into

@@ -2,6 +2,7 @@
 #include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-plan-orchestration.h"
 #include "tools/agent/cli/agent-cli-selection.h"
+#include "tools/agent/cli/agent-cli-runtime.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "json-schema-to-grammar.h"
@@ -9,6 +10,7 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "memory/memory-in-memory.h"
 #include "plan/plan-in-memory.h"
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -54,7 +56,97 @@ struct routing_inference final : common_agent_inference {
         return true;
     }
 };
+struct planner_prompt_inference final : common_agent_inference {
+    std::vector<common_agent_generation_request> requests;
+    std::vector<std::string> replies;
+    bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
+        requests.push_back(request);
+        result = {};
+        if (requests.size() > replies.size()) {
+            result.error_message = "fixture stopped before inference";
+            return false;
+        }
+        result.content = replies[requests.size() - 1];
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = common_agent_generation_stop_reason::eos;
+        return true;
+    }
+};
+
+static void check_planner_prompt_contracts() {
+    common_agent_generation_config config;
+    config.n_predict = 64;
+    common_agent_request request;
+    request.session_id = "planner-prompt-contract";
+    request.prompt = "Inspect the selected evidence.";
+    request.tool_output_format = common_agent_tool_output_format::compact_dsl;
+    request.require_tool_execution = true;
+    common_chat_tool tool{"analysis.inspect", "Inspect selected evidence",
+        R"({"type":"object","additionalProperties":false,"required":["limit"],"properties":{"limit":{"type":"integer"}}})",
+        R"({"type":"object","properties":{"count":{"type":"integer"}}})"};
+    planner_prompt_inference inference;
+    inference.replies = {"invalid plan", "plan goal=\"inspect evidence\"\nstep | open! analysis.inspect\nlimit: 10"};
+    auto planner = make_llama_cli_planner(inference, config, {tool});
+    std::string error;
+    const auto proposal = planner->create_plan(request, error);
+    require(error.empty() && !proposal.operations.empty(), "corrected DSL plan was not accepted");
+    require(inference.requests.size() == 2, "malformed DSL did not use one bounded structural repair");
+    const auto & first = inference.requests.front();
+    const auto & repaired = inference.requests.back();
+    require(first.json_schema.empty() && repaired.json_schema.empty(), "DSL planning silently switched to JSON");
+    const auto & instructions = first.messages[1].content;
+    require(instructions.find("dataset.list") == std::string::npos &&
+        instructions.find("Scalar arrays") == std::string::npos &&
+        instructions.find("rN") == std::string::npos,
+        "unrelated dataset, attachment or array tutorials leaked into a scalar tool plan");
+    require(instructions.find("analysis.inspect") != std::string::npos &&
+        instructions.find("limit") != std::string::npos && instructions.find("count") != std::string::npos,
+        "compact planner prompt lost tool input or output contracts");
+    require(instructions.size() < 1600, "single scalar tool prompt regressed to an oversized instruction block");
+    require(instructions == repaired.messages[1].content &&
+        first.options.n_predict == repaired.options.n_predict, "repair changed the base contract or response reservation");
+    require(repaired.messages.back().content.size() - first.messages.back().content.size() < 350,
+        "structural repair duplicated the planner tutorial");
+    require(first.messages.back().content.find(request.prompt) != std::string::npos &&
+        first.messages.back().content.find(request.prompt) == first.messages.back().content.rfind(request.prompt),
+        "planner duplicated the host-composed turn context");
+    for (const auto & generated : inference.requests) {
+        std::vector<size_t> covered(generated.messages.size(), 0);
+        for (const auto & section : generated.prompt_sections) {
+            require(section.message_index < generated.messages.size(), "prompt diagnostic section has invalid message index");
+            require(section.byte_offset == covered[section.message_index], "prompt diagnostic spans overlap or omit bytes");
+            covered[section.message_index] += section.byte_length;
+            require(covered[section.message_index] <= generated.messages[section.message_index].content.size(),
+                "prompt diagnostic section extends beyond its message");
+        }
+        for (size_t index = 0; index < covered.size(); ++index) {
+            require(covered[index] == generated.messages[index].content.size(), "prompt diagnostics do not account for every message");
+        }
+    }
+    planner_prompt_inference source_inference;
+    auto source_tool = tool;
+    source_tool.parameters = R"({"type":"object","properties":{"resource":{"type":"string"},"dataset":{"type":"string"},"columns":{"type":"array","items":{"type":"string"}}}})";
+    common_agent_input_resource attachment;
+    attachment.resource.uri = "resource://prompt-contract/source";
+    request.input_resources = {attachment};
+    auto source_planner = make_llama_cli_planner(source_inference, config, {source_tool});
+    source_planner->create_plan(request, error);
+    require(source_inference.requests.size() == 1, "source prompt fixture did not reach inference");
+    const auto & source_prompt = source_inference.requests.front().messages[1].content;
+    require(source_prompt.find("Scalar arrays") != std::string::npos && source_prompt.find("rN") != std::string::npos,
+        "declared array or resource capabilities lost their syntax instructions");
+    planner_prompt_inference empty_inference;
+    auto empty_planner = make_llama_cli_planner(empty_inference, config, {});
+    request.input_resources.clear();
+    empty_planner->create_plan(request, error);
+    require(!error.empty() && empty_inference.requests.empty(), "required empty tool catalog reached inference");
+    request.require_tool_execution = false;
+    empty_planner->create_plan(request, error);
+    require(!error.empty() && empty_inference.requests.empty(), "empty DSL tool plan was sent to the model or switched formats");
+}
+
 int main() {
+    check_planner_prompt_contracts();
     require(common_agent_resolve_tool_round_limit(0) == 16, "zero must resolve to the shared default");
     require(common_agent_resolve_tool_round_limit(1) == 1, "explicit one-call limit changed");
     for (const size_t budget : {size_t(0), size_t(1)}) {
@@ -275,5 +367,41 @@ int main() {
     require(!run_agent_runtime_host(host_execution, result, error), "failed conversation was reported as success");
     require(result.total_decoded_tokens == 7 && !result.trace.empty(), "early failure lost partial tokens or trace");
     require(result.error.find("synthetic generation failure") != std::string::npos, "early failure lost provider reason");
+    {
+        common_agent_runtime_tooling empty_tooling;
+        auto empty_turn = turn;
+        empty_turn.request.require_tool_execution = false;
+        empty_turn.request.tool_output_format = common_agent_tool_output_format::compact_dsl;
+        std::string empty_current_plan;
+        common_agent_runtime_host_build_context empty_context{memories, &plans, empty_turn,
+            &empty_current_plan, &blueprints, memories_found, empty_tooling};
+        auto empty_inputs = make_agent_runtime_host_agent_inputs(empty_context, empty_turn.orchestration_config);
+        auto empty_execution = make_agent_runtime_host_execution(empty_inputs, inference);
+        inference.fail_conversation = false;
+        inference.requests.clear();
+        require(run_agent_runtime_host(empty_execution, result, error), error.c_str());
+        require(result.response == "OK" && inference.requests.size() == 1 &&
+            inference.requests.front().purpose == common_agent_generation_purpose::conversation &&
+            inference.requests.front().tools.empty() && inference.requests.front().json_schema.empty(),
+            "empty authorized catalog did not use the existing conversation driver");
+        const auto & conversation = inference.requests.front();
+        require(conversation.scope && conversation.scope->namespace_id == empty_turn.scope.namespace_id &&
+            conversation.scope->session_id == empty_turn.scope.session_id &&
+            conversation.messages.back().content.find(empty_turn.request.prompt) != std::string::npos,
+            "empty-catalog routing lost scope or host-composed context");
+        require(std::any_of(result.trace.begin(), result.trace.end(), [](const common_runtime_trace_entry & entry) {
+                return entry.detail.find("empty_authorized_catalog") != std::string::npos;
+            }), "empty-catalog conversation transition has no diagnostic trace");
+        require(plans.list(error).empty(), "tool-free conversation unnecessarily persisted an execution plan");
+        empty_execution.turn_request.request.require_tool_execution = true;
+        inference.requests.clear();
+        require(!run_agent_runtime_host(empty_execution, result, error) && inference.requests.empty(),
+            "empty catalog bypassed mandatory tool execution");
+        empty_execution.turn_request.request.require_tool_execution = false;
+        empty_execution.turn_request.request.resource_read_binding = common_agent_resource_read_binding{};
+        inference.requests.clear();
+        require(!run_agent_runtime_host(empty_execution, result, error) && inference.requests.empty(),
+            "empty catalog bypassed a host-bound content read");
+    }
     return 0;
 }
