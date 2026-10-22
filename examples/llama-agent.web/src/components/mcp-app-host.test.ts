@@ -1,8 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppAutoSizeScript, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
 
 describe("MCP App sandbox host", () => {
+
+  it("reports content growth and shrinkage without sizing against the iframe viewport", () => {
+    let bottom = 950;
+    const child = { tagName: "MAIN", getBoundingClientRect: () => ({ bottom }) };
+    const fixed = { tagName: "FOOTER", getBoundingClientRect: () => ({ bottom: 5000 }) };
+    const body = { children: [child, fixed] };
+    const parent = { postMessage: vi.fn() };
+    let changed = () => {};
+    const listen = vi.fn();
+    const viewport = { innerWidth: 800 };
+    class Observer {
+      constructor(callback: () => void) { changed = callback; }
+      observe() {}
+    }
+    new Function("document", "parent", "getComputedStyle", "ResizeObserver", "MutationObserver", "requestAnimationFrame", "addEventListener", "scrollY", "window", mcpAppAutoSizeScript())(
+      { body, readyState: "complete" }, parent,
+      (element: unknown) => ({ position: element === fixed ? "fixed" : "static", display: "block", marginBottom: "0", paddingBottom: "20" }),
+      Observer, Observer, (callback: () => void) => callback(), listen, 0, viewport);
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ params: { height: 970 } }), "*");
+    const resize = listen.mock.calls.find(([name]) => name === "resize")![1];
+    bottom = 1100; resize();
+    expect(parent.postMessage).toHaveBeenCalledTimes(1);
+    viewport.innerWidth = 600; resize();
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ params: { height: 1120 } }), "*");
+    bottom = 420; changed();
+    expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ params: { height: 440 } }), "*");
+    const calls = parent.postMessage.mock.calls.length; changed();
+    expect(parent.postMessage).toHaveBeenCalledTimes(calls);
+  });
+  it("validates and bounds app heights", () => {
+    expect(mcpAppHeight({ height: 1240.5 })).toBe(1241);
+    expect(mcpAppHeight({ height: 80 })).toBe(320);
+    expect(mcpAppHeight({ height: 50000 })).toBe(20000);
+    for (const height of [0, -1, NaN, Infinity, "700", null]) expect(mcpAppHeight({ height })).toBeNull();
+    expect(mcpAppHeight(null)).toBeNull();
+  });
   it("opens only bounded resource references requested by the investigation workspace", () => {
     expect(authorizedInvestigationReportReference("ui://llama-agent/apps/investigation-workspace", "agent-resource://resource/report-1"))
       .toBe("agent-resource://resource/report-1");
@@ -106,12 +142,14 @@ describe("MCP App sandbox host", () => {
   it.each([
     '<html><head lang="en"><title>App</title></head><body>content</body></html>',
     '<p>content without head</p>',
+    '<html><head></head><body>İ<p>content</p></BODY></html>',
+    '<html><head></head><body><script>const fragment = "</body>";</script><p>content</p></body></html>',
   ])("runs the generated proxy, inserts CSP and relays only its own view: %s", (appHtml) => {
     const html = sandboxProxyDocument();
     const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"));
     const parent = { postMessage: vi.fn() };
     const view = { setAttribute: vi.fn(), style: {}, srcdoc: "", contentWindow: { postMessage: vi.fn() } };
-    const document = { createElement: vi.fn(() => view), body: { replaceChildren: vi.fn() } };
+    const document = { createElement: vi.fn(() => view), documentElement: { style: {} }, body: { style: {}, replaceChildren: vi.fn() } };
     let receive = (_event: Record<string, unknown>) => {};
     new Function("parent", "addEventListener", "document", script)(parent,
       (_type: string, listener: typeof receive) => { receive = listener; }, document);
@@ -119,6 +157,8 @@ describe("MCP App sandbox host", () => {
     receive({ source: parent, data: { method: "ui/notifications/sandbox-resource-ready", params: {
       html: appHtml, csp: normalizeMcpAppCsp({ csp: { connectDomains: ["https://*.example.org"] } }),
     } } });
+    if (appHtml.includes('const fragment')) expect(view.srcdoc).toContain('<script>const fragment = "</body>";</script>');
+    expect(view.srcdoc).toMatch(/<script>\(\(\) => [\s\S]*<\/script><\/body>/i);
     expect(view.srcdoc).toContain('http-equiv="Content-Security-Policy"');
     expect(view.srcdoc).toContain("connect-src https://*.example.org");
     expect(view.srcdoc.match(/<head\b/gi)).toHaveLength(1);
@@ -129,6 +169,12 @@ describe("MCP App sandbox host", () => {
     expect(parent.postMessage).not.toHaveBeenCalled();
     receive({ source: view.contentWindow, origin: "null", data: message });
     expect(parent.postMessage).toHaveBeenCalledWith(message, "*");
+    receive({ source: view.contentWindow, origin: "null", data: { method: "ui/notifications/size-changed", params: { height: 1234 } } });
+    expect((view.style as Record<string, string>).height).toBe("1234px");
+    receive({ source: {}, origin: "null", data: { method: "ui/notifications/size-changed", params: { height: 9000 } } });
+    expect((view.style as Record<string, string>).height).toBe("1234px");
+    receive({ source: view.contentWindow, origin: "null", data: { method: "ui/notifications/size-changed", params: { height: "9000" } } });
+    expect((view.style as Record<string, string>).height).toBe("1234px");
     receive({ source: parent, data: { jsonrpc: "2.0", id: 2, result: {} } });
     expect(view.contentWindow.postMessage).toHaveBeenCalledOnce();
   });

@@ -453,7 +453,6 @@ function isArtifactEvent(event: Record<string, unknown>) {
     <div class="workspace-toolbar">
       <nav class="workspace-nav" aria-label="Workspace">
         <ChatMenu :locked="navigationLocked" />
-        <span class="active-chat-context"><strong>{{ session.projects.find((item) => item.id === session.projectId)?.name ?? 'Personal' }}</strong><span>/</span><span>{{ session.chatTitle }}</span></span>
         <button type="button" :class="{ selected: activeView === 'resources' }" :disabled="navigationLocked" @click="navigateWorkspace('resources')">Resources</button>
         <div v-if="workspaceActive" class="workspace-tab" :aria-busy="workspaceNavigating">
           <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeView === 'resources' ? 'Resources' : activeMcpApp()?.name || 'Application' }}</span>
@@ -492,7 +491,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
       </div>
       <div class="primary">
         <section class="card chat chat-panel">
-          <div class="card-title chat-heading"><h2>Chat</h2><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
+          <div class="card-title chat-heading"><div><h2>Chat</h2><span class="active-chat-context"><strong>{{ session.projects.find((item) => item.id === session.projectId)?.name ?? 'Personal' }}</strong><span>/</span><span>{{ session.chatTitle }}</span></span></div><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
           <p v-if="!session.historyAvailable && !session.messages.length" class="muted history-unavailable">This chat has no saved message transcript in the resource store.</p>
           <button v-if="session.historyCursor" type="button" class="quiet history-more" :disabled="session.navigationLoading" @click="session.loadOlderMessages()">{{ session.navigationLoading ? 'Loading…' : 'Load older messages' }}</button>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>

@@ -176,6 +176,15 @@ envelope. Truncated samples are labelled explicitly. Source changes discard old
 results and pending replies cannot replace a newer source's view. These operations
 do not start a model turn.
 
+Project and chat titles are displayed in the conversation header, separate from
+workspace navigation buttons. Embedded apps grow with their content through
+validated `ui/notifications/size-changed` messages relayed by the sandbox proxy.
+The host also measures content changes, media loading and width reflow inside
+the isolated app. Height-only host resizing does not trigger another measurement.
+Bundled app layouts use content height rather than viewport-relative page heights
+to avoid a resize feedback loop. Heights are bounded to 320–20,000 CSS pixels;
+large data tables can retain their own paginated or virtualized scrolling views.
+
 Tools that advertise an MCP App UI can be opened from the right-hand status
 floater. Applications use the main workspace with chat alongside it. The browser
 host fetches the UI resource through `POST /api/v1/mcp-apps/resource` and brokers

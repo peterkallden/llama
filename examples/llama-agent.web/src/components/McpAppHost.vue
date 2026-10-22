@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
-import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, sandboxProxyDocument } from "./mcp-app-host";
+import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
 import { DocumentEditorAccess } from "./document-editor-access";
 
 const props = defineProps<{
@@ -20,6 +20,7 @@ const emit = defineEmits<{
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const proxyUrl = ref("");
+const appHeight = ref(620);
 const error = ref("");
 const busy = ref(false);
 const appMessage = ref("");
@@ -59,7 +60,7 @@ async function load() {
   busy.value = false; appMessage.value = "";
   lastInvocationSignature = "";
   documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
-  pendingHtml = ""; pendingCsp = {};
+  pendingHtml = ""; pendingCsp = {}; appHeight.value = 620;
   if (!uri.value || !appVisible.value) { error.value = "This tool does not advertise an app-visible UI resource."; return; }
   busy.value = true;
   try {
@@ -137,6 +138,11 @@ async function onMessage(event: MessageEvent) {
     send({ jsonrpc: "2.0", method: "ui/notifications/sandbox-resource-ready", params: { html: pendingHtml, csp: pendingCsp } });
     return;
   }
+  if (method === "ui/notifications/size-changed") {
+    const height = mcpAppHeight(message.params);
+    if (height !== null) appHeight.value = height;
+    return;
+  }
   if (method === "ui/initialize") {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
     if (id === undefined || !params.appInfo || !params.appCapabilities || params.protocolVersion !== "2026-01-26") {
@@ -162,7 +168,6 @@ async function onMessage(event: MessageEvent) {
     reply(undefined, "The MCP App has not completed initialization.");
     return;
   }
-  if (method === "ui/notifications/size-changed") return;
   if (method === "ping") { reply({}); return; }
   if (method === "notifications/message") return;
   if (method === "ui/llama-agent/editor-status") {
@@ -366,6 +371,6 @@ onBeforeUnmount(() => { ++loadGeneration; window.removeEventListener("message", 
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="appMessage" class="muted">App: {{ appMessage }}</p>
     <p v-if="busy" class="muted">Loading UI resource through the provider…</p>
-    <iframe v-if="proxyUrl" ref="frame" title="MCP App sandbox" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" :src="proxyUrl" />
+    <iframe v-if="proxyUrl" ref="frame" :style="{ height: `${appHeight}px` }" title="MCP App sandbox" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" :src="proxyUrl" />
   </section>
 </template>

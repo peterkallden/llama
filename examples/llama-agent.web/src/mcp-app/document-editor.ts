@@ -211,7 +211,7 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
   if (!mount) return;
   editor = new Editor({
     el: mount,
-    height: "calc(100vh - 150px)",
+    height: "auto",
     initialValue: content,
     initialEditType: "markdown",
     previewStyle: window.matchMedia?.("(max-width: 760px)").matches ? "tab" : "vertical",
