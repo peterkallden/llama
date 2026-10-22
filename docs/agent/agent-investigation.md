@@ -60,6 +60,7 @@ index administration requests.
 When enabled, `workflow_package` is imported through the existing bootstrap
 and plan-store path. The checked-in package declares identity, communication,
 event-chain, integration-trace, hypothesis-testing and report-composition
+workflows, plus actor/relationship, narrative/comparison and document-provenance
 workflows; it does not add a second workflow engine. Relative paths resolve
 against the daemon config file's directory, and the file is checked while the
 config loads. Use an absolute path when the deployment layout is managed
@@ -114,6 +115,64 @@ continuation against Elasticsearch or OpenSearch. It also does not provide
 collector/Kafka subscriptions, a live event stream, formal evidence
 chain-of-custody, or model-supported smoke coverage. Case listing and evidence
 reads are scope-checked on every request.
+
+## Mixed document and log sources
+
+A case may contain retained documents and log files alongside configured
+search-connector sources. Creating a document-only case does not require a
+search source or a time window. A configured search source is marked
+`not_collected` and incomplete until a collection operation records its actual
+coverage. Use `investigation.source.list` to discover resources and currently
+authorized search sources, `investigation.source.attach` to add a source, and
+`investigation.document.prepare` to create a text representation with the
+existing resource processors. These operations do not start model analysis by
+themselves. The workspace asks the user to choose sources and an analysis
+profile before dispatching the normal host-authorized workflow.
+
+An authorized search connector can also be attached to an existing document-only
+case. The first connector added this way must establish the case time window;
+additional connectors use that same case-level window. `investigation.collect`
+accepts only virtual datasets whose provider is attached to the case and keeps
+each provider's event and entity IDs in that source's identity domain. Repeated
+collection for one provider rebuilds that provider's relations while
+preserving relations already collected from other providers.
+
+The original upload is retained as an immutable resource with its parent
+reference and content hash. PDF, DOCX and OCR processing use the processors
+already configured by the host. A missing processor or lossy OCR path is
+recorded as a limitation in the source revision and frozen report. A verified
+quote anchor proves that the quoted UTF-8 bytes occur at the recorded offset in
+the retained text representation; it does not prove that OCR faithfully
+represents the source image or that the source statement is true.
+
+The actor/relationship, narrative/comparison and document-provenance
+workflows record versioned source statements and comparisons. A statement
+must reference a case source and an exact, verified text anchor. Actor IDs are
+references attached to those statements, not verified real-world identities;
+name similarity does not merge actors. Model-produced comparisons remain
+`model_proposal`, and source-dependency claims remain proposals until an
+authorized analyst review or explicit deterministic rule is added. Reported
+times in documents remain separate from event times observed in collected log
+records. A document statement does not become an independently observed log
+event by being linked to one.
+
+`investigation.statement.record` publishes statements, comparisons and their
+analysis provenance together in a new case revision. Its idempotency key binds
+the full typed payload, including source versions, profile, parameters and
+completeness. `investigation.case.items` exposes bounded pages of sources,
+statements, comparisons, analyses and hypotheses for the selected revision.
+Frozen report composition carries the source manifest, exact source and text
+representation hashes, processor limitations, analysis versions and the
+resulting coverage assessment. Later case revisions do not change an existing
+report.
+
+This is a bounded document-analysis path, not a general document-forensics
+engine: it does not provide OCR-region coordinates, native actor resolution,
+automatic source-independence verification, image/audio/video analysis,
+lie detection or formal chain-of-custody. Uploaded log files can be retained
+and processed as text, but they do not become normalized independent event
+records unless a configured structured collection path supplies those
+records.
 
 The workspace can bind a selected case revision and selected entity, relation
 and event IDs to the next chat turn. The daemon reloads the case in the active

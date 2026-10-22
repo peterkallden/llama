@@ -415,6 +415,8 @@ public:
         const bool document_write = name=="document.create"||name=="document.import"||name=="document.save"||
             name=="document.propose_patch"||name=="document.apply_patch";
         const bool investigation_write = name=="investigation.case.create"||name=="investigation.collect"||
+            name=="investigation.source.attach"||name=="investigation.document.prepare"||
+            name=="investigation.statement.record"||
             name=="investigation.claim.hypothesize"||name=="investigation.report.compose"||
             name=="visualization.snapshot";
         if ((document_write && resource_uri!="ui://llama-agent/apps/document-editor") ||

@@ -8,7 +8,10 @@ const props = defineProps<{
   tool: DaemonToolStatus;
   tools: DaemonToolStatus[];
   sessionId: string;
+  projectId?: string;
   readResource: (toolName: string, uri: string) => Promise<unknown>;
+  listResources?: (input: { scope: "project" | "session"; query?: string; cursor?: string; limit?: number; projectId?: string; sessionId?: string }) => Promise<{ resources: Array<Record<string, unknown>>; next_cursor: string }>;
+  uploadResource?: (file: File, options: { scope: "session"; orient: false; attach: false }) => Promise<string | undefined>;
   callTool: (appTool: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
   submitReview?: (prompt: string, documentContext: { document_uri: string; revision: number; block_ids: string[]; base_document_uri?: string }, operationId?: string) => Promise<unknown>;
   invocation?: { input?: Record<string, unknown>; result?: unknown };
@@ -17,6 +20,7 @@ const emit = defineEmits<{
   documentStatus: [status: Record<string, unknown>];
   documentClosed: [];
   openReport: [uri: string];
+  startInvestigation: [prompt: string];
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const proxyUrl = ref("");
@@ -180,6 +184,16 @@ async function onMessage(event: MessageEvent) {
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
     const action = String(params.action ?? "");
+    if (action === "start-investigation") {
+      if (uri.value !== "ui://llama-agent/apps/investigation-workspace" ||
+          typeof content.text !== "string" || content.text.length > 2000) {
+        reply(undefined, "The investigation workspace supplied an invalid analysis request.");
+        return;
+      }
+      emit("startInvestigation", content.text);
+      reply({ queued: true });
+      return;
+    }
     if (action === "open-investigation-report") {
       const uriValue = authorizedInvestigationReportReference(uri.value, content.text);
       if (!uriValue) {
@@ -248,6 +262,26 @@ async function onMessage(event: MessageEvent) {
       let storage: Storage | undefined;
       try { storage = window.localStorage; } catch { /* host can still retain drafts in memory */ }
       reply(documentAccess.draft(params, storage));
+    } else if (method === "ui/llama-agent/list-investigation-resources") {
+      if (uri.value !== "ui://llama-agent/apps/investigation-workspace") throw new Error("Resource selection is available only to the investigation workspace.");
+      if (params.scope !== undefined && params.scope !== "project" && params.scope !== "session") throw new Error("Invalid resource scope.");
+      if (params.scope === "project" && !props.projectId) throw new Error("A project scope is not active for this chat.");
+      const scopeValue = params.scope === "project" ? "project" : "session";
+      const query = typeof params.query === "string" ? params.query.slice(0, 256) : "";
+      const cursor = typeof params.cursor === "string" ? params.cursor.slice(0, 128) : "";
+      const limit = typeof params.limit === "number" && Number.isSafeInteger(params.limit) ? Math.max(1, Math.min(50, params.limit)) : 30;
+      if (!props.listResources) throw new Error("The host resource browser is unavailable.");
+      const result = await props.listResources({ scope: scopeValue, query, cursor, limit,
+        projectId: props.projectId, sessionId: props.sessionId });
+      reply({ resources: result.resources, next_cursor: result.next_cursor, project_available: Boolean(props.projectId) });
+    } else if (method === "ui/llama-agent/upload-investigation-resource") {
+      if (uri.value !== "ui://llama-agent/apps/investigation-workspace") throw new Error("Uploads are available only to the investigation workspace.");
+      const file = params.file;
+      if (!(file instanceof File) || file.size === 0 || file.size > 4 * 1024 * 1024) throw new Error("Choose a non-empty file no larger than 4 MiB.");
+      if (!props.uploadResource) throw new Error("The host upload service is unavailable.");
+      const resourceUri = await props.uploadResource(file, { scope: "session", orient: false, attach: false });
+      if (!resourceUri) throw new Error("The upload did not produce a resource reference.");
+      reply({ resource_uri: resourceUri });
     } else if (method === "tools/list") {
       const listed = props.tools.filter((tool) => (tool.provider_id ?? "") === (props.tool.provider_id ?? "") &&
         (tool.app_read_only || tool.app_write_authorized || (!tool.provider_id && tool.read_only)) &&
@@ -346,7 +380,8 @@ async function prepareInvestigationContext(): Promise<NonNullable<import("../typ
   const value = result as Record<string, unknown>;
   const refs = (key: string) => {
     const list = value[key];
-    if (!Array.isArray(list) || list.length > 64 || !list.every((item) => typeof item === "string" && item.length > 0 && item.length <= 512)) {
+    const max = key === "source_ids" ? 32 : 64;
+    if (!Array.isArray(list) || list.length > max || !list.every((item) => typeof item === "string" && item.length > 0 && item.length <= 512)) {
       throw new Error(`The workspace returned an invalid ${key} selection.`);
     }
     return [...new Set(list as string[])];
@@ -354,7 +389,9 @@ async function prepareInvestigationContext(): Promise<NonNullable<import("../typ
   if (typeof value.case_id !== "string" || !value.case_id || value.case_id.length > 512 ||
       !Number.isSafeInteger(value.revision) || Number(value.revision) <= 0) throw new Error("The workspace returned an invalid case binding.");
   return { case_id: value.case_id, revision: Number(value.revision), entity_ids: refs("entity_ids"),
-    relation_ids: refs("relation_ids"), event_ids: refs("event_ids") };
+    relation_ids: refs("relation_ids"), event_ids: refs("event_ids"), source_ids: refs("source_ids"),
+    ...(typeof value.analysis_profile === "string" && value.analysis_profile.length <= 64
+      ? { analysis_profile: value.analysis_profile } : {}) };
 }
 defineExpose({ prepareForChat, prepareDocumentSwitch, closeDocument, prepareInvestigationContext });
 

@@ -204,7 +204,7 @@ bool common_agent_cozo_data_store::get_investigation_case(
         out = {}; error = "investigation case scope does not match its storage key"; return false;
     }
     std::string authorization_error;
-    if (!authorize_investigation_source(out.source_id, scope, authorization_error)) {
+    if (!out.source_id.empty() && !authorize_investigation_source(out.source_id, scope, authorization_error)) {
         out = {}; error = "investigation case is unavailable under current source permissions"; return false;
     }
     return true;
@@ -238,7 +238,8 @@ bool common_agent_cozo_data_store::list_investigation_cases(
         item.source_id = row[4].get<std::string>(); item.window_start_ms = row[5].get<int64_t>();
         item.window_end_ms = row[6].get<int64_t>();
         std::string authorization_error;
-        if (item.case_id > after && authorize_investigation_source(item.source_id, scope, authorization_error))
+        if (item.case_id > after && (item.source_id.empty() ||
+                authorize_investigation_source(item.source_id, scope, authorization_error)))
             cases.push_back(std::move(item));
     }
     std::sort(cases.begin(), cases.end(), [](const auto & a, const auto & b) { return a.case_id < b.case_id; });
@@ -324,7 +325,7 @@ bool common_agent_cozo_data_store::publish_investigation_report(
     std::lock_guard<std::mutex> lock(investigation_mutex_);
     published = {};
     if (input.case_id.empty() || input.case_id.size() > 512 || input.case_revision == 0 ||
-            input.source_id.empty() || input.case_fingerprint.empty() || input.content_fingerprint.empty() ||
+            input.case_fingerprint.empty() || input.content_fingerprint.empty() ||
             input.report_uri.empty() || input.markdown_uri.empty() || input.source_manifest_uri.empty() ||
             input.report_uri.size() > 1024 || input.markdown_uri.size() > 1024 || input.source_manifest_uri.size() > 1024 ||
             input.visualization_uris.size() > 8) {
@@ -332,7 +333,7 @@ bool common_agent_cozo_data_store::publish_investigation_report(
         return false;
     }
     std::string authorization_error;
-    if (!authorize_investigation_source(input.source_id, scope, authorization_error)) {
+    if (!input.source_id.empty() && !authorize_investigation_source(input.source_id, scope, authorization_error)) {
         error = "investigation report is unavailable under current source permissions";
         return false;
     }
@@ -462,7 +463,7 @@ bool common_agent_cozo_data_store::list_investigation_reports(
         entry.complete = payload.value("complete", false);
         entry.created_at_ms = payload.value("created_at_ms", int64_t(0));
         std::string authorization_error;
-        if (!entry.source_id.empty() && authorize_investigation_source(entry.source_id, scope, authorization_error))
+        if (entry.source_id.empty() || authorize_investigation_source(entry.source_id, scope, authorization_error))
             out.push_back(std::move(entry));
     }
     std::sort(out.begin(), out.end(), [](const auto & a, const auto & b) {

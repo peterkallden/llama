@@ -38,11 +38,64 @@ int main() {
           decoded.scope.project_id == value.scope.project_id,
           "case JSON roundtrip must preserve evidence, revision, and scope");
     auto legacy = encoded;
+    legacy["schema_version"] = 1;
+    legacy.erase("sources"); legacy.erase("statements"); legacy.erase("comparisons"); legacy.erase("analyses");
     legacy["events"][1].erase("source_index");
     common_investigation_case_revision legacy_decoded;
     check(common_investigation_case_from_json(legacy, legacy_decoded, error) &&
           legacy_decoded.events[1].source_index.empty(),
           "older case revisions without source indexes must remain readable");
+
+    common_investigation_case_revision document_case;
+    document_case.case_id = "document-case"; document_case.title = "Document investigation";
+    document_case.question = "What do the selected reports say?"; document_case.scope.namespace_id = "local";
+    common_investigation_source document_source;
+    document_source.id = "source-report-a"; document_source.kind = common_investigation_source_kind::document;
+    document_source.resource_uri = "resource://project/report-a";
+    document_source.representation_uri = document_source.resource_uri;
+    document_source.content_hash = "sha256:abc";
+    document_source.processing_limitations = {"OCR text is derived and may be incomplete."};
+    document_source.processing_status = "ready_with_limitations";
+    document_source.complete = false;
+    document_case.sources.push_back(document_source);
+    check(common_investigation_case_validate(document_case, error),
+        "document-only cases must not require a search provider or time window");
+    auto document_roundtrip = common_investigation_case_to_json(document_case);
+    common_investigation_case_revision document_decoded;
+    check(common_investigation_case_from_json(document_roundtrip, document_decoded, error) &&
+            document_decoded.source_id.empty() && document_decoded.sources.size() == 1 &&
+            document_decoded.sources[0].processing_limitations == document_source.processing_limitations &&
+            !document_decoded.sources[0].complete,
+        "versioned case JSON must preserve typed document-only source processing limitations");
+    const std::string unicode_source = "Prefix. Återgiven uppgift. Repeated: same quote. Repeated: same quote.";
+    common_investigation_source_anchor anchor;
+    anchor.source_id = "source-report-a"; anchor.resource_uri = "resource://project/report-a";
+    anchor.byte_offset = unicode_source.find("same quote"); anchor.byte_length = std::string("same quote").size();
+    anchor.quote = "same quote";
+    check(common_investigation_anchor_validate(anchor, unicode_source, error),
+        "anchor verification must use the exact declared byte position when quotes repeat");
+    anchor.byte_offset = unicode_source.find("Återgiven");
+    anchor.quote = "Återgiven"; anchor.byte_length = anchor.quote.size();
+    check(common_investigation_anchor_validate(anchor, unicode_source, error),
+        "anchor verification must preserve UTF-8 byte offsets");
+    ++anchor.byte_offset;
+    check(!common_investigation_anchor_validate(anchor, unicode_source, error),
+        "anchor verification must reject offsets that split or miss UTF-8 text");
+    auto invalid_document_case = document_case;
+    common_investigation_statement statement;
+    statement.id = "statement-1"; statement.text = "A quoted claim";
+    statement.anchor.source_id = document_source.id; statement.anchor.resource_uri = document_source.representation_uri;
+    statement.anchor.byte_offset = 0; statement.anchor.byte_length = 5; statement.anchor.quote = "wrong";
+    statement.anchor.quote_verified = false;
+    invalid_document_case.statements.push_back(statement);
+    check(!common_investigation_case_validate(invalid_document_case, error),
+        "unverified model-proposed source positions must not be persisted as evidence");
+    auto invalid_actor_case = document_case;
+    statement.anchor.quote_verified = true;
+    statement.actor_ids = {"actor-mention-1", "actor-mention-1"};
+    invalid_actor_case.statements.push_back(statement);
+    check(!common_investigation_case_validate(invalid_actor_case, error),
+        "duplicate actor mention references must not be persisted in one statement");
 
     common_investigation_context_binding binding;
     binding.case_id = value.case_id; binding.revision = value.revision;

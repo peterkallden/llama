@@ -153,16 +153,30 @@ int main() {
     assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
     assert(research_publish->risk_class == common_tool_risk_class::artifact_write &&
         research_publish->requires_confirmation && !research_publish->mcp_app_write_authorized);
-    for (const auto * name : {"investigation.case.create", "investigation.collect", "investigation.claim.hypothesize", "investigation.report.compose", "visualization.snapshot"}) {
+    for (const auto * name : {"investigation.case.create", "investigation.source.attach", "investigation.document.prepare",
+            "investigation.statement.record", "investigation.collect", "investigation.claim.hypothesize",
+            "investigation.report.compose", "visualization.snapshot"}) {
         const auto * definition = catalog.find_definition(name);
         assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
             definition->requires_confirmation && definition->mcp_app_write_authorized);
     }
+    const auto * source_attach = catalog.find_definition("investigation.source.attach");
+    assert(source_attach);
+    const auto source_attach_schema = nlohmann::json::parse(source_attach->input_schema_json);
+    assert(source_attach_schema["properties"].contains("resource_uri") &&
+        source_attach_schema["properties"].contains("provider_id") &&
+        source_attach_schema["properties"].contains("window_start_ms") &&
+        source_attach_schema["properties"].contains("window_end_ms"));
+    const auto * investigation_source_list = catalog.find_definition("investigation.source.list");
+    assert(investigation_source_list && investigation_source_list->risk_class == common_tool_risk_class::local_read &&
+        !investigation_source_list->requires_confirmation);
     const auto * case_items = catalog.find_definition("investigation.case.items");
     assert(case_items);
     const auto case_items_schema = nlohmann::json::parse(case_items->input_schema_json);
     const auto & item_types = case_items_schema["properties"]["type"]["enum"];
-    assert(item_types.is_array() && std::find(item_types.begin(), item_types.end(), "reports") != item_types.end());
+    assert(item_types.is_array() && std::find(item_types.begin(), item_types.end(), "reports") != item_types.end() &&
+        std::find(item_types.begin(), item_types.end(), "sources") != item_types.end() &&
+        std::find(item_types.begin(), item_types.end(), "statements") != item_types.end());
     const auto * investigation_collect = catalog.find_definition("investigation.collect");
     const auto * visualization_create = catalog.find_definition("visualization.create");
     assert(investigation_collect && investigation_collect->risk_class == common_tool_risk_class::artifact_write &&
@@ -469,7 +483,7 @@ int main() {
             assert(definition.requires_confirmation);
             assert(std::find(definition.capabilities.begin(), definition.capabilities.end(),
                 "artifact.export") != definition.capabilities.end());
-        } else if (definition.name == "document.import" || definition.name == "document.save" ||
+        } else if (definition.name == "document.create" || definition.name == "document.import" || definition.name == "document.save" ||
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch" ||
                 definition.name == "visualization.create") {
             assert(definition.requires_confirmation);

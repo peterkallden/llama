@@ -298,6 +298,9 @@ int main() {
         "workflow://investigation/integration-trace",
         "workflow://investigation/hypothesis-testing",
         "workflow://investigation/report-composition",
+        "workflow://investigation/actor-relationship",
+        "workflow://investigation/narrative-comparison",
+        "workflow://investigation/document-provenance",
     };
     assert(investigation_package.workflows.size() == investigation_workflows.size());
     assert(investigation_package.blueprints.size() == investigation_workflows.size());

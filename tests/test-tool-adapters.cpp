@@ -1297,7 +1297,11 @@ int main() {
     investigation_bindings.data_store = &investigation_store;
     investigation_bindings.tool_scope = investigation_case.scope;
     test_resource_store investigation_resources;
+    investigation_resources.available_uris.insert("resource://session/long-text");
     investigation_bindings.resource_runtime.store = &investigation_resources;
+    investigation_bindings.resource_runtime.namespace_id = investigation_case.scope.namespace_id;
+    investigation_bindings.resource_runtime.session_id = investigation_case.scope.session_id;
+    investigation_bindings.resource_runtime.project_id = investigation_case.scope.project_id;
     common_tool_registry investigation_registry;
     assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
         investigation_bindings, investigation_registry, adapters, error));
@@ -1309,6 +1313,8 @@ int main() {
         investigation_registry.is_policy_gated("investigation.claim.hypothesize"));
     assert(!investigation_registry.is_read_only("investigation.report.compose") &&
         investigation_registry.is_policy_gated("investigation.report.compose"));
+    assert(investigation_registry.is_read_only("investigation.source.list") &&
+        !investigation_registry.is_policy_gated("investigation.source.list"));
     assert(investigation_registry.is_read_only("investigation.case.open") &&
         !investigation_registry.is_policy_gated("investigation.case.open"));
     result = investigation_registry.execute({"investigation.case.open", R"({"case_id":"graph-case"})"});
@@ -1317,9 +1323,103 @@ int main() {
         result.output.find("\"events\":[") == std::string::npos);
     result = investigation_registry.execute({"investigation.case.list", R"({"limit":10})"});
     assert(result.ok && result.output.find("graph-case") != std::string::npos);
+    result = investigation_registry.execute({"investigation.source.list", R"({"limit":10})"});
+    assert(result.ok && result.output.find("\"source_id\":\"logs\"") != std::string::npos);
     result = investigation_registry.execute({"investigation.case.create",
         R"({"title":"New case","question":"What happened?","source_id":"logs","window_start_ms":100,"window_end_ms":1000})"});
     assert(result.ok && result.output.find("case-") != std::string::npos);
+    const auto created_search_case = nlohmann::json::parse(result.output);
+    const auto search_case_id = created_search_case.value("case_id", std::string{});
+    assert(!search_case_id.empty() && investigation_store.cases.at(search_case_id).sources.size() == 1 &&
+        investigation_store.cases.at(search_case_id).sources[0].processing_status == "not_collected" &&
+        !investigation_store.cases.at(search_case_id).sources[0].complete);
+    result = investigation_registry.execute({"investigation.case.create",
+        R"({"title":"Document case","question":"What was reported?","resource_uri":"resource://session/long-text","resource_kind":"document"})"});
+    assert(result.ok);
+    const auto created_document_case = nlohmann::json::parse(result.output);
+    const auto document_case_id = created_document_case.value("case_id", std::string{});
+    assert(investigation_store.cases.at(document_case_id).source_id.empty() &&
+        investigation_store.cases.at(document_case_id).window_start_ms == 0 &&
+        investigation_store.cases.at(document_case_id).sources.size() == 1 &&
+        investigation_store.cases.at(document_case_id).sources[0].kind == common_investigation_source_kind::document &&
+        investigation_store.cases.at(document_case_id).sources[0].resource_uri != "resource://session/long-text" &&
+        investigation_resources.last_request.scope == common_runtime_resource_scope::project &&
+        investigation_resources.last_request.lineage.parent_uri == "resource://session/long-text");
+    const auto document_source_id = investigation_store.cases.at(document_case_id).sources[0].id;
+    result = investigation_registry.execute({"investigation.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 1},
+        {"resource_uri", "resource://session/long-text"}, {"kind", "log_file"}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 2 &&
+        investigation_store.cases.at(document_case_id).sources.size() == 2 &&
+        investigation_store.cases.at(document_case_id).sources[1].kind == common_investigation_source_kind::log_file);
+    result = investigation_registry.execute({"investigation.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 1},
+        {"resource_uri", "resource://session/long-text"}, {"kind", "log_file"}}.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos &&
+        investigation_store.cases.at(document_case_id).revision == 2);
+    result = investigation_registry.execute({"investigation.document.prepare", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 2}, {"source_id", document_source_id}}.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos);
+    const auto statement_args = nlohmann::json{{"case_id", document_case_id}, {"expected_revision", 2},
+        {"idempotency_key", "extract-1"}, {"analysis_kind", "actor_relationship"},
+        {"source_ids", nlohmann::json::array({document_source_id})},
+        {"statements", nlohmann::json::array({{{"id", "statement-a"}, {"kind", "reported_event"},
+            {"text", "A source statement"}, {"actor_ids", nlohmann::json::array({"actor-alice"})},
+            {"anchor", {{"source_id", document_source_id},
+                {"resource_uri", investigation_store.cases.at(document_case_id).sources[0].representation_uri},
+                {"byte_offset", 0}, {"byte_length", 5}, {"quote", "xxxxx"}}}}})},
+        {"comparisons", nlohmann::json::array()}};
+    result = investigation_registry.execute({"investigation.statement.record", statement_args.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 3 &&
+        investigation_store.cases.at(document_case_id).statements.size() == 1 &&
+        investigation_store.cases.at(document_case_id).statements[0].anchor.quote_verified &&
+        investigation_store.cases.at(document_case_id).analyses[0].kind == "actor_relationship");
+    result = investigation_registry.execute({"investigation.statement.record", statement_args.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos &&
+        result.output.find("\"published_revision\":3") != std::string::npos &&
+        investigation_store.cases.at(document_case_id).revision == 3);
+    auto invalid_statement_args = statement_args;
+    invalid_statement_args["expected_revision"] = 3;
+    invalid_statement_args["idempotency_key"] = "bad-anchor";
+    invalid_statement_args["statements"][0]["anchor"]["quote"] = "yyyyy";
+    result = investigation_registry.execute({"investigation.statement.record", invalid_statement_args.dump()});
+    assert(!result.ok && investigation_store.cases.at(document_case_id).revision == 3);
+    result = investigation_registry.execute({"investigation.claim.hypothesize", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 3}, {"claim_id", "document-hypothesis"},
+        {"text", "A testable explanation based on the source statements."}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 4);
+    result = investigation_registry.execute({"investigation.statement.record", statement_args.dump()});
+    assert(result.ok && result.output.find("\"revision\":4") != std::string::npos &&
+        result.output.find("\"published_revision\":3") != std::string::npos &&
+        result.output.find("\"reused\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigation.case.items", nlohmann::json{
+        {"case_id", document_case_id}, {"case_revision", 4}, {"type", "statements"}, {"limit", 10}}.dump()});
+    assert(result.ok && result.output.find("statement-a") != std::string::npos &&
+        result.output.find("quote_verified\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigation.report.compose", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 4}}.dump()});
+    assert(result.ok && result.output.find("source_manifest_uri") != std::string::npos);
+    const auto frozen_document_report = nlohmann::json::parse(result.output);
+    std::string frozen_manifest, frozen_manifest_error;
+    assert(investigation_resources.read_text(frozen_document_report.at("source_manifest_uri"), {},
+        1024 * 1024, frozen_manifest, frozen_manifest_error));
+    assert(frozen_manifest.find("statement-a") != std::string::npos &&
+        frozen_manifest.find(document_source_id) != std::string::npos &&
+        frozen_manifest.find("representation_hash") != std::string::npos);
+    result = investigation_registry.execute({"investigation.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 4}, {"provider_id", "logs"},
+        {"window_start_ms", 100}, {"window_end_ms", 1000}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 5 &&
+        investigation_store.cases.at(document_case_id).source_id == "logs" &&
+        investigation_store.cases.at(document_case_id).sources.size() == 3);
+    result = investigation_registry.execute({"investigation.collect", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 5},
+        {"dataset", "dataset://investigation/logs/security"}, {"identifier_field", "user.id"},
+        {"identifier_value", "alice"}, {"limit", 20}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 6 &&
+        investigation_store.cases.at(document_case_id).events.size() == 1 &&
+        investigation_store.cases.at(document_case_id).events[0].source_id == "logs" &&
+        investigation_store.cases.at(document_case_id).relations.size() == 1);
     result = investigation_registry.execute({"investigation.graph.expand",
         R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
     assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
@@ -1333,6 +1433,7 @@ int main() {
     assert(!result.ok && result.failure_code == "tool.investigation.timestamp_unmapped" &&
         investigation_store.cases.at("graph-case").revision == 1);
     investigation_store.source.columns.push_back(saved_timestamp_column);
+    const auto resource_request_count_before_collection = investigation_resources.requests.size();
     result = investigation_registry.execute({"investigation.collect",
         R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
     assert(result.ok && result.output.find("collected_events") != std::string::npos &&
@@ -1344,7 +1445,7 @@ int main() {
         investigation_store.cases.at("graph-case").events[1].entity_roles.at("user") == "entity:logs:user:alice" &&
         investigation_store.cases.at("graph-case").events[1].entity_roles.at("host") == "entity:logs:host:db2" &&
         investigation_store.cases.at("graph-case").entities.size() == 4 &&
-        investigation_resources.requests.size() == 2);
+        investigation_resources.requests.size() == resource_request_count_before_collection + 2);
     assert(std::any_of(investigation_store.cases.at("graph-case").relations.begin(),
         investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
             return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
@@ -1426,18 +1527,21 @@ int main() {
     report_snapshot_request.lineage.derivation="visualization.snapshot:png-v1";
     agent_resource_descriptor report_snapshot;
     assert(investigation_resources.put_bytes(report_snapshot_request,report_snapshot,error));
+    const auto resource_request_count_before_report = investigation_resources.requests.size();
     result = investigation_registry.execute({"investigation.report.compose", nlohmann::json{
         {"case_id", "graph-case"}, {"expected_revision", 3},
         {"visualization_uris", {report_snapshot.uri}}}.dump()});
     assert(result.ok && result.output.find("report_uri") != std::string::npos &&
-        investigation_resources.requests.size() == 6 &&
-        investigation_resources.requests.back().text.find("## Timeline") != std::string::npos &&
-        investigation_resources.requests.back().text.find("## Visualization snapshots") != std::string::npos &&
-        investigation_resources.requests.back().text.find(report_snapshot.uri) != std::string::npos &&
-        investigation_resources.requests.back().text.find("authenticated_to") != std::string::npos &&
-        investigation_resources.requests.back().text.find("Hypothesis:") != std::string::npos &&
-        investigation_resources.requests.back().text.find("event:1") != std::string::npos);
+        investigation_resources.requests.size() == resource_request_count_before_report + 3);
     const auto composed_report = nlohmann::json::parse(result.output);
+    const auto & frozen_report_markdown = investigation_resources.contents.at(
+        composed_report.at("markdown_uri").get<std::string>());
+    assert(frozen_report_markdown.find("## Timeline") != std::string::npos &&
+        frozen_report_markdown.find("## Visualization snapshots") != std::string::npos &&
+        frozen_report_markdown.find(report_snapshot.uri) != std::string::npos &&
+        frozen_report_markdown.find("authenticated_to") != std::string::npos &&
+        frozen_report_markdown.find("Hypothesis:") != std::string::npos &&
+        frozen_report_markdown.find("event:1") != std::string::npos);
     assert(std::any_of(result.resource_refs.begin(), result.resource_refs.end(), [&](const auto & resource) {
         return resource.uri == composed_report.at("report_uri").get<std::string>() &&
             resource.mime_type == "application/vnd.llama-agent.document+json";
@@ -1460,7 +1564,10 @@ int main() {
     assert(indexed_reports.at("items").size() == 1 &&
         indexed_reports.at("items")[0].at("report_uri") == composed_report.at("report_uri") &&
         indexed_reports.at("items")[0].at("case_revision") == 3);
-    auto second_indexed_report = investigation_store.reports.front();
+    const auto graph_case_report = std::find_if(investigation_store.reports.begin(), investigation_store.reports.end(),
+        [](const auto & report) { return report.case_id == "graph-case"; });
+    assert(graph_case_report != investigation_store.reports.end());
+    auto second_indexed_report = *graph_case_report;
     second_indexed_report.content_fingerprint = "sha256:second-report";
     second_indexed_report.report_uri = "resource://reports/second.json";
     investigation_store.reports.push_back(second_indexed_report);

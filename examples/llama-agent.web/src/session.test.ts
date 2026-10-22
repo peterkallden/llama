@@ -201,7 +201,8 @@ it("persists document context on a queued user turn and keeps failed turns retry
   const session = useAgentSession();
   const first = session.submit("first");
   const documentContext = { document_uri: "resource://doc", revision: 3, block_ids: ["b1"] };
-  const investigationContext = { case_id: "case-7", revision: 4, entity_ids: ["host:7"], relation_ids: [], event_ids: ["event:9"] };
+  const investigationContext = { case_id: "case-7", revision: 4, entity_ids: ["host:7"], relation_ids: [], event_ids: ["event:9"],
+    source_ids: ["source:report-a", "source:logs-a"], analysis_profile: "narrative_comparison" };
   const queued = await session.submit("review this", [], false, documentContext, "queued-review",
     ["resource://attachment"], "Review draft", false, investigationContext);
   expect(queued).toBe(true);

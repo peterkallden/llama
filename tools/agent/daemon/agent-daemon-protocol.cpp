@@ -492,15 +492,17 @@ bool parse_agent_daemon_turn_request(
         common_investigation_context_binding context;
         context.case_id = binding["case_id"].get<std::string>();
         context.revision = binding["revision"].get<uint64_t>();
-        for (const auto & field : {"entity_ids", "relation_ids", "event_ids"}) {
+        for (const auto & field : {"entity_ids", "relation_ids", "event_ids", "source_ids"}) {
             if (!binding.contains(field)) continue;
             const auto & values = binding[field];
-            if (!values.is_array() || values.size() > 64) {
-                error = std::string("investigation_context.") + field + " must be an array with at most 64 references";
+            const size_t max_refs = std::string(field) == "source_ids" ? 32 : 64;
+            if (!values.is_array() || values.size() > max_refs) {
+                error = std::string("investigation_context.") + field + " has an invalid reference count";
                 return false;
             }
             auto & output = std::string(field) == "entity_ids" ? context.entity_ids :
-                std::string(field) == "relation_ids" ? context.relation_ids : context.event_ids;
+                std::string(field) == "relation_ids" ? context.relation_ids :
+                std::string(field) == "event_ids" ? context.event_ids : context.source_ids;
             for (const auto & value : values) {
                 if (!value.is_string() || value.get<std::string>().empty() || value.get<std::string>().size() > 512) {
                     error = std::string("investigation_context.") + field + " must contain bounded non-empty strings";
@@ -513,6 +515,13 @@ bool parse_agent_daemon_turn_request(
                 error = std::string("investigation_context.") + field + " must contain unique references";
                 return false;
             }
+        }
+        if (binding.contains("analysis_profile")) {
+            if (!binding["analysis_profile"].is_string() || binding["analysis_profile"].get<std::string>().size() > 64) {
+                error = "investigation_context.analysis_profile must be a bounded registered profile name";
+                return false;
+            }
+            context.analysis_profile = binding["analysis_profile"].get<std::string>();
         }
         request.investigation_context = std::move(context);
     }

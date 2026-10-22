@@ -134,9 +134,19 @@ export type PendingUserTurn = {
 };
 function copyInvestigationContext(context: NonNullable<TurnRequest["investigation_context"]>) {
   return { case_id: context.case_id, revision: context.revision,
-    entity_ids: [...context.entity_ids], relation_ids: [...context.relation_ids], event_ids: [...context.event_ids] };
+    entity_ids: [...context.entity_ids], relation_ids: [...context.relation_ids], event_ids: [...context.event_ids],
+    ...(context.source_ids ? { source_ids: [...context.source_ids] } : {}),
+    ...(context.analysis_profile ? { analysis_profile: context.analysis_profile } : {}) };
 }
 function userTurnQueueKey(id = sessionId.value) { return `llama-agent-web.pending-user-turns:${id}`; }
+function validSavedInvestigationContext(value: any): boolean {
+  return Boolean(value && typeof value === "object" && typeof value.case_id === "string" &&
+    Number.isSafeInteger(value.revision) && Array.isArray(value.entity_ids) &&
+    Array.isArray(value.relation_ids) && Array.isArray(value.event_ids) &&
+    (!value.source_ids || (Array.isArray(value.source_ids) && value.source_ids.length <= 32 &&
+      value.source_ids.every((ref: unknown) => typeof ref === "string" && ref.length > 0 && ref.length <= 512))) &&
+    (!value.analysis_profile || (typeof value.analysis_profile === "string" && value.analysis_profile.length <= 64)));
+}
 function restorePendingUserTurns(): PendingUserTurn[] {
   try {
     const stored = JSON.parse(sessionStorage.getItem(userTurnQueueKey()) ?? "[]");
@@ -147,9 +157,7 @@ function restorePendingUserTurns(): PendingUserTurn[] {
       typeof item.display_prompt === "string" &&
       (!item.document_context || (typeof item.document_context.document_uri === "string" &&
         Number.isSafeInteger(item.document_context.revision) && Array.isArray(item.document_context.block_ids))) &&
-      (!item.investigation_context || (typeof item.investigation_context.case_id === "string" &&
-        Number.isSafeInteger(item.investigation_context.revision) && Array.isArray(item.investigation_context.entity_ids) &&
-        Array.isArray(item.investigation_context.relation_ids) && Array.isArray(item.investigation_context.event_ids))))
+      (!item.investigation_context || validSavedInvestigationContext(item.investigation_context)))
       .map((item) => item.state === "failed"
         ? item
         : item.state === "running"

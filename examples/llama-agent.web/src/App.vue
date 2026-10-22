@@ -166,6 +166,15 @@ async function send() {
   } finally { if (generation === sendGeneration) chatSending.value = false; }
 }
 
+function startInvestigation(promptText: string) {
+  if (activeView.value !== "app" || activeMcpApp()?._meta?.ui?.resourceUri !== "ui://llama-agent/apps/investigation-workspace") {
+    session.error = "Open the investigation workspace before starting an analysis.";
+    return;
+  }
+  prompt.value = promptText;
+  void send();
+}
+
 function enterDocumentMode() {
   if (!savedWorkspaceState.value) savedWorkspaceState.value = {
     view: activeView.value, app: activeAppTool.value,
@@ -487,7 +496,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <ResourceBrowser v-if="activeView === 'resources'" :project-id="session.projectId" :session-id="session.sessionId" :tools="session.tools" :list-resources="session.listResources" :call-tool="session.callReadOnlyTool" :read-resource="session.readResourceBlob" @open-data="openSelectedResource" @attach="toggleResourceRef" @open-app="openWorkspaceApp" />
         <DataExplorer v-if="activeView === 'data'" :key="`${session.sessionId}:${selectedExplorerSource}`" :initial-source="selectedExplorerSource || undefined" :initial-kind="selectedExplorerKind" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" @browse="navigateWorkspace('resources')" />
         <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :read-resource="session.readMcpAppResource" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" />
+        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :project-id="session.projectId" :read-resource="session.readMcpAppResource" :list-resources="session.listResources" :upload-resource="session.upload" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" @start-investigation="startInvestigation" />
       </div>
       <div class="primary">
         <section class="card chat chat-panel">

@@ -5,3 +5,24 @@
 #frozen-reports{display:grid;gap:6px;margin-bottom:12px}.frozen-report{display:grid;gap:3px;width:100%;text-align:left;background:#111d2d;border:1px solid #344a65;border-radius:7px;padding:8px}.frozen-report small{color:#9fb3cb;overflow-wrap:anywhere}.frozen-report .qualified{color:#e5bc72}
 
 header,.panel-title,.time-filter{flex-wrap:wrap}body{padding-bottom:32px}.time-filter input{max-width:100%}
+
+#source-panel,#analysis-panel{margin:0 0 14px;padding:10px;border:1px solid #304660;border-radius:8px;background:#0e1928}
+#source-panel h2,#analysis-panel h2{margin-bottom:8px}
+.source-picker{display:grid;gap:8px;min-width:0}
+.source-picker>label,.source-picker>button{min-width:0}
+.source-picker input[type=file],.source-picker input[type=search],.source-picker select{width:100%;min-width:0}
+.resource-results,#case-sources,#selected-sources,#statements,#comparisons{display:grid;gap:6px;min-width:0;max-height:30vh;overflow:auto}
+.resource-result,.case-source,.source-row,.analysis-item{display:grid;gap:3px;width:100%;min-width:0;padding:8px;text-align:left;background:#111d2d;border:1px solid #344a65;border-radius:7px;overflow-wrap:anywhere}
+.resource-result small,.case-source small,.source-row small,.analysis-item small{color:#9fb3cb;overflow-wrap:anywhere}
+.case-source{grid-template-columns:auto minmax(0,1fr);align-items:start}
+.case-source input{margin-top:3px}
+.case-source label{min-width:0;overflow-wrap:anywhere}
+.source-row{grid-template-columns:auto minmax(0,1fr) auto;align-items:start}
+.source-choice{min-width:0;overflow-wrap:anywhere}
+.selected-source{display:flex;flex-direction:row;align-items:center;gap:6px}
+#analysis-panel h3{font-size:12px;margin:12px 0 6px;color:#c3d3e5}
+#analysis-panel>label{margin-bottom:8px}
+#analysis-panel select{width:100%}
+.analysis-item .proposal{color:#e5bc72}
+@media(max-width:1000px){.source-picker{grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.source-picker{grid-template-columns:1fr}.resource-results,#case-sources,#selected-sources,#statements,#comparisons{max-height:38vh}}
