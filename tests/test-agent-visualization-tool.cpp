@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/artifact/artifact-contract.h"
+#include "agent/artifact/research-view-projection.h"
 #include "agent/thinking/research/research-workspace-serialization.h"
 #include "agent/visualization/visualization-contract.h"
 #include "base64.hpp"
@@ -314,6 +315,35 @@ int main() {
         report_graph_json.at("visualization"), projected_report, error));
     assert(std::any_of(projected_report.edges.begin(), projected_report.edges.end(), [](const auto & edge) {
         return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
+    }));
+    const auto whole_report_graph = registry.execute({"visualization.research_graph",
+        nlohmann::json{{"source_uri", report_descriptor.uri}}.dump()});
+    assert(whole_report_graph.ok);
+    auto anchor_only_document = report_document;
+    anchor_only_document.sections.front().blocks.front().evidence_ids.clear();
+    common_agent_visualization_relationship anchor_graph;
+    assert(common_agent_research_report_evidence_graph(anchor_only_document, frozen_snapshot, {}, anchor_graph, error));
+    assert(anchor_graph.nodes.size() == 2 && anchor_graph.edges.size() == 1 &&
+        anchor_graph.edges.front().relation == "asserts");
+    auto empty_document = report_document;
+    empty_document.sections.clear();
+    assert(common_agent_research_report_evidence_graph(empty_document, frozen_snapshot, {}, anchor_graph, error));
+    assert(anchor_graph.nodes.empty() && anchor_graph.edges.empty());
+    assert(!common_agent_research_report_evidence_graph(report_document, frozen_snapshot, {"missing-block"}, anchor_graph, error));
+    auto revised_research = active_research;
+    revised_research.revision++;
+    revised_research.objective.question = std::string(300, 'q');
+    common_agent_research_gap revised_gap;
+    revised_gap.gap_id = "gap-test";
+    revised_gap.question = "Is the result reproducible?";
+    revised_gap.completion_criterion = "Independent confirmation";
+    revised_gap.assessment = common_agent_research_gap_assessment::inconclusive;
+    revised_gap.evidence_ids = {"evidence-test"};
+    revised_research.gaps.push_back(revised_gap);
+    assert(common_agent_research_workspace_evidence_graph(revised_research, anchor_graph, error));
+    assert(anchor_graph.data_revision != projected_research.data_revision && anchor_graph.title.size() <= 256);
+    assert(std::any_of(anchor_graph.nodes.begin(), anchor_graph.nodes.end(), [](const auto & node) {
+        return node.kind == "research_gap" && node.label.find("evidence inconclusive") != std::string::npos;
     }));
     resources.resources[frozen_descriptor.uri].sha256 = "tampered";
     const auto invalid_report_graph = registry.execute({"visualization.research_graph",

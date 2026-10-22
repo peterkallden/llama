@@ -142,6 +142,9 @@ int main() {
     persisted_seed.draft_id = draft_ref.draft_id;
     persisted_seed.base_revision = draft_ref.base_revision;
     persisted_seed.revision = draft_ref.draft_revision;
+    persisted_seed.iterations_completed = persisted_seed.budget.max_iterations;
+    persisted_seed.tool_calls = persisted_seed.budget.max_tool_calls;
+    persisted_seed.no_progress_iterations = 2;
     persisted_seed.sources.front().source_id = "persisted-source";
     const auto old_workspace_id = persisted_seed.workspace_id;
     common_agent_request resumed_request = factory_request;
@@ -155,6 +158,11 @@ int main() {
     assert(resumed_workspace.research_id == draft_ref.research_id && resumed_workspace.draft_id == draft_ref.draft_id);
     assert(resumed_workspace.workspace_id != old_workspace_id && resumed_workspace.revision == draft_ref.draft_revision);
     assert(resumed_workspace.objective.question == persisted_seed.objective.question);
+    assert(resumed_workspace.iterations_completed == persisted_seed.iterations_completed &&
+        resumed_workspace.budget.max_iterations == persisted_seed.iterations_completed + 4);
+    assert(resumed_workspace.tool_calls == persisted_seed.tool_calls &&
+        resumed_workspace.budget.max_tool_calls == persisted_seed.tool_calls + 2);
+    assert(resumed_workspace.no_progress_iterations == 0);
     assert(std::any_of(resumed_workspace.sources.begin(), resumed_workspace.sources.end(), [](const auto & source) {
         return source.source_id == "persisted-source";
     }));
@@ -403,6 +411,7 @@ int main() {
         0.9}, error);
     assert(final_action.kind == common_agent_research_action_kind::complete);
     assert(final_action.stop_reason == common_agent_research_stop_reason::sufficient_coverage);
+    assert(workspace.gaps.front().assessment == common_agent_research_gap_assessment::sufficient);
     const auto research_result = controller.finalize(workspace);
     assert(research_result.complete && research_result.workspace_id == "research-1");
     assert(research_result.established_claim_ids.size() == 1);

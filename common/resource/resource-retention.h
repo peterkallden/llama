@@ -37,7 +37,7 @@ inline bool retain_agent_resource(
     };
     retained = {};
     copied = false;
-    if (source.uri.empty() || target.namespace_id.empty() || target.max_bytes == 0 ||
+    if (source.uri.empty() || target.namespace_id.empty() ||
             target.namespace_id != authority.namespace_id ||
             scope_rank(target.scope) < 0 ||
             (target.scope == common_runtime_resource_scope::session && target.session_id.empty()) ||
@@ -61,7 +61,7 @@ inline bool retain_agent_resource(
         error.clear();
         return true;
     }
-    if (original.size_bytes > target.max_bytes) {
+    if (target.max_bytes == 0 || original.size_bytes > target.max_bytes) {
         error = "resource exceeds the configured retention byte limit";
         return false;
     }

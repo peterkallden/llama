@@ -3,6 +3,7 @@
 #include "agent/thinking/research/research-workspace.h"
 
 #include <algorithm>
+#include <limits>
 
 bool common_agent_research_create_workspace(
         const common_agent_request & request,
@@ -14,6 +15,7 @@ bool common_agent_research_create_workspace(
     }
 
     const bool resumed = request.research_workspace_seed.has_value();
+    if (resumed && !common_agent_research_workspace_validate(*request.research_workspace_seed, error)) return false;
     workspace = resumed ? *request.research_workspace_seed : common_agent_research_workspace{};
     workspace.workspace_id = request.turn_id.empty() ? "research:turn" : "research:" + request.turn_id;
     if (request.research_draft) {
@@ -45,11 +47,25 @@ bool common_agent_research_create_workspace(
         }
     }
 
-    workspace.budget.max_iterations = request.deliberation_policy.max_research_iterations > 0
-        ? request.deliberation_policy.max_research_iterations
-        : static_cast<int>(request.max_iterations);
-    workspace.budget.max_tasks = static_cast<int>(request.max_tool_batches);
-    workspace.budget.max_tool_calls = static_cast<int>(request.max_tool_batches);
+    // Counters and tasks are retained as research history. Each new execution
+    // gets only the current request's additional budget, rather than inheriting
+    // an already exhausted ceiling or discarding earlier work.
+    const auto grant_budget = [&](size_t used, size_t granted, int & ceiling) {
+        const auto maximum = static_cast<size_t>(std::numeric_limits<int>::max());
+        if (used > maximum || granted > maximum - used) {
+            error = "research execution budget exceeds its supported counter range";
+            return false;
+        }
+        ceiling = static_cast<int>(used + granted);
+        return true;
+    };
+    const size_t iterations = request.deliberation_policy.max_research_iterations > 0
+        ? static_cast<size_t>(request.deliberation_policy.max_research_iterations) : request.max_iterations;
+    if (!grant_budget(static_cast<size_t>(workspace.iterations_completed), iterations, workspace.budget.max_iterations) ||
+            !grant_budget(workspace.tasks.size(), request.max_tool_batches, workspace.budget.max_tasks) ||
+            !grant_budget(static_cast<size_t>(workspace.tool_calls), request.max_tool_batches, workspace.budget.max_tool_calls))
+        return false;
+    workspace.no_progress_iterations = 0;
     workspace.budget.minimum_coverage = 1.0;
     workspace.budget.minimum_sources = request.deliberation_policy.require_source_cross_check ? 2 : 1;
 

@@ -31,6 +31,8 @@ function clearFigures() {
   figures.value = [];
 }
 const document = computed(() => object(opened.value.document));
+const canShowEvidenceGraph = computed(() => Boolean(props.callTool &&
+  typeof snapshot.value.research_workspace_id === "string" && snapshot.value.research_workspace_id));
 const sections = computed(() => objects(document.value.sections));
 const targetIndex = computed(() => new Map<Fields, InspectionTarget[]>(sections.value.flatMap((section) =>
   objects(section.blocks).map((block) => [block, blockTargets(block, document.value, snapshot.value)] as [Fields, InspectionTarget[]]))));
@@ -65,7 +67,7 @@ async function load() {
   finally { if (current === generation) busy.value = false; }
 }
 async function showEvidenceGraph(block?: Fields) {
-  if (!props.callTool || !props.uri || graphBusy.value) return;
+  if (!props.callTool || !canShowEvidenceGraph.value || !props.uri || graphBusy.value) return;
   const current = generation;
   graphBusy.value = true; graphError.value = ""; graphSelection.value = undefined;
   try {
@@ -123,7 +125,7 @@ onBeforeUnmount(() => { generation++; clearFigures(); });
 </script>
 <template>
   <article class="report-card" aria-label="Saved document reading view">
-    <header class="report-heading"><div><span class="eyebrow">Saved {{ opened.kind || 'report' }} · revision {{ opened.revision || '…' }}</span><h3>{{ opened.title || name }}</h3></div><div class="report-actions"><button v-if="document.snapshot_uri && props.callTool" type="button" :disabled="busy || graphBusy" @click="showEvidenceGraph()">{{ graphBusy ? 'Building graph…' : 'Evidence graph' }}</button><button type="button" :disabled="busy || downloading || !opened.document_uri" @click="download">Download</button><button type="button" :disabled="busy || !editable || !opened.document_uri" @click="emit('edit', uri)">Edit</button></div></header>
+    <header class="report-heading"><div><span class="eyebrow">Saved {{ opened.kind || 'report' }} · revision {{ opened.revision || '…' }}</span><h3>{{ opened.title || name }}</h3></div><div class="report-actions"><button v-if="canShowEvidenceGraph" type="button" :disabled="busy || graphBusy" @click="showEvidenceGraph()">{{ graphBusy ? 'Building graph…' : 'Evidence graph' }}</button><button type="button" :disabled="busy || downloading || !opened.document_uri" @click="download">Download</button><button type="button" :disabled="busy || !editable || !opened.document_uri" @click="emit('edit', uri)">Edit</button></div></header>
     <p v-if="busy" role="status">Opening saved document…</p>
     <p v-if="error" class="error" role="alert">{{ error }} <button type="button" @click="load">Retry</button></p>
     <p v-if="document.kind === 'report' && document.coverage_complete === false" class="report-warning">Incomplete coverage. {{ strings(document.unresolved_gaps).join(' · ') }}</p>
@@ -133,7 +135,7 @@ onBeforeUnmount(() => { generation++; clearFigures(); });
       <p v-if="section.no_findings" class="muted">No findings were produced in this section.</p>
       <div v-for="block in objects(section.blocks)" :key="String(block.id)" class="report-block" tabindex="0">
         <MarkdownView :text="String(block.text ?? '')" @link="(uri) => link(uri, block)" />
-        <div class="report-block-meta"><span class="support-state">{{ block.support || 'unverified' }} · {{ block.review_state || 'unreviewed' }}</span><button v-for="target in targets(block)" :key="target.id" type="button" class="citation-button" :title="`Inspect saved ${target.kind}: ${target.title}`" @click="emit('inspect', target)">{{ target.kind === 'tool' ? 'Tool: ' : '' }}{{ target.title }}</button><button v-if="document.snapshot_uri && props.callTool" type="button" class="citation-button" :disabled="graphBusy" @click="showEvidenceGraph(block)">Trace evidence</button><span v-if="!targets(block).length && strings(block.evidence_ids).length" class="muted">Evidence references retained; no saved source mapping available.</span></div>
+        <div class="report-block-meta"><span class="support-state">{{ block.support || 'unverified' }} · {{ block.review_state || 'unreviewed' }}</span><button v-for="target in targets(block)" :key="target.id" type="button" class="citation-button" :title="`Inspect saved ${target.kind}: ${target.title}`" @click="emit('inspect', target)">{{ target.kind === 'tool' ? 'Tool: ' : '' }}{{ target.title }}</button><button v-if="canShowEvidenceGraph" type="button" class="citation-button" :disabled="graphBusy" @click="showEvidenceGraph(block)">Trace evidence</button><span v-if="!targets(block).length && strings(block.evidence_ids).length" class="muted">Evidence references retained; no saved source mapping available.</span></div>
         <div v-if="targets(block).length" class="provenance-peek" role="note"><strong>Saved supporting material</strong><div v-for="target in targets(block)" :key="target.id"><span>{{ target.kind }} · {{ target.title }}</span><pre v-if="target.kind === 'tool'">{{ toolExcerpt(target) }}</pre></div><small>Choose a source or tool above to inspect it. A linked reference is not itself factual verification.</small></div>
       </div>
     </section>

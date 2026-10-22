@@ -135,6 +135,13 @@ int main() {
     assert(retain_agent_resource(store, project_resource, authority, chat_target, chat_resource, copied, error));
     assert(!copied && chat_resource.uri == project_resource.uri);
 
+    auto exhausted_target = chat_target;
+    exhausted_target.max_bytes = 0;
+    agent_resource_descriptor reused;
+    assert(retain_agent_resource(store, project_resource, authority, exhausted_target, reused, copied, error));
+    assert(!copied && reused.uri == project_resource.uri);
+    assert(!retain_agent_resource(store, original, authority, exhausted_target, reused, copied, error));
+
     auto too_small = chat_target;
     too_small.max_bytes = 2;
     agent_resource_descriptor rejected;

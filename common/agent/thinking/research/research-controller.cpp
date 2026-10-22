@@ -368,6 +368,11 @@ common_agent_research_action common_agent_research_controller::advance(
                 error)) {
             return complete_action(common_agent_research_stop_reason::policy_blocked);
         }
+        gap->assessment = sufficient_evidence
+            ? common_agent_research_gap_assessment::sufficient
+            : (event.assessment.status == common_agent_research_assessment_status::inconclusive && !assessed_sufficiently
+                ? common_agent_research_gap_assessment::inconclusive
+                : common_agent_research_gap_assessment::insufficient);
         workspace.no_progress_iterations = gap->status == common_agent_research_gap_status::open
             ? workspace.no_progress_iterations + 1
             : 0;

@@ -217,10 +217,14 @@ common_tool_execution_result publish_research_workspace(const common_native_tool
     common_agent_research_revision_ref published;
     bool already_published = false;
     if (!bindings.data_store->publish_research_revision(scope, next, draft.base_revision,
-            published, already_published, error))
-        return common_adapter_failure("tool.research.workspace.publish.conflict", common_tool_failure_class::conflict,
-            false, "The research revision changed during publication. The saved chat draft remains available.",
-            std::move(error));
+            published, already_published, error)) {
+        if (error == "research workspace revision conflict")
+            return common_adapter_failure("tool.research.workspace.publish.conflict", common_tool_failure_class::conflict,
+                false, "The research revision changed during publication. The saved chat draft remains available.",
+                std::move(error));
+        return common_adapter_execution_failure("tool.research.workspace.publish.publication_failed", std::move(error),
+            "The research publication could not be confirmed. The saved chat draft remains available; retry the same publication to recover its outcome.");
+    }
 
     // Advance only this chat's draft after its revision was published. This
     // keeps the chat writable while preserving all other chats' independent drafts.

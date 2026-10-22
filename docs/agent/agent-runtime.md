@@ -955,6 +955,11 @@ newer project revision. The `research.workspace.publish` tool is a
 confirmation-gated host operation, not a model-authored revision update.
 
 Draft payloads and published revisions are immutable resource-store objects.
+Resuming research preserves prior task history and execution counters. The
+current request grants a new bounded increment for iterations, tasks and tool
+calls; the controller uses cumulative ceilings without reusing an exhausted
+turn budget. No-progress tracking restarts for the new execution. Gap workflow
+status and evidence assessment are persisted independently.
 Turn-scoped source resources are retained at chat scope when a draft is saved;
 session-scoped sources are promoted to project scope when a project revision is
 published. Retention is bounded by per-resource and aggregate byte limits and

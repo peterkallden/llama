@@ -145,6 +145,7 @@ async function loadDatasets() {
 watch([scope, () => props.projectId, () => props.sessionId], () => {
   ++scopeGeneration; ++generation; ++previewGeneration;
   if (searchTimer) clearTimeout(searchTimer);
+  researchGraph.value = undefined; graphError.value = ""; graphSelection.value = undefined; graphBusy.value = false;
   rows.value = []; nextCursor.value = ""; selected.value = undefined; preview.value = "";
   cases.value = []; datasets.value = []; casesLoaded.value = false; datasetsLoaded.value = false;
   casesUnavailable.value = false; datasetsUnavailable.value = false; casesLoading.value = false; datasetsLoading.value = false;
