@@ -52,7 +52,12 @@ function openSelectedResource(uri: string, kind: "dataset" | "resource" | "path"
   selectedExplorerKind.value = kind;
   void navigateWorkspace("data");
 }
-function openWorkspaceApp(tool: (typeof session.tools)[number]) {
+const localAppInvocation = ref<{ appKey: string; invocation: { id: string; input: Record<string, unknown> } }>();
+function openWorkspaceApp(tool: (typeof session.tools)[number], input?: Record<string, unknown>) {
+  localAppInvocation.value = input ? {
+    appKey: mcpAppKey(tool),
+    invocation: { id: crypto.randomUUID(), input },
+  } : undefined;
   void navigateWorkspace("app", mcpAppKey(tool));
 }
 function toggleResourceRef(uri: string) {
@@ -75,6 +80,7 @@ let cachedInvocation: { id: string; input: Record<string, unknown>; result?: unk
 const activeAppInvocation = computed(() => {
   const app = activeMcpApp();
   if (!app) return undefined;
+  if (localAppInvocation.value?.appKey === mcpAppKey(app)) return localAppInvocation.value.invocation;
   const events = documentMode.value && localDocumentEvent.value
     ? session.events.filter((event) => event.tool_input?.document_uri === documentStatus.value.uri ||
         event.tool_input?.document_uri === localDocumentEvent.value?.tool_input?.document_uri)
@@ -93,6 +99,7 @@ const activeAppInvocation = computed(() => {
 
 watch(() => session.sessionId, () => {
   localDocumentEvent.value = undefined;
+  localAppInvocation.value = undefined;
   restoreDocumentMode();
   activeView.value = "chat";
   activeAppTool.value = "";

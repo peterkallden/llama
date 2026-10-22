@@ -156,6 +156,7 @@ if (!window.__investigationWorkspace) {
       if (!result) return;
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
+      q("#case-form").setAttribute("hidden", "");
       await loadCaseClaims();
       await loadReports();
       if (token !== generation) return;

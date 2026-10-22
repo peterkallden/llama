@@ -18,7 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   openData: [uri: string, kind: "resource" | "dataset"];
   attach: [uri: string];
-  openApp: [tool: DaemonToolStatus];
+  openApp: [tool: DaemonToolStatus, input?: Record<string, unknown>];
 }>();
 const tab = ref<"resources" | "datasets" | "workspaces" | "work-products">("resources");
 const scope = ref<"session" | "project">("session");
@@ -122,6 +122,12 @@ async function loadCases() {
   finally { if (request === scopeGeneration) casesLoading.value = false; }
 }
 
+function openCase(item: Record<string, unknown>) {
+  const app = apps.value.find((candidate) => candidate._meta?.ui?.resourceUri === "ui://llama-agent/apps/investigation-workspace");
+  const caseId = String(item.case_id ?? item.id ?? "");
+  if (app && caseId) emit("openApp", app, { case_id: caseId });
+}
+
 async function loadDatasets() {
   const request = scopeGeneration;
   if (datasetsLoaded.value || datasetsLoading.value) return;
@@ -219,7 +225,7 @@ function toggleAttach(item: ResourceRow) { emit("attach", item.uri); }
     </template>
     <template v-else>
       <p class="muted">Saved investigation cases are work products; opening one uses the existing Investigation Workspace.</p>
-      <button v-for="item in cases" :key="String(item.case_id ?? item.id)" type="button" class="workspace-row" @click="apps.find((app) => app._meta?.ui?.resourceUri === 'ui://llama-agent/apps/investigation-workspace') && emit('openApp', apps.find((app) => app._meta?.ui?.resourceUri === 'ui://llama-agent/apps/investigation-workspace')!)">
+      <button v-for="item in cases" :key="String(item.case_id ?? item.id)" type="button" class="workspace-row" @click="openCase(item)">
         <span>{{ String(item.title ?? item.case_id ?? item.id ?? 'Investigation case') }}</span><small>{{ String(item.status ?? '') }}</small>
       </button>
       <p v-if="casesLoading" class="muted">Loading saved cases…</p>
