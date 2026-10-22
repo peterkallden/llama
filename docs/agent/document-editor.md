@@ -2,7 +2,7 @@
 
 The first document editor is a first-party MCP App at
 `ui://llama-agent/apps/document-editor`. It edits immutable report revisions
-and explicitly imported TXT, Markdown, and DOCX documents. The editor is a standalone embedded app using
+and explicitly imported TXT, Markdown, and DOCX documents. User-authored documents use the same editor. The editor is a standalone embedded app using
 the pinned `@toast-ui/editor` package; Markdown/GFM parsing and block identity
 remain host responsibilities.
 
@@ -23,7 +23,11 @@ and title directly through the host, including unsaved content; it does not
 publish a revision. The host performs the download because the embedded app's
 sandbox does not grant direct download permission.
 Closing a user document uses the same save/discard/cancel choice and does not
-start a review turn. Report documents retain their existing review-on-close
+start a review turn. Document changes are serialized: New, Upload, and Open reserve
+the navigation action before waiting for the draft decision. An in-flight save
+or review prevents switching, and simultaneous switch requests share one decision.
+Document titles use the same 256-byte UTF-8 save limit as the host.
+Report documents retain their existing review-on-close
 flow; Review remains an explicit toolbar action for user documents.
 
 The picker lists structured document and report revisions as **Open**, and
@@ -70,9 +74,10 @@ expands when required and collapses when connected. The main workspace follows
 viewport width, with a compact chat column beside the editor or another app.
 
 The document title and close icon form one workspace tab. While editing,
-the Chat tab, app launchers, new-session action, and other document-open actions
-are disabled. Close the document through its tab to save and queue review before
-switching views. The embedded editor has no second close button. Attachment
+the Chat tab, app launchers, and new-session action are disabled. The document
+toolbar supports protected switching to another document. Closing through the
+tab saves and queues review for reports; ordinary documents use Save, Discard,
+or Cancel. The embedded editor has no second close button. Attachment
 removal uses an outlined trash icon and removes only the session attachment;
 it does not delete the original file or saved document revisions.
 
@@ -85,13 +90,18 @@ Data Explorer, other sources offer original or scoped saved-file links, and
 tool results come from the frozen snapshot. Presentation does not rerun a tool
 or promote reference integrity to factual verification. Browser rendering is
 sanitized and does not fetch embedded media. Large reports initialize their
-Markdown presentations as blocks enter the viewport.
+Markdown presentations as blocks enter the viewport. The Markdown viewer and
+generic research graph renderer are loaded as separate JavaScript chunks when
+their views are mounted; the chat startup bundle does not include either engine.
 `document.open` returns the saved immutable report or imported document revision and an editable
 Markdown projection. `document.save` compares `expected_revision` with the
 current host manifest, parses the full document, and publishes a new immutable
 revision. A conflicting save leaves the browser's local draft intact. An
 unchanged save does not increment the revision. `operation_id` makes a
-retry idempotent, including unchanged saves. The editor retains the pending
+retry idempotent, including unchanged saves. Title and Markdown are framed as
+separate values in the operation fingerprint, so field boundaries cannot collide.
+Legacy title-bearing operations are also checked against their canonical saved
+content and title before a retry is accepted. The editor retains the pending
 operation and payload until the host confirms it. A retry uses that same
 operation even if newer local edits already exist.
 

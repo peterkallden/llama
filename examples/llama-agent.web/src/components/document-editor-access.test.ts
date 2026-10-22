@@ -38,6 +38,19 @@ describe("document editor host grant and draft storage", () => {
     expect(() => access.authorize("document.save", { document_uri: "resource://other", expected_revision: 1 })).toThrow();
   });
 
+  it("accepts a new document after a clean draft differs only through host normalization", () => {
+    const access = new DocumentEditorAccess("normalized-clean", "native");
+    open(access);
+    access.draft({ document_uri: "resource://r1", revision: 1, action: "write", draft: {
+      markdown: "Normalized saved content\n", dirty: false,
+    } });
+    access.observe("document.open", { document_uri: "resource://other" }, {
+      document_uri: "resource://other", id: "other", revision: 1, title: "Other", markdown: "",
+    });
+    expect(() => access.authorize("document.save", { document_uri: "resource://other", expected_revision: 1 })).not.toThrow();
+    expect(() => access.authorize("document.save", { document_uri: "resource://r1", expected_revision: 1 })).toThrow();
+  });
+
   it("prefers the newest in-memory draft after a persistent write failed", () => {
     const access = new DocumentEditorAccess("quota-session", "native"); open(access);
     const storage = { getItem: () => JSON.stringify({ markdown: "Old" }), setItem: () => { throw new Error("quota"); } } as unknown as Storage;

@@ -137,6 +137,41 @@ describe("document editor sandbox script", () => {
     expect(view.requests.some((request) => request.id === 81 && request.result?.closed === true)).toBe(true);
   });
 
+  it("rejects a document switch while a save is in flight and preserves its draft", async () => {
+    const view = app();
+    let finishSave!: (value: unknown) => void;
+    view.handle((request) => request.params?.name === "document.save"
+      ? new Promise((resolve) => { finishSave = resolve; }) : undefined);
+    view.deliver("ui/notifications/tool-result", { structuredContent: { ...opened, kind: "document" } }); await settle();
+    view.Editor.current.edit("Saving this draft"); await settle();
+    view.node("#save").click(); await settle();
+    view.deliverRequest(84, "ui/llama-agent/prepare-document-switch"); await settle();
+    expect(view.requests.some((request) => request.id === 84 && request.error)).toBe(true);
+    finishSave({ structuredContent: { document_uri: "resource://r1", revision: 1, reused: true } }); await settle();
+  });
+
+  it("shares a switch decision across simultaneous requests and preserves the draft on cancel", async () => {
+    const view = app();
+    view.deliver("ui/notifications/tool-result", { structuredContent: { ...opened, kind: "document" } }); await settle();
+    view.Editor.current.edit("Keep this draft"); await settle();
+    view.deliverRequest(85, "ui/llama-agent/prepare-document-switch");
+    view.deliverRequest(86, "ui/llama-agent/prepare-document-switch");
+    view.node('[data-switch-choice="cancel"]').click(); await settle();
+    expect(view.requests.filter((request) => [85, 86].includes(request.id) && request.error)).toHaveLength(2);
+    expect(view.Editor.current.getMarkdown()).toBe("Keep this draft");
+  });
+
+  it("checks document titles against the host UTF-8 byte limit before saving", async () => {
+    const view = app();
+    view.deliver("ui/notifications/tool-result", { structuredContent: { ...opened, kind: "document" } }); await settle();
+    view.node("#document-title").value = "å".repeat(129);
+    view.node("#document-title").oninput(); await settle();
+    view.node("#save").click(); await settle();
+    expect(view.requests.some((request) => request.params?.name === "document.save")).toBe(false);
+    expect(view.node("#status").textContent).toContain("UTF-8 bytes");
+    expect(view.Editor.current.getMarkdown()).toBe(opened.markdown);
+  });
+
   it("waits for the matching tool result instead of fetching the document twice", async () => {
     const view = app();
     view.deliver("ui/notifications/tool-input", { arguments: { document_uri: opened.document_uri } });

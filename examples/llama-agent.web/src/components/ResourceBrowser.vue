@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 import { structuredToolResult } from "./structured-tool-result";
-import ResearchEvidenceGraph from "./ResearchEvidenceGraph.vue";
+const ResearchEvidenceGraph = defineAsyncComponent(() => import("./ResearchEvidenceGraph.vue"));
 import { parseRelationshipVisualization, type RelationshipVisualization } from "../visualization/contract";
 import type { RelationshipSelection } from "../visualization/relationship-renderer";
 

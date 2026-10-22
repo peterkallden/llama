@@ -817,6 +817,7 @@ test-agent-flydelta-alpha-response-search.cpp
                 src/components/report-view.test.ts src/components/report-snapshots.test.ts src/components/app-invocation.test.ts
                 src/visualization/contract.test.ts
                 src/components/dataset-table.test.ts src/components/document-editor-access.test.ts
+                src/components/mcp-app-host.test.ts src/mcp-app/document-editor.test.ts
                 src/api/agent-api.test.ts src/session.test.ts)
         set_tests_properties(test-agent-web-workspace PROPERTIES
             WORKING_DIRECTORY "${LLAMA_AGENT_WEB_TEST_DIR}" LABELS "agent;web;model-free")

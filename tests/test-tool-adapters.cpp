@@ -647,6 +647,37 @@ int main() {
         assert(retried.value("reused",false)&&retried.value("document_uri",std::string{})==created_uri&&retried.value("revision",uint64_t(0))==1);
         result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Different title"},{"operation_id","create-document-1"}}.dump()});
         assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        const auto collision_create=foundation_registry.execute({"document.create",nlohmann::json{{"title","Collision test"},{"operation_id","create-collision-document"}}.dump()});
+        assert(collision_create.ok);
+        const auto collision_uri=nlohmann::json::parse(collision_create.output).value("document_uri",std::string{});
+        const auto collision_save=nlohmann::json{{"document_uri",collision_uri},{"expected_revision",1},{"title","First\nSecond"},
+            {"markdown","Body"},{"operation_id","title-boundary-test"}};
+        result=foundation_registry.execute({"document.save",collision_save.dump()});
+        assert(result.ok);
+        auto different_input=collision_save;different_input["title"]="First";different_input["markdown"]="Second\nBody";
+        result=foundation_registry.execute({"document.save",different_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        auto unframed_input=collision_save;unframed_input.erase("title");
+        unframed_input["markdown"]=nlohmann::json{{"title","First\nSecond"},{"markdown","Body"}}.dump();
+        result=foundation_registry.execute({"document.save",unframed_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        bool legacy_operation_found=false;
+        for(auto & resource:foundation_resources.contents){
+            auto operation_record=nlohmann::json::parse(resource.second,nullptr,false);
+            if(!operation_record.is_object()||operation_record.value("operation_id",std::string{})!="title-boundary-test"||!operation_record.contains("input_fingerprint"))continue;
+            const std::string legacy_input="First\nSecond\nBody";
+            operation_record.erase("input_format");
+            operation_record["input_fingerprint"]="sha256:"+hash_sha256_hex(legacy_input.data(),legacy_input.size());
+            resource.second=operation_record.dump();legacy_operation_found=true;
+        }
+        assert(legacy_operation_found);
+        result=foundation_registry.execute({"document.save",collision_save.dump()});
+        assert(result.ok);
+        result=foundation_registry.execute({"document.save",different_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        unframed_input["markdown"]="First\nSecond\nBody";
+        result=foundation_registry.execute({"document.save",unframed_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
     }
     {
         agent_resource_descriptor uploaded;

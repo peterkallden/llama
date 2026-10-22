@@ -30,6 +30,7 @@ let applyAttempt: { document_uri: string; proposal_uri: string; expected_revisio
 let reviewAttempt: { document_uri: string; base_uri: string; revision: number; operation_id: string } | undefined;
 let closing = false;
 let closePromise: Promise<boolean> | undefined;
+let switchPromise: Promise<boolean> | undefined;
 
 function updateButtons() {
   for (const id of ["save", "review", "reload", "accept-proposal"]) {
@@ -260,7 +261,7 @@ async function saveRevision() {
   try {
   const content = editor.getMarkdown();
   const title = documentKind === "document" ? currentTitle() : undefined;
-  if (title !== undefined && (!title || title.length > 256)) throw new Error("Document title must contain 1-256 characters.");
+  if (title !== undefined && (!title || new TextEncoder().encode(title).byteLength > 256)) throw new Error("Document title must contain 1-256 UTF-8 bytes.");
   const savedEditSequence = editSequence;
   saveAttempt ??= { document_uri: documentUri, expected_revision: revision, ...(title !== undefined ? { title } : {}), markdown: content, operation_id: operationId() };
   const attempt = saveAttempt;
@@ -381,7 +382,14 @@ function chooseSwitchAction(): Promise<"save" | "discard" | "cancel"> {
   });
 }
 
-async function prepareDocumentSwitch(): Promise<boolean> {
+function prepareDocumentSwitch(): Promise<boolean> {
+  if (switchPromise) return switchPromise;
+  if (mutationBusy || reviewBusy) return Promise.resolve(false);
+  switchPromise = resolveDocumentSwitch().finally(() => { switchPromise = undefined; });
+  return switchPromise;
+}
+
+async function resolveDocumentSwitch(): Promise<boolean> {
   if (!dirty) return true;
   const choice = await chooseSwitchAction();
   if (choice === "cancel") return false;

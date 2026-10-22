@@ -12,16 +12,18 @@ export class DocumentEditorAccess {
   private draftMarkdown = "";
   private documentTitle = "";
   private draftTitle = "";
+  private dirty = false;
   constructor(private readonly session: string, private readonly provider: string) {}
 
   observe(name: string, args: Fields, result: Fields) {
     if (name === "document.open" && typeof result.document_uri === "string" &&
         result.document_uri === args.document_uri && typeof result.id === "string" &&
         Number.isSafeInteger(result.revision) && Number(result.revision) > 0) {
-      if (this.uri && (this.draftMarkdown !== this.savedMarkdown || this.draftTitle !== this.documentTitle)) return;
+      if (this.uri && this.dirty) return;
       this.uri = result.document_uri; this.id = result.id; this.revision = Number(result.revision);
       this.savedMarkdown = String(result.markdown ?? ""); this.draftMarkdown = this.savedMarkdown;
       this.documentTitle = String(result.title ?? "Document"); this.draftTitle = this.documentTitle;
+      this.dirty = false;
       this.completedWrite = "";
     } else if ((name === "document.save" || name === "document.apply_patch") &&
         args.document_uri === this.uri && typeof result.document_uri === "string" &&
@@ -30,6 +32,7 @@ export class DocumentEditorAccess {
       if (typeof args.markdown === "string") this.savedMarkdown = args.markdown;
       if (typeof args.title === "string") this.documentTitle = args.title;
       this.draftMarkdown = this.savedMarkdown; this.draftTitle = this.documentTitle;
+      this.dirty = false;
       this.completedWrite = JSON.stringify([name, args]);
     }
   }
@@ -67,6 +70,8 @@ export class DocumentEditorAccess {
     if (draft && typeof draft === "object" && typeof (draft as Fields).markdown === "string") {
       this.draftMarkdown = (draft as Fields).markdown as string;
       this.draftTitle = typeof (draft as Fields).title === "string" ? (draft as Fields).title as string : this.documentTitle;
+      this.dirty = (draft as Fields).dirty === true || ((draft as Fields).dirty !== false &&
+        (this.draftMarkdown !== this.savedMarkdown || this.draftTitle !== this.documentTitle));
     }
     return { draft, persistent };
   }

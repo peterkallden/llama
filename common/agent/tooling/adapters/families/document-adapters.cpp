@@ -211,14 +211,18 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
         "The selected report does not match the expected revision.","document revision does not match expected_revision");
     if(!requested_title.empty()&&original.kind!=common_agent_artifact_document_kind::document)
         return common_adapter_validation_failure("tool.document.save.title_not_editable","report titles are edited in the report Markdown heading");
-    const std::string operation_input=requested_title.empty()?markdown:requested_title+"\n"+markdown;
+    const std::string operation_input=json{{"title",requested_title},{"markdown",markdown}}.dump();
     const auto input_fingerprint="sha256:"+hash_sha256_hex(operation_input.data(),operation_input.size());
     json prior_operation_record;
     if(!find_document_operation(bindings,original.id,operation_id,prior_operation_record,error))return common_adapter_execution_failure("tool.document.save.operation_lookup_failed",error,"The prior save operation could not be checked.");
     if(!prior_operation_record.empty()){
+        const std::string legacy_input=requested_title.empty()?markdown:requested_title+"\n"+markdown;
+        const auto legacy_fingerprint="sha256:"+hash_sha256_hex(legacy_input.data(),legacy_input.size());
+        const bool legacy_input_format=prior_operation_record.value("input_format",1)==1;
+        const auto expected_input=legacy_input_format?legacy_fingerprint:input_fingerprint;
         if(prior_operation_record.value("base_document_uri",std::string{})!=document_uri||
                 prior_operation_record.value("expected_revision",uint64_t(0))!=expected_revision||
-                prior_operation_record.value("input_fingerprint",std::string{})!=input_fingerprint)
+                prior_operation_record.value("input_fingerprint",std::string{})!=expected_input)
             return common_adapter_failure("tool.document.save.operation_conflict",common_tool_failure_class::conflict,false,
                 "This operation ID was already used for different document content.","document operation ID payload mismatch");
         std::string latest_uri,latest_markdown,latest_operation;uint64_t latest_revision=0;
@@ -232,6 +236,14 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
         std::string saved_markdown;
         if(!common_agent_artifact_render_editable_markdown(saved_document,saved_markdown,error))return common_adapter_execution_failure("tool.document.save.retry_unavailable",error,"The prior saved revision could not be restored.");
         const auto saved_fingerprint="sha256:"+hash_sha256_hex(saved_markdown.data(),saved_markdown.size());
+        if(legacy_input_format){
+            common_agent_artifact_document candidate;std::string candidate_markdown;
+            if(!common_agent_artifact_apply_markdown_edit(original,markdown,candidate,error)||
+                    !common_agent_artifact_render_editable_markdown(candidate,candidate_markdown,error)||
+                    candidate_markdown!=saved_markdown||saved_document.title!=(requested_title.empty()?candidate.title:requested_title))
+                return common_adapter_failure("tool.document.save.operation_conflict",common_tool_failure_class::conflict,false,
+                    "This operation ID was already used for different document content.","legacy document operation payload mismatch");
+        }
         if(saved_fingerprint!=prior_operation_record.value("content_fingerprint",std::string{}))
             return common_adapter_execution_failure("tool.document.save.retry_unavailable","stored operation fingerprint does not match saved content","The saved operation failed content verification.");
         if(saved_revision>expected_revision&&((latest_revision==expected_revision&&latest_uri==document_uri)||
@@ -265,7 +277,7 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
     if(!common_agent_artifact_render_editable_markdown(original,original_markdown,error))return common_adapter_execution_failure("tool.document.save.render_failed",error,"The prior report could not be rendered.");
     const auto original_fingerprint="sha256:"+hash_sha256_hex(original_markdown.data(),original_markdown.size());
     if(revised.content_fingerprint==original_fingerprint&&revised.title==original.title){
-        const json operation_manifest={{"schema_version",1},{"document_id",original.id},{"operation_id",operation_id},
+        const json operation_manifest={{"schema_version",1},{"input_format",2},{"document_id",original.id},{"operation_id",operation_id},
             {"base_document_uri",document_uri},{"expected_revision",expected_revision},{"input_fingerprint",input_fingerprint},
             {"document_uri",document_uri},{"markdown_uri",latest_markdown},{"revision",original.revision},
             {"content_fingerprint",original_fingerprint},{"diff",document_diff(original,original)}};
@@ -287,7 +299,7 @@ common_tool_execution_result save_document(const common_native_tool_bindings & b
     if(document_json.size()>document_max_bytes)return common_adapter_validation_failure("tool.document.save.document_too_large","serialized document exceeds the document read limit","The edited document is too large to reopen safely.");
     const auto structured_mime=revised.kind==common_agent_artifact_document_kind::document?"application/vnd.llama-agent.document+json":"application/vnd.llama-agent.report+json";
     if(!put_document_resource(bindings,revised.id+"-r"+std::to_string(revised.revision)+"-document.json",structured_mime,document_json,"document.save",base+":document",document_uri,new_document_uri,error))return common_adapter_execution_failure("tool.document.save.document_write_failed",error,"The new document revision could not be saved.");
-    const json operation_manifest={{"schema_version",1},{"document_id",revised.id},{"operation_id",operation_id},
+    const json operation_manifest={{"schema_version",1},{"input_format",2},{"document_id",revised.id},{"operation_id",operation_id},
         {"base_document_uri",document_uri},{"expected_revision",expected_revision},{"input_fingerprint",input_fingerprint},
         {"document_uri",new_document_uri},{"markdown_uri",new_markdown_uri},{"revision",revised.revision},
         {"content_fingerprint",revised.content_fingerprint},{"diff",diff}};

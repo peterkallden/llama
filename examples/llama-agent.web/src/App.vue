@@ -271,10 +271,11 @@ async function refreshDocumentChoices() {
 async function openDocumentChoice() {
   const choice = documentChoices.value.find((item) => item.uri === selectedDocumentChoice.value);
   selectedDocumentChoice.value = "";
-  if (!choice || !(await prepareDocumentSwitch())) return;
+  if (!choice || workspaceNavigating.value) return;
   workspaceNavigating.value = true;
   const requestSession = session.sessionId;
   try {
+    if (!(await prepareDocumentSwitch()) || session.sessionId !== requestSession) return;
     let documentUri = choice.uri;
     if (choice.action === "import") {
       if (!session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) throw new Error("Document import is not authorized by the daemon profile.");
@@ -292,10 +293,11 @@ async function createDocument() {
   if (!session.tools.some((tool) => tool.name === "document.create" && tool.app_write_authorized)) {
     session.error = "Document creation is not authorized by the daemon profile."; return;
   }
-  if (!(await prepareDocumentSwitch())) return;
+  if (workspaceNavigating.value) return;
   workspaceNavigating.value = true;
   const requestSession = session.sessionId;
   try {
+    if (!(await prepareDocumentSwitch()) || session.sessionId !== requestSession) return;
     const created = structuredToolResult(await session.callMcpAppTool("document.open", "document.create", { title: "Untitled document", operation_id: `web-create-${crypto.randomUUID()}` }));
     const uri = String(created.document_uri ?? "");
     if (!uri) throw new Error("Document creation returned no revision reference.");
@@ -308,13 +310,14 @@ async function createDocument() {
 async function uploadDocumentFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0]; input.value = "";
-  if (!file || !(await prepareDocumentSwitch())) return;
+  if (!file || workspaceNavigating.value) return;
   if (!session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) {
     session.error = "Document import is not authorized by the daemon profile."; return;
   }
   workspaceNavigating.value = true;
   const requestSession = session.sessionId;
   try {
+    if (!(await prepareDocumentSwitch()) || session.sessionId !== requestSession) return;
     const uri = await session.upload(file, { scope: session.projectId ? "project" : "session", orient: false, attach: false });
     if (!uri) throw new Error("The selected file could not be uploaded.");
     const imported = structuredToolResult(await session.importDocument(uri));
