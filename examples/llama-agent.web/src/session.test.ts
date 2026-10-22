@@ -6,7 +6,9 @@ const transport = vi.hoisted(() => ({
   replies: [] as Array<(value: unknown) => void>,
   history: undefined as ((id: string, project: string) => Promise<unknown>) | undefined,
   detach: undefined as (() => Promise<unknown>) | undefined,
+  detachRequests: [] as Array<Record<string, unknown>>,
   upload: undefined as (() => Promise<unknown>) | undefined,
+  uploadedResources: [] as Array<Record<string, unknown>>,
   sink: (_event: Record<string, unknown>) => {},
 }));
 
@@ -19,9 +21,15 @@ vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constru
   migrateLegacyChat(session_id: string) { return Promise.resolve({ chat: { id: session_id, project_id: "legacy-project", title: "Imported chat" }, migrated: true }); }
   createProject(name: string) { return Promise.resolve({ project: { id: "project-test", name, created_at: 1, last_active_at: 1 } }); }
   resources() { return Promise.resolve({ resources: [], next_cursor: "" }); }
-  setChatResource() { return transport.detach?.() ?? Promise.resolve({ chat: {} }); }
+  setChatResource(input: Record<string, unknown>) {
+    transport.detachRequests.push(input);
+    return transport.detach?.() ?? Promise.resolve({ chat: {} });
+  }
   cancelTurn() { return Promise.resolve({ ok: true }); }
-  putResource() { return transport.upload?.() ?? Promise.resolve({ resource: { uri: "resource://upload/test" } }); }
+  putResource(resource: Record<string, unknown>) {
+    transport.uploadedResources.push(resource);
+    return transport.upload?.() ?? Promise.resolve({ resource: { uri: "resource://upload/test" } });
+  }
   connectEvents(sink: typeof transport.sink, _signal: AbortSignal, connected: () => void) {
     transport.sink = sink; connected();
     return new Promise<void>(() => {});
@@ -36,7 +44,7 @@ vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constru
   }
 } }));
 
-afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; transport.detachRequests.length = 0; transport.uploadedResources.length = 0; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
   transport.calls.length = 0;
@@ -81,6 +89,26 @@ it("automatically orients each uploaded attachment as its own read-only host tas
   for (let i = 0; i < 10; i++) await Promise.resolve();
   expect(session.messages[1].content).toBe("This is a short note.");
   expect(session.attachmentOrientations[0].state).toBe("completed");
+});
+
+it("stores an editor upload in project scope without attaching it or starting an orientation turn", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  transport.uploadedResources.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  session.projectId = "project-test";
+  const uri = await session.upload({ name: "draft.markdown", type: "application/octet-stream", size: 12,
+    text: async () => "# Draft" } as File, { scope: "project", orient: false, attach: false });
+  expect(uri).toBe("resource://upload/test");
+  expect(transport.uploadedResources[0]).toMatchObject({ scope: "project", project_id: "project-test", mime_type: "text/markdown" });
+  expect(session.attachments).toHaveLength(0);
+  expect(session.attachmentOrientations).toHaveLength(0);
+  expect(transport.calls).toHaveLength(0);
 });
 
 it("skips the pending default orientation when the user sends an explicit question with the attachment", async () => {
@@ -420,4 +448,16 @@ it("does not remove an attachment from a new chat after a late detach response",
   resolveDetach({ chat: {} });
   await removal;
   expect(session.attachments.map((item) => item.uri)).toEqual(["resource://new"]);
+});
+
+it("detaches project resources using their owning scope", async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  session.projectId = "project-test";
+  session.attachments.push({ name: "research.md", mime_type: "text/markdown", scope: "project", uri: "resource://project/research" });
+  await session.removeAttachment(0);
+  expect(transport.detachRequests[0]).toMatchObject({ projectId: "project-test", uri: "resource://project/research", scope: "project", action: "detach" });
 });

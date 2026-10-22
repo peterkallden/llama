@@ -24,7 +24,7 @@ const activeAppTool = ref("");
 const documentMode = ref(false);
 const chatSending = ref(false);
 const workspaceNavigating = ref(false);
-const documentStatus = ref<{ title: string; revision: number; dirty: boolean; uri?: string; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
+const documentStatus = ref<{ title: string; kind?: string; revision: number; dirty: boolean; uri?: string; message?: string; error?: boolean }>({ title: "Document", revision: 0, dirty: false });
 const editorHost = ref<InstanceType<typeof McpAppHost> | null>(null);
 const savedWorkspaceState = ref<{ view: typeof activeView.value; app: string } | null>(null);
 const localDocumentEvent = ref<AgentEvent>();
@@ -32,6 +32,11 @@ const openingAttachmentUri = ref("");
 const selectedExplorerSource = ref("");
 const selectedExplorerKind = ref<"dataset" | "resource" | "path">("resource");
 const attachmentEditorError = ref("");
+const documentChoices = ref<Array<{ uri: string; name: string; action: "open" | "import"; revision: number }>>([]);
+const selectedDocumentChoice = ref("");
+const documentChoicesLoading = ref(false);
+const documentChoicesTruncated = ref(false);
+let documentChoiceGeneration = 0;
 const inspection = ref<InspectionTarget>();
 const workspaceActive = computed(() => activeView.value !== "chat");
 const reports = computed(() => reportReferences(session.events, session.sessionId));
@@ -96,6 +101,10 @@ watch(() => session.sessionId, () => {
   inspection.value = undefined;
 });
 
+watch(() => [session.sessionId, session.projectId], () => {
+  if (documentMode.value) void refreshDocumentChoices();
+});
+
 onMounted(() => { void session.connect(); void session.ensureActiveChat().catch((cause) => {
   session.error = cause instanceof Error ? cause.message : String(cause);
 }); void session.refreshStatus().catch((cause) => {
@@ -155,6 +164,7 @@ function enterDocumentMode() {
     view: activeView.value, app: activeAppTool.value,
   };
   documentMode.value = true; activeView.value = "app";
+  void refreshDocumentChoices();
 }
 
 function restoreDocumentMode() {
@@ -202,9 +212,118 @@ async function startNewSession() {
 function onDocumentClosed() { restoreDocumentMode(); }
 function onDocumentStatus(value: Record<string, unknown>) {
   documentStatus.value = {
-    title: String(value.title ?? "Document"), revision: Number(value.revision ?? 0), uri: String(value.document_uri ?? ""),
+    title: String(value.title ?? "Document"), kind: String(value.kind ?? "document"), revision: Number(value.revision ?? 0), uri: String(value.document_uri ?? ""),
     dirty: Boolean(value.dirty), message: String(value.message ?? ""), error: Boolean(value.error),
   };
+}
+
+async function prepareDocumentSwitch() {
+  try { return Boolean(await editorHost.value?.prepareDocumentSwitch()); }
+  catch (cause) { session.error = cause instanceof Error ? cause.message : String(cause); return false; }
+}
+
+async function refreshDocumentChoices() {
+  const generation = ++documentChoiceGeneration;
+  const requestSession = session.sessionId;
+  const requestProject = session.projectId;
+  documentChoicesLoading.value = true;
+  documentChoicesTruncated.value = false;
+  try {
+    const scopes: Array<"session" | "project"> = requestProject ? ["session", "project"] : ["session"];
+    const rows: Array<Record<string, unknown>> = [];
+    for (const scope of scopes) {
+      let cursor = "";
+      for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
+        const page = await session.listResources({ scope, projectId: requestProject, sessionId: requestSession, cursor, limit: 100 });
+        rows.push(...page.resources);
+        cursor = page.next_cursor;
+        if (!cursor) break;
+        if (pageIndex === 9) documentChoicesTruncated.value = true;
+      }
+    }
+    if (generation !== documentChoiceGeneration || session.sessionId !== requestSession || session.projectId !== requestProject) return;
+    const structured = new Map<string, { uri: string; name: string; action: "open"; revision: number }>();
+    const sources: Array<{ uri: string; name: string; action: "import"; revision: number }> = [];
+    for (const row of rows) {
+      const uri = String(row.uri ?? "");
+      const name = String(row.name ?? "Document");
+      const mime = String(row.mime_type ?? "").toLowerCase();
+      if (!uri) continue;
+      if (mime === "application/vnd.llama-agent.document+json" || mime === "application/vnd.llama-agent.report+json") {
+        const match = name.match(/^(.*)-r(\d+)-(?:document|report)\.json$/i);
+        const identity = match?.[1] ?? uri;
+        const revision = Number(match?.[2] ?? 1);
+        const prior = structured.get(identity);
+        if (!prior || revision > prior.revision) structured.set(identity, { uri, name: match ? match[1] : name, action: "open", revision });
+      } else if (/\.(txt|md|markdown|docx)$/i.test(name) && (mime === "text/plain" || mime === "text/markdown" || mime.includes("wordprocessingml"))) {
+        sources.push({ uri, name, action: "import", revision: 0 });
+      }
+    }
+    documentChoices.value = [...structured.values(), ...sources].sort((a, b) => a.name.localeCompare(b.name));
+  } catch (cause) {
+    if (generation === documentChoiceGeneration && session.sessionId === requestSession && session.projectId === requestProject) {
+      session.error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+  finally { if (generation === documentChoiceGeneration) documentChoicesLoading.value = false; }
+}
+
+async function openDocumentChoice() {
+  const choice = documentChoices.value.find((item) => item.uri === selectedDocumentChoice.value);
+  selectedDocumentChoice.value = "";
+  if (!choice || !(await prepareDocumentSwitch())) return;
+  workspaceNavigating.value = true;
+  const requestSession = session.sessionId;
+  try {
+    let documentUri = choice.uri;
+    if (choice.action === "import") {
+      if (!session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) throw new Error("Document import is not authorized by the daemon profile.");
+      const imported = structuredToolResult(await session.importDocument(choice.uri));
+      documentUri = String(imported.document_uri ?? "");
+      if (!documentUri) throw new Error("Import completed without a document revision reference.");
+    }
+    const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: documentUri }));
+    if (session.sessionId === requestSession) showOpenedDocument(opened, documentUri);
+  } catch (cause) { if (session.sessionId === requestSession) session.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { workspaceNavigating.value = false; }
+}
+
+async function createDocument() {
+  if (!session.tools.some((tool) => tool.name === "document.create" && tool.app_write_authorized)) {
+    session.error = "Document creation is not authorized by the daemon profile."; return;
+  }
+  if (!(await prepareDocumentSwitch())) return;
+  workspaceNavigating.value = true;
+  const requestSession = session.sessionId;
+  try {
+    const created = structuredToolResult(await session.callMcpAppTool("document.open", "document.create", { title: "Untitled document", operation_id: `web-create-${crypto.randomUUID()}` }));
+    const uri = String(created.document_uri ?? "");
+    if (!uri) throw new Error("Document creation returned no revision reference.");
+    const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: uri }));
+    if (session.sessionId === requestSession) showOpenedDocument(opened, uri);
+  } catch (cause) { if (session.sessionId === requestSession) session.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { workspaceNavigating.value = false; }
+}
+
+async function uploadDocumentFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0]; input.value = "";
+  if (!file || !(await prepareDocumentSwitch())) return;
+  if (!session.tools.some((tool) => tool.name === "document.import" && tool.app_write_authorized)) {
+    session.error = "Document import is not authorized by the daemon profile."; return;
+  }
+  workspaceNavigating.value = true;
+  const requestSession = session.sessionId;
+  try {
+    const uri = await session.upload(file, { scope: session.projectId ? "project" : "session", orient: false, attach: false });
+    if (!uri) throw new Error("The selected file could not be uploaded.");
+    const imported = structuredToolResult(await session.importDocument(uri));
+    const documentUri = String(imported.document_uri ?? "");
+    if (!documentUri) throw new Error("Import completed without a document revision reference.");
+    const opened = structuredToolResult(await session.callMcpAppTool("document.open", "document.open", { document_uri: documentUri }));
+    if (session.sessionId === requestSession) showOpenedDocument(opened, documentUri);
+  } catch (cause) { if (session.sessionId === requestSession) session.error = cause instanceof Error ? cause.message : String(cause); }
+  finally { workspaceNavigating.value = false; void refreshDocumentChoices(); }
 }
 
 async function openAttachmentInEditor(file: (typeof session.attachments)[number]) {
@@ -245,7 +364,7 @@ function showOpenedDocument(opened: Record<string, unknown>, documentUri: string
     server_tool_name: openTool.server_tool_name ?? openTool.name, app_context_available: true,
     tool_input: { document_uri: documentUri }, tool_result: { isError: false, structuredContent: opened },
   };
-  documentStatus.value = { title: String(opened.title || "Document"), revision: Number(opened.revision || 0), dirty: false, uri: documentUri };
+  documentStatus.value = { title: String(opened.title || "Document"), kind: String(opened.kind || "document"), revision: Number(opened.revision || 0), dirty: false, uri: documentUri };
   enterDocumentMode();
   activeAppTool.value = mcpAppKey(openTool);
 }
@@ -328,7 +447,14 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <button type="button" :class="{ selected: activeView === 'resources' }" :disabled="navigationLocked" @click="navigateWorkspace('resources')">Resources</button>
         <div v-if="workspaceActive" class="workspace-tab" :aria-busy="workspaceNavigating">
           <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeView === 'resources' ? 'Resources' : activeMcpApp()?.name || 'Application' }}</span>
-          <button type="button" class="workspace-close" :disabled="workspaceNavigating || Boolean(openingAttachmentUri)" :title="documentMode ? 'Save, review and close' : 'Close workspace'" :aria-label="documentMode ? 'Save, review and close document' : 'Close workspace'" @click="navigateWorkspace('chat', '', true)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+          <div v-if="documentMode" class="document-toolbar">
+            <button type="button" :disabled="workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.create' && tool.app_write_authorized)" @click="createDocument">New</button>
+            <label class="document-upload-button" :class="{ disabled: workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) }">Upload<input type="file" accept=".txt,.md,.markdown,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" :disabled="workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" @change="uploadDocumentFile"></label>
+            <select v-model="selectedDocumentChoice" aria-label="Open or import a document" :disabled="workspaceNavigating || documentChoicesLoading" @change="openDocumentChoice"><option value="">{{ documentChoicesLoading ? 'Loading documents…' : 'Open document…' }}</option><option v-for="choice in documentChoices" :key="choice.uri" :value="choice.uri">{{ choice.action === 'open' ? 'Open' : 'Import' }} · {{ choice.name }}{{ choice.revision > 1 ? ` · r${choice.revision}` : '' }}</option></select>
+            <button type="button" class="quiet" :disabled="workspaceNavigating || documentChoicesLoading" title="Refresh document list" @click="refreshDocumentChoices">↻</button>
+            <small v-if="documentChoicesTruncated" class="document-list-note">Showing the first 1,000 resources per scope. Use Resources to find older documents.</small>
+          </div>
+          <button type="button" class="workspace-close" :disabled="workspaceNavigating || Boolean(openingAttachmentUri)" :title="documentMode ? documentStatus.kind === 'document' ? 'Save or discard changes and close' : 'Save, review and close' : 'Close workspace'" :aria-label="documentMode ? documentStatus.kind === 'document' ? 'Save or discard changes and close document' : 'Save, review and close document' : 'Close workspace'" @click="navigateWorkspace('chat', '', true)"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
         </div>
       </nav>
       <StatusFloater :active-view="activeView" :active-app="activeAppTool" :navigation-locked="navigationLocked" @navigate="navigateWorkspace" @new-session="startNewSession"><template #events>

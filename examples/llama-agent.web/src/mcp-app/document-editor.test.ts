@@ -9,6 +9,8 @@ function app() {
   const nodes = new Map<string, Fields>();
   const node = (selector: string) => {
     if (!nodes.has(selector)) nodes.set(selector, { textContent: "", dataset: {}, replaceChildren() {}, append() {},
+      click() { this.onclick?.(); }, showModal() { this.open = true; }, close() { this.open = false; },
+      querySelector(child: string) { return node(child); },
       setAttribute() {},
       addEventListener(event: string, handler: () => void) { this[event] = handler; } });
     return nodes.get(selector)!;
@@ -38,9 +40,10 @@ function app() {
     listener = () => {};
     constructor(options: Fields) {
       expect(options.toolbarItems.every(Array.isArray)).toBe(true);
-      this.markdown = options.initialValue; Editor.current = this;
+    this.markdown = options.initialValue; Editor.current = this;
     }
     getMarkdown() { return this.markdown; }
+    setMarkdown(value: string) { this.markdown = value; }
     destroy() {}
     on(_name: string, listener: () => void) { this.listener = listener; }
     edit(text: string) { this.markdown = text; this.listener(); }
@@ -60,7 +63,7 @@ function app() {
   };
 }
 
-const opened = { document_uri: "resource://r1", id: "report", revision: 1, title: "Report", markdown: "# Report\n\n## Results\n\nOriginal.\n", document: {} };
+const opened = { document_uri: "resource://r1", id: "report", kind: "report", revision: 1, title: "Report", markdown: "# Report\n\n## Results\n\nOriginal.\n", document: {} };
 
 describe("document editor sandbox script", () => {
   it("reopens host-normalized saved Markdown without reviving a clean draft as unsaved", async () => {
@@ -84,6 +87,54 @@ describe("document editor sandbox script", () => {
     view.deliver("ui/notifications/tool-result", { structuredContent: opened }); await settle();
     expect(view.Editor.current.getMarkdown()).toBe("Restored local draft");
     expect(view.node("#status").textContent).toContain("local draft restored");
+  });
+
+  it("saves document title and Markdown as one revision and downloads the current unsaved Markdown through the host", async () => {
+    const view = app();
+    view.handle((request) => {
+      if (request.method !== "tools/call") return undefined;
+      if (request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", markdown_uri: "resource://md2", revision: 2, reused: false, diff: {},
+      } };
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: { ...opened, kind: "document", title: "First title" } }); await settle();
+    const title = view.node("#document-title");
+    title.value = "Changed title";
+    title.oninput();
+    view.Editor.current.edit("Saved body"); await settle();
+    view.node("#save").click(); await settle();
+    const save = view.requests.findLast((request) => request.params?.name === "document.save")!;
+    expect(save.params.arguments.title).toBe("Changed title");
+    expect(save.params.arguments.markdown).toBe("Saved body");
+    expect(save.params.arguments.document_uri).toBe("resource://r1");
+
+    title.value = "Unsaved title";
+    title.oninput();
+    view.Editor.current.edit("Exact unsaved body\n"); await settle();
+    view.node("#download").click(); await settle();
+    const download = view.requests.findLast((request) => request.method === "ui/llama-agent/document-download")!;
+    expect(download.params).toEqual({ document_uri: "resource://r2", document_id: "report", title: "Unsaved title", markdown: "Exact unsaved body\n" });
+  });
+
+  it("closes a user document after an explicit save choice without starting a review turn", async () => {
+    const view = app();
+    view.handle((request) => {
+      if (request.method !== "tools/call") return undefined;
+      if (request.params.name === "document.save") return { structuredContent: {
+        document_uri: "resource://r2", markdown_uri: "resource://md2", revision: 2, reused: false, diff: {},
+      } };
+      return undefined;
+    });
+    view.deliver("ui/notifications/tool-result", { structuredContent: { ...opened, kind: "document", title: "Notes" } }); await settle();
+    view.Editor.current.edit("Saved note"); await settle();
+    view.deliverRequest(81, "ui/llama-agent/close-document");
+    expect(view.node("#switch-dialog").open).toBe(true);
+    view.node('[data-switch-choice="save"]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); await settle();
+    expect(view.requests.some((request) => request.method === "tools/call" && request.params?.name === "document.save")).toBe(true);
+    expect(view.requests.some((request) => request.method === "ui/message" && request.params?.action === "close-document")).toBe(true);
+    expect(view.requests.some((request) => request.method === "ui/message" && request.params?.action === "review-document")).toBe(false);
+    expect(view.requests.some((request) => request.id === 81 && request.result?.closed === true)).toBe(true);
   });
 
   it("waits for the matching tool result instead of fetching the document twice", async () => {

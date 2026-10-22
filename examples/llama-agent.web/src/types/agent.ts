@@ -97,7 +97,7 @@ export type UploadedResource = {
   mime_type: string;
   text?: string;
   bytes_base64?: string;
-  scope: "session";
+  scope: "session" | "project";
   description?: string;
   session_id?: string;
   namespace_id?: string;

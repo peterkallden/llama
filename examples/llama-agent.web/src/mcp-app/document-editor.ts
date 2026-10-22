@@ -12,6 +12,9 @@ let documentUri = "";
 let markdownUri = "";
 let revision = 0;
 let documentId = "";
+let documentKind = "document";
+let savedMarkdown = "";
+let savedTitle = "Untitled document";
 let selectedBlockIds = new Set<string>();
 let lastKnownBlockIds = new Set<string>();
 let dirty = false;
@@ -20,7 +23,8 @@ let activeProposal = "";
 let openGeneration = 0;
 let mutationBusy = false;
 let reviewBusy = false;
-type SaveAttempt = { document_uri: string; expected_revision: number; markdown: string; operation_id: string };
+let suppressDraftChanges = false;
+type SaveAttempt = { document_uri: string; expected_revision: number; title?: string; markdown: string; operation_id: string };
 let saveAttempt: SaveAttempt | undefined;
 let applyAttempt: { document_uri: string; proposal_uri: string; expected_revision: number; operation_id: string } | undefined;
 let reviewAttempt: { document_uri: string; base_uri: string; revision: number; operation_id: string } | undefined;
@@ -32,11 +36,22 @@ function updateButtons() {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);
     if (button) button.disabled = mutationBusy || reviewBusy || !editor;
   }
+  const download = document.querySelector<HTMLButtonElement>("#download");
+  if (download) download.disabled = !editor;
 }
 
 function lockEditor(locked: boolean) {
   const mount = document.querySelector<HTMLElement>("#editor");
   if (mount) mount.inert = locked;
+}
+
+function replaceEditorMarkdown(markdown: string) {
+  if (!editor) throw new Error("Open a document before replacing its Markdown.");
+  // Toast UI Editor 3 exposes setMarkdown at runtime, but its bundled default
+  // export type omits the method from some TypeScript resolution paths.
+  const editorApi = editor as Editor & { setMarkdown?: (value: string, cursorToEnd?: boolean) => void };
+  if (typeof editorApi.setMarkdown !== "function") throw new Error("The editor cannot restore the saved Markdown draft.");
+  editorApi.setMarkdown(markdown, false);
 }
 
 async function draft(action: "read" | "write", value?: Record<string, unknown>, uri = documentUri, base = revision): Promise<Record<string, unknown>> {
@@ -47,7 +62,7 @@ async function draft(action: "read" | "write", value?: Record<string, unknown>, 
 
 function retainDraft() {
   if (!editor || !documentUri) return;
-  void draft("write", { markdown: editor.getMarkdown(), dirty, pending_save: saveAttempt, pending_review: reviewAttempt, pending_apply: applyAttempt })
+  void draft("write", { title: currentTitle(), markdown: editor.getMarkdown(), dirty, pending_save: saveAttempt, pending_review: reviewAttempt, pending_apply: applyAttempt })
     .then((result) => { if (!result.persistent) status("Draft retained in host memory; browser persistence is unavailable.", true); })
     .catch((error) => status(`Draft storage failed; keep this editor open. ${String(error)}`, true));
 }
@@ -76,11 +91,16 @@ function status(message: string, isError = false) {
 
 function publishEditorStatus(message = "", isError = false) {
   if (!documentUri) return;
-  const title = document.querySelector<HTMLElement>("#document-title")?.textContent ?? "Document";
+  const title = currentTitle();
   parent.postMessage({ jsonrpc: "2.0", method: "ui/llama-agent/editor-status", params: {
-    document_uri: documentUri, document_id: documentId, revision, title,
+    document_uri: documentUri, document_id: documentId, kind: documentKind, revision, title,
     dirty, busy: mutationBusy, message, error: isError,
   } }, "*");
+}
+
+function currentTitle(): string {
+  const node = document.querySelector<HTMLInputElement>("#document-title");
+  return (node?.value ?? node?.textContent ?? savedTitle).trim();
 }
 
 function structured(result: RpcResult): Record<string, unknown> {
@@ -142,7 +162,8 @@ function showEvidenceStatus(documentValue: unknown) {
 }
 
 async function openDocument(doc: Record<string, unknown>, uri: string) {
-  if (mutationBusy || dirty) return;
+  if (mutationBusy) return;
+  if (dirty && uri !== documentUri && !(await prepareDocumentSwitch())) return;
   const generation = ++openGeneration;
   const sequence = editSequence;
   const loadedRevision = Number(doc.revision ?? 0);
@@ -152,6 +173,7 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
   markdownUri = String(doc.markdown_uri ?? "");
   revision = Number(doc.revision ?? 0);
   documentId = String(doc.id ?? "");
+  documentKind = String(doc.kind ?? "document");
   const initialDocument = doc.document && typeof doc.document === "object" ? doc.document as Record<string, unknown> : {};
   selectedBlockIds = new Set<string>();
   for (const section of Array.isArray(initialDocument.sections) ? initialDocument.sections : []) {
@@ -162,12 +184,14 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
   }
   lastKnownBlockIds = new Set(selectedBlockIds);
   const markdown = String(doc.markdown ?? "");
-  const titleNode = document.querySelector<HTMLElement>("#document-title");
-  if (titleNode) titleNode.textContent = String(doc.title ?? "Document");
+  savedMarkdown = markdown;
+  savedTitle = String(doc.title ?? "Untitled document");
   const stored = response.draft && typeof response.draft === "object" ? response.draft as Record<string, unknown> : {};
   // A saved projection may differ textually after host Markdown normalization.
   // Restore only actual unsaved drafts; pending review metadata remains valid.
   const content = stored.dirty !== false && typeof stored.markdown === "string" ? stored.markdown : markdown;
+  const titleNode = document.querySelector<HTMLInputElement>("#document-title");
+  if (titleNode) { titleNode.value = stored.dirty !== false && typeof stored.title === "string" ? stored.title : savedTitle; titleNode.disabled = documentKind !== "document"; }
   const pendingSave = stored.pending_save as SaveAttempt | undefined;
   saveAttempt = pendingSave?.document_uri === uri && pendingSave.expected_revision === revision &&
     typeof pendingSave.markdown === "string" && typeof pendingSave.operation_id === "string" ? pendingSave : undefined;
@@ -195,14 +219,23 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
     hideModeSwitch: false,
     toolbarItems: [["heading", "bold", "italic", "strike"], ["hr", "quote"], ["ul", "ol", "task"], ["table", "link"], ["code", "codeblock"]],
   });
-  dirty = content !== markdown;
+  dirty = content !== markdown || currentTitle() !== savedTitle;
   editor.on("change", () => {
+    if (suppressDraftChanges) return;
     editSequence++;
     dirty = true;
     retainDraft();
     status(`Unsaved draft · base revision ${revision}`);
     publishEditorStatus();
   });
+  if (titleNode) titleNode.oninput = () => {
+    if (suppressDraftChanges) return;
+    editSequence++;
+    dirty = true;
+    retainDraft();
+    status(`Unsaved draft · base revision ${revision}`);
+    publishEditorStatus();
+  };
   showBibliography(doc.bibliography);
   showEvidenceStatus(doc.document);
   status(`${String(doc.title ?? "Document")} · revision ${revision}${dirty ? " · local draft restored" : ""}`);
@@ -210,7 +243,7 @@ async function openDocument(doc: Record<string, unknown>, uri: string) {
 }
 
 async function callOpen(uri: string) {
-  if (mutationBusy || dirty) { status("Your local draft is preserved. Save it before opening another revision."); return; }
+  if (mutationBusy || (dirty && !(await prepareDocumentSwitch()))) return;
   const generation = ++openGeneration;
   const sequence = editSequence;
   status("Loading saved document…");
@@ -226,21 +259,25 @@ async function saveRevision() {
   publishEditorStatus();
   try {
   const content = editor.getMarkdown();
+  const title = documentKind === "document" ? currentTitle() : undefined;
+  if (title !== undefined && (!title || title.length > 256)) throw new Error("Document title must contain 1-256 characters.");
   const savedEditSequence = editSequence;
-  saveAttempt ??= { document_uri: documentUri, expected_revision: revision, markdown: content, operation_id: operationId() };
+  saveAttempt ??= { document_uri: documentUri, expected_revision: revision, ...(title !== undefined ? { title } : {}), markdown: content, operation_id: operationId() };
   const attempt = saveAttempt;
-  await draft("write", { markdown: content, dirty, pending_save: attempt, pending_review: reviewAttempt });
+  await draft("write", { title: currentTitle(), markdown: content, dirty, pending_save: attempt, pending_review: reviewAttempt });
   const result = structured(await rpc("tools/call", { name: "document.save", arguments: attempt }));
   documentUri = String(result.document_uri ?? "");
   markdownUri = String(result.markdown_uri ?? "");
   revision = Number(result.revision ?? revision + 1);
-  dirty = editSequence !== savedEditSequence || editor.getMarkdown() !== attempt.markdown;
+  if (attempt.title !== undefined) savedTitle = attempt.title;
+  savedMarkdown = attempt.markdown;
+  dirty = editSequence !== savedEditSequence || editor.getMarkdown() !== attempt.markdown || currentTitle() !== savedTitle;
   saveAttempt = undefined;
   if (!result.reused) {
     if (!reviewAttempt) reviewAttempt = { document_uri: documentUri, base_uri: attempt.document_uri, revision, operation_id: operationId() };
     else { reviewAttempt.document_uri = documentUri; reviewAttempt.revision = revision; }
   }
-  await draft("write", { markdown: editor.getMarkdown(), dirty, pending_review: reviewAttempt });
+  await draft("write", { title: currentTitle(), markdown: editor.getMarkdown(), dirty, pending_review: reviewAttempt });
   status(dirty ? `Saved revision ${revision}; newer local edits remain unsaved.` : `Saved immutable revision ${revision}`);
   return result;
   } finally { mutationBusy = false; updateButtons(); publishEditorStatus(); }
@@ -300,7 +337,7 @@ async function registerReview(closeAfter = false): Promise<boolean> {
         block_ids: blockIds ?? [], base_document_uri: attempt.base_uri },
     });
     reviewAttempt = undefined;
-    await draft("write", { markdown: editor?.getMarkdown() ?? "", dirty, pending_review: undefined });
+    await draft("write", { title: currentTitle(), markdown: editor?.getMarkdown() ?? "", dirty, pending_review: undefined });
     if (closeAfter) {
       if (dirty || editSequence !== expectedEditSequence) {
         status("Review queued; newer edits remain unsaved. Save them before closing.", true);
@@ -324,12 +361,87 @@ async function save(review: boolean) {
   else status(dirty ? `Saved revision ${revision}; newer local edits remain unsaved.` : `Revision ${revision} saved. No agent turn was started.`);
 }
 
+function chooseSwitchAction(): Promise<"save" | "discard" | "cancel"> {
+  const dialog = document.querySelector<HTMLDialogElement>("#switch-dialog");
+  if (!dialog || typeof dialog.showModal !== "function") return Promise.resolve("cancel");
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (choice: "save" | "discard" | "cancel") => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      resolve(choice);
+    };
+    for (const choice of ["save", "discard", "cancel"] as const) {
+      const button = dialog.querySelector<HTMLButtonElement>(`[data-switch-choice="${choice}"]`);
+      if (button) button.onclick = () => finish(choice);
+    }
+    dialog.oncancel = (event) => { event.preventDefault(); finish("cancel"); };
+    dialog.showModal();
+  });
+}
+
+async function prepareDocumentSwitch(): Promise<boolean> {
+  if (!dirty) return true;
+  const choice = await chooseSwitchAction();
+  if (choice === "cancel") return false;
+  if (choice === "save") {
+    try {
+      await saveRevision();
+      return !dirty;
+    } catch (cause) {
+      status(String(cause), true);
+      return false;
+    }
+  }
+  if (!editor || mutationBusy) return false;
+  mutationBusy = true; lockEditor(true); updateButtons();
+  try {
+    suppressDraftChanges = true;
+    replaceEditorMarkdown(savedMarkdown);
+    const title = document.querySelector<HTMLInputElement>("#document-title");
+    if (title) title.value = savedTitle;
+    suppressDraftChanges = false;
+    dirty = false; saveAttempt = undefined; ++editSequence;
+    await draft("write", { title: savedTitle, markdown: savedMarkdown, dirty: false });
+    status(`Discarded local changes · revision ${revision}`);
+    publishEditorStatus();
+    return true;
+  } catch (cause) {
+    suppressDraftChanges = false;
+    status(`Could not discard the local draft: ${String(cause)}`, true);
+    return false;
+  } finally {
+    mutationBusy = false; lockEditor(false); updateButtons();
+  }
+}
+
+async function downloadCurrentDocument() {
+  if (!editor || !documentUri || !documentId) return;
+  try {
+    const result = await rpc("ui/llama-agent/document-download", {
+      document_uri: documentUri, document_id: documentId, title: currentTitle(), markdown: editor.getMarkdown(),
+    });
+    if (result.isError) structured(result);
+    const value = result as Record<string, unknown>;
+    status(typeof value.filename === "string" ? `Downloaded ${value.filename}` : "Downloaded current Markdown.");
+  } catch (cause) { status(String(cause), true); }
+}
+
 function closeEditor(): Promise<boolean> {
   if (closePromise) return closePromise;
   if (mutationBusy) return Promise.resolve(false);
   closing = true; updateButtons();
   closePromise = (async () => {
-    try { return await registerReview(true); }
+    try {
+      if (documentKind === "document") {
+        if (!(await prepareDocumentSwitch())) return false;
+        await rpc("ui/message", { action: "close-document" });
+        status("Document closed.");
+        return true;
+      }
+      return await registerReview(true);
+    }
     catch (cause) { status(String(cause), true); return false; }
     finally { closing = false; closePromise = undefined; updateButtons(); }
   })();
@@ -357,6 +469,11 @@ window.addEventListener("message", (event) => {
         replyToHost(message.id as number, { document_uri: documentUri, revision, block_ids: blockIds ?? [] });
       } catch (cause) { replyToHost(message.id as number, undefined, cause instanceof Error ? cause.message : String(cause)); }
     })();
+    return;
+  }
+  if (typeof message.id === "number" && message.method === "ui/llama-agent/prepare-document-switch") {
+    void prepareDocumentSwitch().then((ready) => replyToHost(message.id as number,
+      ready ? { ready: true } : undefined, ready ? undefined : "Document switching was canceled or the draft could not be saved."));
     return;
   }
   if (typeof message.id === "number" && message.method === "ui/llama-agent/close-document") {
@@ -392,6 +509,9 @@ window.addEventListener("message", (event) => {
   }
 });
 
+const downloadButton = document.querySelector<HTMLButtonElement>("#download");
+downloadButton?.addEventListener("click", () => { void downloadCurrentDocument(); });
+
 document.querySelector<HTMLButtonElement>("#save")?.addEventListener("click", () => void save(false).catch((error) => status(String(error), true)));
 document.querySelector<HTMLButtonElement>("#review")?.addEventListener("click", () => void save(true).catch((error) => status(String(error), true)));
 document.querySelector<HTMLButtonElement>("#toggle-side")?.addEventListener("click", () => {
@@ -417,7 +537,7 @@ document.querySelector<HTMLButtonElement>("#accept-proposal")?.addEventListener(
   try {
   const appliedEditSequence = editSequence;
   applyAttempt ??= { document_uri: documentUri, proposal_uri: activeProposal, expected_revision: revision, operation_id: operationId() };
-  await draft("write", { markdown: editor?.getMarkdown() ?? "", pending_apply: applyAttempt, pending_review: reviewAttempt });
+  await draft("write", { title: currentTitle(), markdown: editor?.getMarkdown() ?? "", pending_apply: applyAttempt, pending_review: reviewAttempt });
   const result = structured(await rpc("tools/call", { name: "document.apply_patch", arguments: applyAttempt }));
   applyAttempt = undefined;
   activeProposal = "";
@@ -426,7 +546,7 @@ document.querySelector<HTMLButtonElement>("#accept-proposal")?.addEventListener(
   documentUri = String(result.document_uri ?? documentUri);
   revision = Number(result.revision ?? revision + 1);
   dirty = editSequence !== appliedEditSequence;
-  if (dirty) await draft("write", { markdown: editor?.getMarkdown() ?? "" });
+  if (dirty) await draft("write", { title: currentTitle(), markdown: editor?.getMarkdown() ?? "" });
   } finally { mutationBusy = false; updateButtons(); }
   await callOpen(documentUri);
 })().catch((error) => status(String(error), true)));

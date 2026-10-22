@@ -501,6 +501,7 @@ int main() {
         {"diagnostics.include_graph", 1, true, "{}"},
         {"diagnostics.native_crash", 1, true, "{}"},
         {"artifact.export", 1, true, "{}"},
+        {"document.create", 1, true, "{}"},
         {"document.open", 1, true, "{}"},
         {"document.import", 1, true, "{}"},
         {"document.save", 1, true, "{}"},
@@ -620,6 +621,33 @@ int main() {
             R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
     };
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    {
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
+        assert(result.ok);
+        const auto created=nlohmann::json::parse(result.output);
+        assert(created.value("revision",uint64_t(0))==1&&created.value("title",std::string{})=="Working notes"&&!created.value("reused",true));
+        const auto created_uri=created.value("document_uri",std::string{});
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",created_uri}}.dump()});
+        assert(result.ok);
+        auto opened=nlohmann::json::parse(result.output);
+        assert(opened.value("kind",std::string{})=="document"&&opened.value("title",std::string{})=="Working notes");
+        const auto empty_markdown=opened.value("markdown",std::string{});
+        auto renamed=nlohmann::json{{"document_uri",created_uri},{"expected_revision",1},{"title","Research draft"},
+            {"markdown",empty_markdown},{"operation_id","create-document-rename-1"}};
+        result=foundation_registry.execute({"document.save",renamed.dump()});
+        assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==2);
+        const auto renamed_uri=nlohmann::json::parse(result.output).value("document_uri",std::string{});
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",renamed_uri}}.dump()});
+        assert(result.ok);
+        opened=nlohmann::json::parse(result.output);
+        assert(opened.value("title",std::string{})=="Research draft"&&opened.value("markdown",std::string{})==empty_markdown);
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
+        assert(result.ok);
+        const auto retried=nlohmann::json::parse(result.output);
+        assert(retried.value("reused",false)&&retried.value("document_uri",std::string{})==created_uri&&retried.value("revision",uint64_t(0))==1);
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Different title"},{"operation_id","create-document-1"}}.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    }
     {
         agent_resource_descriptor uploaded;
         uploaded.uri = "resource://session/notes.txt";

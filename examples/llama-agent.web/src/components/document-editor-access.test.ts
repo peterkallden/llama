@@ -45,4 +45,18 @@ describe("document editor host grant and draft storage", () => {
     access.draft({ ...params, action: "write", draft: { markdown: "Newest" } }, storage);
     expect(access.draft({ ...params, action: "read" }, storage).draft).toEqual({ markdown: "Newest" });
   });
+
+  it("retains title edits and exports only the currently opened document draft", () => {
+    const access = new DocumentEditorAccess("download-session", "native");
+    access.observe("document.open", { document_uri: "resource://doc-r1" }, {
+      document_uri: "resource://doc-r1", id: "doc-1", revision: 1, title: "Untitled document", markdown: "Saved",
+    });
+    const params = { document_uri: "resource://doc-r1", revision: 1 };
+    access.draft({ ...params, action: "write", draft: { title: "Notes?", markdown: "Unsaved exact\n", dirty: true } });
+    expect(access.draft({ ...params, action: "read" }).draft).toEqual({ title: "Notes?", markdown: "Unsaved exact\n", dirty: true });
+    expect(access.authorizeDownload({ document_uri: params.document_uri, document_id: "doc-1", title: "Notes?", markdown: "Unsaved exact\n" }))
+      .toEqual({ filename: "Notes_.md", markdown: "Unsaved exact\n" });
+    expect(access.authorizeDownload({ document_uri: params.document_uri, document_id: "doc-1", title: "NUL", markdown: "draft" }).filename).toBe("_NUL.md");
+    expect(() => access.authorizeDownload({ document_uri: params.document_uri, document_id: "other", title: "x", markdown: "secret" })).toThrow();
+  });
 });

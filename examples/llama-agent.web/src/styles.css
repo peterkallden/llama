@@ -51,6 +51,14 @@ dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 16px 
 .workspace-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a9bdd5; }
 .workspace-tab { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: min(60vw, 480px); padding: 4px 5px 4px 12px; border: 1px solid #385b7d; border-bottom-color: #7dd3fc; border-radius: 7px 7px 0 0; background: #142237; }
 .workspace-tab .workspace-title { color: #e7edf7; }
+.workspace-tab:has(.document-toolbar) { max-width: min(82vw, 900px); }
+.document-toolbar { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.document-toolbar button, .document-toolbar select, .document-upload-button { min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.document-upload-button { display: inline-flex; align-items: center; color: #dce8f6; background: #1b2b40; border: 1px solid #38506a; border-radius: 6px; cursor: pointer; }
+.document-upload-button input { display: none; }
+.document-upload-button.disabled { opacity: .5; cursor: not-allowed; }
+.document-list-note { flex-basis: 100%; color: #9aacc2; font-size: 11px; }
+.document-toolbar select { max-width: 240px; color: #dce8f6; background: #101827; border: 1px solid #38506a; border-radius: 6px; }
 .workspace-nav .workspace-close { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 5px; background: transparent; }
 .workspace-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .workspace-nav .workspace-close:hover:not(:disabled) { color: #fff; background: #30445f; }

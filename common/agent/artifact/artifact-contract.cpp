@@ -616,13 +616,17 @@ bool common_agent_artifact_document_to_json(const common_agent_artifact_document
         {"content_fingerprint",d.content_fingerprint},{"editor_parent_uri",d.editor_parent_uri},
         {"editor_operation_id",d.editor_operation_id},{"editor_markdown_uri",d.editor_markdown_uri},
         {"source_resource_uri",d.source_resource_uri},{"source_content_fingerprint",d.source_content_fingerprint},
-        {"importer_version",d.importer_version},
+        {"importer_version",d.importer_version},{"provenance",d.provenance},
         {"source_plan_id",d.source_plan_id},{"source_plan_version",d.source_plan_version},
         {"coverage_complete",d.coverage_complete},{"unresolved_gaps",d.unresolved_gaps},
         {"source_bibliography",json::array()},{"sections",json::array()}};
+    const bool invalid_v5_document = d.schema_version >= 5 && d.kind == common_agent_artifact_document_kind::document &&
+        ((d.provenance != "authored" && d.provenance != "imported") ||
+         (d.provenance == "imported" && (d.source_resource_uri.empty() || d.source_content_fingerprint.empty() || d.importer_version.empty())) ||
+         (d.provenance == "authored" && (!d.source_resource_uri.empty() || !d.source_content_fingerprint.empty() || !d.importer_version.empty())));
     if (d.id.empty() || d.title.empty() || d.sections.size() > 32 ||
-            (d.schema_version >= 3 && d.kind == common_agent_artifact_document_kind::document &&
-             (d.source_resource_uri.empty() || d.source_content_fingerprint.empty() || d.importer_version.empty()))) {
+            (d.schema_version >= 3 && d.schema_version < 5 && d.kind == common_agent_artifact_document_kind::document &&
+             (d.source_resource_uri.empty() || d.source_content_fingerprint.empty() || d.importer_version.empty())) || invalid_v5_document) {
         error="artifact document has invalid identity, source lineage or section count"; return false;
     }
     for (const auto & s : d.sections) {
@@ -1116,19 +1120,20 @@ bool common_agent_artifact_document_from_plan(const common_plan_state & plan,
 
 bool common_agent_artifact_document_from_json(const std::string & text, common_agent_artifact_document & d, std::string & error) {
     const auto v=json::parse(text,nullptr,false);
-    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>4 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
+    if (!v.is_object() || v.value("schema_version",0)<1 || v.value("schema_version",0)>5 || !v.contains("sections") || !v["sections"].is_array()) { error="unsupported or malformed artifact document"; return false; }
     d={}; d.id=v.value("id",std::string{}); d.title=v.value("title",std::string{}); d.purpose=v.value("purpose",std::string{});
     if(v.contains("markdown_renderer_version")&&!v["markdown_renderer_version"].is_number_unsigned()){
         error="artifact Markdown renderer version is malformed";return false;
     }
     d.schema_version=v.value("schema_version",uint32_t(1));
-    if(d.schema_version<1||d.schema_version>4){error="unsupported artifact document schema version";return false;}
+    if(d.schema_version<1||d.schema_version>5){error="unsupported artifact document schema version";return false;}
     if(d.schema_version>=3&&!parse_document_kind(v.value("kind",std::string{}),d.kind)){error="artifact document kind is invalid";return false;}
     d.markdown_renderer_version=v.value("markdown_renderer_version",uint32_t(1));
     if(d.markdown_renderer_version<1||d.markdown_renderer_version>4){
         error="unsupported artifact Markdown renderer version";return false;
     }
     d.source_resource_uri=v.value("source_resource_uri",std::string{});d.source_content_fingerprint=v.value("source_content_fingerprint",std::string{});d.importer_version=v.value("importer_version",std::string{});
+    d.provenance=v.value("provenance",std::string{});
     d.profile_id=v.value("profile_id",std::string{}); d.profile_revision=v.value("profile_revision",std::string{});
     d.revision=v.value("revision",uint64_t(1)); d.previous_revision_uri=v.value("previous_revision_uri",std::string{});
     d.snapshot_uri=v.value("snapshot_uri",std::string{});d.snapshot_fingerprint=v.value("snapshot_fingerprint",std::string{});d.content_fingerprint=v.value("content_fingerprint",std::string{});d.editor_parent_uri=v.value("editor_parent_uri",std::string{});d.editor_operation_id=v.value("editor_operation_id",std::string{});d.editor_markdown_uri=v.value("editor_markdown_uri",std::string{}); d.source_plan_id=v.value("source_plan_id",std::string{}); d.source_plan_version=v.value("source_plan_version",uint64_t(0));
@@ -1159,8 +1164,12 @@ bool common_agent_artifact_document_from_json(const std::string & text, common_a
         }
         d.sections.push_back(std::move(s));
     }
-    if(d.id.empty()||d.title.empty()||(d.schema_version>=3&&d.kind==common_agent_artifact_document_kind::document&&
-            (d.source_resource_uri.empty()||d.source_content_fingerprint.empty()||d.importer_version.empty()))){error="artifact document identity or source lineage is missing";return false;}
+    const bool invalid_v5_document = d.schema_version >= 5 && d.kind == common_agent_artifact_document_kind::document &&
+        ((d.provenance != "authored" && d.provenance != "imported") ||
+         (d.provenance == "imported" && (d.source_resource_uri.empty() || d.source_content_fingerprint.empty() || d.importer_version.empty())) ||
+         (d.provenance == "authored" && (!d.source_resource_uri.empty() || !d.source_content_fingerprint.empty() || !d.importer_version.empty())));
+    if(d.id.empty()||d.title.empty()||(d.schema_version>=3&&d.schema_version<5&&d.kind==common_agent_artifact_document_kind::document&&
+            (d.source_resource_uri.empty()||d.source_content_fingerprint.empty()||d.importer_version.empty()))||invalid_v5_document){error="artifact document identity or source lineage is missing";return false;}
     if(d.schema_version>=2){std::string editable,render_error;if(!common_agent_artifact_render_editable_markdown(d,editable,render_error)){error=render_error;return false;}const auto expected="sha256:"+hash_sha256_hex(editable.data(),editable.size());if(d.content_fingerprint.empty()||d.content_fingerprint!=expected){error="artifact document content fingerprint is invalid";return false;}}
     error.clear();return true;
 }
@@ -1283,7 +1292,7 @@ bool common_agent_artifact_apply_markdown_edit(
         common_agent_artifact_document & edited,std::string & error) {
     if((markdown.empty()&&original.kind!=common_agent_artifact_document_kind::document)||markdown.size()>4*1024*1024){error="edited Markdown is empty or exceeds the 4 MiB limit";return false;}
     if(markdown.empty()&&original.kind==common_agent_artifact_document_kind::document){
-        edited=original;edited.schema_version=3;edited.markdown_renderer_version=4;
+        edited=original;edited.schema_version=original.schema_version;edited.markdown_renderer_version=4;
         common_agent_artifact_section content;
         if(!original.sections.empty())content=original.sections.front();
         content.id="document-content";content.title="Content";content.no_findings=false;content.blocks.clear();
@@ -1313,7 +1322,7 @@ bool common_agent_artifact_apply_markdown_edit(
     std::unique_ptr<cmark_node, decltype(&cmark_node_free)> root(cmark_parser_finish(parser.get()),cmark_node_free);
     if(!root){error="Markdown could not be parsed as GFM";return false;}
     if(original.kind==common_agent_artifact_document_kind::document){
-        edited=original;edited.schema_version=3;edited.markdown_renderer_version=4;
+        edited=original;edited.schema_version=original.schema_version;edited.markdown_renderer_version=4;
         common_agent_artifact_section content;
         if(!original.sections.empty())content=original.sections.front();
         content.id="document-content";content.title="Content";content.no_findings=false;

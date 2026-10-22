@@ -6,6 +6,33 @@ and explicitly imported TXT, Markdown, and DOCX documents. The editor is a stand
 the pinned `@toast-ui/editor` package; Markdown/GFM parsing and block identity
 remain host responsibilities.
 
+## User-authored documents
+
+The web workspace offers **New**, **Upload**, and an **Open or import** picker.
+New creates and publishes an empty first revision with a stable document ID;
+the title and Markdown body are saved together as later immutable revisions.
+Uploaded files are stored in the active project scope, or the current session
+when no project is selected, and are imported as new documents with the source
+resource and importer version retained as provenance. Uploading from this
+workspace does not attach the file to a chat or start an agent turn.
+
+Opening a different document, importing a file, or creating a new document
+checks the editor draft first. The user can save, discard only local unsaved
+changes, or cancel the switch. Download exports the editor's current Markdown
+and title directly through the host, including unsaved content; it does not
+publish a revision. The host performs the download because the embedded app's
+sandbox does not grant direct download permission.
+Closing a user document uses the same save/discard/cancel choice and does not
+start a review turn. Report documents retain their existing review-on-close
+flow; Review remains an explicit toolbar action for user documents.
+
+The picker lists structured document and report revisions as **Open**, and
+supported plain text, Markdown, and DOCX resources as **Import**. It reads at
+most 1,000 resources per scope in a refresh; when more are available, the UI
+directs users to the Resources workspace to find older items. Project resources
+remain project-owned when opened from a project chat, while session resources
+remain restricted to their originating session.
+
 ## Revision and review flow
 
 `document.import` accepts an explicitly selected, host-authorized source

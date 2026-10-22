@@ -3,7 +3,8 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Document editor</title><style>__LLAMA_AGENT_DOCUMENT_EDITOR_CSS__</style></head>
 <body>
 <header>
-<strong id="document-title">Document editor</strong>
+<input id="document-title" aria-label="Document title" value="Untitled document" maxlength="256" />
+<button id="download" title="Download current Markdown" aria-label="Download current Markdown">Download</button>
 <button class="toolbar-icon" id="reload" title="Reload saved revision" aria-label="Reload saved revision">
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/></svg>
 </button>
@@ -16,6 +17,7 @@
 <button id="licenses">Licenses</button>
 </header>
 <div id="status">Open a document resource to begin.</div>
+<dialog id="switch-dialog"><h2>Unsaved document changes</h2><p>Save the current draft, discard local changes, or cancel switching documents?</p><div><button data-switch-choice="save">Save changes</button><button data-switch-choice="discard">Discard changes</button><button data-switch-choice="cancel">Cancel</button></div></dialog>
 <main class="layout"><div id="editor"></div><aside class="side"><button id="toggle-side" aria-expanded="false">Sources and review context <span id="side-state">+</span></button><div id="side-content" hidden><h3>Sources and provenance</h3><ul id="sources"></ul><h3>Saved blocks · select review context</h3><ul id="evidence-status"></ul><p>Selected blocks and adjacent context are sent as a typed document binding. Editing does not transfer factual support from a retained citation.</p><section id="proposal" hidden><h3>Agent proposal</h3><p id="proposal-summary"></p><small id="proposal-base"></small><pre id="proposal-changes"></pre><button id="accept-proposal" class="primary">Accept as new revision</button><button id="reject-proposal">Dismiss</button></section></div></aside></main>
 <dialog id="license-dialog"><h2>Third-party notices</h2><div>__LLAMA_AGENT_THIRD_PARTY_NOTICES__</div><button id="close-licenses">Close</button></dialog>
 <script>__LLAMA_AGENT_DOCUMENT_EDITOR_BUNDLE__</script>

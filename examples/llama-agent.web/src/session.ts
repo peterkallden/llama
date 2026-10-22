@@ -616,14 +616,20 @@ async function cancel() {
   try { await api.value.cancelTurn(activeTurnId.value, sessionId.value, projectId.value); } catch (cause) { error.value = String(cause); }
 }
 
-async function upload(file: File) {
+async function upload(file: File, options: { scope?: "session" | "project"; orient?: boolean; attach?: boolean } = {}): Promise<string | undefined> {
   const uploadEpoch = sessionEpoch;
   const uploadSessionId = sessionId.value;
   const uploadProjectId = projectId.value;
   try {
-    const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|txt|xml|html?)$/i.test(file.name);
+    const extensionIsMarkdown = /\.(md|markdown)$/i.test(file.name);
+    const extensionIsDocx = /\.docx$/i.test(file.name);
+    const isText = file.type.startsWith("text/") || /\.(csv|json|jsonl|md|markdown|txt|xml|html?)$/i.test(file.name);
+    const mimeType = !file.type || file.type === "application/octet-stream"
+      ? extensionIsDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : extensionIsMarkdown ? "text/markdown" : isText ? "text/plain" : "application/octet-stream"
+      : file.type;
     const resource: UploadedResource = {
-      name: file.name, mime_type: file.type || (isText ? "text/plain" : "application/octet-stream"), scope: "session",
+      name: file.name, mime_type: mimeType, scope: options.scope ?? "session",
       description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
       namespace_id: "web", project_id: uploadProjectId,
       ...(isText
@@ -637,23 +643,29 @@ async function upload(file: File) {
     if (!uri) throw new Error("The daemon returned no resource URI for the attachment");
     // The resource store owns the content after upload. Keep only attachment
     // metadata in reactive UI state rather than a second full file copy.
-    attachments.value.push({ name: resource.name, mime_type: resource.mime_type, scope: resource.scope,
-      description: resource.description, session_id: uploadSessionId,
-      namespace_id: resource.namespace_id, project_id: resource.project_id, uri });
-    resourceRefs.value.push(uri);
-    const operationId = `orient-${crypto.randomUUID()}`;
-    attachmentOrientations.value.push({ operation_id: operationId, turn_id: operationId,
-      session_id: sessionId.value, resource_uri: uri, name: file.name, state: "queued" });
-    persistAttachmentOrientations();
-    if (attachmentOrientationTimer === undefined) attachmentOrientationTimer = globalThis.setTimeout(() => {
-      attachmentOrientationTimer = undefined;
-      void drainDocumentReviews();
-    }, 1500);
+    if (options.attach !== false) {
+      attachments.value.push({ name: resource.name, mime_type: resource.mime_type, scope: resource.scope,
+        description: resource.description, session_id: uploadSessionId,
+        namespace_id: resource.namespace_id, project_id: resource.project_id, uri });
+      resourceRefs.value.push(uri);
+    }
+    if (options.orient !== false) {
+      const operationId = `orient-${crypto.randomUUID()}`;
+      attachmentOrientations.value.push({ operation_id: operationId, turn_id: operationId,
+        session_id: sessionId.value, resource_uri: uri, name: file.name, state: "queued" });
+      persistAttachmentOrientations();
+      if (attachmentOrientationTimer === undefined) attachmentOrientationTimer = globalThis.setTimeout(() => {
+        attachmentOrientationTimer = undefined;
+        void drainDocumentReviews();
+      }, 1500);
+    }
+    return uri;
   }
   catch (cause) {
     if (!disposed && uploadEpoch === sessionEpoch && uploadSessionId === sessionId.value) {
       error.value = cause instanceof Error ? cause.message : String(cause);
     }
+    return undefined;
   }
 }
 
@@ -722,7 +734,7 @@ async function removeAttachment(index: number) {
   const epoch = sessionEpoch;
   const requestSession = sessionId.value;
   if (removed.uri) {
-    try { await api.value.setChatResource({ sessionId: requestSession, projectId: projectId.value, uri: removed.uri, scope: "session", action: "detach" }); }
+    try { await api.value.setChatResource({ sessionId: requestSession, projectId: projectId.value, uri: removed.uri, scope: removed.scope, action: "detach" }); }
     catch (cause) {
       if (epoch === sessionEpoch) error.value = cause instanceof Error ? cause.message : String(cause);
       return;
@@ -940,8 +952,11 @@ async function ensureActiveChat() {
   }
 }
 
-async function listResources(input: { scope: "project" | "session"; query?: string; mimeType?: string; cursor?: string; limit?: number }) {
-  return api.value.resources({ ...input, projectId: projectId.value, ...(input.scope === "session" ? { sessionId: sessionId.value } : {}) });
+async function listResources(input: { scope: "project" | "session"; query?: string; mimeType?: string; cursor?: string; limit?: number; projectId?: string; sessionId?: string }) {
+  const selectedProject = input.projectId ?? projectId.value;
+  const selectedSession = input.sessionId ?? sessionId.value;
+  return api.value.resources({ ...input, projectId: selectedProject,
+    ...(input.scope === "session" ? { sessionId: selectedSession } : {}) });
 }
 
 async function cancelChat(chatId: string) {

@@ -607,6 +607,22 @@ int main() {
     assert(common_agent_artifact_apply_markdown_edit(imported_roundtrip, "", imported_empty_edit, error));
     assert(imported_empty_edit.sections.size() == 1 && imported_empty_edit.sections.front().blocks.empty());
 
+    common_agent_artifact_document authored;
+    authored.schema_version=5;authored.kind=common_agent_artifact_document_kind::document;
+    authored.id="document:authored";authored.title="Untitled document";authored.provenance="authored";
+    authored.sections.push_back({"document-content","Content",false,{},{}});
+    common_agent_artifact_document authored_initialized;
+    assert(common_agent_artifact_apply_markdown_edit(authored,"",authored_initialized,error));
+    authored=std::move(authored_initialized);
+    std::string authored_json;
+    assert(common_agent_artifact_document_to_json(authored,authored_json,error));
+    common_agent_artifact_document authored_roundtrip;
+    assert(common_agent_artifact_document_from_json(authored_json,authored_roundtrip,error));
+    assert(authored_roundtrip.id==authored.id&&authored_roundtrip.provenance=="authored"&&authored_roundtrip.revision==1);
+    auto invalid_authored=authored;invalid_authored.provenance.clear();
+    assert(!common_agent_artifact_document_to_json(invalid_authored,authored_json,error));
+    assert(authored_roundtrip.schema_version==5);
+
     common_agent_artifact_document literal_text = imported_roundtrip;
     common_agent_artifact_document literal_text_edit;
     assert(common_agent_artifact_apply_markdown_edit(literal_text,

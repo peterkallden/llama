@@ -412,7 +412,7 @@ public:
         const auto metadata=json::parse(it->mcp_ui_metadata,nullptr,false);
         if(!metadata.is_object())return false;
         const auto resource_uri = metadata.value("resourceUri",std::string{});
-        const bool document_write = name=="document.import"||name=="document.save"||
+        const bool document_write = name=="document.create"||name=="document.import"||name=="document.save"||
             name=="document.propose_patch"||name=="document.apply_patch";
         const bool investigation_write = name=="investigation.case.create"||name=="investigation.collect"||
             name=="investigation.claim.hypothesize"||name=="investigation.report.compose"||
@@ -1486,7 +1486,7 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["model","app"]})";
 #endif
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
-        } else if (definition.name == "document.import" || definition.name == "document.open" || definition.name == "document.save" ||
+        } else if (definition.name == "document.create" || definition.name == "document.import" || definition.name == "document.open" || definition.name == "document.save" ||
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/document-editor","visibility":["model","app"]})";
 #endif

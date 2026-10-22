@@ -101,6 +101,9 @@ struct common_agent_artifact_document {
     std::string source_resource_uri;
     std::string source_content_fingerprint;
     std::string importer_version;
+    // Document provenance is distinct from revision history and ownership.
+    // Version 5 documents use authored or imported; reports retain their kind.
+    std::string provenance;
     std::string source_plan_id;
     uint64_t source_plan_version = 0;
     bool coverage_complete = false;

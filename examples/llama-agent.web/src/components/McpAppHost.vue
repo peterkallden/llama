@@ -231,7 +231,14 @@ async function onMessage(event: MessageEvent) {
   if (method === "ui/open-link") { reply({ opened: false, message: "Links are not opened automatically by this host." }); return; }
   try {
     const params = message.params && typeof message.params === "object" ? message.params as Record<string, unknown> : {};
-    if (method === "ui/llama-agent/document-draft") {
+    if (method === "ui/llama-agent/document-download") {
+      if (uri.value !== "ui://llama-agent/apps/document-editor") throw new Error("Only the document editor may request a document download.");
+      const file = documentAccess.authorizeDownload(params);
+      const objectUrl = URL.createObjectURL(new Blob([file.markdown], { type: "text/markdown;charset=utf-8" }));
+      const anchor = document.createElement("a"); anchor.href = objectUrl; anchor.download = file.filename;
+      document.body.append(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      reply({ downloaded: true, filename: file.filename });
+    } else if (method === "ui/llama-agent/document-draft") {
       if (uri.value !== "ui://llama-agent/apps/document-editor") throw new Error("Draft storage is reserved for the first-party editor.");
       let storage: Storage | undefined;
       try { storage = window.localStorage; } catch { /* host can still retain drafts in memory */ }
@@ -294,7 +301,7 @@ async function onMessage(event: MessageEvent) {
   } catch (cause) { reply(undefined, cause instanceof Error ? cause.message : String(cause)); }
 }
 
-function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/close-document" | "ui/llama-agent/prepare-investigation-context"): Promise<unknown> {
+function requestEditor(method: "ui/llama-agent/prepare-chat" | "ui/llama-agent/prepare-document-switch" | "ui/llama-agent/close-document" | "ui/llama-agent/prepare-investigation-context"): Promise<unknown> {
   const target = frame.value?.contentWindow;
   const editorRequest = method !== "ui/llama-agent/prepare-investigation-context";
   if (!target || !initialized || (editorRequest
@@ -324,6 +331,10 @@ async function prepareForChat(): Promise<{ document_uri: string; revision: numbe
 }
 
 async function closeDocument() { await requestEditor("ui/llama-agent/close-document"); }
+async function prepareDocumentSwitch(): Promise<boolean> {
+  const result = await requestEditor("ui/llama-agent/prepare-document-switch");
+  return Boolean(result && typeof result === "object" && (result as Record<string, unknown>).ready === true);
+}
 async function prepareInvestigationContext(): Promise<NonNullable<import("../types/agent").TurnRequest["investigation_context"]>> {
   const result = await requestEditor("ui/llama-agent/prepare-investigation-context");
   if (!result || typeof result !== "object") throw new Error("The workspace returned no case selection.");
@@ -340,7 +351,7 @@ async function prepareInvestigationContext(): Promise<NonNullable<import("../typ
   return { case_id: value.case_id, revision: Number(value.revision), entity_ids: refs("entity_ids"),
     relation_ids: refs("relation_ids"), event_ids: refs("event_ids") };
 }
-defineExpose({ prepareForChat, closeDocument, prepareInvestigationContext });
+defineExpose({ prepareForChat, prepareDocumentSwitch, closeDocument, prepareInvestigationContext });
 
 watch(() => [props.tool.name, props.tool.provider_id, uri.value, props.sessionId], () => { initialized = false; void load(); }, { flush: "sync" });
 watch(() => props.invocation, publishInvocation, { deep: true });
