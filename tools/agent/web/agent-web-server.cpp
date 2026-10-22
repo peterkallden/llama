@@ -1,4 +1,5 @@
 #include "agent-web-server.h"
+#include "agent-web-chat-title.h"
 #include "../../../common/base64.hpp"
 
 #include "../../../common/agent/protocol/agent-jsonl.h"
@@ -53,6 +54,7 @@ bool has_prefix(const std::string & value, const char * prefix) {
 
 struct active_web_turn { std::string session_id; std::string project_id; };
 std::mutex active_web_turn_mutex;
+std::mutex chat_metadata_mutex;
 std::map<std::string, active_web_turn> active_web_turns;
 
 std::string web_request_id(const json & command) {
@@ -713,6 +715,7 @@ bool run_agent_web_server(
 
     server.Post(R"(/api/v1/chats/([^/]+)/resources)", [&options, authorize](const httplib::Request & request, httplib::Response & response) {
         if (!authorize(request, response)) return;
+        std::lock_guard<std::mutex> metadata_lock(chat_metadata_mutex);
         const auto input = json::parse(request.body, nullptr, false);
         if (!input.is_object() || !input.contains("resource_uri") || !input["resource_uri"].is_string() ||
                 !input.contains("scope") || !input["scope"].is_string() || !input.contains("action") || !input["action"].is_string() ||
@@ -768,7 +771,10 @@ bool run_agent_web_server(
             set_json_error(response, 400, "turn_id is required"); return;
         }
         if (!command.contains("prompt") || !command["prompt"].is_string()) { set_json_error(response, 400, "prompt must be a string"); return; }
+        if (command.contains("attachment_orientation") && !command["attachment_orientation"].is_boolean()) { set_json_error(response, 400, "attachment_orientation must be a boolean"); return; }
+        const bool conversation_turn = !command.value("attachment_orientation", false);
         command["namespace_id"] = k_web_namespace;
+        std::unique_lock<std::mutex> metadata_lock(chat_metadata_mutex);
         json chat;
         if (!validate_chat_scope(options, session_id, project_id, chat, catalog_error)) {
             set_json_error(response, 403, catalog_error);
@@ -776,12 +782,10 @@ bool run_agent_web_server(
         }
         const auto now = static_cast<int64_t>(std::time(nullptr));
         chat["last_active_at"] = now;
+        if (conversation_turn) chat["latest_turn_id"] = command["turn_id"];
         chat["turn_count"] = chat.value("turn_count", size_t(0)) + 1;
-        if (chat.value("title", std::string()) == "New chat") {
-            auto title = command.value("prompt", std::string());
-            const auto newline = title.find_first_of("\r\n");
-            if (newline != std::string::npos) title.resize(newline);
-            if (title.size() > 80) title.resize(77), title += "...";
+        if (conversation_turn && (chat.value("title", std::string()).empty() || chat.value("title", std::string()) == "New chat")) {
+            auto title = agent_web_chat_title(command.value("prompt", std::string()));
             if (!title.empty()) chat["title"] = title;
         }
         if (!put_catalog_record(options, chat, catalog_error)) { set_json_error(response, 502, catalog_error); return; }
@@ -791,6 +795,7 @@ bool run_agent_web_server(
             project["last_active_at"] = now;
             if (!put_catalog_record(options, project, catalog_error)) { set_json_error(response, 502, catalog_error); return; }
         }
+        metadata_lock.unlock();
         command["command"] = "run_turn";
         command["request_id"] = web_request_id(command);
         const auto turn_id = command["turn_id"].get<std::string>();
@@ -807,6 +812,26 @@ bool run_agent_web_server(
             return;
         }
         { std::lock_guard<std::mutex> lock(active_web_turn_mutex); active_web_turns.erase(turn_id); }
+        // Resolve the final persisted plan after reflection, using the same authorized scope.
+        // Naming failure must not turn a completed user operation into a failed turn.
+        json plans;
+        std::string naming_error;
+        if (conversation_turn && result.contains("plan_id") && result["plan_id"].is_string() &&
+                daemon_command(options, {{"command", "list_plans"}, {"namespace_id", k_web_namespace},
+                    {"session_id", session_id}, {"project_id", project_id}}, plans, naming_error) &&
+                plans.value("ok", false)) {
+            std::lock_guard<std::mutex> lock(chat_metadata_mutex);
+            json current_chat;
+            if (validate_chat_scope(options, session_id, project_id, current_chat, naming_error) &&
+                    agent_web_apply_goal_title(current_chat, turn_id, result["plan_id"].get<std::string>(),
+                        plans.value("plans", json::array()))) {
+                if (put_catalog_record(options, current_chat, naming_error)) {
+                    current_chat.erase("catalog_revision");
+                    result["chat"] = std::move(current_chat);
+                }
+            }
+        }
+        if (!naming_error.empty()) result["chat_title_error"] = naming_error;
         response.set_content(result.dump(), "application/json");
     });
 
@@ -963,6 +988,8 @@ bool run_agent_web_server(
             const auto & resource = result["resource"];
             const auto uri = resource.value("uri", std::string());
             if (!uri.empty()) {
+                std::lock_guard<std::mutex> metadata_lock(chat_metadata_mutex);
+                if (!validate_chat_scope(options, session_id, project_id, chat, scope_error)) { set_json_error(response, 403, scope_error); return; }
                 auto refs = chat.value("attachments", json::array());
                 if (!refs.is_array()) refs = json::array();
                 const bool exists = std::any_of(refs.begin(), refs.end(), [&](const json & item) {

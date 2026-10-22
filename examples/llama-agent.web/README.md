@@ -177,7 +177,20 @@ results and pending replies cannot replace a newer source's view. These operatio
 do not start a model turn.
 
 Project and chat titles are displayed in the conversation header, separate from
-workspace navigation buttons. Embedded apps grow with their content through
+workspace navigation buttons. New chats initially use the first question. After a
+turn, the adapter resolves that turn's final persisted plan and uses its latest
+non-empty goal as the chat title, including when a previous title exists. This
+reuses the plan evaluated during reflection; reflection has no separate chat-goal
+field, and naming starts no additional inference. The catalog records the source
+plan and version. A latest-turn binding prevents older completions from renaming
+a chat; absent goals preserve the existing title. Host-only attachment
+orientation does not rename the conversation. Metadata naming errors are
+reported separately as `chat_title_error` and do not fail the completed turn.
+The HTTP/JSONL naming smoke is
+`pocs/agent/smoke/daemon/agent-web-chat-title-smoke.py --web-binary <path>`;
+it uses a synthetic daemon peer and does not verify model or Cozo behavior.
+
+Embedded apps grow with their content through
 validated `ui/notifications/size-changed` messages relayed by the sandbox proxy.
 The host also measures content changes, media loading and width reflow inside
 the isolated app. Height-only host resizing does not trigger another measurement.

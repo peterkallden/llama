@@ -461,3 +461,24 @@ it("detaches project resources using their owning scope", async () => {
   await session.removeAttachment(0);
   expect(transport.detachRequests[0]).toMatchObject({ projectId: "project-test", uri: "resource://project/research", scope: "project", action: "detach" });
 });
+
+it("updates the scoped chat title from the latest persisted goal", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  for (const title of ["Investigate failed authentication", "Explain the database timeout"]) {
+    const pending = session.submit("Continue the investigation");
+    transport.replies.at(-1)!({ ok: true, response: "Done", chat: { id: session.sessionId, project_id: session.projectId, title } });
+    expect(await pending).toBe(true);
+    expect(session.chatTitle).toBe(title);
+    expect(values.get("llama-agent-web.chat-title")).toBe(title);
+  }
+  const pending = session.submit("Continue");
+  transport.replies.at(-1)!({ ok: true, response: "Done", chat: { id: "other-chat", project_id: session.projectId, title: "Wrong chat" } });
+  await pending;
+  expect(session.chatTitle).toBe("Explain the database timeout");
+});

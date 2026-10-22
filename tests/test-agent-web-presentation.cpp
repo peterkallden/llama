@@ -2,6 +2,7 @@
 #include "tools/agent/daemon/agent-daemon-jsonl-protocol.h"
 #include "tools/agent/daemon/agent-daemon-adapter.h"
 #include "base64.hpp"
+#include "tools/agent/web/agent-web-chat-title.h"
 #include "agent/protocol/agent-sse.h"
 
 #ifdef NDEBUG
@@ -10,6 +11,25 @@
 #include <cassert>
 
 int main() {
+    nlohmann::ordered_json named_chat = {{"latest_turn_id", "new-turn"}, {"title", "Earlier name"}, {"attachments", {"resource://kept"}}};
+    const auto plan_goals = nlohmann::ordered_json::array({
+        {{"plan_id", "plan"}, {"goal", "Old goal"}, {"version", 1}},
+        {{"plan_id", "plan"}, {"goal", "Investigate authentication failures"}, {"version", 3}},
+        {{"plan_id", "other"}, {"goal", "Wrong conversation"}, {"version", 9}},
+    });
+    assert(agent_web_apply_goal_title(named_chat, "new-turn", "plan", plan_goals));
+    assert(named_chat["title"] == "Investigate authentication failures");
+    assert(named_chat["title_plan_version"] == 3);
+    assert(named_chat["attachments"][0] == "resource://kept");
+    assert(!agent_web_apply_goal_title(named_chat, "old-turn", "plan", plan_goals));
+    assert(named_chat["title"] == "Investigate authentication failures");
+    assert(!agent_web_apply_goal_title(named_chat, "new-turn", "missing", plan_goals));
+    assert(!agent_web_apply_goal_title(named_chat, "new-turn", "plan", nlohmann::ordered_json::array({
+        {{"plan_id", "plan"}, {"goal", "   "}, {"version", 4}}})));
+    assert(agent_web_chat_title("  First question\nextra context") == "First question");
+    const std::string utf8_title = std::string(76, 'a') + "ååå";
+    assert(!nlohmann::ordered_json::parse(nlohmann::ordered_json(agent_web_chat_title(utf8_title)).dump()).is_discarded());
+
     common_agent_event_context context;
     context.namespace_id = "web";
     context.session_id = "web-session";

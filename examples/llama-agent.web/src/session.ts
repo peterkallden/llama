@@ -452,6 +452,15 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
       }
       return false;
     }
+    if (result.chat && typeof result.chat === "object" && !Array.isArray(result.chat)) {
+      const named = result.chat as Record<string, unknown>;
+      if (named.id === requestSessionId && named.project_id === turn.project_id && typeof named.title === "string" && named.title.trim()) {
+        chatTitle.value = named.title;
+        sessionStorage.setItem("llama-agent-web.chat-title", named.title);
+        const listed = chats.value.find((chat) => chat.id === requestSessionId);
+        if (listed) listed.title = named.title;
+      }
+    }
     // Recover command-owned events when SSE was disconnected or overflowed.
     // A repeated streamed event must not create another report card or effect.
     if (Array.isArray(result.events)) for (const value of result.events) {
@@ -792,6 +801,11 @@ async function refreshNavigation(forProject = projectId.value) {
     if (request !== navigationGeneration) return;
     projects.value = projectResult.projects;
     chats.value = chatResult.chats;
+    const currentChat = chatResult.chats.find((chat) => chat.id === sessionId.value && chat.project_id === projectId.value);
+    if (currentChat?.title) {
+      chatTitle.value = currentChat.title;
+      sessionStorage.setItem("llama-agent-web.chat-title", currentChat.title);
+    }
     chatCursor.value = chatResult.next_cursor || "";
     for (const chat of chatResult.chats) {
       if (chat.active_turn_id) runningChats.value[chat.id] = chat.active_turn_id;
