@@ -151,13 +151,29 @@ int main() {
     context.session_id = "session-1";
     context.turn_id = "turn-1";
     common_agent_workspace_operation operation;
+    auto stale_workspace_request = request;
+    stale_workspace_request.operation_id.clear();
+    stale_workspace_request.workspace.source_snapshot_uri = "resource://stale/source";
+    stale_workspace_request.workspace.source_snapshot_sha256 = "stale-hash";
     const auto workspace_result = workspace_helper.run_for_workspace(
-        context, "build/op-1", request, &operation);
+        context, "build/op-1", stale_workspace_request, &operation);
     if (!workspace_result.ok || operation.source_path.empty() ||
+            workspace_result.output.find("source_snapshot") != std::string::npos ||
             workspace_runtime.last_request.workspace.source_path != operation.source_path ||
             workspace_runtime.last_request.workspace.writable_path != operation.writable_path ||
             workspace_runtime.last_request.workspace.artifact_path != operation.artifact_path) {
         std::fprintf(stderr, "workspace-aware sandbox helper did not prepare the operation\n");
+        return 1;
+    }
+
+    auto missing_store_request = request;
+    common_runtime_resource_ref missing_input;
+    missing_input.uri = "resource://missing/input";
+    missing_store_request.workspace.input_resources.push_back(missing_input);
+    const auto missing_store_result = workspace_helper.run_for_workspace(
+        context, "build/missing-store", missing_store_request);
+    if (missing_store_result.ok || workspace_runtime.last_request.operation_id != "build/op-1") {
+        std::fprintf(stderr, "sandbox inputs were silently ignored without a resource store\n");
         return 1;
     }
 

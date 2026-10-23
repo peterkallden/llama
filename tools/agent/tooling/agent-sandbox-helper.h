@@ -3,6 +3,7 @@
 #include "agent/sandbox/sandbox-contract.h"
 #include "agent/sandbox/sandbox-policy.h"
 #include "agent/sandbox/sandbox-runtime.h"
+#include "agent/sandbox/source-snapshot.h"
 #include "agent/workspace-manager.h"
 #include "agent/tooling/contracts/tool-runtime-contract.h"
 #include "hash/hash.h"
@@ -12,7 +13,6 @@
 #include <utility>
 #include <filesystem>
 #include <fstream>
-#include <set>
 #include <ctime>
 
 class common_agent_sandbox_tool_helper {
@@ -102,6 +102,12 @@ public:
         }
         common_agent_workspace_operation operation;
         std::string error;
+        request.operation_id = operation_id;
+        if (!policy.validate(request, error)) {
+            return common_tool_execution_result::failure(
+                "sandbox.policy_rejected", common_tool_failure_class::policy, false,
+                "The sandbox request was rejected by host policy.", error);
+        }
         if (!prepare_workspace_request(
                 context, operation_id, request, operation, operation_out, error)) {
             const bool materialization_failed =
@@ -117,23 +123,29 @@ public:
                     : "The sandbox workspace could not be prepared.",
                 error);
         }
+        // Preserve the existing storeless execution profile. It provides status
+        // only; source-bound execution and durable evidence require a store.
+        if (resource_store == nullptr) return run(request);
         const auto started_at = static_cast<int64_t>(std::time(nullptr));
         common_agent_sandbox_result sandbox_result;
         const bool executed = run_raw(request, sandbox_result, error);
         const auto completed_at = static_cast<int64_t>(std::time(nullptr));
         std::vector<common_runtime_resource_ref> retained_outputs;
-        if (executed && resource_store != nullptr) {
+        std::vector<std::string> output_retention_errors;
+        if (resource_store != nullptr) {
             if (!sandbox_result.stdout_excerpt.empty()) {
                 common_runtime_resource_ref output_ref;
                 std::string output_error;
-                if (persist_output(context, operation_id, "stdout", sandbox_result.stdout_excerpt, output_ref, output_error))
+                if (persist_output(context, "stdout", sandbox_result.stdout_excerpt, output_ref, output_error))
                     retained_outputs.push_back(std::move(output_ref));
+                else output_retention_errors.push_back("stdout: " + output_error);
             }
             if (!sandbox_result.stderr_excerpt.empty()) {
                 common_runtime_resource_ref output_ref;
                 std::string output_error;
-                if (persist_output(context, operation_id, "stderr", sandbox_result.stderr_excerpt, output_ref, output_error))
+                if (persist_output(context, "stderr", sandbox_result.stderr_excerpt, output_ref, output_error))
                     retained_outputs.push_back(std::move(output_ref));
+                else output_retention_errors.push_back("stderr: " + output_error);
             }
         }
         nlohmann::ordered_json receipt = {
@@ -148,19 +160,21 @@ public:
             {"program", request.command.program},
             {"started_at", started_at},
             {"completed_at", completed_at},
-            {"status", executed ? common_agent_sandbox_status_name(sandbox_result.status) : "failed"},
-            {"exit_code", executed ? nlohmann::ordered_json(sandbox_result.exit_code) : nlohmann::ordered_json(nullptr)},
-            {"backend_execution_id", executed ? sandbox_result.backend_execution_id : std::string{}},
+            {"status", !executed && sandbox_result.status == common_agent_sandbox_status::completed
+                ? "failed" : common_agent_sandbox_status_name(sandbox_result.status)},
+            {"exit_code", sandbox_result.exit_code >= 0 ? nlohmann::ordered_json(sandbox_result.exit_code) : nlohmann::ordered_json(nullptr)},
+            {"backend_execution_id", sandbox_result.backend_execution_id},
             {"source_snapshot", request.workspace.source_snapshot_uri.empty()
                 ? nlohmann::ordered_json(nullptr)
                 : nlohmann::ordered_json{{"resource_uri", request.workspace.source_snapshot_uri},
                     {"manifest_sha256", request.workspace.source_snapshot_sha256}, {"materialized", true}}},
-            {"stdout_sha256", executed ? "sha256:" + hash_sha256_hex(sandbox_result.stdout_excerpt.data(), sandbox_result.stdout_excerpt.size()) : std::string{}},
-            {"stderr_sha256", executed ? "sha256:" + hash_sha256_hex(sandbox_result.stderr_excerpt.data(), sandbox_result.stderr_excerpt.size()) : std::string{}},
+            {"stdout_sha256", "sha256:" + hash_sha256_hex(sandbox_result.stdout_excerpt.data(), sandbox_result.stdout_excerpt.size())},
+            {"stderr_sha256", "sha256:" + hash_sha256_hex(sandbox_result.stderr_excerpt.data(), sandbox_result.stderr_excerpt.size())},
             {"output_resources", nlohmann::ordered_json::array()},
-            {"usage", executed ? nlohmann::ordered_json{{"wall_time_ms", sandbox_result.usage.wall_time_ms},
+            {"output_retention_errors", output_retention_errors},
+            {"usage", nlohmann::ordered_json{{"wall_time_ms", sandbox_result.usage.wall_time_ms},
                 {"cpu_time_ms", sandbox_result.usage.cpu_time_ms}, {"peak_memory_bytes", sandbox_result.usage.peak_memory_bytes},
-                {"output_bytes", sandbox_result.usage.output_bytes}} : nlohmann::ordered_json::object()},
+                {"output_bytes", sandbox_result.usage.output_bytes}}},
             {"artifacts", nlohmann::ordered_json::array()},
         };
         for (const auto & output_ref : retained_outputs) {
@@ -173,31 +187,51 @@ public:
         }
         common_runtime_resource_ref receipt_ref;
         std::string receipt_error;
-        const bool retained = persist_receipt(context, operation_id, receipt.dump(), receipt_ref, receipt_error);
+        const bool retained = persist_receipt(context, receipt.dump(), receipt_ref, receipt_error);
+        auto result_resources = sandbox_result.artifacts;
+        result_resources.insert(result_resources.end(), retained_outputs.begin(), retained_outputs.end());
         if (!executed || sandbox_result.status != common_agent_sandbox_status::completed) {
-            const auto code = !executed ? "sandbox.execution_failed" :
-                sandbox_result.status == common_agent_sandbox_status::timed_out ? "sandbox.timed_out" :
-                sandbox_result.status == common_agent_sandbox_status::cancelled ? "sandbox.cancelled" : "sandbox.execution_failed";
-            const auto failure_class = !executed ? common_tool_failure_class::execution :
-                sandbox_result.status == common_agent_sandbox_status::timed_out ? common_tool_failure_class::timeout : common_tool_failure_class::execution;
+            const auto code = sandbox_result.status == common_agent_sandbox_status::timed_out ? "sandbox.timed_out" :
+                sandbox_result.status == common_agent_sandbox_status::cancelled ? "sandbox.cancelled" :
+                sandbox_result.status == common_agent_sandbox_status::backend_unavailable ? "sandbox.backend_unavailable" : "sandbox.execution_failed";
+            const auto failure_class = sandbox_result.status == common_agent_sandbox_status::timed_out ? common_tool_failure_class::timeout : common_tool_failure_class::execution;
             auto failure = common_tool_execution_result::failure(code, failure_class, false,
-                "The sandbox did not complete successfully.", executed ? sandbox_result.error : error);
+                "The sandbox did not complete successfully.", sandbox_result.error.empty() ? error : sandbox_result.error);
             if (retained) {
-                failure.resource_refs = retained_outputs;
-                failure.resource_refs.push_back(receipt_ref);
+                result_resources.push_back(receipt_ref);
             }
             else if (receipt_error.size()) failure.raw_diagnostic += (failure.raw_diagnostic.empty() ? "" : "; ") + std::string("receipt retention failed: ") + receipt_error;
+            failure.resource_refs = std::move(result_resources);
             return failure;
         }
-        if (!retained) return common_tool_execution_result::failure(
-            "sandbox.receipt_retention_failed", common_tool_failure_class::execution, false,
-            "The verification completed, but its durable execution receipt could not be saved.", receipt_error);
+        if (!retained) {
+            auto failure = common_tool_execution_result::failure(
+                "sandbox.receipt_retention_failed", common_tool_failure_class::execution, false,
+                "The verification completed, but its durable execution receipt could not be saved.", receipt_error);
+            failure.resource_refs = std::move(result_resources);
+            return failure;
+        }
+        if (!output_retention_errors.empty()) {
+            auto failure = common_tool_execution_result::failure(
+                "sandbox.output_retention_failed", common_tool_failure_class::execution, false,
+                "The execution completed, but some output could not be retained.", output_retention_errors.front());
+            result_resources.push_back(receipt_ref);
+            failure.resource_refs = std::move(result_resources);
+            return failure;
+        }
         receipt["summary"] = "Configured development operation completed; inspect the retained receipt and output resources for source and result provenance.";
         receipt["receipt_uri"] = receipt_ref.uri;
-        receipt["stdout"] = sandbox_result.stdout_excerpt;
-        receipt["stderr"] = sandbox_result.stderr_excerpt;
-        retained_outputs.push_back(receipt_ref);
-        return common_tool_execution_result::success(receipt.dump(), "Sandbox execution completed with a retained receipt.", std::move(retained_outputs));
+        // Full bounded excerpts remain in resources; keep the model-facing
+        // result small enough that the receipt itself is not silently truncated.
+        constexpr size_t preview_bytes = 2048;
+        receipt["stdout"] = sandbox_result.stdout_excerpt.substr(0, preview_bytes);
+        receipt["stderr"] = sandbox_result.stderr_excerpt.substr(0, preview_bytes);
+        receipt["stdout_truncated"] = sandbox_result.stdout_excerpt.size() > preview_bytes;
+        receipt["stderr_truncated"] = sandbox_result.stderr_excerpt.size() > preview_bytes;
+        result_resources.push_back(receipt_ref);
+        return common_tool_execution_result::success(
+            receipt.dump(-1, ' ', false, nlohmann::ordered_json::error_handler_t::replace),
+            "Sandbox execution completed with a retained receipt.", std::move(result_resources));
     }
 
     bool run_raw_for_workspace(
@@ -240,7 +274,6 @@ public:
 private:
     bool persist_receipt(
             const common_agent_workspace_context & context,
-            const std::string & operation_id,
             const std::string & contents,
             common_runtime_resource_ref & output,
             std::string & error) const {
@@ -249,7 +282,7 @@ private:
             return false;
         }
         agent_resource_put_request request;
-        request.name = "development-receipt-" + hash_sha256_hex(operation_id.data(), operation_id.size()).substr(0, 20) + ".json";
+        request.name = "development-receipt-" + hash_sha256_hex(contents.data(), contents.size()).substr(0, 20) + ".json";
         request.description = "Immutable receipt for one configured development build or test execution.";
         request.mime_type = "application/vnd.llama-agent.development-receipt+json";
         request.text = contents;
@@ -275,14 +308,13 @@ private:
 
     bool persist_output(
             const common_agent_workspace_context & context,
-            const std::string & operation_id,
             const std::string & stream_name,
             const std::string & contents,
             common_runtime_resource_ref & output,
             std::string & error) const {
         agent_resource_put_request request;
         request.name = "development-" + stream_name + "-" +
-            hash_sha256_hex(operation_id.data(), operation_id.size()).substr(0, 20) + ".log";
+            hash_sha256_hex(contents.data(), contents.size()).substr(0, 20) + ".log";
         request.description = "Bounded output from one configured development build or test execution.";
         request.mime_type = "text/plain";
         request.text = contents;
@@ -326,6 +358,9 @@ private:
         request.workspace.source_path = operation.source_path;
         request.workspace.writable_path = operation.writable_path;
         request.workspace.artifact_path = operation.artifact_path;
+        // A previous operation's verified identity cannot authorize a new tree.
+        request.workspace.source_snapshot_uri.clear();
+        request.workspace.source_snapshot_sha256.clear();
         if (resource_store != nullptr) {
             bool saw_source_snapshot = false;
             for (size_t index = 0; index < request.workspace.input_resources.size(); ++index) {
@@ -334,8 +369,9 @@ private:
                 if (!resource_store->stat(resource.uri, resource_authority, descriptor, error)) return false;
                 resource = descriptor;
                 if (resource.mime_type == "application/vnd.llama-agent.code-source-snapshot+json") {
-                    if (saw_source_snapshot) {
-                        error = "only one source snapshot may be supplied to a development operation";
+                    if ((!request.source_snapshot_ref.empty() && resource.uri != request.source_snapshot_ref) ||
+                            saw_source_snapshot) {
+                        error = "source snapshot inputs must match the explicitly requested snapshot without duplicates";
                         return false;
                     }
                     saw_source_snapshot = true;
@@ -357,17 +393,18 @@ private:
                         file_name,
                         request.limits.max_input_resource_bytes,
                         materialized_path,
-                        error)) {
+                        error,
+                        !saw_source_snapshot)) {
                     error = "sandbox resource materialization failed: " + error;
                     return false;
                 }
             }
-            if (request.require_source_snapshot && !saw_source_snapshot) {
+            if (!request.source_snapshot_ref.empty() && !saw_source_snapshot) {
                 error = "the required source_snapshot_ref does not resolve to a code source snapshot";
                 return false;
             }
-        } else if (request.require_source_snapshot) {
-            error = "a resource store is required to resolve the requested source snapshot";
+        } else if (!request.source_snapshot_ref.empty() || !request.workspace.input_resources.empty()) {
+            error = "a resource store is required to resolve sandbox input resources";
             return false;
         }
         if (operation_out != nullptr) *operation_out = operation;
@@ -379,61 +416,34 @@ private:
             const common_runtime_resource_ref & resource,
             common_agent_sandbox_request & request,
             std::string & error) const {
-        constexpr size_t max_snapshot_bytes = 256 * 1024 * 1024;
-        constexpr size_t max_snapshot_files = 8192;
         std::string serialized;
         if (!resource_store->read_text(resource.uri, resource_authority,
-                max_snapshot_bytes, serialized, error)) return false;
-        const auto snapshot = nlohmann::json::parse(serialized, nullptr, false);
-        if (!snapshot.is_object() || snapshot.value("schema", std::string{}) != "code-source-snapshot.v1" ||
-                !snapshot.value("complete", false) || !snapshot.contains("files") || !snapshot["files"].is_array() ||
-                snapshot["files"].size() > max_snapshot_files) {
-            error = "source snapshot is malformed, incomplete or exceeds the supported file count";
-            return false;
-        }
-        size_t total_bytes = 0;
-        std::set<std::string> seen_paths;
+                common_agent_source_snapshot::max_total_bytes, serialized, error)) return false;
+        common_agent_source_snapshot snapshot;
+        if (!common_agent_parse_source_snapshot(serialized, snapshot, error)) return false;
         const std::filesystem::path source_root(operation.source_path);
-        for (const auto & file : snapshot["files"]) {
-            if (!file.is_object() || !file.contains("path") || !file["path"].is_string() ||
-                    !file.contains("resource_uri") || !file["resource_uri"].is_string() ||
-                    !file.contains("bytes") || !file["bytes"].is_number_unsigned() ||
-                    !file.contains("sha256") || !file["sha256"].is_string() ||
-                    !file.contains("permissions") || !file["permissions"].is_number_unsigned()) {
-                error = "source snapshot contains an invalid file entry";
-                return false;
-            }
-            const std::string relative_text = file["path"].get<std::string>();
-            const std::filesystem::path relative(relative_text);
-            if (relative_text.empty() || relative.is_absolute() || relative.has_root_name() ||
-                    relative_text.find('\\') != std::string::npos || seen_paths.count(relative.generic_string()) != 0) {
-                error = "source snapshot contains an unsafe or duplicate path";
-                return false;
-            }
-            for (const auto & component : relative) {
-                if (component == "." || component == "..") {
-                    error = "source snapshot path escapes the staged source root";
-                    return false;
-                }
-            }
-            seen_paths.insert(relative.generic_string());
-            const auto declared_size = file["bytes"].get<uint64_t>();
-            if (declared_size > request.limits.max_input_resource_bytes ||
-                    declared_size > 64 * 1024 * 1024 || total_bytes > max_snapshot_bytes - declared_size) {
-                error = "source snapshot exceeds its byte limits";
+        for (const auto & file : snapshot.files) {
+            const std::filesystem::path relative(file.path);
+            const auto declared_size = file.bytes;
+            if (declared_size > request.limits.max_input_resource_bytes) {
+                error = "source snapshot exceeds its input resource limit";
                 return false;
             }
             std::string bytes;
-            const auto uri = file["resource_uri"].get<std::string>();
-            if (uri.rfind("resource://", 0) != 0 ||
-                    !resource_store->read_bytes(uri, resource_authority,
-                        static_cast<size_t>(declared_size), bytes, error)) return false;
-            if (bytes.size() != declared_size || file["sha256"].get<std::string>() !=
+            const auto & uri = file.resource_uri;
+            agent_resource_descriptor file_descriptor;
+            if (!resource_store->stat(uri, resource_authority, file_descriptor, error)) return false;
+            if (file_descriptor.size_bytes != declared_size) {
+                error = "source snapshot file size does not match the complete resource";
+                return false;
+            }
+            if (!resource_store->read_bytes(uri, resource_authority,
+                    static_cast<size_t>(declared_size), bytes, error)) return false;
+            if (bytes.size() != declared_size || file.sha256 !=
                     "sha256:" + hash_sha256_hex(bytes.data(), bytes.size())) {
                 error = "source snapshot file bytes do not match their declared size and hash";
                 return false;
             }
-            total_bytes += bytes.size();
             const auto output_path = source_root / relative;
             std::error_code fs_error;
             std::filesystem::create_directories(output_path.parent_path(), fs_error);
@@ -458,7 +468,7 @@ private:
             output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
             output.close();
             if (!output) { error = "source snapshot file could not be written"; return false; }
-            const auto mode = file["permissions"].get<uint32_t>() & 0777u;
+            const auto mode = file.permissions;
             std::filesystem::permissions(output_path,
                 static_cast<std::filesystem::perms>(mode), std::filesystem::perm_options::replace, fs_error);
             if (fs_error) { error = "source snapshot file mode could not be applied"; return false; }

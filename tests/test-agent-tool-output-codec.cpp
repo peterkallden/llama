@@ -438,6 +438,26 @@ void test_nested_tool_argument_schema_validation() {
     assert(!common_schema_normalize_and_validate_object(
         R"({"measures":[]})", schema, normalized, error));
     assert(error == "required contract field is missing: operation");
+    const std::string nullable = R"({"type":"object","properties":{"exit_code":{"type":["integer","null"]},"source":{"type":["object","null"]}}})";
+    assert(common_schema_normalize_and_validate_object(
+        R"({"exit_code":0,"source":{}})", nullable, normalized, error));
+    assert(common_schema_normalize_and_validate_object(
+        R"({"exit_code":null,"source":null})", nullable, normalized, error));
+    std::string in_place = R"({"exit_code":0,"source":{}})";
+    assert(common_schema_normalize_and_validate_object(in_place, nullable, in_place, error));
+    assert(in_place == R"({"exit_code":0,"source":{}})");
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"exit_code":"0"})", nullable, normalized, error));
+    assert(normalized.empty());
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"source":[]})", nullable, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"value":null})", R"({"type":"object","properties":{"value":{"type":["null",2]}}})", normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({})", R"({"type":["object","null"]})", normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"value":"x"})", R"({"type":"object","properties":{"value":{"minLength":"invalid"}}})", normalized, error));
+
 }
 
 } // namespace

@@ -119,7 +119,7 @@ struct common_agent_sandbox_request {
     std::string logical_target;
     std::string requested_configuration;
     std::string requested_test_filter;
-    bool require_source_snapshot = false;
+    std::string source_snapshot_ref;
     std::string project_id;
     std::string workspace_id;
     std::string execution_class;

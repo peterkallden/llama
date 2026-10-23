@@ -3,6 +3,7 @@
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "subproc.h"
 #include "hash/hash.h"
+#include "agent/sandbox/source-snapshot.h"
 
 #include <algorithm>
 #include <atomic>
@@ -285,15 +286,26 @@ bool common_try_register_repository_tool_adapter(
             bool complete = !tracked_truncated && !untracked_truncated && !status_truncated;
             complete = append_paths(tracked_bytes, "tracked") && complete;
             complete = append_paths(untracked_bytes, "untracked") && complete;
-            if (paths.size() >= 8192) complete = false;
             json files = json::array();
             json unavailable = json::array();
+            json deleted_paths = json::array();
             size_t total_bytes = 0;
             for (const auto & entry : paths) {
                 if (files.size() >= 8192) { complete = false; break; }
                 std::filesystem::path file_path;
                 std::error_code size_error;
-                if (!repository_path(bindings.repository_root, entry.first, file_path, error)) {
+                // Inspect the lexical path first: repository_path canonicalizes
+                // symlinks and would otherwise hide their original file type.
+                const auto lexical_path = std::filesystem::path(bindings.repository_root) / entry.first;
+                const auto lexical_status = std::filesystem::symlink_status(lexical_path, size_error);
+                if (entry.second == "tracked" &&
+                        (size_error == std::errc::no_such_file_or_directory ||
+                         (!size_error && lexical_status.type() == std::filesystem::file_type::not_found))) {
+                    deleted_paths.push_back(entry.first);
+                    continue;
+                }
+                if (size_error || std::filesystem::is_symlink(lexical_status) ||
+                        !repository_path(bindings.repository_root, entry.first, file_path, error)) {
                     complete = false;
                     if (unavailable.size() < 32) unavailable.push_back(entry.first);
                     continue;
@@ -312,6 +324,11 @@ bool common_try_register_repository_tool_adapter(
                 }
                 std::ifstream file(file_path, std::ios::binary);
                 std::string content(static_cast<size_t>(file_size), '\0');
+                if (!file) {
+                    complete = false;
+                    if (unavailable.size() < 32) unavailable.push_back(entry.first);
+                    continue;
+                }
                 if (file_size != 0) file.read(content.data(), static_cast<std::streamsize>(file_size));
                 if (file.bad() || static_cast<uintmax_t>(file.gcount()) != file_size ||
                         file.peek() != std::char_traits<char>::eof()) {
@@ -353,13 +370,13 @@ bool common_try_register_repository_tool_adapter(
                 }
                 files.push_back({{"path", entry.first}, {"kind", entry.second},
                     {"bytes", content.size()}, {"sha256", content_hash},
-                    {"permissions", static_cast<uint32_t>(permissions)}, {"resource_uri", file_descriptor.uri}});
+                    {"permissions", static_cast<uint32_t>(permissions) & 0777u}, {"resource_uri", file_descriptor.uri}});
             }
             const auto status_hash = "sha256:" + hash_sha256_hex(status.data(), status.size());
             const json manifest = {{"schema", "code-source-snapshot.v1"},
                 {"source_revision", revision}, {"git_status", status}, {"git_status_sha256", status_hash},
                 {"files", files}, {"file_count", files.size()}, {"total_bytes", total_bytes},
-                {"complete", complete}, {"unavailable_paths", unavailable},
+                {"complete", complete}, {"unavailable_paths", unavailable}, {"deleted_paths", deleted_paths},
                 {"limits", {{"max_files", 8192}, {"max_file_bytes", 64 * 1024 * 1024},
                     {"max_total_bytes", 256 * 1024 * 1024}}}};
             const std::string serialized = manifest.dump(2);
@@ -476,19 +493,13 @@ bool common_try_register_repository_tool_adapter(
                     return common_adapter_failure("tool.workspace.patch.snapshot_unavailable", common_tool_failure_class::policy,
                         false, "The source snapshot is unavailable or has the wrong type.", error);
                 }
-                const auto snapshot = json::parse(snapshot_json, nullptr, false);
-                if (!snapshot.is_object() || snapshot.value("schema", std::string{}) != "code-source-snapshot.v1" ||
-                        !snapshot.value("complete", false) || !snapshot.contains("files") || !snapshot["files"].is_array()) {
-                    return common_adapter_validation_failure("tool.workspace.patch.snapshot_incomplete",
-                        "workspace.patch requires a complete code-source-snapshot.v1 resource");
+                common_agent_source_snapshot snapshot;
+                if (!common_agent_parse_source_snapshot(snapshot_json, snapshot, error)) {
+                    return common_adapter_validation_failure("tool.workspace.patch.snapshot_incomplete", error);
                 }
-                const auto source_file = std::find_if(snapshot["files"].begin(), snapshot["files"].end(),
-                    [&source_path](const json & file) {
-                        return file.is_object() && file.value("path", std::string{}) == source_path;
-                    });
-                if (source_file == snapshot["files"].end() || !source_file->contains("sha256") ||
-                        !source_file->at("sha256").is_string() ||
-                        source_file->at("sha256").get<std::string>() !=
+                const auto source_file = std::find_if(snapshot.files.begin(), snapshot.files.end(),
+                    [&source_path](const common_agent_source_snapshot_file & file) { return file.path == source_path; });
+                if (source_file == snapshot.files.end() || source_file->sha256 !=
                             "sha256:" + hash_sha256_hex(content.data(), content.size())) {
                     return common_adapter_failure("tool.workspace.patch.snapshot_stale", common_tool_failure_class::policy,
                         false, "The workspace file no longer matches the supplied source snapshot.",

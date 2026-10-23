@@ -3,6 +3,7 @@
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "agent/artifact/artifact-contract.h"
 #include "agent/investigation-access.h"
 #include "agent/sandbox/sandbox-host-config.h"
@@ -747,7 +748,25 @@ int main() {
         std::error_code ignored;
         std::filesystem::remove_all(operation_root, ignored);
         common_agent_workspace_manager workspace_manager({operation_root.string(), {}, "ephemeral", "persistent"});
-        common_agent_sandbox_local_test_runtime sandbox_runtime;
+        struct evidence_runtime final : common_agent_sandbox_runtime {
+            common_agent_sandbox_request last_request;
+            common_agent_sandbox_result next_result;
+            bool transport_ok = true;
+            bool execute(const common_agent_sandbox_request & request, common_agent_sandbox_result & out,
+                    std::string & runtime_error) override {
+                last_request = request;
+                out = next_result;
+                runtime_error.clear();
+                return transport_ok;
+            }
+        } sandbox_runtime;
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::completed;
+        sandbox_runtime.next_result.exit_code = 0;
+        sandbox_runtime.next_result.stdout_excerpt = "retained build output";
+        common_runtime_resource_ref build_artifact;
+        build_artifact.uri = "resource://test/build-artifact";
+        build_artifact.name = "build-artifact";
+        sandbox_runtime.next_result.artifacts.push_back(build_artifact);
         common_agent_sandbox_policy policy;
         policy.execution_class = "developer-build";
         policy.limits.timeout_ms = 120000;
@@ -776,7 +795,11 @@ int main() {
         common_runtime_resource_ref snapshot_ref = foundation_resources.resources.at(manifest_uri);
         sandbox_request.workspace.input_resources.push_back(snapshot_ref);
         const auto execution = sandbox_helper.run_for_workspace(workspace_context, "build-snapshot-test", sandbox_request);
-        assert(execution.ok && execution.resource_refs.size() == 2);
+        assert(execution.ok && execution.resource_refs.size() == 3);
+        assert(execution.resource_refs.front().uri == build_artifact.uri);
+        std::string normalized_execution;
+        assert(common_schema_normalize_and_validate_object(execution.output,
+            foundation_catalog.find_definition("development.build")->result_schema_json, normalized_execution, error));
         assert(sandbox_runtime.last_request.workspace.source_snapshot_uri == manifest_uri);
         const auto staged_sample = std::filesystem::path(sandbox_runtime.last_request.workspace.source_path) / "src" / "sample.txt";
         std::ifstream staged_file(staged_sample, std::ios::binary);
@@ -791,6 +814,59 @@ int main() {
             receipt.at("status") == "completed" &&
             receipt.at("source_snapshot").at("resource_uri") == manifest_uri &&
             receipt.at("output_resources").size() == 1);
+        // Shared parser rejects malformed contracts without JSON conversion exceptions.
+        common_agent_source_snapshot parsed_snapshot;
+        assert(common_agent_parse_source_snapshot(manifest_payload.dump(), parsed_snapshot, error));
+        for (const auto & field : {"schema", "complete", "files", "file_count", "total_bytes"}) {
+            auto malformed = manifest_payload;
+            malformed[field] = nlohmann::json::object();
+            assert(!common_agent_parse_source_snapshot(malformed.dump(), parsed_snapshot, error));
+        }
+        auto malformed_mode = manifest_payload;
+        malformed_mode["files"][0]["permissions"] = uint64_t(1) << 40;
+        assert(!common_agent_parse_source_snapshot(malformed_mode.dump(), parsed_snapshot, error));
+
+        // An unrelated snapshot in generic inputs cannot satisfy an explicit reference.
+        auto wrong_snapshot_request = sandbox_request;
+        wrong_snapshot_request.source_snapshot_ref = sample_snapshot_uri;
+        const auto wrong_snapshot = sandbox_helper.run_for_workspace(
+            workspace_context, "wrong-explicit-snapshot", wrong_snapshot_request);
+        assert(!wrong_snapshot.ok);
+
+        // Successful execution must not hide output storage failure or lose artifacts.
+        foundation_resources.fail_mime = "text/plain";
+        const auto output_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "failed-output-retention", sandbox_request);
+        foundation_resources.fail_mime.clear();
+        assert(!output_failure.ok && output_failure.failure_code == "sandbox.output_retention_failed");
+        assert(output_failure.resource_refs.front().uri == build_artifact.uri);
+        const auto failure_receipt = nlohmann::json::parse(
+            foundation_resources.contents.at(output_failure.resource_refs.back().uri));
+        assert(!failure_receipt.at("output_retention_errors").empty());
+        foundation_resources.fail_mime = "application/vnd.llama-agent.development-receipt+json";
+        const auto receipt_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "failed-receipt-retention", sandbox_request);
+        foundation_resources.fail_mime.clear();
+        assert(!receipt_failure.ok && receipt_failure.failure_code == "sandbox.receipt_retention_failed");
+        assert(receipt_failure.resource_refs.size() == 2 &&
+            receipt_failure.resource_refs.front().uri == build_artifact.uri);
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::timed_out;
+        const auto timed_out = sandbox_helper.run_for_workspace(
+            workspace_context, "timed-out-with-artifact", sandbox_request);
+        assert(!timed_out.ok && timed_out.failure_code == "sandbox.timed_out" &&
+            timed_out.resource_refs.front().uri == build_artifact.uri);
+        sandbox_runtime.transport_ok = false;
+        const auto transport_timeout = sandbox_helper.run_for_workspace(
+            workspace_context, "transport-timeout-with-artifact", sandbox_request);
+        assert(!transport_timeout.ok && transport_timeout.failure_code == "sandbox.timed_out");
+        sandbox_runtime.transport_ok = true;
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::completed;
+        auto policy_request = sandbox_request;
+        policy_request.limits.timeout_ms = policy.limits.timeout_ms + 1;
+        const auto policy_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "policy-failure", policy_request);
+        assert(!policy_failure.ok && policy_failure.failure_code == "sandbox.policy_rejected");
+
         agent_resource_put_request unsafe_snapshot_request;
         unsafe_snapshot_request.name = "unsafe-code-snapshot.json";
         unsafe_snapshot_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
@@ -806,7 +882,67 @@ int main() {
         const auto rejected_snapshot = sandbox_helper.run_for_workspace(workspace_context, "unsafe-snapshot-test", unsafe_request);
         assert(!rejected_snapshot.ok && rejected_snapshot.failure_code == "sandbox.resource_materialization_failed");
         assert(!std::filesystem::exists(operation_root / "snapshot-test" / "unsafe-snapshot-test" / "escape.txt"));
+        // Ordinary inputs must not replace files in an already staged snapshot.
+        auto colliding_request = unsafe_snapshot_request;
+        colliding_request.name = "root-input.txt";
+        colliding_request.mime_type = "text/plain";
+        colliding_request.text = "unrelated replacement";
+        agent_resource_descriptor colliding_descriptor;
+        assert(foundation_resources.put_text(colliding_request, colliding_descriptor, error));
+        auto root_snapshot = manifest_payload;
+        auto root_file = *sample_snapshot;
+        root_file["path"] = "root-input.txt";
+        root_snapshot["files"] = nlohmann::json::array({root_file});
+        root_snapshot["file_count"] = size_t(1);
+        root_snapshot["total_bytes"] = root_file["bytes"];
+        agent_resource_put_request root_snapshot_request;
+        root_snapshot_request.name = "root-snapshot.json";
+        root_snapshot_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        root_snapshot_request.text = root_snapshot.dump();
+        agent_resource_descriptor root_snapshot_descriptor;
+        assert(foundation_resources.put_text(root_snapshot_request, root_snapshot_descriptor, error));
+        auto collision_execution_request = sandbox_request;
+        collision_execution_request.workspace.input_resources = {root_snapshot_descriptor, colliding_descriptor};
+        const auto collision = sandbox_helper.run_for_workspace(
+            workspace_context, "source-input-collision", collision_execution_request);
+        assert(!collision.ok && collision.failure_code == "sandbox.resource_materialization_failed");
+
+        // A retained resource prefix cannot masquerade as a complete source file.
+        auto prefix_file = *sample_snapshot;
+        const auto prefix = foundation_resources.contents.at(sample_snapshot_uri).substr(0, 2);
+        prefix_file["bytes"] = prefix.size();
+        prefix_file["sha256"] = "sha256:" + hash_sha256_hex(prefix.data(), prefix.size());
+        agent_resource_put_request prefix_request;
+        prefix_request.name = "truncated-source-snapshot.json";
+        prefix_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        prefix_request.text = nlohmann::json{{"schema", "code-source-snapshot.v1"}, {"complete", true},
+            {"files", nlohmann::json::array({prefix_file})}}.dump();
+        agent_resource_descriptor prefix_descriptor;
+        assert(foundation_resources.put_text(prefix_request, prefix_descriptor, error));
+        auto prefix_execution_request = sandbox_request;
+        prefix_execution_request.workspace.input_resources = {prefix_descriptor};
+        const auto prefix_result = sandbox_helper.run_for_workspace(
+            workspace_context, "truncated-source-resource", prefix_execution_request);
+        assert(!prefix_result.ok && prefix_result.failure_code == "sandbox.resource_materialization_failed");
         std::filesystem::remove_all(operation_root, ignored);
+    }
+    {
+        // A deleted tracked file is intentional absence, not an unreadable source.
+        std::filesystem::remove(repository / "src" / "sample.txt");
+        const auto deleted_snapshot = foundation_registry.execute({"repository.snapshot", "{}"});
+        assert(deleted_snapshot.ok);
+        const auto deleted_result = nlohmann::json::parse(deleted_snapshot.output);
+        assert(deleted_result.at("complete") == true);
+        const auto deleted_manifest = nlohmann::json::parse(
+            foundation_resources.contents.at(deleted_result.at("resource_uri").get<std::string>()));
+        assert(deleted_manifest.at("deleted_paths") == nlohmann::json::array({"src/sample.txt"}));
+        { std::ofstream restored(repository / "src" / "sample.txt"); restored << foundation_resources.contents.at(sample_snapshot_uri); }
+#ifndef _WIN32
+        std::filesystem::create_symlink("sample.txt", repository / "src" / "alias.txt");
+        const auto symlink_snapshot = foundation_registry.execute({"repository.snapshot", "{}"});
+        assert(symlink_snapshot.ok && nlohmann::json::parse(symlink_snapshot.output).at("complete") == false);
+        std::filesystem::remove(repository / "src" / "alias.txt");
+#endif
     }
     {
         result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
@@ -1614,9 +1750,13 @@ int main() {
     assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
             captured_request.workspace.input_resources[0].uri == "resource://input.txt");
     result = execution_registry.execute({"development.build", R"({"target":"llama-agent","source_snapshot_ref":"resource://snapshot/code.json"})"});
-    assert(result.ok && captured_request.require_source_snapshot &&
+    assert(result.ok && !captured_request.source_snapshot_ref.empty() &&
         captured_request.workspace.input_resources.size() == 1 &&
         captured_request.workspace.input_resources[0].uri == "resource://snapshot/code.json");
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","source_snapshot_ref":"resource://snapshot/code.json","resource_refs":["resource://snapshot/code.json"]})"});
+    assert(result.ok && captured_request.workspace.input_resources.size() == 1);
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","timeout_ms":"invalid"})"});
+    assert(!result.ok);
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));

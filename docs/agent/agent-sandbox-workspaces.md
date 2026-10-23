@@ -256,7 +256,18 @@ target. The execution receipt records the snapshot URI and manifest hash. Incomp
 escaping, duplicate, oversized or hash-mismatched snapshots are rejected before execution.
 The snapshot is bounded to 8,192 files, 64 MiB per file and 256 MiB total. Symlinks,
 submodules and unreadable files make it incomplete; it cannot be used for source-bound
-execution. Receipts and bounded stdout/stderr excerpts are retained as scoped resources.
+execution. Tracked paths that are intentionally absent are listed as `deleted_paths`
+and omitted from the staged tree; they do not make a snapshot incomplete.
+With resource storage configured, receipts and bounded stdout/stderr excerpts are retained
+as scoped resources. Existing storeless profiles can still run without resource inputs,
+but do not produce durable evidence. Requested inputs fail before execution when the
+resource store is unavailable. Output
+retention failures are explicit. Tool results include short output previews and references
+to retained logs, and preserve backend artifact references even on failure. Receipt and
+log names are content-addressed so repeated operation IDs cannot overwrite earlier evidence.
+After a source snapshot is staged, additional resource inputs cannot overwrite its files.
+Generic resource-processing retries retain their existing behavior. File-resource size is checked before
+bounded reads, preventing a resource prefix from being accepted as a complete source file.
 The host records the selected logical target, configuration, test filter, configured
 executable, status, timing, usage, artifact references and output hashes; it does not
 retain command credentials or raw command argument vectors.
@@ -273,7 +284,9 @@ current exact file hash still matches the selected snapshot before applying the 
 then returns a `workspace-change-receipt.v1` resource with the snapshot reference,
 expected/before/after hashes, requested line operations and applied/unchanged status. A
 stale snapshot is rejected even if a caller supplies the current file hash; the workflow
-must capture a new baseline and review the changed source first.
+must capture a new baseline and review the changed source first. After the last patch,
+capture a separate post-change snapshot for build/test execution. Reusing the pre-change
+snapshot would verify the old source rather than the patch.
 
 CTest och smoke
 

@@ -100,7 +100,8 @@ public:
             const std::string & file_name,
             size_t max_bytes,
             std::string & output_path,
-            std::string & error) const {
+            std::string & error,
+            bool overwrite_existing = true) const {
         if (operation.source_path.empty() || resource.uri.empty() || file_name.empty()) {
             error = "workspace resource materialization requires an operation, resource and file name";
             return false;
@@ -113,6 +114,17 @@ public:
         std::string bytes;
         if (!store.read_bytes(resource.uri, authority, max_bytes, bytes, error)) return false;
         const std::filesystem::path path = std::filesystem::path(operation.source_path) / safe_file_name;
+        // Source-bound staging can forbid replacement while existing generic
+        // resource-processing callers retain their retry behavior.
+        if (!overwrite_existing) {
+            std::error_code status_error;
+            const auto status = std::filesystem::symlink_status(path, status_error);
+            if ((status_error && status_error != std::errc::no_such_file_or_directory) ||
+                    (!status_error && status.type() != std::filesystem::file_type::not_found)) {
+                error = "workspace resource file collides with an existing staged input";
+                return false;
+            }
+        }
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
         if (!output) {
             error = "workspace resource file could not be opened for writing";

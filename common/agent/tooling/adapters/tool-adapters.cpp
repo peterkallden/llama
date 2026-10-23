@@ -334,7 +334,16 @@ bool make_sandbox_request(
         request.requested_test_filter = arguments["filter"].get<std::string>();
         request.command.arguments.push_back("--filter=" + request.requested_test_filter);
     }
-    request.limits.timeout_ms = arguments.value("timeout_ms", 120000u);
+    request.limits.timeout_ms = 120000u;
+    if (arguments.contains("timeout_ms")) {
+        if (!arguments["timeout_ms"].is_number_unsigned() ||
+                arguments["timeout_ms"].get<uint64_t>() < 1000 ||
+                arguments["timeout_ms"].get<uint64_t>() > 1800000) {
+            error = tool_name + " timeout_ms must be an integer between 1000 and 1800000";
+            return false;
+        }
+        request.limits.timeout_ms = arguments["timeout_ms"].get<uint32_t>();
+    }
     request.limits.cpu_count = 1;
     request.limits.max_output_bytes = 65536;
     request.limits.max_input_resource_bytes = 64 * 1024 * 1024;
@@ -362,10 +371,12 @@ bool make_sandbox_request(
             error = tool_name + " source_snapshot_ref must be an opaque resource URI";
             return false;
         }
-        request.require_source_snapshot = true;
+        request.source_snapshot_ref = arguments["source_snapshot_ref"].get<std::string>();
         common_runtime_resource_ref snapshot;
         snapshot.uri = arguments["source_snapshot_ref"].get<std::string>();
-        request.workspace.input_resources.push_back(std::move(snapshot));
+        const auto existing = std::find_if(request.workspace.input_resources.begin(), request.workspace.input_resources.end(),
+            [&snapshot](const common_runtime_resource_ref & resource) { return resource.uri == snapshot.uri; });
+        if (existing == request.workspace.input_resources.end()) request.workspace.input_resources.push_back(std::move(snapshot));
     }
     error.clear();
     return true;

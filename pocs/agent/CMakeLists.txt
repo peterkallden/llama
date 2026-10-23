@@ -534,6 +534,7 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_link_libraries(${TARGET} PRIVATE
     llama-agent-sandbox
+    vendor::hash
 )
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 

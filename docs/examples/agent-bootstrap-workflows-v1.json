@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v33",
+  "version": "v34",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -20,7 +20,7 @@
     {
       "id": "development-source-evidence-v1",
       "summary": "source identity and verification evidence",
-      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. Pass the same complete source_snapshot_ref to development.build or development.test; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
+      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. After applying the complete change, capture a new complete repository.snapshot and pass that post-change source_snapshot_ref to development.build or development.test; retain the pre-change snapshot for baseline comparison; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
       "importance": 0.95,
       "confidence": 1.0
     },
@@ -1457,7 +1457,7 @@
     },
     {
       "id": "repository-change-v2",
-      "source_revision": "agent-workflows-starter@v33",
+      "source_revision": "agent-workflows-starter@v34",
       "selection_description": "Implement a scoped repository change and verify the result.",
       "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
       "goal": "Implement the requested repository change safely.",
@@ -1524,7 +1524,7 @@
         {
           "id": "verify",
           "title": "Verify",
-          "objective": "Pass the immutable source_snapshot_ref to host-configured build and test targets when available. Inspect the retained execution receipt, source snapshot binding and output resources; distinguish build success from test and acceptance-criteria outcomes.",
+          "objective": "Capture a new complete repository.snapshot after the last patch and pass that post-change source_snapshot_ref to host-configured build and test targets. Never use the pre-change baseline as evidence that the patch passed. Inspect the retained execution receipt, source snapshot binding and output resources; distinguish build success from test and acceptance-criteria outcomes.",
           "depends_on": [
             "implement"
           ]

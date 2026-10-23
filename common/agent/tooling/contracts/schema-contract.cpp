@@ -53,12 +53,34 @@ bool validate_value(
         }
     }
     if (!validate_alternatives("anyOf", false) || !validate_alternatives("oneOf", true)) return false;
-    const auto type = schema.value("type", std::string());
-    const bool type_ok = type.empty() ||
-        (type == "string" && value.is_string()) || (type == "integer" && value.is_number_integer()) ||
-        (type == "number" && value.is_number()) || (type == "boolean" && value.is_boolean()) ||
-        (type == "array" && value.is_array()) || (type == "object" && value.is_object());
-    if (!type_ok) { error = "contract field '" + field + "' has invalid type"; return false; }
+    const auto matches_type = [&value](const std::string & type) {
+        return (type == "string" && value.is_string()) ||
+            (type == "integer" && value.is_number_integer()) ||
+            (type == "number" && value.is_number()) ||
+            (type == "boolean" && value.is_boolean()) ||
+            (type == "array" && value.is_array()) ||
+            (type == "object" && value.is_object()) ||
+            (type == "null" && value.is_null());
+    };
+    if (schema.contains("type")) {
+        const auto & declared = schema.at("type");
+        bool type_ok = false;
+        if (declared.is_string()) {
+            type_ok = matches_type(declared.get_ref<const std::string &>());
+        } else if (declared.is_array() && !declared.empty()) {
+            for (const auto & alternative : declared) {
+                if (!alternative.is_string()) {
+                    error = "contract schema has an invalid type alternative";
+                    return false;
+                }
+                type_ok = matches_type(alternative.get_ref<const std::string &>()) || type_ok;
+            }
+        } else {
+            error = "contract schema has an invalid type declaration";
+            return false;
+        }
+        if (!type_ok) { error = "contract field '" + field + "' has invalid type"; return false; }
+    }
     if (schema.contains("enum")) {
         bool found = false;
         for (const auto & allowed : schema["enum"]) if (allowed == value) { found = true; break; }
@@ -155,12 +177,25 @@ bool common_json_contract_optional_unit_number(const common_json_contract_value 
 
 bool common_schema_normalize_and_validate_object(const std::string & input_json, const std::string & schema_json,
         std::string & normalized_json, std::string & error) {
-    const auto input = json::parse(input_json, nullptr, false);
-    const auto schema = json::parse(schema_json, nullptr, false);
-    if (!input.is_object()) { error = "contract input must be a JSON object"; return false; }
-    if (!schema.is_object() || schema.value("type", std::string()) != "object") { error = "contract schema must describe an object"; return false; }
-    if (!validate_value(input, schema, "", error)) return false;
-    normalized_json = input.dump();
-    error.clear();
-    return true;
+    try {
+        // Native invokers may normalize in place, so parse both arguments before
+        // clearing an output string that can alias either input.
+        const auto input = json::parse(input_json, nullptr, false);
+        const auto schema = json::parse(schema_json, nullptr, false);
+        normalized_json.clear();
+        if (!input.is_object()) { error = "contract input must be a JSON object"; return false; }
+        if (!schema.is_object() || !schema.contains("type") || !schema["type"].is_string() ||
+                schema["type"] != "object") {
+            error = "contract schema must describe an object";
+            return false;
+        }
+        if (!validate_value(input, schema, "", error)) return false;
+        normalized_json = input.dump();
+        error.clear();
+        return true;
+    } catch (const json::exception &) {
+        normalized_json.clear();
+        error = "contract schema contains an invalid JSON type or bound";
+        return false;
+    }
 }
