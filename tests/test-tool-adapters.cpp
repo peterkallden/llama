@@ -3,6 +3,7 @@
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "agent/artifact/artifact-contract.h"
+#include "agent/investigation-access.h"
 #include "hash/hash.h"
 #include "base64.hpp"
 #include "memory/memory-in-memory.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <ctime>
 #include <iostream>
 #include <cstdlib>
 #include <filesystem>
@@ -95,15 +97,46 @@ public:
     std::map<std::string,std::string> contents;
 };
 
+class test_investigation_text_processor final : public agent_resource_processing_provider {
+public:
+    explicit test_investigation_text_processor(test_resource_store & store) : store_(store) {}
+    agent_resource_processing_result process(const agent_resource_processing_binding_request & request) const override {
+        const std::string text = "Derived OCR evidence";
+        agent_resource_descriptor output;
+        output.uri = "resource://processor/derived-text";
+        output.name = "derived-text.txt";
+        output.mime_type = "text/plain";
+        output.scope = common_runtime_resource_scope::session;
+        output.size_bytes = text.size();
+        output.sha256 = hash_sha256_hex(text.data(), text.size());
+        output.lineage.parent_uri = request.source_uri;
+        output.metadata.limitations = "OCR text does not verify original image regions.";
+        store_.resources[output.uri] = output;
+        store_.contents[output.uri] = text;
+        agent_resource_processing_result result;
+        result.success = true;
+        result.processor_id = "test-ocr-v1";
+        result.resources.push_back(output);
+        return result;
+    }
+private:
+    test_resource_store & store_;
+};
+
 class test_investigation_store final : public common_agent_data_store {
 public:
     common_agent_dataset_descriptor source;
+    std::vector<common_agent_dataset_descriptor> additional_sources;
+    std::set<std::string> denied_sources;
     std::map<std::string, common_investigation_case_revision> cases;
     std::vector<common_investigation_report_index_entry> reports;
     std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
     bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
-        if (source_id != source.ref.source_provider) { error = "source is not authorized"; return false; }
+        if (denied_sources.count(source_id) || (source_id != source.ref.source_provider &&
+                std::none_of(additional_sources.begin(), additional_sources.end(), [&](const auto & descriptor) {
+                    return descriptor.ref.source_provider == source_id;
+                }))) { error = "source is not authorized"; return false; }
         error.clear(); return true;
     }
 
@@ -118,12 +151,17 @@ public:
     }
     bool get_dataset_descriptor(const std::string & uri, common_agent_dataset_descriptor & out,
             std::string & error) override {
-        if (uri != source.ref.uri) { error = "virtual dataset not found"; return false; }
+        if (uri != source.ref.uri) {
+            for (const auto & descriptor : additional_sources) if (descriptor.ref.uri == uri) {
+                out = descriptor; error.clear(); return true;
+            }
+            error = "virtual dataset not found"; return false;
+        }
         out = source; error.clear(); return true;
     }
     bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & out,
             std::string & error) override {
-        out = {source}; error.clear(); return true;
+        out = additional_sources; out.push_back(source); error.clear(); return true;
     }
     bool get_investigation_case(const std::string & id, const common_agent_scope & scope,
             common_investigation_case_revision & out, std::string & error) override {
@@ -157,6 +195,7 @@ public:
         if (current != expected || input.revision != expected + 1) {
             error = "investigation case revision conflict"; return false;
         }
+        if (!common_investigation_case_validate(input, error)) return false;
         out = input; cases[input.case_id] = out; error.clear(); return true;
     }
     bool publish_investigation_report(const common_agent_scope & scope,
@@ -1381,6 +1420,10 @@ int main() {
     auto invalid_statement_args = statement_args;
     invalid_statement_args["expected_revision"] = 3;
     invalid_statement_args["idempotency_key"] = "bad-anchor";
+    invalid_statement_args["statements"][0]["anchor"]["byte_offset"] = 0.5;
+    result = investigation_registry.execute({"investigation.statement.record", invalid_statement_args.dump()});
+    assert(!result.ok && investigation_store.cases.at(document_case_id).revision == 3);
+    invalid_statement_args["statements"][0]["anchor"]["byte_offset"] = 0;
     invalid_statement_args["statements"][0]["anchor"]["quote"] = "yyyyy";
     result = investigation_registry.execute({"investigation.statement.record", invalid_statement_args.dump()});
     assert(!result.ok && investigation_store.cases.at(document_case_id).revision == 3);
@@ -1420,6 +1463,61 @@ int main() {
         investigation_store.cases.at(document_case_id).events.size() == 1 &&
         investigation_store.cases.at(document_case_id).events[0].source_id == "logs" &&
         investigation_store.cases.at(document_case_id).relations.size() == 1);
+    auto secondary_source = investigation_store.source;
+    secondary_source.ref.uri = "dataset://investigation/secondary/security";
+    secondary_source.ref.source_provider = "logs-secondary";
+    investigation_store.additional_sources.push_back(secondary_source);
+    result = investigation_registry.execute({"investigation.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 6}, {"provider_id", "logs-secondary"}}.dump()});
+    assert(result.ok);
+    result = investigation_registry.execute({"investigation.collect", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 7},
+        {"dataset", secondary_source.ref.uri}, {"identifier_field", "user.id"},
+        {"identifier_value", "alice"}, {"limit", 20}}.dump()});
+    const auto & mixed_case = investigation_store.cases.at(document_case_id);
+    assert(result.ok && mixed_case.revision == 8 && mixed_case.events.size() == 2 &&
+        mixed_case.events[0].id != mixed_case.events[1].id && mixed_case.relations.size() == 2 &&
+        mixed_case.entities.size() == 4 && common_investigation_case_validate(mixed_case, error));
+    const auto investigation_authority = make_agent_resource_read_authority(
+        investigation_bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    assert(common_investigation_authorize_sources(mixed_case, investigation_bindings.tool_scope,
+        investigation_store, &investigation_resources, investigation_authority, error));
+    investigation_store.denied_sources.insert("logs-secondary");
+    assert(!common_investigation_authorize_sources(mixed_case, investigation_bindings.tool_scope,
+        investigation_store, &investigation_resources, investigation_authority, error));
+    result = investigation_registry.execute({"investigation.case.open", nlohmann::json{{"case_id", document_case_id}}.dump()});
+    assert(!result.ok);
+    investigation_store.denied_sources.clear();
+    result = investigation_registry.execute({"investigation.statement.record", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 8}, {"idempotency_key", "mixed-analysis"},
+        {"analysis_kind", "narrative_comparison"}, {"source_ids", {document_source_id, "provider-logs"}},
+        {"statements", nlohmann::json::array()}, {"comparisons", nlohmann::json::array()}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 9);
+    agent_resource_put_request pdf_request;
+    pdf_request.name = "investigation-original.pdf";
+    pdf_request.mime_type = "application/pdf";
+    pdf_request.bytes = "synthetic-pdf";
+    pdf_request.scope = common_runtime_resource_scope::session;
+    agent_resource_descriptor pdf_resource;
+    assert(investigation_resources.put_bytes(pdf_request, pdf_resource, error));
+    result = investigation_registry.execute({"investigation.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 9}, {"resource_uri", pdf_resource.uri}}.dump()});
+    assert(result.ok);
+    const auto pdf_source_id = nlohmann::json::parse(result.output).at("source_id").get<std::string>();
+    test_investigation_text_processor text_processor(investigation_resources);
+    auto processing_bindings = investigation_bindings;
+    processing_bindings.resource_processing_service = &text_processor;
+    common_tool_registry processing_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation", processing_bindings,
+        processing_registry, adapters, error));
+    result = processing_registry.execute({"investigation.document.prepare", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 10}, {"source_id", pdf_source_id}}.dump()});
+    assert(result.ok);
+    const auto & prepared_source = investigation_store.cases.at(document_case_id).sources.back();
+    assert(prepared_source.representation_uri != "resource://processor/derived-text" &&
+        investigation_resources.resources.at(prepared_source.representation_uri).scope == common_runtime_resource_scope::project &&
+        prepared_source.processor_version == "test-ocr-v1" && !prepared_source.complete &&
+        prepared_source.processing_limitations.size() == 1);
     result = investigation_registry.execute({"investigation.graph.expand",
         R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
     assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&

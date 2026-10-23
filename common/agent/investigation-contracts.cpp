@@ -1,4 +1,5 @@
 #include "investigation-contracts.h"
+#include "investigation-sources.h"
 
 #include <algorithm>
 #include <cmath>
@@ -256,6 +257,22 @@ bool common_investigation_project_context(
     return true;
 }
 
+std::vector<std::string> common_investigation_search_providers(
+        const common_investigation_case_revision & value) {
+    std::set<std::string> providers;
+    if (!value.source_id.empty()) providers.insert(value.source_id);
+    for (const auto & source : value.sources)
+        if (source.kind == common_investigation_source_kind::search_connector && !source.provider_id.empty())
+            providers.insert(source.provider_id);
+    return {providers.begin(), providers.end()};
+}
+
+bool common_investigation_source_complete(const common_investigation_source & source) {
+    return source.complete && source.processing_limitations.empty() &&
+        (source.kind == common_investigation_source_kind::search_connector
+            ? source.processing_status == "query_complete" : source.processing_status == "ready");
+}
+
 bool common_investigation_case_validate(
         const common_investigation_case_revision & value, std::string & error) {
     error.clear();
@@ -272,11 +289,11 @@ bool common_investigation_case_validate(
         error = "investigation case identity, time window, or bounded collection is invalid";
         return false;
     }
-    std::unordered_set<std::string> source_ids, entities, events, relations, statements;
+    std::unordered_set<std::string> source_ids, source_record_ids, providers, entities, events, relations, statements;
     if (!value.source_id.empty()) source_ids.insert(value.source_id);
     bool has_search_source = !value.source_id.empty();
     for (const auto & source : value.sources) {
-        if (!valid_id(source.id) || !source_ids.insert(source.id).second || source.source_revision == 0 ||
+        if (!valid_id(source.id) || !source_record_ids.insert(source.id).second || source.source_revision == 0 ||
                 source.resource_uri.size() > 512 || source.representation_uri.size() > 512 ||
                 source.provider_id.size() > 256 || source.display_name.size() > 512 ||
             source.mime_type.size() > 128 || source.content_hash.size() > 256 ||
@@ -286,15 +303,23 @@ bool common_investigation_case_validate(
                 source.processing_limitations.size() > 64 ||
                 ((source.kind == common_investigation_source_kind::document ||
                     source.kind == common_investigation_source_kind::log_file) && source.resource_uri.empty()) ||
-                (source.kind == common_investigation_source_kind::search_connector && source.provider_id.empty())) {
+                (source.kind == common_investigation_source_kind::search_connector &&
+                    (source.provider_id.empty() || !providers.insert(source.provider_id).second))) {
             error = "investigation source identity or provenance is invalid";
             return false;
         }
+        source_ids.insert(source.id);
+        if (source.kind == common_investigation_source_kind::search_connector) source_ids.insert(source.provider_id);
         for (const auto & limitation : source.processing_limitations) if (limitation.empty() || limitation.size() > 1024) {
             error = "investigation source processing limitation is invalid";
             return false;
         }
         has_search_source = has_search_source || source.kind == common_investigation_source_kind::search_connector;
+    }
+    for (const auto & source : value.sources) if (source.kind == common_investigation_source_kind::search_connector &&
+            source.provider_id != source.id && source_record_ids.count(source.provider_id)) {
+        error = "investigation provider domain collides with another source record identity";
+        return false;
     }
     if (!has_search_source && (value.window_start_ms || value.window_end_ms)) {
         error = "document-only investigation cases must not imply a search time window";
@@ -403,12 +428,17 @@ bool common_investigation_case_validate(
                 analysis.kind.size() > 64 || analysis.algorithm_version.empty() ||
                 analysis.algorithm_version.size() > 128 || analysis.published_revision == 0 ||
                 analysis.published_revision > value.revision || analysis.parameters_fingerprint.size() > 256 ||
+                analysis.source_ids.size() > 32 || analysis.limitations.size() > 96 ||
                 (analysis.completeness != "complete" && analysis.completeness != "partial" && analysis.completeness != "unknown")) {
             error = "investigation analysis provenance is invalid";
             return false;
         }
         for (const auto & source_id : analysis.source_ids) if (!source_ids.count(source_id)) {
             error = "investigation analysis references an unknown source";
+            return false;
+        }
+        for (const auto & limitation : analysis.limitations) if (limitation.empty() || limitation.size() > 1024) {
+            error = "investigation analysis limitation is invalid";
             return false;
         }
     }

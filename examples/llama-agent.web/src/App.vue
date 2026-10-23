@@ -132,8 +132,8 @@ watch(() => session.events.length, () => {
 });
 
 let sendGeneration = 0;
-async function send() {
-  const draftAtSubmit = prompt.value;
+function send() { return submitMessage(prompt.value, true); }
+async function submitMessage(draftAtSubmit: string, fromComposer: boolean) {
   const value = draftAtSubmit.trim();
   const investigationAppSelected = activeView.value === "app" &&
     activeMcpApp()?._meta?.ui?.resourceUri === "ui://llama-agent/apps/investigation-workspace";
@@ -141,7 +141,7 @@ async function send() {
   const generation = ++sendGeneration;
   chatSending.value = true;
   const sendingSession = session.sessionId;
-  const sendingResources = [...session.selectedResourceRefs];
+  const sendingResources = fromComposer ? [...session.selectedResourceRefs] : [];
   try {
     const workspaceUri = activeMcpApp()?._meta?.ui?.resourceUri;
     const investigationMode = activeView.value === "app" && workspaceUri === "ui://llama-agent/apps/investigation-workspace";
@@ -155,12 +155,12 @@ async function send() {
     // submit registers the message/queue synchronously before awaiting HTTP.
     // Only the save/registration operation owns the composer, not model runtime.
     if (session.messages.some((message) => message.id === `${turnId}-user`)) {
-      if (prompt.value === draftAtSubmit) prompt.value = "";
+      if (fromComposer && prompt.value === draftAtSubmit) prompt.value = "";
       session.selectedResourceRefs = session.selectedResourceRefs.filter((uri) => !sendingResources.includes(uri));
     }
     chatSending.value = false;
     const sent = await response;
-    if (!sent && generation === sendGeneration && session.sessionId === sendingSession && !prompt.value) prompt.value = draftAtSubmit;
+    if (fromComposer && !sent && generation === sendGeneration && session.sessionId === sendingSession && !prompt.value) prompt.value = draftAtSubmit;
   } catch (cause) {
     if (session.sessionId === sendingSession) session.error = cause instanceof Error ? cause.message : String(cause);
   } finally { if (generation === sendGeneration) chatSending.value = false; }
@@ -171,8 +171,7 @@ function startInvestigation(promptText: string) {
     session.error = "Open the investigation workspace before starting an analysis.";
     return;
   }
-  prompt.value = promptText;
-  void send();
+  void submitMessage(promptText, false);
 }
 
 function enterDocumentMode() {

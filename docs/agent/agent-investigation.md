@@ -122,8 +122,9 @@ A case may contain retained documents and log files alongside configured
 search-connector sources. Creating a document-only case does not require a
 search source or a time window. A configured search source is marked
 `not_collected` and incomplete until a collection operation records its actual
-coverage. Use `investigation.source.list` to discover resources and currently
-authorized search sources, `investigation.source.attach` to add a source, and
+coverage. Use the host resource browser to select resources,
+`investigation.source.list` to discover currently authorized search sources,
+`investigation.source.attach` to add a source, and
 `investigation.document.prepare` to create a text representation with the
 existing resource processors. These operations do not start model analysis by
 themselves. The workspace asks the user to choose sources and an analysis
@@ -165,6 +166,22 @@ Frozen report composition carries the source manifest, exact source and text
 representation hashes, processor limitations, analysis versions and the
 resulting coverage assessment. Later case revisions do not change an existing
 report.
+
+The shared source-access check is used by both tool calls and chat-context
+binding. Every attached search provider must still be authorized, and every
+retained original and text representation must be accessible with its recorded
+hash. Source record IDs and provider identity domains are validated separately;
+adding another provider does not merge its identifiers with existing sources.
+Processor outputs are retained to the case's project/session lifetime before
+publication, including outputs produced by a narrower-lived processor session.
+Generic resource retention also copies resources with transient expiration,
+even when their organizational scope already matches the target.
+
+Workspace reads use separate request gates for graph, events and resource
+queries. A new query invalidates older responses for that view; changing case
+invalidates all views. Upload completion cannot attach a file to a different
+case opened in the meantime. Starting an analysis preserves the user's chat
+draft.
 
 This is a bounded document-analysis path, not a general document-forensics
 engine: it does not provide OCR-region coordinates, native actor resolution,

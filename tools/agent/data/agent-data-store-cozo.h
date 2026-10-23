@@ -55,6 +55,9 @@ public:
         const common_agent_scope & scope, std::string & error) const override;
 
 private:
+    // Call only while investigation_mutex_ is held. Revision zero selects current.
+    bool load_investigation_case(const std::string &, const common_agent_scope &, uint64_t,
+        common_investigation_case_revision &, std::string &);
     int32_t db_id_ = -1;
     mutable std::mutex investigation_mutex_;
     common_agent_virtual_dataset_source * virtual_dataset_source_ = nullptr;

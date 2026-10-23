@@ -19,8 +19,11 @@ public:
     common_agent_scope last_scope;
     bool last_allow_network = false;
     bool authorized = true;
+    bool secondary_authorized = true;
     bool authorize_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
-        if (!authorized || source_id != "elastic-a") { error = "source authorization denied"; return false; }
+        if (!authorized || (source_id != "elastic-a" && (source_id != "elastic-b" || !secondary_authorized))) {
+            error = "source authorization denied"; return false;
+        }
         error.clear(); return true;
     }
     bool execute(const common_agent_dataset_descriptor &, const std::string &,
@@ -117,6 +120,22 @@ int main() {
     TEST_ASSERT(!store.get_investigation_case("case-persist-1", other_scope, reloaded_case, error));
     TEST_ASSERT(store.list_investigation_cases(other_scope, 10, "",
         listed_cases, case_cursor, error) && listed_cases.empty());
+    common_investigation_source secondary_provider;
+    secondary_provider.id = "provider-elastic-b";
+    secondary_provider.kind = common_investigation_source_kind::search_connector;
+    secondary_provider.provider_id = "elastic-b";
+    secondary_provider.processing_status = "not_collected";
+    secondary_provider.complete = false;
+    second_case.sources.push_back(secondary_provider);
+    second_case.revision = 2;
+    TEST_ASSERT(store.publish_investigation_case(second_case, 1,
+        "resource://investigation/case-persist-2/revision-2", published, error));
+    virtual_source.secondary_authorized = false;
+    TEST_ASSERT(!store.get_investigation_case(second_case.case_id, investigation.scope, reloaded_case, error));
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 10, "", listed_cases, case_cursor, error) &&
+        listed_cases.size() == 1 && listed_cases[0].case_id == investigation.case_id);
+    virtual_source.secondary_authorized = true;
+    TEST_ASSERT(store.get_investigation_case(second_case.case_id, investigation.scope, reloaded_case, error));
 
     common_agent_research_revision_ref research_revision;
     research_revision.research_id = "research-shared";

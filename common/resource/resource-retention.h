@@ -14,11 +14,12 @@ struct agent_resource_retention_target {
     std::string turn_id;
     std::string source_tool;
     size_t max_bytes = 0;
+    std::string derivation;
 };
 
 // Retain an authorized resource at the requested lifetime. Broader-scoped
-// resources remain referenced directly; narrower resources are copied with
-// immutable lineage to the requested scope.
+// non-expiring resources remain referenced directly; narrower or expiring
+// resources are copied with immutable lineage and no transient expiration.
 inline bool retain_agent_resource(
         agent_resource_store & store,
         const common_runtime_resource_ref & source,
@@ -56,7 +57,7 @@ inline bool retain_agent_resource(
         error = "resource reference metadata does not match its host resource";
         return false;
     }
-    if (scope_rank(original.scope) >= scope_rank(target.scope)) {
+    if (scope_rank(original.scope) >= scope_rank(target.scope) && original.expires_at == 0) {
         retained = std::move(original);
         error.clear();
         return true;
@@ -88,8 +89,9 @@ inline bool retain_agent_resource(
     request.metadata = original.metadata;
     request.metadata.content_hash = original.sha256.empty() ? std::string{} : "sha256:" + original.sha256;
     request.lineage.parent_uri = original.uri;
-    request.lineage.derivation = target.scope == common_runtime_resource_scope::project
-        ? "research-source-project-promotion:v1" : "research-source-chat-retention:v1";
+    request.lineage.derivation = !target.derivation.empty() ? target.derivation :
+        target.scope == common_runtime_resource_scope::project
+            ? "resource-retention:project-v1" : "resource-retention:session-v1";
     if (!store.put_bytes(request, retained, error) || retained.uri.empty()) {
         if (error.empty()) error = "resource store returned an empty retained resource reference";
         return false;

@@ -1,4 +1,5 @@
 #include "agent/investigation-contracts.h"
+#include "agent/investigation-sources.h"
 
 #include <cmath>
 #include <iostream>
@@ -31,6 +32,27 @@ int main() {
     auto value = sample();
     value.events[0].source_index = "logs-2026.10";
     check(common_investigation_case_validate(value, error), "valid case must pass validation");
+    auto multi_source = value;
+    common_investigation_source secondary;
+    secondary.id = "provider-elastic-b";
+    secondary.kind = common_investigation_source_kind::search_connector;
+    secondary.provider_id = "elastic-b";
+    secondary.processing_status = "query_complete";
+    multi_source.sources.push_back(secondary);
+    auto secondary_entity = multi_source.entities.front();
+    secondary_entity.id = "user:secondary";
+    secondary_entity.source_id = "elastic-b";
+    multi_source.entities.push_back(secondary_entity);
+    check(common_investigation_case_validate(multi_source, error) &&
+        common_investigation_search_providers(multi_source) == (std::vector<std::string>{"elastic-a", "elastic-b"}),
+        "secondary provider domains must remain valid independently of source record identities");
+    check(common_investigation_source_complete(secondary),
+        "a complete collected search query must not be mistaken for an unprepared document");
+    secondary.processing_status = "not_collected";
+    check(!common_investigation_source_complete(secondary), "uncollected sources cannot imply complete coverage");
+    multi_source.sources.push_back(multi_source.sources.front());
+    multi_source.sources.back().id = "another-source-record";
+    check(!common_investigation_case_validate(multi_source, error), "duplicate provider domains must be rejected");
     const auto encoded = common_investigation_case_to_json(value);
     common_investigation_case_revision decoded;
     check(common_investigation_case_from_json(encoded, decoded, error) && decoded.case_id == value.case_id &&

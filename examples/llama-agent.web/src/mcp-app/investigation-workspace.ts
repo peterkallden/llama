@@ -1,6 +1,7 @@
 import "./investigation-workspace.css";
 import { RelationshipRenderer } from "../visualization/relationship-renderer";
 import { parseRelationshipVisualization } from "../visualization/contract";
+import { createLatestRequestGate } from "../async/latest-request";
 
 declare global { interface Window { __investigationWorkspace?: true } }
 if (!window.__investigationWorkspace) {
@@ -12,6 +13,11 @@ if (!window.__investigationWorkspace) {
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let seq = 1;
   let generation = 0;
+  const beginGraphRead = createLatestRequestGate(() => generation);
+  const beginEventRead = createLatestRequestGate(() => generation);
+  const beginResourceRead = createLatestRequestGate(() => generation);
+  const beginCaseListRead = createLatestRequestGate(() => generation);
+  const beginResourceChoiceRead = createLatestRequestGate(() => generation);
   let currentCase: Json | null = null;
   let selectedEntity = "";
   let selectedRelation = "";
@@ -70,6 +76,7 @@ if (!window.__investigationWorkspace) {
       ? new Date(ms - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
   }
   function resetEvents() {
+    beginEventRead();
     eventsCursor = ""; eventQuery = {}; selectedEvent = "";
     q("#timeline").replaceChildren(); q("#evidence").textContent = "";
     q<HTMLButtonElement>("#events-more").hidden = true;
@@ -77,6 +84,13 @@ if (!window.__investigationWorkspace) {
   }
   function showCase(value: Json) {
     currentCase = value;
+    caseSources = [];
+    statementCursor = ""; comparisonCursor = "";
+    for (const selector of ["#case-sources", "#selected-sources", "#statements", "#comparisons"])
+      q(selector).replaceChildren();
+    q<HTMLButtonElement>("#start-analysis").disabled = true;
+    q<HTMLButtonElement>("#statements-more").hidden = true;
+    q<HTMLButtonElement>("#comparisons-more").hidden = true;
     renderedVisualizationUri = "";
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
     q<HTMLInputElement>("#visualization-uri").value = "";
@@ -200,9 +214,11 @@ if (!window.__investigationWorkspace) {
     const target = q<HTMLDivElement>("#resource-results");
     const query = q<HTMLInputElement>("#resource-query").value.trim();
     const scope = q<HTMLSelectElement>("#resource-scope").value;
+    const isCurrent = beginResourceRead();
     try {
       const value = await rpc("ui/llama-agent/list-investigation-resources", { scope, query, limit: 30,
         ...(continuation ? { cursor: resourceCursor } : {}) });
+      if (!isCurrent()) return;
       if (!continuation) { target.replaceChildren(); resourceRows = []; }
       resourceCursor = String(value?.next_cursor ?? "");
       const resources = Array.isArray(value?.resources) ? value.resources : [];
@@ -216,12 +232,14 @@ if (!window.__investigationWorkspace) {
       }
       if (!resources.length && !continuation) { const empty = document.createElement("p"); empty.textContent = "No authorized resources match this search."; target.append(empty); }
       q<HTMLButtonElement>("#resource-more").hidden = !resourceCursor;
-    } catch (error) { target.textContent = error instanceof Error ? error.message : String(error); setStatus("Could not browse authorized resources.", true); }
+    } catch (error) { if (isCurrent()) { target.textContent = error instanceof Error ? error.message : String(error); setStatus("Could not browse authorized resources.", true); } }
   }
   async function populateCaseResources() {
+    const isCurrent = beginResourceChoiceRead();
     const selector = q<HTMLSelectElement>("#case-resource");
     selector.replaceChildren(new Option("Choose a host-authorized resource", ""));
     const firstPage = await rpc("ui/llama-agent/list-investigation-resources", { scope: "session", limit: 50 });
+    if (!isCurrent()) return;
     const projectOption = q<HTMLSelectElement>("#resource-scope").querySelector<HTMLOptionElement>('option[value="project"]');
     if (projectOption) projectOption.disabled = !firstPage?.project_available;
     const scopes = ["session", ...(firstPage?.project_available ? ["project"] : [])];
@@ -230,6 +248,7 @@ if (!window.__investigationWorkspace) {
       for (let page = 0; page < 10; page++) {
         const result = scope === "session" && page === 0 ? firstPage :
           await rpc("ui/llama-agent/list-investigation-resources", { scope, limit: 50, ...(cursor ? { cursor } : {}) });
+        if (!isCurrent()) return;
         for (const resource of Array.isArray(result?.resources) ? result.resources : []) {
           const uri = String(resource.uri ?? "");
           if (!uri) continue;
@@ -251,12 +270,11 @@ if (!window.__investigationWorkspace) {
     }
     selectors.forEach((selector, index) => { selector.value = current[index]; });
   }
-  async function attachResource(uri: string) {
-    if (!currentCase || !uri) return;
-    const token = generation;
+  async function attachResource(uri: string, token = generation, kind = q<HTMLSelectElement>("#attach-kind").value) {
+    if (!currentCase || !uri || token !== generation) return;
     try {
       const result = await call("investigation.source.attach", { case_id: currentCase.case_id,
-        expected_revision: currentCase.revision, resource_uri: uri, kind: q<HTMLSelectElement>("#attach-kind").value }, token);
+        expected_revision: currentCase.revision, resource_uri: uri, kind }, token);
       if (result) await openCase(currentCase.case_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
@@ -344,11 +362,12 @@ if (!window.__investigationWorkspace) {
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function listCases(after = "") {
-    const token = ++generation;
+    const token = generation;
+    const isCurrent = beginCaseListRead();
     try {
       setStatus("Loading cases in this scope…");
       const value = await call("investigation.case.list", { limit: 50, after_case_id: after }, token);
-      if (!value) return;
+      if (!value || !isCurrent()) return;
       const target = q<HTMLDivElement>("#case-list-items");
       if (!after) target.replaceChildren();
       caseListCursor = String(value.next_cursor ?? "");
@@ -363,7 +382,7 @@ if (!window.__investigationWorkspace) {
       q("#case-list").removeAttribute("hidden");
       q<HTMLButtonElement>("#case-list-more").hidden = !caseListCursor;
       setStatus(`${target.children.length} cases visible in this scope.`);
-    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+    } catch (error) { if (isCurrent()) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   function renderGraph(value: Json, replace = false) {
     if (!graph) {
@@ -399,6 +418,9 @@ if (!window.__investigationWorkspace) {
     renderGraph(visualization, true);
     ++generation;
     currentCase = null;
+    q("#source-panel").setAttribute("hidden", "");
+    q("#analysis-panel").setAttribute("hidden", "");
+    q<HTMLButtonElement>("#start-analysis").disabled = true;
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
     resetEvents(); renderClaims([]);
     q<HTMLButtonElement>("#save-hypothesis").disabled = true;
@@ -418,7 +440,8 @@ if (!window.__investigationWorkspace) {
   }
   async function expand(center = selectedEntity) {
     if (!currentCase) return;
-    const token = ++generation;
+    const token = generation;
+    const isCurrent = beginGraphRead();
     try {
       const value = await call("investigation.graph.expand", {
         case_id: currentCase.case_id, case_revision: currentCase.revision,
@@ -427,19 +450,20 @@ if (!window.__investigationWorkspace) {
         window_start_ms: msValue("#filter-start") || currentCase.window_start_ms,
         window_end_ms: msValue("#filter-end") || currentCase.window_end_ms,
       }, token);
-      if (!value) return;
+      if (!value || !isCurrent()) return;
       renderGraph(value);
-    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+    } catch (error) { if (isCurrent()) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function loadEvents(entityId: string, relationId = "", continuation = false) {
     if (!currentCase) return;
     if (continuation && (!eventsCursor || eventQuery.case_id !== currentCase.case_id ||
         eventQuery.case_revision !== currentCase.revision || q<HTMLButtonElement>("#events-more").disabled)) return;
-    const token = ++generation;
+    const token = generation;
+    if (!continuation) resetEvents();
+    const isCurrent = beginEventRead();
     try {
       setStatus("Loading source events…");
       if (!continuation) {
-        resetEvents();
         eventQuery = { case_id: currentCase.case_id, case_revision: currentCase.revision, limit: 100,
         window_start_ms: msValue("#filter-start") || currentCase.window_start_ms,
         window_end_ms: msValue("#filter-end") || currentCase.window_end_ms };
@@ -448,12 +472,12 @@ if (!window.__investigationWorkspace) {
       q<HTMLButtonElement>("#events-more").disabled = true;
       const args: Json = { ...eventQuery, ...(continuation && eventsCursor ? { cursor: eventsCursor } : {}) };
       const value = await call("investigation.events", args, token);
-      if (!value) return;
+      if (!value || !isCurrent()) return;
       eventsCursor = String(value.next_cursor ?? "");
       renderTimeline(value.events ?? [], Boolean(value.has_more), continuation);
       setStatus(`${value.events?.length ?? 0} evidence events on this page${value.has_more ? " · more events are available" : ""}.`);
-    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
-    finally { if (token === generation) q<HTMLButtonElement>("#events-more").disabled = false; }
+    } catch (error) { if (isCurrent()) setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally { if (isCurrent()) q<HTMLButtonElement>("#events-more").disabled = false; }
   }
   function renderTimeline(events: Json[], hasMore: boolean, append = false) {
     const list = q<HTMLDivElement>("#timeline"); if (!append) list.replaceChildren();
@@ -645,11 +669,16 @@ if (!window.__investigationWorkspace) {
       input.value = "";
       return;
     }
+    const token = generation;
+    const caseId = currentCase.case_id;
+    const revision = currentCase.revision;
+    const kind = q<HTMLSelectElement>("#attach-kind").value;
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error("Investigation uploads are limited to 4 MiB per source.");
       const uploaded = await rpc("ui/llama-agent/upload-investigation-resource", { file });
-      if (uploaded?.resource_uri) await attachResource(String(uploaded.resource_uri));
-    } catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
+      if (uploaded?.resource_uri && currentCase?.case_id === caseId && currentCase?.revision === revision)
+        await attachResource(String(uploaded.resource_uri), token, kind);
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
     finally { input.value = ""; }
   });
   q("#save-hypothesis").addEventListener("click", () => void saveHypothesis());

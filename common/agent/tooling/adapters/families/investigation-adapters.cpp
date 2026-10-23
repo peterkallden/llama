@@ -2,6 +2,7 @@
 
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "agent/artifact/artifact-contract.h"
+#include "agent/investigation-access.h"
 #include "hash/hash.h"
 #include "resource/resource-retention.h"
 
@@ -162,6 +163,30 @@ bool investigation_comparison_kind_from_name(const std::string & value,
     return true;
 }
 
+bool investigation_retain_resource(const common_native_tool_bindings & bindings,
+        const agent_resource_descriptor & original, const std::string & source_tool,
+        agent_resource_descriptor & retained, std::string & error) {
+    constexpr size_t max_bytes = 4 * 1024 * 1024;
+    if (!bindings.resource_runtime.store || original.size_bytes > max_bytes) {
+        error = "investigation resource exceeds its retention limit or storage is unavailable";
+        return false;
+    }
+    const auto authority = make_agent_resource_read_authority(bindings.resource_runtime,
+        static_cast<int64_t>(std::time(nullptr)));
+    agent_resource_retention_target target;
+    target.scope = bindings.tool_scope.project_id.empty()
+        ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+    target.namespace_id = bindings.tool_scope.namespace_id;
+    target.session_id = bindings.tool_scope.session_id;
+    target.project_id = bindings.tool_scope.project_id;
+    target.turn_id = bindings.tool_scope.turn_id;
+    target.source_tool = source_tool;
+    target.max_bytes = max_bytes;
+    bool copied = false;
+    return retain_agent_resource(*bindings.resource_runtime.store,
+        static_cast<const common_runtime_resource_ref &>(original), authority, target, retained, copied, error);
+}
+
 bool investigation_make_resource_source(const common_native_tool_bindings & bindings,
         const std::string & case_id, const std::string & uri, const std::string & kind,
         common_investigation_source & source, std::string & error) {
@@ -177,20 +202,8 @@ bool investigation_make_resource_source(const common_native_tool_bindings & bind
         error = "investigation source exceeds the existing 4 MiB per-resource retention limit";
         return false;
     }
-    agent_resource_descriptor retained = original;
-    bool copied = false;
-    agent_resource_retention_target target;
-    target.scope = bindings.tool_scope.project_id.empty()
-        ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
-    target.namespace_id = bindings.tool_scope.namespace_id;
-    target.session_id = bindings.tool_scope.session_id;
-    target.project_id = bindings.tool_scope.project_id;
-    target.turn_id = bindings.tool_scope.turn_id;
-    target.source_tool = "investigation.source.attach";
-    target.max_bytes = 4 * 1024 * 1024;
-    if (!retain_agent_resource(*bindings.resource_runtime.store,
-            static_cast<const common_runtime_resource_ref &>(original), authority, target,
-            retained, copied, error)) return false;
+    agent_resource_descriptor retained;
+    if (!investigation_retain_resource(bindings, original, "investigation.source.attach", retained, error)) return false;
     const std::string identity = case_id + "\n" + uri + "\n" + original.sha256 + "\n" + kind;
     source = {};
     source.id = "source-" + hash_sha256_hex(identity.data(), identity.size()).substr(0, 40);
@@ -205,7 +218,9 @@ bool investigation_make_resource_source(const common_native_tool_bindings & bind
     source.original_uri = original.uri;
     source.original_parent_uri = original.lineage.parent_uri;
     source.processing_status = source.representation_uri.empty() ? "pending" : "ready";
-    source.complete = source.processing_status == "ready";
+    if (!retained.metadata.limitations.empty()) source.processing_limitations.push_back(retained.metadata.limitations);
+    source.complete = source.processing_status == "ready" && source.processing_limitations.empty();
+    if (!source.representation_uri.empty() && !source.complete) source.processing_status = "ready_with_limitations";
     if (source.representation_uri.empty()) source.processor_version = "pending-host-processor";
     error.clear();
     return true;
@@ -213,30 +228,9 @@ bool investigation_make_resource_source(const common_native_tool_bindings & bind
 
 bool investigation_authorize_sources(const common_native_tool_bindings & bindings,
         const common_investigation_case_revision & value, std::string & error) {
-    if (!value.source_id.empty() && !bindings.data_store->authorize_investigation_source(
-            value.source_id, bindings.tool_scope, error)) return false;
-    for (const auto & source : value.sources) {
-        if (source.kind == common_investigation_source_kind::search_connector) {
-            if (!bindings.data_store->authorize_investigation_source(source.provider_id,
-                    bindings.tool_scope, error)) return false;
-            continue;
-        }
-        if (bindings.resource_runtime.store == nullptr) { error = "resource store is unavailable"; return false; }
-        const auto authority = make_agent_resource_read_authority(bindings.resource_runtime,
-            static_cast<int64_t>(std::time(nullptr)));
-        agent_resource_descriptor descriptor;
-        if (!bindings.resource_runtime.store->stat(source.resource_uri, authority, descriptor, error) ||
-                (!source.content_hash.empty() && source.content_hash != "sha256:" + descriptor.sha256)) return false;
-        if (!source.representation_uri.empty() && source.representation_uri != source.resource_uri &&
-                !bindings.resource_runtime.store->stat(source.representation_uri, authority, descriptor, error)) return false;
-        if (!source.representation_uri.empty() && !source.representation_hash.empty() &&
-                source.representation_hash != "sha256:" + descriptor.sha256) {
-            error = "investigation source representation failed its retained content hash check";
-            return false;
-        }
-    }
-    error.clear();
-    return true;
+    return common_investigation_authorize_sources(value, bindings.tool_scope, *bindings.data_store,
+        bindings.resource_runtime.store, make_agent_resource_read_authority(bindings.resource_runtime,
+            static_cast<int64_t>(std::time(nullptr))), error);
 }
 
 bool investigation_publish_revision(const common_native_tool_bindings & bindings,
@@ -430,7 +424,8 @@ common_tool_execution_result execute_investigation_tool(
                 item.provider_id == source.provider_id);
         });
         if (prior != value.sources.end()) return common_adapter_success_json({
-            {"case_id", value.case_id}, {"revision", value.revision}, {"source_id", source.id}, {"reused", true}});
+            {"case_id", value.case_id}, {"revision", value.revision}, {"source_id", prior->id},
+            {"resource_uri", prior->resource_uri}, {"processing_status", prior->processing_status}, {"reused", true}});
         if (value.sources.size() >= 32) return common_adapter_limit_failure(
             "tool.investigation.case_source_count_limit", "case already contains the maximum 32 sources",
             "Remove a source or create another case before adding more sources.");
@@ -540,6 +535,12 @@ common_tool_execution_result execute_investigation_tool(
                 !common_resource_media_type_is_text_like(representation.mime_type))
             return common_adapter_execution_failure("tool.investigation.processing_invalid",
                 "processor output is not an authorized readable text resource", "Document processing produced an invalid representation.");
+        agent_resource_descriptor retained_representation;
+        if (!investigation_retain_resource(bindings, representation, "investigation.document.prepare",
+                retained_representation, error)) return common_adapter_execution_failure(
+            "tool.investigation.processing_retention_failed", std::move(error),
+            "The derived text could not be retained for this case's scope.");
+        representation = std::move(retained_representation);
         source->representation_uri = representation.uri;
         source->representation_hash = representation.sha256.empty() ? std::string() : "sha256:" + representation.sha256;
         source->processor_version = processed.processor_id;
@@ -610,6 +611,7 @@ common_tool_execution_result execute_investigation_tool(
         std::map<std::string, std::string> source_texts;
         for (const auto & source_ref : analysis_sources) {
             const auto source = std::find_if(value.sources.begin(), value.sources.end(), [&](const auto & item) { return item.id == source_ref; });
+            if (source != value.sources.end() && source->kind == common_investigation_source_kind::search_connector) continue;
             if (source == value.sources.end() || source->representation_uri.empty())
                 return common_adapter_not_found_failure("tool.investigation.analysis_text_unavailable",
                     "selected source has no prepared text representation", "Prepare the selected document sources before recording extracted statements.");
@@ -630,6 +632,14 @@ common_tool_execution_result execute_investigation_tool(
             if (!investigation_statement_kind_from_name(item["kind"].get<std::string>(), statement.kind)) return common_adapter_validation_failure(
                 "tool.investigation.statement_invalid", "statement kind is not supported");
             const auto & anchor = item["anchor"];
+            const auto nonnegative_integer = [&](const char * field) {
+                return anchor.contains(field) && anchor[field].is_number_integer() &&
+                    (anchor[field].is_number_unsigned() || anchor[field].get<int64_t>() >= 0);
+            };
+            if (!nonnegative_integer("byte_offset") || !nonnegative_integer("byte_length") ||
+                    (anchor.contains("page_number") && !nonnegative_integer("page_number")))
+                return common_adapter_validation_failure("tool.investigation.statement_anchor_invalid",
+                    "source anchor offsets, lengths and optional page numbers must be nonnegative integers");
             try {
                 statement.anchor.source_id = anchor.at("source_id").get<std::string>();
                 statement.anchor.resource_uri = anchor.at("resource_uri").get<std::string>();
@@ -639,7 +649,7 @@ common_tool_execution_result execute_investigation_tool(
                 statement.anchor.quote = anchor.at("quote").get<std::string>();
             } catch (const std::exception & exception) { return common_adapter_validation_failure(
                 "tool.investigation.statement_anchor_invalid", exception.what()); }
-            if (!analysis_sources.count(statement.anchor.source_id) ||
+            if (!source_texts.count(statement.anchor.source_id) ||
                     !common_investigation_anchor_validate(statement.anchor,
                         source_texts.at(statement.anchor.source_id), error))
                 return common_adapter_validation_failure("tool.investigation.statement_anchor_unverified", error);
@@ -674,6 +684,9 @@ common_tool_execution_result execute_investigation_tool(
             const auto right = std::find_if(value.statements.begin(), value.statements.end(), [&](const auto & s) { return s.id == comparison.right_statement_id; });
             if (left == value.statements.end() || right == value.statements.end()) return common_adapter_validation_failure(
                 "tool.investigation.comparison_statement_missing", "comparison statements must be present in the case revision");
+            if (!analysis_sources.count(left->anchor.source_id) || !analysis_sources.count(right->anchor.source_id))
+                return common_adapter_validation_failure("tool.investigation.comparison_source_unselected",
+                    "comparison statements must belong to the explicitly selected analysis sources");
             comparison.source_ids = {left->anchor.source_id, right->anchor.source_id};
             value.comparisons.push_back(std::move(comparison));
         }
@@ -684,6 +697,11 @@ common_tool_execution_result execute_investigation_tool(
         record.parameters_fingerprint = parameters_fingerprint;
         record.completeness = arguments.value("completeness", std::string("complete"));
         record.limitations = arguments.value("limitations", std::vector<std::string>{});
+        for (const auto & source : value.sources) if (analysis_sources.count(source.id) &&
+                !common_investigation_source_complete(source)) {
+            if (record.completeness == "complete") record.completeness = "partial";
+            record.limitations.push_back("Selected source " + source.id + " has incomplete or qualified coverage.");
+        }
         value.analyses.push_back(std::move(record));
         common_investigation_case_revision published;
         if (!investigation_publish_revision(bindings, std::move(value), expected, published, error))
@@ -859,7 +877,7 @@ common_tool_execution_result execute_investigation_tool(
         markdown += "## Scope and coverage\n\n";
         std::vector<std::string> report_limitations = value.gaps;
         for (const auto & source : value.sources) {
-            if (!source.complete || source.processing_status != "ready")
+            if (!common_investigation_source_complete(source))
                 report_limitations.push_back("Source " + source.id + " is incomplete or not fully processed (" + source.processing_status + ").");
             for (const auto & limitation : source.processing_limitations)
                 report_limitations.push_back("Source " + source.id + " processing limitation: " + limitation);

@@ -137,6 +137,7 @@ bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
         target.project_id = request.project_id;
         target.turn_id = request.turn_id;
         target.source_tool = "research.workspace.persist";
+        target.derivation = "research-source-chat-retention:v1";
         target.max_bytes = std::min<size_t>(4 * 1024 * 1024, max_total_bytes - copied_bytes);
         agent_resource_descriptor retained;
         bool copied = false;

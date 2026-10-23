@@ -15,6 +15,7 @@
 #include "../mcp/agent-mcp-server-tool-registry.h"
 #include "llama.h"
 #include "agent/agent-scope.h"
+#include "agent/investigation-access.h"
 #include "agent/agent-bootstrap.h"
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 #include "../runtime/agent-runtime-package-io.h"
@@ -1569,6 +1570,14 @@ bool resolve_agent_daemon_tooling(
             error = error.empty() ? "investigation context case is unavailable in the current scope" : error;
             return false;
         }
+        agent_resource_read_authority authority;
+        authority.namespace_id = request.namespace_id;
+        authority.session_id = request.session_id;
+        authority.project_id = request.project_id;
+        authority.turn_id = request.turn_id;
+        authority.now = static_cast<int64_t>(std::time(nullptr));
+        if (!common_investigation_authorize_sources(case_value, scope, *data_store,
+                resource_store, authority, error)) return false;
         nlohmann::ordered_json projection;
         if (!common_investigation_project_context(case_value, binding, projection, error)) return false;
         auto rendered = projection.dump(2);

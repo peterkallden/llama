@@ -31,6 +31,7 @@ bool promote_workspace_sources(
         target.project_id = scope.project_id;
         target.turn_id = scope.turn_id;
         target.source_tool = "research.workspace.publish";
+        target.derivation = "research-source-project-promotion:v1";
         target.max_bytes = std::min<size_t>(4 * 1024 * 1024, max_total_bytes - copied_bytes);
         agent_resource_descriptor retained;
         bool copied = false;

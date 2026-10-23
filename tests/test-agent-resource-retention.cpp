@@ -26,6 +26,7 @@ public:
         out.session_id = request.session_id;
         out.project_id = request.project_id;
         out.turn_id = request.turn_id;
+        out.expires_at = request.expires_at;
         out.sha256 = "resource-sha";
         out.metadata = request.metadata;
         out.lineage = request.lineage;
@@ -121,16 +122,19 @@ int main() {
     bool copied = false;
     assert(retain_agent_resource(store, original, authority, chat_target, chat_resource, copied, error));
     assert(copied && chat_resource.scope == common_runtime_resource_scope::session &&
-        chat_resource.lineage.parent_uri == original.uri && store.payloads.at(chat_resource.uri) == "retained evidence");
+        chat_resource.lineage.parent_uri == original.uri && store.payloads.at(chat_resource.uri) == "retained evidence" &&
+        chat_resource.lineage.derivation == "resource-retention:session-v1");
 
     agent_resource_retention_target project_target = chat_target;
     project_target.scope = common_runtime_resource_scope::project;
     project_target.project_id = "project-a";
     project_target.source_tool = "research.workspace.publish";
+    project_target.derivation = "explicit-test-retention:v1";
     agent_resource_descriptor project_resource;
     assert(retain_agent_resource(store, chat_resource, authority, project_target, project_resource, copied, error));
     assert(copied && project_resource.scope == common_runtime_resource_scope::project &&
-        project_resource.lineage.parent_uri == chat_resource.uri);
+        project_resource.lineage.parent_uri == chat_resource.uri &&
+        project_resource.lineage.derivation == "explicit-test-retention:v1");
 
     assert(retain_agent_resource(store, project_resource, authority, chat_target, chat_resource, copied, error));
     assert(!copied && chat_resource.uri == project_resource.uri);
@@ -141,6 +145,12 @@ int main() {
     assert(retain_agent_resource(store, project_resource, authority, exhausted_target, reused, copied, error));
     assert(!copied && reused.uri == project_resource.uri);
     assert(!retain_agent_resource(store, original, authority, exhausted_target, reused, copied, error));
+
+    store.resources.at(project_resource.uri).expires_at = 1000;
+    agent_resource_descriptor permanent;
+    assert(retain_agent_resource(store, project_resource, authority, project_target, permanent, copied, error));
+    assert(copied && permanent.uri != project_resource.uri && permanent.expires_at == 0 &&
+        permanent.scope == common_runtime_resource_scope::project && permanent.lineage.parent_uri == project_resource.uri);
 
     auto too_small = chat_target;
     too_small.max_bytes = 2;
