@@ -289,3 +289,119 @@ The live smoke has been exercised against Elasticsearch 8.17.3 and OpenSearch
 network events, checks a typed filter, deterministic sort and bounded first
 page, then removes the containers. It does not yet exercise PIT continuation,
 case publication/restart or daemon-backed collection.
+
+## Incremental document structure and uploaded log events
+
+The v2 definitions in `agent-investigation-workflows-v1.json` extend the same nine
+workflow families. The filename continues to identify the package schema. The
+package version and procedure, blueprint and workflow definition identities are
+v2 because the bootstrap importer preserves already installed definitions. Old
+v1 plans remain available; restarting imports the new definitions alongside them.
+No running plan is rewritten and no semantic routing precedence is introduced.
+
+### Uploaded structured logs
+
+A retained `log_file` source can be normalized using `investigation.log.import`
+after text preparation. The workspace exposes an explicit JSONL/CSV format and
+field mapping form. Upload and preparation do not start an import or analysis.
+For example, a JSONL source with nested ECS fields can use:
+
+```json
+{
+  "case_id": "case-example",
+  "expected_revision": 2,
+  "source_id": "source-example",
+  "format": "jsonl",
+  "fields": {
+    "event.type": "/event/type",
+    "@timestamp": "/@timestamp",
+    "user.id": "/user/id",
+    "host.id": "/host/id"
+  },
+  "limit": 200,
+  "idempotency_key": "import-attempt-1"
+}
+```
+
+Mapping values are exact JSON keys, JSON pointers, or exact CSV headers. JSON
+arrays and objects are not coerced into scalar identifiers. JSONL records and
+CSV records retain UTF-8 byte offsets, byte lengths and physical start lines;
+quoted CSV delimiters and embedded newlines are supported. Duplicate CSV headers
+are rejected. Unknown formats require a separately implemented parser profile;
+there is no heuristic format classifier, executable parser or model-generated
+regular expression path.
+
+The shared collection normalizer creates ordinary case events, entity roles and
+bounded evidence-backed relations. Event identities include the source domain,
+parser profile and original record position, rather than trusting a possibly
+reused event ID. Original text, rejected-record positions, import parameters and
+normalized pages remain available as evidence. Missing or invalid timestamps
+remain unknown and are recorded as limitations.
+
+A page scans at most 500 records, including rejected records. Input remains
+limited by the existing 4 MiB source-retention boundary; records are limited to
+64 KiB and JSON nesting to 64 levels. These are bounded historical imports, not
+a streaming tail or arbitrary-size file reader.
+
+The host persists the parser profile and next record separately from the original
+processor version. Subsequent calls with the same profile can resume saved
+progress without a browser cursor; supplied cursors must match revision, scope,
+source and profile. The parser profile cannot silently change after publication.
+Reusing an idempotency key with the same request replays the published response;
+using it for another page or profile produces a conflict. `complete` describes
+the current page, `exhausted` describes traversal, and `source_complete` also
+accounts for earlier rejected records and source limitations. None establishes
+complete coverage of the real-world incident.
+
+### Actor mentions and proposed cross-source links
+
+`investigation.statement.record` accepts optional `mentions` inside a statement:
+`name`, `kind` and absolute UTF-8 `byte_offset`. The host validates the exact name
+inside the verified statement quote and creates a stable mention ID and distinct
+actor-candidate ID. Equal names do not merge candidates. Candidates can exist
+without relations and are paginated through `investigation.case.items` types
+`actors`, `actor_mentions` and `evidence_links`, also shown in the workspace.
+Older free-form `actor_ids` remain readable; they are not retroactively resolved
+into the new anchored candidate structure.
+
+Optional `evidence_links` propose `possible_same_actor` between candidate IDs or
+`possible_same_event` between a `reported_event` statement and a normalized log
+event. The selected sources, endpoints and supporting statement IDs are checked
+by the host. Actor-link evidence must include the mentions of both candidates;
+event-link evidence must include the reported statement. These are proposals,
+not identity merges, independent corroboration or analyst decisions. Actual
+candidate merging/splitting and a new review UI are not introduced here.
+
+Hypotheses can use `supporting_statement_ids` and `contradicting_statement_ids`
+separately from their existing log-event references. Verifying a text position
+never verifies that the reported event occurred. Source-dependency comparisons
+remain available and should prevent dependent retellings from being described
+as independent evidence; there is no numerical independence score.
+
+### Source follow-up and frozen reports
+
+`investigation.analyze` with `analysis: "source_followup"` and explicit
+`source_ids` returns a bounded structural work list: prepare missing text, declare
+or continue a log import, extract missing statements, or compare selected source
+pairs without a complete published pair analysis. It does not infer identity or
+contradiction from names or wording, and does not execute the suggestions.
+The workspace provides a separate button for this deterministic read; users can
+then start the relevant existing chat workflow with their selected sources.
+
+Frozen report manifests preserve source parser profiles and progress, normalized
+event positions, actor candidates and mentions, proposed links, hypotheses and
+analysis records at the selected revision. Later documents add new revisions;
+they do not update old report evidence. Actor/mention tables and proposed links
+are available now; a dedicated actor graph projection and automated identity
+resolution are not added by this extension.
+
+### Verification status for this extension
+
+Contract coverage has been added for parser boundaries and rejection accounting,
+UTF-8/CSV positions, actor anchoring and identity separation, proposed event
+links, hypothesis evidence roundtrips, follow-up budgets, import pagination and
+idempotency, window-free event reads, isolated actor presentation and late import
+responses after navigation. The existing CTest and frontend registrations are
+reused. Compilation, CTest, frontend tests, browser smokes and model smokes have
+intentionally not been run for this extension; they remain required before the
+new paths are described as verified functionality.

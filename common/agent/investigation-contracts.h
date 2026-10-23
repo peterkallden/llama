@@ -54,6 +54,10 @@ struct common_investigation_source {
     std::vector<std::string> processing_limitations;
     uint64_t source_revision = 1;
     bool complete = true;
+    std::string log_parser_profile_json;
+    uint64_t log_import_next_record = 0;
+    uint64_t log_import_rejected_records = 0;
+    bool log_import_exhausted = false;
 };
 
 struct common_investigation_source_anchor {
@@ -76,6 +80,32 @@ struct common_investigation_statement {
     std::string extraction_origin = "model_proposal";
 };
 
+// Mentions remain source-local even when their display names are identical.
+struct common_investigation_actor_mention {
+    std::string id;
+    std::string statement_id;
+    std::string name;
+    std::string kind = "unknown";
+    common_investigation_source_anchor anchor;
+};
+
+struct common_investigation_actor_candidate {
+    std::string id;
+    std::string display_name;
+    std::vector<std::string> mention_ids;
+};
+
+// Proposed links do not merge actors or establish that two events are identical.
+struct common_investigation_evidence_link {
+    std::string id;
+    std::string kind;
+    std::string left_id;
+    std::string right_id;
+    std::vector<std::string> supporting_statement_ids;
+    std::string rationale;
+    std::string assessment_origin = "model_proposal";
+};
+
 struct common_investigation_comparison {
     std::string id;
     std::string left_statement_id;
@@ -93,6 +123,7 @@ struct common_investigation_analysis_record {
     uint64_t published_revision = 0;
     std::vector<std::string> source_ids;
     std::string parameters_fingerprint;
+    std::string result_json;
     std::string completeness = "complete";
     std::vector<std::string> limitations;
 };
@@ -126,6 +157,10 @@ struct common_investigation_event {
     std::string normalized_resource_uri;
     std::map<std::string, std::string> entity_roles;
     std::string source_index;
+    uint64_t source_byte_offset = 0;
+    uint64_t source_byte_length = 0;
+    uint64_t source_line = 0;
+    std::string parser_version;
 };
 
 struct common_investigation_relation {
@@ -161,6 +196,8 @@ struct common_investigation_claim {
     std::vector<std::string> supporting_event_ids;
     std::vector<std::string> contradicting_event_ids;
     std::vector<std::string> limitations;
+    std::vector<std::string> supporting_statement_ids;
+    std::vector<std::string> contradicting_statement_ids;
 };
 
 struct common_investigation_case_revision {
@@ -182,6 +219,9 @@ struct common_investigation_case_revision {
     std::vector<common_investigation_statement> statements;
     std::vector<common_investigation_comparison> comparisons;
     std::vector<common_investigation_analysis_record> analyses;
+    std::vector<common_investigation_actor_mention> actor_mentions;
+    std::vector<common_investigation_actor_candidate> actors;
+    std::vector<common_investigation_evidence_link> evidence_links;
     std::vector<std::string> gaps;
     std::string fingerprint;
 };
@@ -322,3 +362,8 @@ bool common_investigation_build_relations(
     std::string & error);
 std::vector<common_investigation_candidate> common_investigation_rank_candidates(
     std::vector<common_investigation_candidate>, size_t max_candidates);
+
+// Structural follow-up only: no language, name matching or inferred identity.
+bool common_investigation_source_followup(
+    const common_investigation_case_revision &, const std::vector<std::string> & source_ids,
+    const common_investigation_analysis_budget &, nlohmann::ordered_json &, std::string & error);

@@ -27,8 +27,9 @@ if (!window.__investigationWorkspace) {
   let caseListCursor = "";
   let reportCursor = "";
   let eventsCursor = "";
-  let statementCursor = "";
-  let comparisonCursor = "";
+  type AnalysisItemType = "statements" | "comparisons" | "actors" | "actor_mentions" | "evidence_links";
+  const analysisCursors: Partial<Record<AnalysisItemType, string>> = {};
+  const analysisReads: Partial<Record<AnalysisItemType, number>> = {};
   let resourceCursor = "";
   let caseSources: Json[] = [];
   let resourceRows: Json[] = [];
@@ -85,12 +86,14 @@ if (!window.__investigationWorkspace) {
   function showCase(value: Json) {
     currentCase = value;
     caseSources = [];
-    statementCursor = ""; comparisonCursor = "";
-    for (const selector of ["#case-sources", "#selected-sources", "#statements", "#comparisons"])
+    for (const type of Object.keys(analysisCursors) as AnalysisItemType[]) delete analysisCursors[type];
+    for (const selector of ["#case-sources", "#selected-sources", "#statements", "#comparisons", "#actors", "#actor_mentions", "#evidence_links", "#followup-steps"])
       q(selector).replaceChildren();
     q<HTMLButtonElement>("#start-analysis").disabled = true;
     q<HTMLButtonElement>("#statements-more").hidden = true;
     q<HTMLButtonElement>("#comparisons-more").hidden = true;
+    for (const type of ["actors", "actor_mentions", "evidence_links"])
+      q<HTMLButtonElement>(`#${type}-more`).hidden = true;
     renderedVisualizationUri = "";
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
     q<HTMLInputElement>("#visualization-uri").value = "";
@@ -119,6 +122,9 @@ if (!window.__investigationWorkspace) {
     void loadCaseSources();
     void loadAnalysisItems("statements");
     void loadAnalysisItems("comparisons");
+    void loadAnalysisItems("actors");
+    void loadAnalysisItems("actor_mentions");
+    void loadAnalysisItems("evidence_links");
   }
   async function loadCaseClaims() {
     if (!currentCase) return;
@@ -156,6 +162,40 @@ if (!window.__investigationWorkspace) {
           const prepare = document.createElement("button"); prepare.type = "button"; prepare.textContent = "Prepare text";
           prepare.addEventListener("click", () => void prepareSource(String(source.id ?? ""))); row.append(prepare);
         }
+        if (source.kind === "log_file" && source.representation_uri) {
+          const controls = document.createElement("details");
+          const summary = document.createElement("summary"); summary.textContent = "Import structured log events";
+          const format = document.createElement("select"); format.setAttribute("aria-label", "Log format");
+          for (const kind of ["jsonl", "csv"]) { const option = document.createElement("option"); option.value = kind; option.textContent = kind.toUpperCase(); format.append(option); }
+          const fields = document.createElement("textarea"); fields.setAttribute("aria-label", "Log field mapping");
+          fields.value = JSON.stringify({ "event.type": "/event/type", "@timestamp": "/@timestamp" }, null, 2);
+          let profile: Json | null = null;
+          try { profile = source.log_parser_profile_json ? JSON.parse(source.log_parser_profile_json) : null; } catch { /* The host reports invalid saved profiles. */ }
+          if (profile) { format.value = String(profile.format); fields.value = JSON.stringify(profile.fields, null, 2); format.disabled = true; fields.readOnly = true; }
+          const help = document.createElement("small"); help.textContent = "Explicit mapping: normalized field → exact JSON key/JSON pointer or CSV header. event.type is required. Up to 200 records per page; unknown formats are not guessed.";
+          const progress = document.createElement("small"); progress.textContent = `Processed ${source.log_import_next_record ?? 0} records · rejected ${source.log_import_rejected_records ?? 0}`;
+          const button = document.createElement("button"); button.type = "button";
+          button.textContent = profile ? "Import next page" : "Import first page";
+          button.disabled = source.log_import_exhausted === true;
+          let attempt: Json | null = null;
+          button.addEventListener("click", async () => {
+            if (!currentCase || button.disabled) return;
+            const token = generation, caseId = currentCase.case_id;
+            try {
+              if (!attempt) attempt = { case_id: caseId, expected_revision: currentCase.revision,
+                source_id: source.id, format: format.value, fields: JSON.parse(fields.value), limit: 200,
+                idempotency_key: crypto.randomUUID() };
+              button.disabled = true;
+              const result = await call("investigation.log.import", attempt, token);
+              if (!result || token !== generation) return;
+              attempt = null;
+              await openCase(String(caseId));
+            } catch (error) {
+              if (token === generation) { button.disabled = false; button.textContent = "Retry this import page"; setStatus(error instanceof Error ? error.message : String(error), true); }
+            }
+          });
+          controls.append(summary, help, format, fields, progress, button); row.append(controls);
+        }
         target.append(row);
         const selectedRow = document.createElement("label"); selectedRow.className = "selected-source";
         const selectedCheckbox = document.createElement("input"); selectedCheckbox.type = "checkbox"; selectedCheckbox.value = String(source.id ?? ""); selectedCheckbox.checked = true;
@@ -175,22 +215,23 @@ if (!window.__investigationWorkspace) {
       .filter((item) => item.checked).length;
     q<HTMLButtonElement>("#start-analysis").disabled = !currentCase || selected === 0;
   }
-  async function loadAnalysisItems(type: "statements" | "comparisons", continuation = false) {
-    if (!currentCase) return;
-    const cursor = type === "statements" ? statementCursor : comparisonCursor;
+  async function loadAnalysisItems(type: AnalysisItemType, continuation = false) {
+    if (!currentCase || analysisReads[type] === generation) return;
+    const cursor = analysisCursors[type] ?? "";
     if (continuation && !cursor) return;
     const token = generation;
-    const target = q<HTMLDivElement>(type === "statements" ? "#statements" : "#comparisons");
+    const target = q<HTMLDivElement>(`#${type}`);
+    analysisReads[type] = token;
+    q<HTMLButtonElement>(`#${type}-more`).disabled = true;
     try {
       const value = await call("investigation.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type, limit: 50, ...(continuation ? { cursor } : {}) }, token);
       if (!value || token !== generation) return;
       if (!continuation) target.replaceChildren();
-      if (type === "statements") statementCursor = String(value.next_cursor ?? "");
-      else comparisonCursor = String(value.next_cursor ?? "");
+      analysisCursors[type] = String(value.next_cursor ?? "");
       const rows = Array.isArray(value.items) ? value.items : [];
       if (!rows.length && !continuation) {
-        const empty = document.createElement("p"); empty.textContent = type === "statements" ? "No source-anchored statements recorded." : "No comparisons recorded."; target.append(empty);
+        const empty = document.createElement("p"); empty.textContent = `No ${type.replaceAll("_", " ")} recorded.`; target.append(empty);
       }
       for (const item of rows) {
         const box = document.createElement("div"); box.className = "analysis-item";
@@ -199,6 +240,18 @@ if (!window.__investigationWorkspace) {
           const quote = document.createElement("blockquote"); quote.textContent = `“${item.anchor?.quote ?? ""}”`;
           const meta = document.createElement("small"); meta.textContent = `${item.anchor?.source_id ?? "source"} · ${item.anchor?.resource_uri ?? ""} · byte ${item.anchor?.byte_offset ?? 0}${item.anchor?.page_number ? ` · page ${item.anchor.page_number}` : ""}`;
           box.append(title, quote, meta);
+        } else if (type === "actors") {
+          const title = document.createElement("strong"); title.textContent = String(item.display_name ?? item.id);
+          const detail = document.createElement("small"); detail.textContent = `${item.id} · candidate · ${item.mention_ids?.length ?? 0} anchored mentions`;
+          box.append(title, detail);
+        } else if (type === "actor_mentions") {
+          const title = document.createElement("strong"); title.textContent = `${item.name} (${item.kind})`;
+          const detail = document.createElement("small"); detail.textContent = `${item.id} · statement ${item.statement_id} · ${item.anchor?.source_id} · byte ${item.anchor?.byte_offset}`;
+          box.append(title, detail);
+        } else if (type === "evidence_links") {
+          const title = document.createElement("strong"); title.textContent = `${item.kind}: ${item.left_id} ↔ ${item.right_id}`;
+          const detail = document.createElement("small"); detail.textContent = `Proposed, no merge · ${item.rationale} · evidence ${(item.supporting_statement_ids ?? []).join(", ")}`;
+          box.append(title, detail);
         } else {
           const title = document.createElement("strong"); title.textContent = `${item.kind}: ${item.left_statement_id} ↔ ${item.right_statement_id}`;
           const detail = document.createElement("small"); detail.textContent = `${item.assessment_origin ?? "model_proposal"} · ${item.rationale ?? "No rationale provided."}`;
@@ -206,8 +259,12 @@ if (!window.__investigationWorkspace) {
         }
         target.append(box);
       }
-      q<HTMLButtonElement>(type === "statements" ? "#statements-more" : "#comparisons-more").hidden = !value.has_more;
+      q<HTMLButtonElement>(`#${type}-more`).hidden = !value.has_more;
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally {
+      if (analysisReads[type] === token) delete analysisReads[type];
+      if (token === generation) q<HTMLButtonElement>(`#${type}-more`).disabled = false;
+    }
   }
   async function browseResources(continuation = false) {
     if (continuation && !resourceCursor) return;
@@ -359,6 +416,7 @@ if (!window.__investigationWorkspace) {
       await loadReports();
       if (token !== generation) return;
       if (result.case.first_entity_id) await expand(result.case.first_entity_id);
+      if (token === generation) await loadEvents("");
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   async function listCases(after = "") {
@@ -498,6 +556,8 @@ if (!window.__investigationWorkspace) {
       event_id: event.id, source_index: event.source_index, source_document_id: event.source_document_id, event_type: event.event_type,
       event_time: event.time, entities: event.entity_ids, raw_resource_uri: event.raw_resource_uri,
       normalized_resource_uri: event.normalized_resource_uri,
+      source_resource_uri: event.source_resource_uri, source_byte_offset: event.source_byte_offset,
+      source_byte_length: event.source_byte_length, source_line: event.source_line, parser_version: event.parser_version,
       note: "This is a source-linked observation. It does not by itself establish causality.",
     }, null, 2);
   }
@@ -529,6 +589,22 @@ if (!window.__investigationWorkspace) {
         text: `Run the selected ${profiles[profile] ?? "investigation"} workflow for the selected sources in this case. Follow its declared steps, preserve source anchors and uncertainty, and do not present model proposals as verified findings.` } });
       setStatus("Analysis request sent through the normal chat workflow.");
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
+  }
+  async function suggestFollowup() {
+    if (!currentCase) return;
+    const token = generation;
+    try {
+      const context = selectedContext();
+      const result = await call("investigation.analyze", { case_id: context.case_id,
+        analysis: "source_followup", source_ids: context.source_ids, max_expansions: 10000 }, token);
+      if (!result || token !== generation) return;
+      const target = q<HTMLDivElement>("#followup-steps"); target.replaceChildren();
+      for (const step of result.steps ?? []) {
+        const row = document.createElement("p"); row.textContent = `${step.operation}: ${(step.source_ids ?? [step.source_id]).join(", ")} · ${step.reason}`; target.append(row);
+      }
+      if (!result.steps?.length) target.textContent = "No unprocessed sources or source pairs found within this structural check.";
+      if (!result.complete) { const note = document.createElement("p"); note.textContent = "Suggestions stopped at their budget or result limit."; target.append(note); }
+    } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
   function renderClaims(claims: Json[]) {
     const target = q<HTMLDivElement>("#claims"); target.replaceChildren();
@@ -651,6 +727,7 @@ if (!window.__investigationWorkspace) {
     resetEvents(); selectedRelation = "";
     renderGraph({ nodes: [], edges: [] }, true);
     void expand();
+    void loadEvents("");
   });
   q("#events-more").addEventListener("click", () => void loadEvents("", "", true));
   q("#frozen-reports-more").addEventListener("click", () => void loadReports(true));
@@ -658,6 +735,9 @@ if (!window.__investigationWorkspace) {
   q("#resource-more").addEventListener("click", () => void browseResources(true));
   q("#attach-search-source").addEventListener("click", () => void attachSearchSource());
   q("#start-analysis").addEventListener("click", () => void startAnalysis());
+  q("#suggest-followup").addEventListener("click", () => void suggestFollowup());
+  for (const type of ["actors", "actor_mentions", "evidence_links"] as AnalysisItemType[])
+    q(`#${type}-more`).addEventListener("click", () => void loadAnalysisItems(type, true));
   q("#statements-more").addEventListener("click", () => void loadAnalysisItems("statements", true));
   q("#comparisons-more").addEventListener("click", () => void loadAnalysisItems("comparisons", true));
   q<HTMLInputElement>("#resource-upload").addEventListener("change", async (event) => {

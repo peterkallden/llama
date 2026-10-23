@@ -1739,6 +1739,63 @@ int main() {
         std::cerr << "immutable normalization evidence must preserve endpoint roles and collection time\n";
         return 24;
     }
+    // Tool-level contracts for uploaded logs use the same retained-resource,
+    // normalization, publication and paginated event paths as search pages.
+    agent_resource_put_request uploaded_log;
+    uploaded_log.name = "uploaded-investigation.jsonl";
+    uploaded_log.mime_type = "text/plain";
+    uploaded_log.scope = common_runtime_resource_scope::project;
+    uploaded_log.bytes = "{\"type\":\"authentication\",\"ts\":500,\"user\":\"alex\",\"host\":\"app\"}\ninvalid\n{\"type\":\"network\",\"ts\":700}\n";
+    agent_resource_descriptor uploaded_log_descriptor;
+    if (!investigation_resources.put_bytes(uploaded_log, uploaded_log_descriptor, error)) return 25;
+    result = investigation_registry.execute({"investigation.case.create",nlohmann::json{
+        {"title","Uploaded logs"},{"question","What do these records show?"},
+        {"resource_uri",uploaded_log_descriptor.uri},{"resource_kind","log_file"}}.dump()});
+    if (!result.ok) { std::cerr << "uploaded log case creation failed\n"; return 26; }
+    const auto uploaded_case_id = nlohmann::json::parse(result.output).at("case_id").get<std::string>();
+    const auto uploaded_source_id = investigation_store.cases.at(uploaded_case_id).sources.front().id;
+    nlohmann::json import_args = {{"case_id",uploaded_case_id},{"expected_revision",1},
+        {"source_id",uploaded_source_id},{"format","jsonl"},{"limit",2},{"idempotency_key","page-one"},
+        {"fields",{{"event.type","type"},{"@timestamp","ts"},{"user.id","user"},{"host.id","host"}}}};
+    result = investigation_registry.execute({"investigation.log.import",import_args.dump()});
+    if (!result.ok) { std::cerr << "uploaded log import failed: " << result.failure_code << '\n'; return 27; }
+    const auto imported_page = nlohmann::json::parse(result.output);
+    if (imported_page.at("collected_events") != 1 || imported_page.at("rejected_count") != 1 ||
+            imported_page.at("exhausted") != false || imported_page.at("next_cursor").get<std::string>().empty()) return 28;
+    const auto first_log_event = investigation_store.cases.at(uploaded_case_id).events.front();
+    if (first_log_event.source_line != 1 || first_log_event.source_byte_offset != 0 ||
+            first_log_event.source_byte_length != uploaded_log.bytes.find('\n') || first_log_event.parser_version.empty()) return 29;
+    result = investigation_registry.execute({"investigation.log.import",import_args.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("reused") != true ||
+            investigation_store.cases.at(uploaded_case_id).revision != 2) return 30;
+    auto wrong_retry = import_args; wrong_retry["format"] = "csv";
+    result = investigation_registry.execute({"investigation.log.import",wrong_retry.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.idempotency_conflict") return 31;
+    import_args["expected_revision"] = 2; import_args["idempotency_key"] = "page-two";
+    import_args["cursor"] = imported_page.at("next_cursor");
+    result = investigation_registry.execute({"investigation.log.import",import_args.dump()});
+    if (!result.ok) { std::cerr << "uploaded log continuation failed\n"; return 32; }
+    const auto exhausted_page = nlohmann::json::parse(result.output);
+    const auto & imported_case = investigation_store.cases.at(uploaded_case_id);
+    if (exhausted_page.at("exhausted") != true || exhausted_page.at("source_complete") != false ||
+            imported_case.events.size() != 2 || imported_case.sources.front().log_import_next_record != 3 ||
+            imported_case.sources.front().log_import_rejected_records != 1 || imported_case.sources.front().complete) return 33;
+    result = investigation_registry.execute({"investigation.events",nlohmann::json{
+        {"case_id",uploaded_case_id},{"case_revision",3}}.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("events").size() != 2)
+        { std::cerr << "uploaded log events require a window-free read in document-only cases\n"; return 34; }
+    const auto & log_source = imported_case.sources.front();
+    const auto actor_offset = uploaded_log.bytes.find("alex");
+    result = investigation_registry.execute({"investigation.statement.record",nlohmann::json{
+        {"case_id",uploaded_case_id},{"expected_revision",3},{"idempotency_key","anchored-actor"},
+        {"analysis_kind","actor_relationship"},{"source_ids",nlohmann::json::array({uploaded_source_id})},
+        {"comparisons",nlohmann::json::array()},{"statements",nlohmann::json::array({{
+            {"id","log-statement"},{"kind","statement"},{"text","The log names alex."},
+            {"anchor",{{"source_id",uploaded_source_id},{"resource_uri",log_source.representation_uri},
+                {"byte_offset",actor_offset},{"byte_length",4},{"quote","alex"}}},
+            {"mentions",nlohmann::json::array({{{"name","alex"},{"kind","person"},{"byte_offset",actor_offset}}})}}})}}.dump()});
+    if (!result.ok || investigation_store.cases.at(uploaded_case_id).actor_mentions.size() != 1 ||
+            investigation_store.cases.at(uploaded_case_id).actors.size() != 1) return 35;
     std::filesystem::remove_all(repository);
     return 0;
 }

@@ -3,6 +3,7 @@
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "agent/artifact/artifact-contract.h"
 #include "agent/investigation-access.h"
+#include "agent/investigation-log-parser.h"
 #include "hash/hash.h"
 #include "resource/resource-retention.h"
 
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <ctime>
 #include <iomanip>
@@ -61,20 +63,28 @@ bool investigation_page_offset(const std::string & cursor, uint64_t revision,
 
 
 bool parse_investigation_time(const json & value, int64_t & out) {
+    if (value.is_number_unsigned()) {
+        const auto v = value.get<uint64_t>();
+        if (v > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) return false;
+        out = static_cast<int64_t>(v); return true;
+    }
     if (value.is_number_integer()) { out = value.get<int64_t>(); return true; }
-    if (value.is_number_float()) { out = static_cast<int64_t>(value.get<double>()); return true; }
+    if (value.is_number_float()) return false;
     if (!value.is_string()) return false;
     const std::string text = value.get<std::string>();
     char * end = nullptr;
+    errno = 0;
     const auto integer = std::strtoll(text.c_str(), &end, 10);
-    if (end != text.c_str() && *end == '\0') { out = integer; return true; }
+    if (errno != ERANGE && end != text.c_str() && *end == '\0') { out = integer; return true; }
     if (text.size() < 20) return false;
     std::tm parsed{};
     std::istringstream input(text.substr(0, 19));
     input >> std::get_time(&parsed, "%Y-%m-%dT%H:%M:%S");
     if (input.fail()) return false;
+    const std::tm original = parsed;
     const time_t seconds = timegm(&parsed);
-    if (seconds < 0) return false;
+    if (parsed.tm_year != original.tm_year || parsed.tm_mon != original.tm_mon || parsed.tm_mday != original.tm_mday ||
+            parsed.tm_hour != original.tm_hour || parsed.tm_min != original.tm_min || parsed.tm_sec != original.tm_sec) return false;
     int64_t millis = static_cast<int64_t>(seconds) * 1000;
     size_t cursor = 19;
     if (cursor < text.size() && text[cursor] == '.') {
@@ -84,11 +94,14 @@ bool parse_investigation_time(const json & value, int64_t & out) {
             if (digits < 3) fraction = fraction * 10 + (text[cursor] - '0');
             ++digits; ++cursor;
         }
+        if (!digits) return false;
         while (digits < 3) { fraction *= 10; ++digits; }
         millis += fraction;
     }
     if (cursor < text.size() && text[cursor] == 'Z') ++cursor;
     else if (cursor + 6 == text.size() && (text[cursor] == '+' || text[cursor] == '-') && text[cursor + 3] == ':') {
+        for (size_t i : {cursor + 1,cursor + 2,cursor + 4,cursor + 5})
+            if (text[i] < '0' || text[i] > '9') return false;
         const int hours = std::atoi(text.substr(cursor + 1, 2).c_str());
         const int minutes = std::atoi(text.substr(cursor + 4, 2).c_str());
         if (hours > 23 || minutes > 59) return false;
@@ -581,7 +594,7 @@ common_tool_execution_result execute_investigation_tool(
         json request_body = arguments;
         request_body.erase("expected_revision"); request_body.erase("case_id");
         request_body.erase("idempotency_key");
-        const std::string parameters = request_body.dump();
+        const std::string parameters = nlohmann::json(request_body).dump();
         const std::string parameters_fingerprint = "sha256:" + hash_sha256_hex(parameters.data(), parameters.size());
         const std::string analysis_identity = value.case_id + "\n" + idempotency_key;
         const std::string analysis_id = "analysis-" + hash_sha256_hex(
@@ -663,6 +676,34 @@ common_tool_execution_result execute_investigation_tool(
             statement.actor_ids = item.value("actor_ids", std::vector<std::string>{});
             statement.reported_time_text = item.value("reported_time_text", std::string{});
             statement.extraction_origin = "model_proposal";
+            if (item.contains("mentions")) {
+                if (!item["mentions"].is_array() || item["mentions"].size() > 32)
+                    return common_adapter_validation_failure("tool.investigation.mention_invalid", "at most 32 anchored actor mentions are allowed per statement");
+                for (const auto & mention : item["mentions"]) {
+                    if (!mention.is_object() || !mention.contains("name") || !mention["name"].is_string() ||
+                            !mention.contains("byte_offset") || !mention["byte_offset"].is_number_integer() ||
+                            (!mention["byte_offset"].is_number_unsigned() && mention["byte_offset"].get<int64_t>() < 0) ||
+                            (mention.contains("kind") && !mention["kind"].is_string()))
+                        return common_adapter_validation_failure("tool.investigation.mention_invalid", "mention name, kind and absolute byte offset have invalid types");
+                    common_investigation_actor_mention m;
+                    m.statement_id = statement.id;
+                    m.name = mention["name"].get<std::string>();
+                    m.kind = mention.value("kind",std::string("unknown"));
+                    m.anchor = statement.anchor;
+                    m.anchor.byte_offset = mention["byte_offset"].get<uint64_t>();
+                    m.anchor.byte_length = m.name.size(); m.anchor.quote = m.name;
+                    if (!common_investigation_anchor_validate(m.anchor, source_texts.at(m.anchor.source_id), error))
+                        return common_adapter_validation_failure("tool.investigation.mention_unverified", error);
+                    const std::string identity = value.case_id + "\n" + statement.id + "\n" + m.anchor.source_id + "\n" +
+                        std::to_string(m.anchor.byte_offset) + "\n" + m.name;
+                    m.id = "mention-" + hash_sha256_hex(identity.data(), identity.size()).substr(0,40);
+                    const std::string actor_id = "actor-" + hash_sha256_hex(m.id.data(), m.id.size()).substr(0,40);
+                    if (std::find(statement.actor_ids.begin(), statement.actor_ids.end(), actor_id) == statement.actor_ids.end())
+                        statement.actor_ids.push_back(actor_id);
+                    value.actors.push_back({actor_id,m.name,{m.id}});
+                    value.actor_mentions.push_back(std::move(m));
+                }
+            }
             value.statements.push_back(std::move(statement));
         }
         for (const auto & item : arguments["comparisons"]) {
@@ -689,6 +730,46 @@ common_tool_execution_result execute_investigation_tool(
                     "comparison statements must belong to the explicitly selected analysis sources");
             comparison.source_ids = {left->anchor.source_id, right->anchor.source_id};
             value.comparisons.push_back(std::move(comparison));
+        }
+        if (arguments.contains("evidence_links")) {
+            if (!arguments["evidence_links"].is_array() || arguments["evidence_links"].size() > 64)
+                return common_adapter_validation_failure("tool.investigation.evidence_link_invalid", "at most 64 proposed evidence links are allowed");
+            for (const auto & item : arguments["evidence_links"]) {
+                common_investigation_evidence_link link;
+                try {
+                    link.id = item.at("id").get<std::string>(); link.kind = item.at("kind").get<std::string>();
+                    link.left_id = item.at("left_id").get<std::string>(); link.right_id = item.at("right_id").get<std::string>();
+                    link.supporting_statement_ids = item.at("supporting_statement_ids").get<std::vector<std::string>>();
+                    link.rationale = item.at("rationale").get<std::string>();
+                } catch (const std::exception &) {
+                    return common_adapter_validation_failure("tool.investigation.evidence_link_invalid", "evidence link fields have invalid types");
+                }
+                for (const auto & id : link.supporting_statement_ids) {
+                    const auto statement = std::find_if(value.statements.begin(),value.statements.end(),[&](const auto & v) { return v.id == id; });
+                    if (statement == value.statements.end() || !analysis_sources.count(statement->anchor.source_id))
+                        return common_adapter_validation_failure("tool.investigation.evidence_link_unselected", "link evidence must belong to the explicitly selected sources");
+                }
+                if (link.kind == "possible_same_actor") {
+                    for (const auto & actor_id : {link.left_id,link.right_id}) {
+                        const auto actor = std::find_if(value.actors.begin(),value.actors.end(),[&](const auto & a) { return a.id == actor_id; });
+                        if (actor == value.actors.end()) return common_adapter_validation_failure("tool.investigation.actor_missing", "link references an unknown actor candidate");
+                        for (const auto & mention_id : actor->mention_ids) {
+                            const auto m = std::find_if(value.actor_mentions.begin(),value.actor_mentions.end(),[&](const auto & v) { return v.id == mention_id; });
+                            if (m == value.actor_mentions.end() || !analysis_sources.count(m->anchor.source_id))
+                                return common_adapter_validation_failure("tool.investigation.actor_unselected", "linked actors must belong to the selected sources");
+                        }
+                    }
+                } else if (link.kind == "possible_same_event") {
+                    const auto event = std::find_if(value.events.begin(),value.events.end(),[&](const auto & v) { return v.id == link.right_id; });
+                    if (event == value.events.end() || std::none_of(value.sources.begin(),value.sources.end(),[&](const auto & v) {
+                            return analysis_sources.count(v.id) && (v.id == event->source_id ||
+                                (v.kind == common_investigation_source_kind::search_connector && v.provider_id == event->source_id)); }))
+                        return common_adapter_validation_failure("tool.investigation.event_unselected", "linked log event must belong to a selected source");
+                }
+                // All links use the model-proposal origin. User review remains
+                // an independent host-authorized operation.
+                value.evidence_links.push_back(std::move(link));
+            }
         }
         common_investigation_analysis_record record;
         record.id = analysis_id; record.kind = analysis_kind; record.algorithm_version = "evidence-anchor-validation-v1";
@@ -720,7 +801,8 @@ common_tool_execution_result execute_investigation_tool(
             {"counts", {{"entities", value.entities.size()}, {"events", value.events.size()},
                 {"relations", value.relations.size()}, {"claims", value.claims.size()}, {"gaps", value.gaps.size()},
                 {"sources", value.sources.size()}, {"statements", value.statements.size()},
-                {"comparisons", value.comparisons.size()}, {"analyses", value.analyses.size()}}},
+                {"comparisons", value.comparisons.size()}, {"analyses", value.analyses.size()},
+                {"actors",value.actors.size()},{"actor_mentions",value.actor_mentions.size()},{"evidence_links",value.evidence_links.size()}}},
             {"first_entity_id", first_entity_id}, {"status", value.gaps.empty() ? "open" : "qualified"}}}});
     }
     if (operation == "investigation.case.items") {
@@ -771,13 +853,16 @@ common_tool_execution_result execute_investigation_tool(
             else if (item_type == "statements") collection = "statements";
             else if (item_type == "comparisons") collection = "comparisons";
             else if (item_type == "analyses") collection = "analyses";
+            else if (item_type == "actors") collection = "actors";
+            else if (item_type == "actor_mentions") collection = "actor_mentions";
+            else if (item_type == "evidence_links") collection = "evidence_links";
             else if (item_type == "entities") collection = "entities";
             else if (item_type == "events") collection = "events";
             else if (item_type == "relations") collection = "relations";
             else if (item_type == "claims") collection = "claims";
             else if (item_type == "gaps") collection = "gaps";
             else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
-                "type must be sources, statements, comparisons, analyses, entities, events, relations, claims, gaps or reports");
+                "type must be sources, statements, comparisons, analyses, actors, actor_mentions, evidence_links, entities, events, relations, claims, gaps or reports");
             source = serialized.at(collection);
         }
         json items = json::array();
@@ -942,10 +1027,27 @@ common_tool_execution_result execute_investigation_tool(
             markdown += "### " + std::string(state) + ": " + safe_text(claim.text) + "\n\n";
             for (const auto & id : claim.supporting_event_ids) markdown += "- Supports: `" + safe_text(id) + "`\n";
             for (const auto & id : claim.contradicting_event_ids) markdown += "- Contradicts: `" + safe_text(id) + "`\n";
+            for (const auto & id : claim.supporting_statement_ids) markdown += "- Supporting statement: `" + safe_text(id) + "`\n";
+            for (const auto & id : claim.contradicting_statement_ids) markdown += "- Contradicting statement: `" + safe_text(id) + "`\n";
             for (const auto & limitation : claim.limitations) markdown += "- Limitation: " + safe_text(limitation) + "\n";
             markdown += "\n";
         }
-        markdown += "## Source statements\n\n";
+        markdown += "## Actor candidates and proposed links\n\n";
+        for (const auto & actor : value.actors) {
+            markdown += "- Candidate `" + safe_text(actor.id) + "`: " + safe_text(actor.display_name) + "; mentions:";
+            for (const auto & id : actor.mention_ids) markdown += " `" + safe_text(id) + "`";
+            markdown += "\n";
+        }
+        for (const auto & mention : value.actor_mentions) markdown += "- Mention `" + safe_text(mention.id) + "`: " +
+            safe_text(mention.name) + " in statement `" + safe_text(mention.statement_id) + "`, resource `" +
+            safe_text(mention.anchor.resource_uri) + "`, byte " + std::to_string(mention.anchor.byte_offset) + "\n";
+        for (const auto & link : value.evidence_links) {
+            markdown += "- Proposed " + safe_text(link.kind) + ": `" + safe_text(link.left_id) + "` ↔ `" + safe_text(link.right_id) +
+                "` — " + safe_text(link.rationale) + "; statements:";
+            for (const auto & id : link.supporting_statement_ids) markdown += " `" + safe_text(id) + "`";
+            markdown += "\n";
+        }
+        markdown += "\n## Source statements\n\n";
         if (value.statements.empty()) markdown += "No source-anchored statements are recorded.\n\n";
         for (const auto & statement : value.statements) {
             const char * kind = statement.kind == common_investigation_statement_kind::reported_event ? "reported_event" :
@@ -1015,6 +1117,9 @@ common_tool_execution_result execute_investigation_tool(
             {"statements", frozen_case_json.at("statements")},
             {"comparisons", frozen_case_json.at("comparisons")},
             {"analyses", frozen_case_json.at("analyses")},
+            {"actors", frozen_case_json.at("actors")},{"actor_mentions", frozen_case_json.at("actor_mentions")},
+            {"evidence_links", frozen_case_json.at("evidence_links")},
+            {"events", frozen_case_json.at("events")},{"claims",frozen_case_json.at("claims")},
             {"gaps", report_limitations}};
         const auto source_json = frozen_source.dump();
         const std::string source_fingerprint = "sha256:" + hash_sha256_hex(source_json.data(), source_json.size());
@@ -1161,7 +1266,35 @@ common_tool_execution_result execute_investigation_tool(
         }
         return result;
     }
-    if (operation == "investigation.collect") {
+    if (operation == "investigation.collect" || operation == "investigation.log.import") {
+        const bool file_import = operation == "investigation.log.import";
+        if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
+                (!arguments["expected_revision"].is_number_unsigned() && arguments["expected_revision"].get<int64_t>() < 1))
+            return common_adapter_validation_failure("tool.investigation.collect_invalid_arguments", "expected_revision must be a positive integer");
+        std::string import_analysis_id, import_parameters;
+        if (file_import) {
+            if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
+                    !arguments.contains("idempotency_key") || !arguments["idempotency_key"].is_string() ||
+                    arguments["idempotency_key"].get<std::string>().empty() || arguments["idempotency_key"].get<std::string>().size() > 128)
+                return common_adapter_validation_failure("tool.investigation.log_invalid_arguments", "a positive revision and bounded idempotency key are required");
+            const auto identity = "log-import\n" + value.case_id + "\n" + arguments["idempotency_key"].get<std::string>();
+            import_analysis_id = "analysis-" + hash_sha256_hex(identity.data(),identity.size()).substr(0,40);
+            nlohmann::json canonical = arguments;
+            canonical.erase("expected_revision"); canonical.erase("idempotency_key");
+            const auto payload = canonical.dump();
+            import_parameters = "sha256:" + hash_sha256_hex(payload.data(),payload.size());
+            const auto existing = std::find_if(value.analyses.begin(),value.analyses.end(),[&](const auto & a) { return a.id == import_analysis_id; });
+            if (existing != value.analyses.end()) {
+                if (existing->parameters_fingerprint != import_parameters)
+                    return common_adapter_failure("tool.investigation.idempotency_conflict",common_tool_failure_class::conflict,
+                        false,"This log import key was already used for a different page or profile.","log import idempotency payload mismatch");
+                auto replay = json::parse(existing->result_json,nullptr,false);
+                if (!replay.is_object()) return common_adapter_execution_failure("tool.investigation.import_result_invalid",
+                    "saved import response is invalid","The import result cannot be replayed.");
+                replay["reused"] = true; replay["current_revision"] = value.revision;
+                return common_adapter_success_json(replay);
+            }
+        }
         if (arguments.value("expected_revision", uint64_t(0)) != value.revision) {
             return common_adapter_execution_failure("tool.investigation.revision_conflict",
                 "case revision changed before collection", "Reload the case before collecting more evidence.");
@@ -1169,108 +1302,185 @@ common_tool_execution_result execute_investigation_tool(
         if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
             "tool.investigation.evidence_store_unavailable", "resource store is unavailable",
             "Evidence collection is unavailable because persistent resource storage is not configured.");
-        common_agent_dataset_descriptor dataset;
-        const auto dataset_uri = arguments.value("dataset", std::string());
-        if (!bindings.data_store->get_dataset_descriptor(dataset_uri, dataset, error) ||
-                dataset.ref.storage_mode != common_agent_dataset_storage_mode::virtual_) {
-            return common_adapter_not_found_failure("tool.investigation.dataset_unavailable",
-                error.empty() ? "dataset is not a configured virtual search dataset" : std::move(error),
-                "Choose a configured virtual search dataset.");
-        }
-        const std::string collection_source_id = dataset.ref.source_provider;
-        auto attached_source = std::find_if(value.sources.begin(), value.sources.end(), [&](const auto & source) {
-            return source.kind == common_investigation_source_kind::search_connector &&
-                source.provider_id == collection_source_id;
-        });
-        if (collection_source_id.empty() ||
-                (attached_source == value.sources.end() && collection_source_id != value.source_id)) {
-            return common_adapter_not_found_failure("tool.investigation.dataset_unavailable",
-                "dataset provider is not attached to this case", "Attach an authorized search source before collecting it.");
-        }
-        if (attached_source == value.sources.end()) {
-            common_investigation_source legacy_source;
-            legacy_source.id = "provider-" + collection_source_id;
-            legacy_source.kind = common_investigation_source_kind::search_connector;
-            legacy_source.provider_id = collection_source_id;
-            legacy_source.display_name = collection_source_id;
-            legacy_source.processing_status = "not_collected";
-            legacy_source.complete = false;
-            value.sources.push_back(std::move(legacy_source));
-        }
-        std::vector<common_investigation_relation_rule> configured_relation_profiles;
-        if (!dataset.ref.source_request_json.empty()) {
-            const auto source_request = json::parse(dataset.ref.source_request_json, nullptr, false);
-            if (!source_request.is_object() ||
-                    (source_request.contains("relation_profiles") &&
-                        (!source_request["relation_profiles"].is_array() || source_request["relation_profiles"].size() > 256))) {
-                return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
-                    "configured source relation profiles are malformed");
-            }
-            if (source_request.contains("relation_profiles")) {
-                for (const auto & profile : source_request["relation_profiles"]) {
-                    if (!profile.is_object() || !profile.contains("id") || !profile["id"].is_string() ||
-                            !profile.contains("event_type") || !profile["event_type"].is_string() ||
-                            !profile.contains("from_kind") || !profile["from_kind"].is_string() ||
-                            !profile.contains("to_kind") || !profile["to_kind"].is_string() ||
-                            !profile.contains("relation_kind") || !profile["relation_kind"].is_string()) {
-                        return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
-                            "configured source relation profile is incomplete");
-                    }
-                    common_investigation_relation_rule rule;
-                    rule.id = profile["id"].get<std::string>();
-                    rule.event_type = profile["event_type"].get<std::string>();
-                    if (!investigation_entity_kind_from_name(profile["from_kind"].get<std::string>(), rule.from_kind) ||
-                            !investigation_entity_kind_from_name(profile["to_kind"].get<std::string>(), rule.to_kind) ||
-                            !investigation_relation_kind_from_name(profile["relation_kind"].get<std::string>(), rule.relation_kind) ||
-                            (profile.contains("from_role") && !profile["from_role"].is_string()) ||
-                            (profile.contains("to_role") && !profile["to_role"].is_string())) {
-                        return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
-                            "configured source relation profile contains an invalid kind or role");
-                    }
-                    rule.from_role = profile.value("from_role", std::string());
-                    rule.to_role = profile.value("to_role", std::string());
-                    configured_relation_profiles.push_back(std::move(rule));
-                }
-            }
-        }
+        if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
+                (arguments.contains("limit") && !arguments["limit"].is_number_unsigned() &&
+                    (!arguments["limit"].is_number_integer() || arguments["limit"].get<int64_t>() < 1)))
+            return common_adapter_validation_failure("tool.investigation.collect_invalid_arguments", "revision and limit must be positive integers");
         const size_t limit = arguments.value("limit", size_t(200));
         if (limit == 0 || limit > 500) return common_adapter_validation_failure(
             "tool.investigation.collect_limit_invalid", "collection page size must be from 1 to 500");
-        json selected = json::array();
-        for (const auto & column : dataset.columns) selected.push_back(column.name);
-        json predicates = json::array({{{"field", arguments.value("identifier_field", std::string())},
-            {"operator", "="}, {"value", arguments.value("identifier_value", std::string())}}});
-        const auto has_column = [&](const std::string & name) {
-            return std::any_of(dataset.columns.begin(), dataset.columns.end(),
-                [&](const auto & column) { return column.name == name; });
-        };
-        const auto first_column = [&](std::initializer_list<const char *> candidates) {
-            for (const char * candidate : candidates) if (has_column(candidate)) return std::string(candidate);
-            return std::string();
-        };
-        const auto time_field = first_column({"@timestamp", "event_time", "event.time"});
-        if (time_field.empty()) return common_adapter_validation_failure(
-            "tool.investigation.timestamp_unmapped",
-            "the configured source has no supported event-time field; collection cannot enforce this case window");
-        predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
-        predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
-        const json query = {{"dataset", dataset_uri}, {"select", selected}, {"where", predicates},
-            {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit}};
-        std::string response;
-        if (!bindings.data_store->execute_scoped("data.query", query.dump(), bindings.tool_scope,
-                bindings.allow_network, response, error)) {
-            return common_adapter_execution_failure("tool.investigation.collect_failed", std::move(error),
-                "The configured source could not return this evidence page.");
+        std::string collection_source_id;
+        const auto dataset_uri = arguments.value("dataset", std::string());
+        std::vector<common_investigation_relation_rule> configured_relation_profiles;
+        json page, query;
+        common_investigation_log_page imported;
+        std::string parser_fingerprint;
+        json import_binding;
+        size_t start_record = 0;
+        if (file_import) {
+            if (!arguments.contains("source_id") || !arguments["source_id"].is_string() ||
+                    !arguments.contains("format") || !arguments["format"].is_string() ||
+                    !arguments.contains("fields") || !arguments["fields"].is_object() ||
+                    (arguments.contains("cursor") && !arguments["cursor"].is_string()))
+                return common_adapter_validation_failure("tool.investigation.log_profile_invalid", "source, format, fields and optional cursor have invalid types");
+            collection_source_id = arguments["source_id"].get<std::string>();
+            const auto source = std::find_if(value.sources.begin(), value.sources.end(), [&](const auto & item) {
+                return item.id == collection_source_id && item.kind == common_investigation_source_kind::log_file;
+            });
+            if (source == value.sources.end() || source->representation_uri.empty())
+                return common_adapter_validation_failure("tool.investigation.log_source_unprepared", "attach and prepare the selected log file before importing events");
+            std::map<std::string, std::string> fields;
+            for (auto it = arguments["fields"].begin(); it != arguments["fields"].end(); ++it) {
+                if (!it.value().is_string()) return common_adapter_validation_failure(
+                    "tool.investigation.log_profile_invalid", "every mapped source field must be a string");
+                fields.emplace(it.key(), it.value().get<std::string>());
+            }
+            query = {{"schema","investigation-log-parser.v1"},{"format",arguments["format"]},{"fields",fields},
+                {"source_id",source->id},{"source_revision",source->source_revision},{"representation_hash",source->representation_hash}};
+            const auto profile_json = nlohmann::json(query).dump();
+            parser_fingerprint = hash_sha256_hex(profile_json.data(), profile_json.size());
+            import_binding = {{"case_id",value.case_id},{"scope",{{"namespace",bindings.tool_scope.namespace_id},
+                {"project",bindings.tool_scope.project_id},{"session",bindings.tool_scope.session_id}}},{"profile",parser_fingerprint}};
+            start_record = source->log_import_next_record;
+            size_t requested_record = start_record;
+            if (arguments.contains("cursor") && !arguments["cursor"].get<std::string>().empty() &&
+                    (!investigation_page_offset(arguments["cursor"].get<std::string>(), value.revision, import_binding, requested_record) ||
+                        requested_record != start_record))
+                return common_adapter_validation_failure("tool.investigation.cursor_invalid", "log cursor is stale or belongs to another source, profile or scope");
+            const auto authority = make_agent_resource_read_authority(bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+            agent_resource_descriptor descriptor;
+            std::string text;
+            if (!bindings.resource_runtime.store->stat(source->representation_uri, authority, descriptor, error) ||
+                    descriptor.size_bytes > 4 * 1024 * 1024 ||
+                    !bindings.resource_runtime.store->read_text(source->representation_uri, authority, descriptor.size_bytes + 1, text, error) ||
+                    text.size() != descriptor.size_bytes)
+                return common_adapter_execution_failure("tool.investigation.log_read_failed", error.empty() ? "log representation is oversized or incomplete" : error,
+                    "The retained log text could not be read completely.");
+            if (!common_investigation_parse_log(text, arguments["format"].get<std::string>(), fields,
+                    start_record, limit, imported, error))
+                return common_adapter_validation_failure("tool.investigation.log_parse_failed", error);
+            // One source uses one declared parser profile. A different profile is
+            // a new source/analysis, never a silent replacement of old evidence.
+            if (!source->log_parser_profile_json.empty() && source->log_parser_profile_json != profile_json)
+                return common_adapter_validation_failure("tool.investigation.log_profile_conflict", "this source already has a different published parser profile");
+            json names = json::array();
+            for (const auto & row : imported.rows) for (auto it = row.begin(); it != row.end(); ++it)
+                if (std::find(names.begin(), names.end(), json(it.key())) == names.end()) names.push_back(it.key());
+            json rows = json::array();
+            for (auto row : imported.rows) {
+                row["@source.index"] = parser_fingerprint;
+                if (std::find(names.begin(), names.end(), json("@source.index")) == names.end()) names.push_back("@source.index");
+                json cells = json::array();
+                for (const auto & name : names) cells.push_back(row.contains(name.get<std::string>()) ? row.at(name.get<std::string>()) : json());
+                rows.push_back(std::move(cells));
+            }
+            page = {{"columns",names},{"rows",rows},{"complete",imported.exhausted && imported.rejected_count == 0},
+                {"rejected",imported.rejected},{"rejected_count",imported.rejected_count},{"exhausted",imported.exhausted},
+                {"record_start",start_record},{"record_end",imported.next_record},{"representation_uri",source->representation_uri}};
+        } else {
+            common_agent_dataset_descriptor dataset;
+            if (!bindings.data_store->get_dataset_descriptor(dataset_uri, dataset, error) ||
+                    dataset.ref.storage_mode != common_agent_dataset_storage_mode::virtual_) {
+                return common_adapter_not_found_failure("tool.investigation.dataset_unavailable",
+                    error.empty() ? "dataset is not a configured virtual search dataset" : std::move(error),
+                    "Choose a configured virtual search dataset.");
+            }
+            collection_source_id = dataset.ref.source_provider;
+            auto attached_source = std::find_if(value.sources.begin(), value.sources.end(), [&](const auto & source) {
+                return source.kind == common_investigation_source_kind::search_connector &&
+                    source.provider_id == collection_source_id;
+            });
+            if (collection_source_id.empty() ||
+                    (attached_source == value.sources.end() && collection_source_id != value.source_id)) {
+                return common_adapter_not_found_failure("tool.investigation.dataset_unavailable",
+                    "dataset provider is not attached to this case", "Attach an authorized search source before collecting it.");
+            }
+            if (attached_source == value.sources.end()) {
+                common_investigation_source legacy_source;
+                legacy_source.id = "provider-" + collection_source_id;
+                legacy_source.kind = common_investigation_source_kind::search_connector;
+                legacy_source.provider_id = collection_source_id;
+                legacy_source.display_name = collection_source_id;
+                legacy_source.processing_status = "not_collected";
+                legacy_source.complete = false;
+                value.sources.push_back(std::move(legacy_source));
+            }
+            if (!dataset.ref.source_request_json.empty()) {
+                const auto source_request = json::parse(dataset.ref.source_request_json, nullptr, false);
+                if (!source_request.is_object() ||
+                        (source_request.contains("relation_profiles") &&
+                            (!source_request["relation_profiles"].is_array() || source_request["relation_profiles"].size() > 256))) {
+                    return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                        "configured source relation profiles are malformed");
+                }
+                if (source_request.contains("relation_profiles")) {
+                    for (const auto & profile : source_request["relation_profiles"]) {
+                        if (!profile.is_object() || !profile.contains("id") || !profile["id"].is_string() ||
+                                !profile.contains("event_type") || !profile["event_type"].is_string() ||
+                                !profile.contains("from_kind") || !profile["from_kind"].is_string() ||
+                                !profile.contains("to_kind") || !profile["to_kind"].is_string() ||
+                                !profile.contains("relation_kind") || !profile["relation_kind"].is_string()) {
+                            return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                                "configured source relation profile is incomplete");
+                        }
+                        common_investigation_relation_rule rule;
+                        rule.id = profile["id"].get<std::string>();
+                        rule.event_type = profile["event_type"].get<std::string>();
+                        if (!investigation_entity_kind_from_name(profile["from_kind"].get<std::string>(), rule.from_kind) ||
+                                !investigation_entity_kind_from_name(profile["to_kind"].get<std::string>(), rule.to_kind) ||
+                                !investigation_relation_kind_from_name(profile["relation_kind"].get<std::string>(), rule.relation_kind) ||
+                                (profile.contains("from_role") && !profile["from_role"].is_string()) ||
+                                (profile.contains("to_role") && !profile["to_role"].is_string())) {
+                            return common_adapter_validation_failure("tool.investigation.source_descriptor_invalid",
+                                "configured source relation profile contains an invalid kind or role");
+                        }
+                        rule.from_role = profile.value("from_role", std::string());
+                        rule.to_role = profile.value("to_role", std::string());
+                        configured_relation_profiles.push_back(std::move(rule));
+                    }
+                }
+            }
+            json selected = json::array();
+            for (const auto & column : dataset.columns) selected.push_back(column.name);
+            json predicates = json::array({{{"field", arguments.value("identifier_field", std::string())},
+                {"operator", "="}, {"value", arguments.value("identifier_value", std::string())}}});
+            const auto has_column = [&](const std::string & name) {
+                return std::any_of(dataset.columns.begin(), dataset.columns.end(),
+                    [&](const auto & column) { return column.name == name; });
+            };
+            const auto first_column = [&](std::initializer_list<const char *> candidates) {
+                for (const char * candidate : candidates) if (has_column(candidate)) return std::string(candidate);
+                return std::string();
+            };
+            const auto time_field = first_column({"@timestamp", "event_time", "event.time"});
+            if (time_field.empty()) return common_adapter_validation_failure(
+                "tool.investigation.timestamp_unmapped",
+                "the configured source has no supported event-time field; collection cannot enforce this case window");
+            predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
+            predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
+            query = {{"dataset", dataset_uri}, {"select", selected}, {"where", predicates},
+                {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit}};
+            std::string response;
+            if (!bindings.data_store->execute_scoped("data.query", query.dump(), bindings.tool_scope,
+                    bindings.allow_network, response, error)) {
+                return common_adapter_execution_failure("tool.investigation.collect_failed", std::move(error),
+                    "The configured source could not return this evidence page.");
+            }
+            page = json::parse(response, nullptr, false);
+            if (!page.is_object() || !page.contains("columns") || !page["columns"].is_array() ||
+                    !page.contains("rows") || !page["rows"].is_array()) return common_adapter_execution_failure(
+                "tool.investigation.collect_invalid_result", "virtual dataset returned an invalid row page",
+                "The source result could not be normalized.");
         }
-        const auto page = json::parse(response, nullptr, false);
-        if (!page.is_object() || !page.contains("columns") || !page["columns"].is_array() ||
-                !page.contains("rows") || !page["rows"].is_array()) return common_adapter_execution_failure(
-            "tool.investigation.collect_invalid_result", "virtual dataset returned an invalid row page",
-            "The source result could not be normalized.");
         const bool query_complete = page.value("complete", false) &&
             !page.value("scan_truncated", false) && !page.value("result_truncated", false);
         std::vector<std::string> columns;
         for (const auto & column : page["columns"]) if (column.is_string()) columns.push_back(column.get<std::string>());
+        const auto first_column = [&](std::initializer_list<const char *> candidates) {
+            for (const char * candidate : candidates)
+                if (std::find(columns.begin(), columns.end(), candidate) != columns.end()) return std::string(candidate);
+            return std::string();
+        };
         std::vector<json> rows;
         for (const auto & row : page["rows"]) {
             if (!row.is_array() || row.size() != columns.size()) continue;
@@ -1295,8 +1505,8 @@ common_tool_execution_result execute_investigation_tool(
         for (const auto & event : value.events) existing_events.insert(event.id);
         std::vector<common_investigation_event> collected_events;
         std::vector<std::string> limitations;
-        if (!page.value("complete", false) || page.value("scan_truncated", false) ||
-                page.value("result_truncated", false)) {
+        if (!file_import && (!page.value("complete", false) || page.value("scan_truncated", false) ||
+                page.value("result_truncated", false))) {
             limitations.push_back("source page is partial or truncated; case coverage does not represent a complete search");
         }
         const auto entity_id = [&](common_investigation_entity_kind kind, const std::string & raw,
@@ -1317,6 +1527,8 @@ common_tool_execution_result execute_investigation_tool(
                 id, collection_source_id, kind, raw, raw, host, 0, 0});
             return id;
         };
+        if (file_import && imported.rejected_count) limitations.push_back(
+            "Rejected " + std::to_string(imported.rejected_count) + " invalid log records on this page; positions are preserved in raw evidence.");
         json normalized_rows = json::array();
         for (const auto & row : rows) {
             const std::string source_index = get_alias(row, {"@source.index"});
@@ -1370,6 +1582,13 @@ common_tool_execution_result execute_investigation_tool(
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
                 refs, {}, {}, {}, {}});
             collected_events.back().source_index = source_index;
+            if (file_import) {
+                auto & event = collected_events.back();
+                event.source_byte_offset = row.value("@source.byte_offset", uint64_t(0));
+                event.source_byte_length = row.value("@source.byte_length", uint64_t(0));
+                event.source_line = row.value("@source.line", uint64_t(0));
+                event.parser_version = "log-parser-v1:" + parser_fingerprint;
+            }
             if (!user_id.empty()) collected_events.back().entity_roles["user"] = user_id;
             if (!host_id.empty()) collected_events.back().entity_roles["host"] = host_id;
             if (!source_ip.empty()) collected_events.back().entity_roles["source_ip"] = source_ip;
@@ -1385,10 +1604,15 @@ common_tool_execution_result execute_investigation_tool(
             existing_events.insert(event_id);
             normalized_rows.push_back({{"event_id", event_id}, {"source_index", source_index},
                 {"source_document_id", source_document_id}, {"event_type", event_type},
+                {"source_byte_offset",collected_events.back().source_byte_offset},
+                {"source_byte_length",collected_events.back().source_byte_length},
+                {"source_line",collected_events.back().source_line},{"parser_version",collected_events.back().parser_version},
                 {"event_time_ms", event_time.event_time_ms}, {"has_event_time", event_time.has_event_time},
                 {"collected_time_ms", event_time.collected_time_ms},
                 {"entity_ids", refs}, {"entity_roles", collected_events.back().entity_roles}});
         }
+        std::sort(limitations.begin(),limitations.end());
+        limitations.erase(std::unique(limitations.begin(),limitations.end()),limitations.end());
         json raw_page = {{"source_id", collection_source_id}, {"dataset", dataset_uri},
             {"query", query}, {"result", page}, {"collected_at_ms", std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count()}};
@@ -1397,7 +1621,7 @@ common_tool_execution_result execute_investigation_tool(
         raw_put.description = "Immutable raw search page collected for investigation case " + value.case_id;
         raw_put.mime_type = "application/json"; raw_put.text = raw_page.dump(2);
         raw_put.scope = bindings.tool_scope.project_id.empty() ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
-        raw_put.source_provider = collection_source_id; raw_put.source_tool = "investigation.collect";
+        raw_put.source_provider = collection_source_id; raw_put.source_tool = operation;
         apply_agent_resource_runtime(bindings.resource_runtime, raw_put);
         agent_resource_descriptor raw_descriptor;
         if (!bindings.resource_runtime.store->put_text(raw_put, raw_descriptor, error)) return common_adapter_execution_failure(
@@ -1498,7 +1722,10 @@ common_tool_execution_result execute_investigation_tool(
             return relation.source_id == collection_source_id;
         }), value.relations.end());
         value.relations.insert(value.relations.end(), source_relations.begin(), source_relations.end());
-        value.gaps.insert(value.gaps.end(), limitations.begin(), limitations.end());
+        std::sort(limitations.begin(),limitations.end());
+        limitations.erase(std::unique(limitations.begin(),limitations.end()),limitations.end());
+        for (const auto & limitation : limitations)
+            if (std::find(value.gaps.begin(),value.gaps.end(),limitation) == value.gaps.end()) value.gaps.push_back(limitation);
         for (auto & source : value.sources) if (source.kind == common_investigation_source_kind::search_connector &&
                 source.provider_id == collection_source_id) {
             const bool first_collection = source.processing_status == "not_collected";
@@ -1510,22 +1737,68 @@ common_tool_execution_result execute_investigation_tool(
                     partial_reason) == source.processing_limitations.end())
                 source.processing_limitations.push_back(partial_reason);
         }
+        bool imported_source_complete = false;
+        if (file_import) for (auto & source : value.sources) if (source.id == collection_source_id) {
+            source.log_parser_profile_json = nlohmann::json(query).dump();
+            source.log_import_next_record = imported.next_record;
+            source.log_import_rejected_records += imported.rejected_count;
+            source.log_import_exhausted = imported.exhausted;
+            source.processing_status = imported.exhausted ? "ready" : "log_import_partial";
+            if (imported.rejected_count && std::find(source.processing_limitations.begin(), source.processing_limitations.end(),
+                    "Some log records could not be parsed; see immutable import pages.") == source.processing_limitations.end()) {
+                source.processing_limitations.push_back("Some log records could not be parsed; see immutable import pages.");
+                source.complete = false;
+            }
+            imported_source_complete = common_investigation_source_complete(source);
+        }
+        json import_result;
+        if (file_import) {
+            import_result = {{"case_id",value.case_id},{"revision",value.revision + 1},
+                {"collected_events",collected_events.size()},{"complete",query_complete},
+                {"limitations",limitations},{"raw_resource_uri",raw_descriptor.uri},{"normalized_resource_uri",normalized_descriptor.uri},
+                {"next_cursor",!imported.exhausted ? investigation_page_cursor(value.revision + 1,imported.next_record,import_binding) : std::string()},
+                {"exhausted",imported.exhausted},{"rejected_count",imported.rejected_count},
+                {"source_complete",imported_source_complete},{"reused",false}};
+            common_investigation_analysis_record record;
+            record.id = import_analysis_id; record.kind = "log_import"; record.algorithm_version = "log-parser-v1";
+            record.published_revision = value.revision + 1; record.source_ids = {collection_source_id};
+            record.parameters_fingerprint = import_parameters; record.result_json = import_result.dump();
+            record.completeness = query_complete ? "complete" : "partial"; record.limitations = limitations;
+            value.analyses.push_back(std::move(record));
+        }
         const uint64_t expected = value.revision++;
         common_investigation_case_revision published;
         const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
         if (!bindings.data_store->publish_investigation_case(value, expected, revision_uri, published, error))
             return common_adapter_execution_failure("tool.investigation.revision_conflict", std::move(error),
                 "The case changed while evidence was being collected; reload and retry.");
+        if (file_import) return common_adapter_success_json(import_result);
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"collected_events", collected_events.size()}, {"complete", page.value("complete", false)},
             {"limitations", limitations}, {"raw_resource_uri", raw_descriptor.uri},
-            {"normalized_resource_uri", normalized_descriptor.uri}});
+            {"normalized_resource_uri", normalized_descriptor.uri},
+            {"next_cursor", file_import && !imported.exhausted ? investigation_page_cursor(published.revision, imported.next_record, import_binding) : std::string()},
+            {"exhausted",file_import ? imported.exhausted : query_complete},
+            {"rejected_count",file_import ? imported.rejected_count : size_t(0)}});
     }
     if (operation == "investigation.analyze") {
         const auto analysis = arguments.value("analysis", std::string());
         common_investigation_analysis_budget budget;
         budget.max_expansions = arguments.value("max_expansions", budget.max_expansions);
         budget.max_path_length = arguments.value("max_path_length", budget.max_path_length);
+        if (analysis == "source_followup") {
+            if (!arguments.contains("source_ids") || !arguments["source_ids"].is_array())
+                return common_adapter_validation_failure("tool.investigation.followup_invalid", "select source IDs for follow-up");
+            std::vector<std::string> selected;
+            for (const auto & id : arguments["source_ids"]) {
+                if (!id.is_string()) return common_adapter_validation_failure("tool.investigation.followup_invalid", "source IDs must be strings");
+                selected.push_back(id.get<std::string>());
+            }
+            json result;
+            if (!common_investigation_source_followup(value, selected, budget, result, error))
+                return common_adapter_validation_failure("tool.investigation.followup_invalid",error);
+            return common_adapter_success_json(result);
+        }
         if (analysis == "graph_metrics") {
             common_investigation_graph_metrics metrics;
             if (!common_investigation_graph_analyze(value, budget, metrics, error)) {
@@ -1622,8 +1895,12 @@ common_tool_execution_result execute_investigation_tool(
                 "The selected relation is unavailable in this case.");
             evidence_ids.insert(relation->evidence_event_ids.begin(), relation->evidence_event_ids.end());
         }
-        const int64_t window_start = arguments.value("window_start_ms", value.window_start_ms);
-        const int64_t window_end = arguments.value("window_end_ms", value.window_end_ms);
+        int64_t window_start = arguments.value("window_start_ms", value.window_start_ms);
+        int64_t window_end = arguments.value("window_end_ms", value.window_end_ms);
+        if (window_start == 0 && window_end == 0) {
+            window_start = std::numeric_limits<int64_t>::min();
+            window_end = std::numeric_limits<int64_t>::max();
+        }
         if (window_start >= window_end) return common_adapter_validation_failure(
             "tool.investigation.events_window_invalid", "event window start must precede its end");
         const json binding = {{"case_id", value.case_id}, {"entity_id", entity_id},
@@ -1662,10 +1939,14 @@ common_tool_execution_result execute_investigation_tool(
             const auto & event = *matched[next_offset];
             json row = {{"id", event.id}, {"source_index", event.source_index},
                 {"source_document_id", event.source_document_id},
+                {"source_byte_offset",event.source_byte_offset},{"source_byte_length",event.source_byte_length},
+                {"source_line",event.source_line},{"parser_version",event.parser_version},
                 {"event_type", event.event_type}, {"time", {{"event_time_ms", event.time.event_time_ms},
                     {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
                     {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},
                 {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}};
+            const auto source = std::find_if(value.sources.begin(),value.sources.end(),[&](const auto & v) { return v.id == event.source_id; });
+            if (source != value.sources.end()) row["source_resource_uri"] = source->representation_uri;
             const size_t row_bytes = row.dump().size();
             if (!events.empty() && serialized_bytes + row_bytes > max_page_bytes) break;
             if (row_bytes > max_page_bytes) return common_adapter_execution_failure(
@@ -1693,6 +1974,8 @@ common_tool_execution_result execute_investigation_tool(
         claim.supporting_event_ids = arguments.value("supporting_event_ids", std::vector<std::string>{});
         claim.contradicting_event_ids = arguments.value("contradicting_event_ids", std::vector<std::string>{});
         claim.limitations = arguments.value("limitations", std::vector<std::string>{});
+        claim.supporting_statement_ids = arguments.value("supporting_statement_ids", std::vector<std::string>{});
+        claim.contradicting_statement_ids = arguments.value("contradicting_statement_ids", std::vector<std::string>{});
         value.claims.push_back(std::move(claim));
         const uint64_t expected = value.revision++;
         common_investigation_case_revision published;

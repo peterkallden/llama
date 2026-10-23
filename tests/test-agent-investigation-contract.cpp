@@ -1,5 +1,6 @@
 #include "agent/investigation-contracts.h"
 #include "agent/investigation-sources.h"
+#include "agent/investigation-log-parser.h"
 
 #include <cmath>
 #include <iostream>
@@ -282,6 +283,83 @@ int main() {
     const auto ranked = common_investigation_rank_candidates(std::move(candidates), 4);
     check(ranked.size() == 2 && ranked[0].id == "a" && ranked[1].posterior_priority < 0.8,
           "scoped outcome posterior should lower historically unhelpful work without overstating evidence");
+    // Declarative log parsing is independent of daemon, model and assertions.
+    common_investigation_log_page log_page;
+    const std::map<std::string,std::string> log_fields = {{"event.type","/event/type"},{"@timestamp","/@timestamp"},{"user.id","/user/id"}};
+    const std::string log_text = "{\"event\":{\"type\":\"auth\"},\"user\":{\"id\":\"åsa\"}}\ninvalid\n{\"event\":{\"type\":\"network\"}}\n";
+    check(common_investigation_parse_log(log_text,"jsonl",log_fields,0,2,log_page,error) &&
+        log_page.rows.size() == 1 && log_page.rejected_count == 1 && !log_page.exhausted && log_page.next_record == 2,
+        "log pages must count rejected records toward their scan budget and preserve continuation");
+    const auto first_record_length = log_text.find('\n');
+    check(log_page.rows[0]["@source.byte_length"] == first_record_length && log_page.rows[0]["user.id"] == "åsa",
+        "log anchors must use original UTF-8 bytes rather than character indexes");
+    check(common_investigation_parse_log(log_text,"jsonl",log_fields,2,2,log_page,error) &&
+        log_page.exhausted && log_page.rows.size() == 1 && log_page.rows[0]["@source.line"] == 3,
+        "continuation must reach the remaining original record without replaying earlier rows");
+    check(!common_investigation_parse_log(log_text,"auto",log_fields,0,2,log_page,error),
+        "unknown log formats must not trigger heuristic parser selection");
+    const std::string csv = "type,user\r\nauth,\"Åsa, A\"\r\nnetwork,\"two\nlines\"\r\n";
+    check(common_investigation_parse_log(csv,"csv",{{"event.type","type"},{"user.id","user"}},0,5,log_page,error) &&
+        log_page.exhausted && log_page.rows.size() == 2 && log_page.rows[1]["user.id"] == "two\nlines" &&
+        log_page.rows[1]["@source.line"] == 3,
+        "CSV parsing must preserve quoted delimiters, embedded newlines and record positions");
+    check(!common_investigation_parse_log("type,type\nauth,a\n","csv",{{"event.type","type"}},0,5,log_page,error),
+        "ambiguous duplicate CSV headers must fail rather than guess a column");
+    check(common_investigation_parse_log("{\"event\":{\"type\":[\"auth\"]}}\n","jsonl",log_fields,0,5,log_page,error) &&
+        log_page.rows.empty() && log_page.rejected_count == 1,
+        "structured values in scalar mappings must remain rejected evidence");
+
+    auto actor_case = sample();
+    common_investigation_source document;
+    document.id = "document-a"; document.resource_uri = "resource://original/a";
+    document.representation_uri = "resource://text/a";
+    actor_case.sources.push_back(document);
+    common_investigation_statement statement;
+    statement.id = "statement-a"; statement.kind = common_investigation_statement_kind::reported_event;
+    statement.text = "Alex met Alex.";
+    statement.anchor = {document.id,document.representation_uri,0,14,0,"Alex met Alex.",true};
+    actor_case.statements.push_back(statement);
+    auto mention_anchor = statement.anchor;
+    mention_anchor.byte_length = 4; mention_anchor.quote = "Alex";
+    actor_case.actor_mentions.push_back({"mention-a",statement.id,"Alex","person",mention_anchor});
+    mention_anchor.byte_offset = 9;
+    actor_case.actor_mentions.push_back({"mention-b",statement.id,"Alex","person",mention_anchor});
+    actor_case.actors = {{"actor-a","Alex",{"mention-a"}},{"actor-b","Alex",{"mention-b"}}};
+    check(common_investigation_case_validate(actor_case,error) && actor_case.actors.size() == 2,
+        "equal names at distinct source positions must remain separate actor candidates");
+    actor_case.evidence_links.push_back({"identity-proposal","possible_same_actor","actor-a","actor-b",{statement.id},"Explicit comparison remains provisional.","model_proposal"});
+    actor_case.evidence_links.push_back({"event-proposal","possible_same_event",statement.id,actor_case.events.front().id,{statement.id},"Reported and recorded event may correspond.","model_proposal"});
+    check(common_investigation_case_validate(actor_case,error) && actor_case.actors.size() == 2 && actor_case.events.size() == 2,
+        "proposed identity/event links must preserve distinct candidates and original log observations");
+    common_investigation_case_revision actor_reloaded;
+    check(common_investigation_case_from_json(common_investigation_case_to_json(actor_case),actor_reloaded,error) &&
+        actor_reloaded.actor_mentions.size() == 2 && actor_reloaded.evidence_links.size() == 2,
+        "actor structure and proposed cross-source links must survive case serialization");
+    actor_case.actor_mentions[1].anchor.byte_offset = 8;
+    check(!common_investigation_case_validate(actor_case,error),"actor anchors must match the exact named substring inside the statement");
+    actor_case = actor_reloaded;
+    actor_case.evidence_links.front().assessment_origin = "analyst_review";
+    check(!common_investigation_case_validate(actor_case,error),"model proposal records cannot become analyst decisions through an origin flag");
+    actor_case = actor_reloaded;
+    common_investigation_claim document_hypothesis;
+    document_hypothesis.id = "hypothesis-document"; document_hypothesis.text = "A testable explanation";
+    document_hypothesis.supporting_statement_ids = {statement.id}; actor_case.claims.push_back(document_hypothesis);
+    check(common_investigation_case_from_json(common_investigation_case_to_json(actor_case),actor_reloaded,error) &&
+        actor_reloaded.claims.back().supporting_statement_ids == document_hypothesis.supporting_statement_ids,
+        "hypothesis statement evidence must remain separate from log event evidence across reload");
+    common_investigation_source another = document; another.id = "document-b";
+    actor_case.sources.push_back(another);
+    nlohmann::ordered_json followup;
+    common_investigation_analysis_budget followup_budget;
+    check(common_investigation_source_followup(actor_case,{document.id,another.id},followup_budget,followup,error) &&
+        followup["complete"] == true && followup["steps"].size() == 2,
+        "new selected sources should offer extraction and comparison work without inferring semantic matches");
+    followup_budget.max_expansions = 1;
+    check(common_investigation_source_followup(actor_case,{document.id,another.id},followup_budget,followup,error) &&
+        followup["complete"] == false && followup["explored_states"] == 1,
+        "follow-up work must obey a scan budget even before suggestion generation");
+    check(!common_investigation_source_followup(actor_case,{"unselected-source"},followup_budget,followup,error),
+        "follow-up cannot manufacture access to a source outside the case");
     check(failures == 0, "all investigation contract checks must pass");
     return failures == 0 ? 0 : 1;
 }

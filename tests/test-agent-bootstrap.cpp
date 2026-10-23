@@ -291,6 +291,11 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
+    // Existing bootstrap objects are immutable; this package deliberately uses
+    // new identities so previously installed v1 procedures are not reused.
+    if (investigation_package.version != "v2" ||
+            std::any_of(investigation_package.procedures.begin(), investigation_package.procedures.end(),
+                [](const auto & p) { return p.id.size() < 3 || p.id.substr(p.id.size() - 3) != "-v2"; })) return 1;
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
         "workflow://investigation/communication-analysis",

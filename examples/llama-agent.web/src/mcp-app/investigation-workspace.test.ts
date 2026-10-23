@@ -57,14 +57,14 @@ function workspace() {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None,
   } }).outputText;
   new Function("RelationshipRenderer", "parseRelationshipVisualization", "createLatestRequestGate", "document",
-    "window", "parent", "addEventListener", "Option", script)(Renderer, (value: unknown) => value,
+    "window", "parent", "addEventListener", "Option", "crypto", script)(Renderer, (value: unknown) => value,
     createLatestRequestGate, { querySelector: node, createElement: element }, {}, parent,
     (_name: string, listener: typeof receive) => { receive = listener; },
-    class { constructor(public text: string, public value: string) {} });
+    class { constructor(public text: string, public value: string) {} }, { randomUUID: () => "import-attempt" });
   return { node, requests, respond,
-    deferTool(name: string, type: string) {
+    deferTool(name: string, type?: string) {
       const previous = handler;
-      handler = (request) => request.params?.name === name && request.params.arguments?.type === type
+      handler = (request) => request.params?.name === name && (!type || request.params.arguments?.type === type)
         ? undefined : previous(request);
     },
     defer(method: string) { const previous = handler; handler = (request) => request.method === method ? undefined : previous(request); },
@@ -97,4 +97,39 @@ it("does not attach an upload to another case opened while the upload was pendin
   view.respond(upload!.id, { resource_uri: "resource://session/uploaded" });
   await uploading; await settle();
   expect(view.requests.filter((request) => request.params?.name === "investigation.source.attach")).toHaveLength(0);
+});
+
+it("shows isolated actor candidates without requiring graph edges", async () => {
+  const view = workspace();
+  view.deferTool("investigation.case.items", "actors");
+  view.open("case-a"); await settle();
+  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" &&
+    request.params.arguments.type === "actors");
+  view.respond(read!.id, { items: [{ id: "actor-a", display_name: "Alex", mention_ids: ["mention-a"] }], has_more: false });
+  await settle();
+  const actor = view.node("#actors").children[0];
+  expect(actor.children[0].textContent).toBe("Alex");
+  expect(actor.children[1].textContent).toContain("candidate");
+  expect(actor.children[1].textContent).toContain("1 anchored mentions");
+});
+
+it("does not reopen the old case when an import completes after navigation", async () => {
+  const view = workspace();
+  view.deferTool("investigation.case.items", "sources");
+  view.deferTool("investigation.log.import");
+  view.open("case-a"); await settle();
+  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" &&
+    request.params.arguments.type === "sources");
+  view.respond(read!.id, { items: [{ id: "log-a", kind: "log_file", representation_uri: "resource://text/log-a" }] });
+  await settle();
+  const all = (item: Fields): Fields[] => [item, ...item.children.flatMap(all)];
+  const button = all(view.node("#case-sources")).find((item) => item.textContent === "Import first page")!;
+  const importing = button.handlers.click(); await settle();
+  const request = view.requests.find((item) => item.params?.name === "investigation.log.import");
+  expect(request?.params.arguments.case_id).toBe("case-a");
+  view.open("case-b"); await settle();
+  view.respond(request!.id, { case_id: "case-a", revision: 2, collected_events: 1 });
+  await importing; await settle();
+  expect(view.requests.filter((item) => item.params?.name === "investigation.case.open").map((item) => item.params.arguments.case_id))
+    .toEqual(["case-a", "case-b"]);
 });
