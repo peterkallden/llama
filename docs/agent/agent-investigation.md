@@ -369,8 +369,8 @@ Optional `evidence_links` propose `possible_same_actor` between candidate IDs or
 event. The selected sources, endpoints and supporting statement IDs are checked
 by the host. Actor-link evidence must include the mentions of both candidates;
 event-link evidence must include the reported statement. These are proposals,
-not identity merges, independent corroboration or analyst decisions. Actual
-candidate merging/splitting and a new review UI are not introduced here.
+not identity merges, independent corroboration or analyst decisions. Physical candidate merging/splitting is not used. The user review path described
+below groups the presentation while preserving candidates and their mentions.
 
 Hypotheses can use `supporting_statement_ids` and `contradicting_statement_ids`
 separately from their existing log-event references. Verifying a text position
@@ -392,8 +392,8 @@ Frozen report manifests preserve source parser profiles and progress, normalized
 event positions, actor candidates and mentions, proposed links, hypotheses and
 analysis records at the selected revision. Later documents add new revisions;
 they do not update old report evidence. Actor/mention tables and proposed links
-are available now; a dedicated actor graph projection and automated identity
-resolution are not added by this extension.
+are available now; the user-reviewed actor projection described below uses the shared relationship
+renderer; automated identity resolution is not added by this extension.
 
 ### Verification status for this extension
 
@@ -405,3 +405,73 @@ responses after navigation. The existing CTest and frontend registrations are
 reused. Compilation, CTest, frontend tests, browser smokes and model smokes have
 intentionally not been run for this extension; they remain required before the
 new paths are described as verified functionality.
+
+
+## User review of actor associations
+
+The Investigation Workspace now offers explicit actor selection and the actions
+**Same actor**, **Different actors**, **Leave identity unresolved**, **Confirm
+relationship** and **Leave relationship unresolved**. Identity confirmation can
+cover 2–32 selected candidates in one atomic publication; other actions use a
+pair. The selected candidate order determines relation direction. Users can add
+a comment describing their knowledge of the material. The `other` relation type
+requires a comment.
+
+`investigation.association.review` is an app-only operation. The native provider
+uses a separate, internally authorized adapter registry only after verifying the
+first-party Investigation Workspace provenance and normal write permissions.
+Ordinary native/model/async calls cannot authorize a review, including a call
+that guesses the tool name. Reviewer identity and timestamps are host-supplied,
+not accepted as tool arguments. App-only native tools are separated from model
+selection using the existing `app_tools()` contract; the same correction applies
+to app-only snapshot operations.
+
+The current authentication model records the authorized host namespace/session
+as `reviewer_id`; it does not infer a person's name from a token or document.
+This is session-level attribution, not an independently verified personal
+identity. The web host additionally requires the app's acknowledged case and
+revision before forwarding a review. Late opens or results cannot restore an old
+case binding.
+
+Decisions are immutable records with operation identity, request fingerprint,
+reviewer, timestamp, published case revision and predecessor decision. A retry
+with the same key and payload returns the published result; changed payloads or
+stale revisions fail explicitly. A later decision supersedes the effective
+meaning of the earlier decision for that pair, without deleting history.
+Identity and relationship decisions have separate histories. Directed relationship
+decisions are keyed by type and direction, so employment and ownership between
+the same actors can coexist; withdrawing one does not remove the other.
+
+The domain derives actor groups from current `same_actor` decisions. Original
+candidates, source-local mentions, statements and proposed links are never
+rewritten. `different_actors` decisions constrain grouping. If a new decision
+contradicts a transitive confirmation chain, publication stops with an explicit
+conflict; users must withdraw the conflicting confirmations first. This avoids
+silently choosing which knowledge to discard.
+
+`investigation.case.items` exposes revision-pinned `actor_groups`,
+`actor_relationships` and `association_reviews`. Group member lists are bounded
+and state their total counts and abbreviation status. Review history is shown
+newest first. The shared relationship renderer shows loaded groups and reviewed
+relations, including isolated actors. Missing pages and projection limits are
+explicit; no unseen association is manufactured to complete a diagram.
+
+The history lets users select an earlier pair for reconsideration. A failed
+publication preserves the decision draft and its retry key; users can retry the
+same operation or explicitly unlock the draft for editing. An unknown outcome
+cannot overwrite newer state because a new attempt still requires the expected
+case revision. Navigating away during publication does not reopen the old case
+when its response arrives.
+
+Reports freeze both review history and the derived actor projection at the
+selected revision. They label decisions as analyst-confirmed and retain the
+underlying source positions. Analyst confirmation does not become machine-
+verified causality or independent log corroboration.
+
+Contract cases have been written for grouping, withdrawal, transitive conflicts,
+review provenance and roundtrip, host-only execution, model/app visibility,
+idempotency, revision conflicts, case binding and late responses. Frontend cases
+also cover explicit selection and decision submission without a model turn.
+These changes have only received static review and `git diff --check`;
+compilation, CTest, frontend tests and functional/browser/model smokes have not
+been run, as requested.

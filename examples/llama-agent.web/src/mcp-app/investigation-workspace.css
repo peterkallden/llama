@@ -26,3 +26,8 @@ header,.panel-title,.time-filter{flex-wrap:wrap}body{padding-bottom:32px}.time-f
 .analysis-item .proposal{color:#e5bc72}
 @media(max-width:1000px){.source-picker{grid-template-columns:1fr 1fr}}
 @media(max-width:650px){.source-picker{grid-template-columns:1fr}.resource-results,#case-sources,#selected-sources,#statements,#comparisons{max-height:38vh}}
+
+.actor-association-graph { height: 320px; min-height: 240px; width: 100%; position: relative; }
+#association-review { min-width: 0; margin-block: 1rem; }
+#association-selection blockquote { overflow-wrap: anywhere; }
+#actor-association-detail { white-space: pre-wrap; overflow-wrap: anywhere; }

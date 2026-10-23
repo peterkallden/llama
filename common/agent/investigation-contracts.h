@@ -106,6 +106,24 @@ struct common_investigation_evidence_link {
     std::string assessment_origin = "model_proposal";
 };
 
+// Append-only user decisions. The host supplies reviewer identity and time;
+// model-proposed evidence links never populate this record type.
+struct common_investigation_association_review {
+    std::string id;
+    std::string operation_id;
+    std::string parameters_fingerprint;
+    std::string left_actor_id;
+    std::string right_actor_id;
+    std::string kind = "identity";
+    std::string decision;
+    std::string relation_type;
+    std::string comment;
+    std::string reviewer_id;
+    int64_t created_at_ms = 0;
+    uint64_t published_revision = 0;
+    std::string supersedes_id;
+};
+
 struct common_investigation_comparison {
     std::string id;
     std::string left_statement_id;
@@ -222,6 +240,7 @@ struct common_investigation_case_revision {
     std::vector<common_investigation_actor_mention> actor_mentions;
     std::vector<common_investigation_actor_candidate> actors;
     std::vector<common_investigation_evidence_link> evidence_links;
+    std::vector<common_investigation_association_review> association_reviews;
     std::vector<std::string> gaps;
     std::string fingerprint;
 };
@@ -367,3 +386,8 @@ std::vector<common_investigation_candidate> common_investigation_rank_candidates
 bool common_investigation_source_followup(
     const common_investigation_case_revision &, const std::vector<std::string> & source_ids,
     const common_investigation_analysis_budget &, nlohmann::ordered_json &, std::string & error);
+
+// Derive actor groups and reviewed relations without changing source mentions.
+// Conflicting transitive same/different-actor decisions fail explicitly.
+bool common_investigation_actor_associations(const common_investigation_case_revision &,
+    nlohmann::ordered_json &, std::string & error);

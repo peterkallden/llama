@@ -1796,6 +1796,39 @@ int main() {
             {"mentions",nlohmann::json::array({{{"name","alex"},{"kind","person"},{"byte_offset",actor_offset}}})}}})}}.dump()});
     if (!result.ok || investigation_store.cases.at(uploaded_case_id).actor_mentions.size() != 1 ||
             investigation_store.cases.at(uploaded_case_id).actors.size() != 1) return 35;
+    const auto reviewed_case_id = uploaded_case_id;
+    // Ordinary registered adapters have no user authority, regardless of args.
+    nlohmann::json user_review_args={{"case_id",reviewed_case_id},{"expected_revision",4},
+        {"idempotency_key","user-association"},{"actor_ids",nlohmann::json::array({"unknown-a","unknown-b"})},
+        {"kind","identity"},{"decision","same_actor"}};
+    result=investigation_registry.execute({"investigation.association.review",user_review_args.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.user_review_required") return 36;
+    // Add another independently anchored candidate through the model proposal
+    // path before exercising the host-only review binding.
+    auto & review_case=investigation_store.cases.at(reviewed_case_id);
+    auto second_mention=review_case.actor_mentions.front(); second_mention.id="separate-mention";
+    review_case.actor_mentions.push_back(second_mention);
+    review_case.actors.push_back({"separate-actor","alex",{second_mention.id}});
+    user_review_args["actor_ids"]=nlohmann::json::array({review_case.actors.front().id,"separate-actor"});
+    auto review_bindings=investigation_bindings;
+    review_bindings.investigation_reviewer_id="authenticated-session:tenant-a/session-a";
+    common_tool_registry review_registry;
+    if (!common_register_native_tool_adapters(investigation_catalog,"investigation",review_bindings,review_registry,adapters,error)) return 37;
+    result=review_registry.execute({"investigation.association.review",user_review_args.dump()});
+    if (!result.ok || investigation_store.cases.at(reviewed_case_id).association_reviews.size() != 1 ||
+        investigation_store.cases.at(reviewed_case_id).revision != 5) return 38;
+    result=review_registry.execute({"investigation.association.review",user_review_args.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("reused") != true ||
+        investigation_store.cases.at(reviewed_case_id).association_reviews.size() != 1) return 39;
+    auto changed_review=user_review_args; changed_review["decision"]="different_actors";
+    result=review_registry.execute({"investigation.association.review",changed_review.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.idempotency_conflict") return 40;
+    auto stale_review=user_review_args; stale_review["idempotency_key"]="another-review";
+    result=review_registry.execute({"investigation.association.review",stale_review.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.revision_conflict") return 41;
+    result=investigation_registry.execute({"investigation.case.items",nlohmann::json{
+        {"case_id",reviewed_case_id},{"case_revision",5},{"type","actor_groups"}}.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("items").size() != 1) return 42;
     std::filesystem::remove_all(repository);
     return 0;
 }

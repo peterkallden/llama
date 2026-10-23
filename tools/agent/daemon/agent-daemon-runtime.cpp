@@ -2180,15 +2180,14 @@ bool initialize_agent_daemon_environment(
         }
         if (!payload.mcp_app_resource_uri.empty()) {
             if (payload.mcp_app_resource_uri.rfind("ui://llama-agent/apps/", 0) == 0) {
-                const auto & chat_tools = tooling.tool_view->chat_tools();
-                const auto tool = std::find_if(chat_tools.begin(), chat_tools.end(), [&](const common_chat_tool & candidate) {
-                    return candidate.name == payload.tool_name;
-                });
-                if (tool == chat_tools.end()) {
+                const common_chat_tool * owner = nullptr;
+                for (const auto * tools : {&tooling.tool_view->chat_tools(),&tooling.tool_view->app_tools()})
+                    for (const auto & candidate : *tools) if (candidate.name == payload.tool_name) owner = &candidate;
+                if (owner == nullptr) {
                     callback_error = "MCP App resource owner tool is unavailable";
                     return false;
                 }
-                const auto metadata = nlohmann::ordered_json::parse(tool->mcp_ui_metadata, nullptr, false);
+                const auto metadata = nlohmann::ordered_json::parse(owner->mcp_ui_metadata, nullptr, false);
                 const auto visibility = metadata.is_object()
                     ? metadata.value("visibility", nlohmann::ordered_json::array())
                     : nlohmann::ordered_json::array();

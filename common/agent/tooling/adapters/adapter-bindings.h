@@ -18,6 +18,9 @@ class agent_resource_processing_provider;
 // pull in the complete adapter router.
 struct common_native_tool_bindings {
     common_agent_scope tool_scope;
+    // Populated only in the host's isolated first-party user-review executor.
+    // Ordinary model and native tool bindings leave this empty.
+    std::string investigation_reviewer_id;
     bool allow_network = false;
     common_memory_store * memory_store = nullptr;
     common_plan_store * plan_store = nullptr;

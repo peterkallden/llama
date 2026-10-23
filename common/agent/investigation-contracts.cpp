@@ -83,7 +83,7 @@ nlohmann::ordered_json common_investigation_case_to_json(const common_investigat
     using json = nlohmann::ordered_json;
     json entities=json::array(),events=json::array(),relations=json::array(),claims=json::array();
     json sources=json::array(),statements=json::array(),comparisons=json::array(),analyses=json::array();
-    json actor_mentions=json::array(), actors=json::array(), evidence_links=json::array();
+    json actor_mentions=json::array(), actors=json::array(), evidence_links=json::array(), association_reviews=json::array();
     for(const auto & e:c.entities) entities.push_back({{"id",e.id},{"source_id",e.source_id},{"kind",entity_kind(e.kind)},{"value",e.value},{"display_name",e.display_name},{"host_identity",e.host_identity},{"valid_from_ms",e.valid_from_ms},{"valid_to_ms",e.valid_to_ms}});
     for(const auto & e:c.events) events.push_back({{"id",e.id},{"source_id",e.source_id},{"source_index",e.source_index},{"source_byte_offset",e.source_byte_offset},{"source_byte_length",e.source_byte_length},{"source_line",e.source_line},{"parser_version",e.parser_version},{"source_document_id",e.source_document_id},{"event_type",e.event_type},{"time",{{"event_time_ms",e.time.event_time_ms},{"collected_time_ms",e.time.collected_time_ms},{"uncertainty_ms",e.time.uncertainty_ms},{"has_event_time",e.time.has_event_time}}},{"entity_ids",e.entity_ids},{"entity_roles",e.entity_roles},{"raw_resource_uri",e.raw_resource_uri},{"normalized_resource_uri",e.normalized_resource_uri}});
     for(const auto & r:c.relations) relations.push_back({{"id",r.id},{"source_id",r.source_id},{"from_entity_id",r.from_entity_id},{"to_entity_id",r.to_entity_id},{"kind",relation_kind(r.kind)},{"first_seen_ms",r.first_seen_ms},{"last_seen_ms",r.last_seen_ms},{"has_time",r.has_time},{"event_count",r.event_count},{"rule_id",r.rule_id},{"rule_revision",r.rule_revision},{"confidence_label",r.confidence_label},{"evidence_event_ids",r.evidence_event_ids}});
@@ -119,7 +119,13 @@ nlohmann::ordered_json common_investigation_case_to_json(const common_investigat
     for (const auto & l : c.evidence_links) evidence_links.push_back({{"id",l.id},{"kind",l.kind},
         {"left_id",l.left_id},{"right_id",l.right_id},{"supporting_statement_ids",l.supporting_statement_ids},
         {"rationale",l.rationale},{"assessment_origin",l.assessment_origin}});
-    return {{"schema_version",c.schema_version},{"case_id",c.case_id},{"revision",c.revision},{"previous_revision_uri",c.previous_revision_uri},{"title",c.title},{"question",c.question},{"scope",{{"namespace_id",c.scope.namespace_id},{"session_id",c.scope.session_id},{"project_id",c.scope.project_id},{"turn_id",c.scope.turn_id}}},{"source_id",c.source_id},{"window_start_ms",c.window_start_ms},{"window_end_ms",c.window_end_ms},{"entities",std::move(entities)},{"events",std::move(events)},{"relations",std::move(relations)},{"claims",std::move(claims)},{"sources",std::move(sources)},{"statements",std::move(statements)},{"comparisons",std::move(comparisons)},{"analyses",std::move(analyses)},{"actor_mentions",std::move(actor_mentions)},{"actors",std::move(actors)},{"evidence_links",std::move(evidence_links)},{"gaps",c.gaps},{"fingerprint",c.fingerprint}};
+    for (const auto & r : c.association_reviews) association_reviews.push_back({{"id",r.id},
+        {"operation_id",r.operation_id},{"parameters_fingerprint",r.parameters_fingerprint},
+        {"left_actor_id",r.left_actor_id},{"right_actor_id",r.right_actor_id},{"kind",r.kind},
+        {"decision",r.decision},{"relation_type",r.relation_type},{"comment",r.comment},
+        {"reviewer_id",r.reviewer_id},{"created_at_ms",r.created_at_ms},
+        {"published_revision",r.published_revision},{"supersedes_id",r.supersedes_id}});
+    return {{"schema_version",c.schema_version},{"case_id",c.case_id},{"revision",c.revision},{"previous_revision_uri",c.previous_revision_uri},{"title",c.title},{"question",c.question},{"scope",{{"namespace_id",c.scope.namespace_id},{"session_id",c.scope.session_id},{"project_id",c.scope.project_id},{"turn_id",c.scope.turn_id}}},{"source_id",c.source_id},{"window_start_ms",c.window_start_ms},{"window_end_ms",c.window_end_ms},{"entities",std::move(entities)},{"events",std::move(events)},{"relations",std::move(relations)},{"claims",std::move(claims)},{"sources",std::move(sources)},{"statements",std::move(statements)},{"comparisons",std::move(comparisons)},{"analyses",std::move(analyses)},{"actor_mentions",std::move(actor_mentions)},{"actors",std::move(actors)},{"evidence_links",std::move(evidence_links)},{"association_reviews",std::move(association_reviews)},{"gaps",c.gaps},{"fingerprint",c.fingerprint}};
 }
 
 bool common_investigation_case_from_json(const nlohmann::ordered_json & j, common_investigation_case_revision & c, std::string & error) {
@@ -192,6 +198,17 @@ bool common_investigation_case_from_json(const nlohmann::ordered_json & j, commo
             l.supporting_statement_ids=x.at("supporting_statement_ids").get<std::vector<std::string>>();
             l.rationale=x.value("rationale",std::string{}); l.assessment_origin=x.value("assessment_origin",std::string("model_proposal"));
             c.evidence_links.push_back(std::move(l));
+        }
+        if (j.contains("association_reviews")) for (const auto & x : j.at("association_reviews")) {
+            common_investigation_association_review r;
+            r.id=x.at("id").get<std::string>(); r.operation_id=x.at("operation_id").get<std::string>();
+            r.parameters_fingerprint=x.at("parameters_fingerprint").get<std::string>();
+            r.left_actor_id=x.at("left_actor_id").get<std::string>(); r.right_actor_id=x.at("right_actor_id").get<std::string>();
+            r.kind=x.at("kind").get<std::string>(); r.decision=x.at("decision").get<std::string>();
+            r.relation_type=x.value("relation_type",std::string{}); r.comment=x.value("comment",std::string{});
+            r.reviewer_id=x.at("reviewer_id").get<std::string>(); r.created_at_ms=x.at("created_at_ms").get<int64_t>();
+            r.published_revision=x.at("published_revision").get<uint64_t>(); r.supersedes_id=x.value("supersedes_id",std::string{});
+            c.association_reviews.push_back(std::move(r));
         }
         if (j.contains("analyses")) for (const auto & x : j.at("analyses")) {
             common_investigation_analysis_record a; a.id=x.at("id").get<std::string>(); a.kind=x.at("kind").get<std::string>();
@@ -295,6 +312,7 @@ bool common_investigation_project_context(
     projection.erase("actors");
     projection.erase("actor_mentions");
     projection.erase("evidence_links");
+    projection.erase("association_reviews");
     projection.erase("fingerprint");
     projection.erase("previous_revision_uri");
     projection.erase("scope");
@@ -333,7 +351,7 @@ bool common_investigation_case_validate(
             value.relations.size() > 500000 || value.claims.size() > 10000 ||
             value.sources.size() > 32 || value.statements.size() > 10000 ||
             value.comparisons.size() > 10000 || value.analyses.size() > 1000 ||
-            value.actor_mentions.size() > 10000 || value.actors.size() > 10000 || value.evidence_links.size() > 10000) {
+            value.actor_mentions.size() > 10000 || value.actors.size() > 10000 || value.evidence_links.size() > 10000 || value.association_reviews.size() > 10000) {
         error = "investigation case identity, time window, or bounded collection is invalid";
         return false;
     }
@@ -552,6 +570,10 @@ bool common_investigation_case_validate(
             error = "investigation comparison references an unknown source";
             return false;
         }
+    }
+    if (!value.association_reviews.empty()) {
+        nlohmann::ordered_json associations;
+        if (!common_investigation_actor_associations(value,associations,error)) return false;
     }
     for (const auto & analysis : value.analyses) {
         if (!valid_id(analysis.id) || !analysis_ids.insert(analysis.id).second || analysis.kind.empty() ||
@@ -1056,5 +1078,117 @@ bool common_investigation_source_followup(const common_investigation_case_revisi
     result = {{"case_revision",value.revision},{"analysis","source_followup"},{"complete",complete},
         {"steps",steps},{"explored_states",visited},
         {"limitations",{"Structural suggestions only; no identity, contradiction or causality is inferred."}}};
+    return true;
+}
+
+bool common_investigation_actor_associations(const common_investigation_case_revision & value,
+        nlohmann::ordered_json & result, std::string & error) {
+    using json = nlohmann::ordered_json;
+    error.clear(); result = json::object();
+    if (value.actors.size() > 10000 || value.association_reviews.size() > 10000) {
+        error = "actor association projection exceeds its bounds"; return false;
+    }
+    std::map<std::string,std::string> parent;
+    std::map<std::string,const common_investigation_actor_candidate *> actors;
+    for (const auto & actor : value.actors) {
+        if (!actors.emplace(actor.id,&actor).second) { error = "duplicate actor candidate"; return false; }
+        parent[actor.id] = actor.id;
+    }
+    const auto root = [&](std::string id) {
+        std::string found = id;
+        while (parent.at(found) != found) found = parent.at(found);
+        while (parent.at(id) != id) { const auto next = parent.at(id); parent[id] = found; id = next; }
+        return found;
+    };
+    const auto pair_key = [](const common_investigation_association_review & review) {
+        if (review.kind == "identity") return std::make_tuple(review.kind,std::string(),
+            std::min(review.left_actor_id,review.right_actor_id),std::max(review.left_actor_id,review.right_actor_id));
+        return std::make_tuple(review.kind,review.relation_type,review.left_actor_id,review.right_actor_id);
+    };
+    std::map<std::tuple<std::string,std::string,std::string,std::string>,const common_investigation_association_review *> latest;
+    std::set<std::string> ids;
+    std::map<std::string,std::tuple<std::string,std::string,uint64_t>> operations;
+    uint64_t last_revision = 0;
+    const std::set<std::string> relation_types = {"associated_with","employed_by","owns","member_of","communicated_with","other"};
+    for (const auto & review : value.association_reviews) {
+        const bool identity = review.kind == "identity";
+        const bool relationship = review.kind == "relationship";
+        if (!valid_id(review.id) || !ids.insert(review.id).second || review.operation_id.empty() || review.operation_id.size() > 128 ||
+                review.parameters_fingerprint.empty() || review.parameters_fingerprint.size() > 128 ||
+                !actors.count(review.left_actor_id) || !actors.count(review.right_actor_id) || review.left_actor_id == review.right_actor_id ||
+                (!identity && !relationship) || review.comment.size() > 4096 || review.reviewer_id.empty() || review.reviewer_id.size() > 512 ||
+                review.created_at_ms <= 0 || !review.published_revision || review.published_revision > value.revision ||
+                review.published_revision < last_revision ||
+                (identity && (review.decision != "same_actor" && review.decision != "different_actors" && review.decision != "unresolved")) ||
+                (relationship && (review.decision != "related" && review.decision != "unresolved")) ||
+                (identity && !review.relation_type.empty()) ||
+                (relationship && (!relation_types.count(review.relation_type) ||
+                    (review.relation_type == "other" && review.comment.empty())))) {
+            error = "association review has invalid provenance, endpoints or decision"; return false;
+        }
+        const auto provenance = std::make_tuple(review.parameters_fingerprint,review.reviewer_id,review.published_revision);
+        const auto operation = operations.emplace(review.operation_id,provenance);
+        if (!operation.second && operation.first->second != provenance) {
+            error = "association operation has inconsistent publication or reviewer provenance"; return false;
+        }
+        const auto key = pair_key(review);
+        const auto old = latest.find(key);
+        if (review.supersedes_id != (old == latest.end() ? std::string() : old->second->id)) {
+            error = "association review does not supersede the current decision for this pair"; return false;
+        }
+        latest[key] = &review; last_revision = review.published_revision;
+    }
+    for (const auto & item : latest) {
+        const auto & review = *item.second;
+        if (review.kind != "identity" || review.decision != "same_actor") continue;
+        const auto a = root(review.left_actor_id), b = root(review.right_actor_id);
+        if (a != b) parent[std::max(a,b)] = std::min(a,b);
+    }
+    for (const auto & item : latest) {
+        const auto & review = *item.second;
+        if (review.kind == "identity" && review.decision == "different_actors" && root(review.left_actor_id) == root(review.right_actor_id)) {
+            error = "different-actor decision conflicts with remaining confirmations; withdraw the conflicting same-actor decisions first";
+            return false;
+        }
+    }
+    std::map<std::string,json> groups;
+    for (const auto & actor : value.actors) {
+        const auto id = root(actor.id);
+        if (!groups.count(id)) groups[id] = {{"id",id},{"display_name",actors.at(id)->display_name},
+            {"actor_ids",json::array()},{"mention_ids",json::array()},{"assessment_origin","unreviewed_candidate"}};
+        groups[id]["actor_ids"].push_back(actor.id);
+        for (const auto & mention : actor.mention_ids) groups[id]["mention_ids"].push_back(mention);
+    }
+    std::set<std::string> distinguished;
+    for (const auto & item : latest) if (item.second->kind == "identity" && item.second->decision == "different_actors") {
+        distinguished.insert(root(item.second->left_actor_id)); distinguished.insert(root(item.second->right_actor_id));
+    }
+    json group_rows=json::array(), decisions=json::array(), relationships=json::array(), limitations=json::array();
+    for (auto & group : groups) {
+        if (group.second["actor_ids"].size() > 1) group.second["assessment_origin"] = "analyst_confirmed_identity";
+        else if (distinguished.count(group.first)) group.second["assessment_origin"] = "analyst_distinguished_identity";
+        group.second["actor_count"] = group.second["actor_ids"].size();
+        group.second["mention_count"] = group.second["mention_ids"].size();
+        const bool abbreviated = group.second["actor_ids"].size() > 128 || group.second["mention_ids"].size() > 128;
+        group.second["members_truncated"] = abbreviated;
+        for (const char * field : {"actor_ids","mention_ids"})
+            while (group.second[field].size() > 128) group.second[field].erase(group.second[field].end() - 1);
+        group_rows.push_back(std::move(group.second));
+    }
+    for (const auto & item : latest) {
+        const auto & review = *item.second;
+        decisions.push_back(review.id);
+        if (review.kind == "relationship" && review.decision == "related") {
+            const auto a=root(review.left_actor_id), b=root(review.right_actor_id);
+            if (a == b && review.published_revision == value.revision) {
+                error = "a new relationship requires two distinct actor groups"; return false;
+            }
+            if (a == b) { limitations.push_back("Reviewed relation " + review.id + " now falls within one actor group."); continue; }
+            relationships.push_back({{"id",review.id},{"source",a},{"target",b},{"type",review.relation_type},
+                {"assessment_origin","analyst_confirmed"},{"reviewer_id",review.reviewer_id}});
+        }
+    }
+    result = {{"case_revision",value.revision},{"groups",group_rows},{"relationships",relationships},
+        {"active_review_ids",decisions},{"limitations",limitations}};
     return true;
 }

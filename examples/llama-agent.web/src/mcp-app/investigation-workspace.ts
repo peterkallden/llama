@@ -23,11 +23,22 @@ if (!window.__investigationWorkspace) {
   let selectedRelation = "";
   let selectedEvent = "";
   let graph: RelationshipRenderer | null = null;
+  let actorGraph: RelationshipRenderer | null = null;
+  const selectedActors = new Set<string>();
+  const actorCandidates = new Map<string, Json>();
+  const sourceStatements = new Map<string, Json>();
+  const actorMentions = new Map<string, Json>();
+  const actorGroups = new Map<string, Json>();
+  const actorRelationships = new Map<string, Json>();
+  let actorGroupsLoaded = false, actorRelationshipsLoaded = false;
+  const actorProjectionLimitations = new Set<string>();
+  let reviewBusy = false;
+  let reviewAttempt: Json | null = null;
   let lastAppCallAt = 0;
   let caseListCursor = "";
   let reportCursor = "";
   let eventsCursor = "";
-  type AnalysisItemType = "statements" | "comparisons" | "actors" | "actor_mentions" | "evidence_links";
+  type AnalysisItemType = "statements" | "comparisons" | "actors" | "actor_mentions" | "evidence_links" | "actor_groups" | "actor_relationships" | "association_reviews";
   const analysisCursors: Partial<Record<AnalysisItemType, string>> = {};
   const analysisReads: Partial<Record<AnalysisItemType, number>> = {};
   let resourceCursor = "";
@@ -86,13 +97,20 @@ if (!window.__investigationWorkspace) {
   function showCase(value: Json) {
     currentCase = value;
     caseSources = [];
+    selectedActors.clear(); actorCandidates.clear(); sourceStatements.clear(); actorMentions.clear(); actorGroups.clear(); actorRelationships.clear();
+    reviewAttempt = null; reviewBusy = false;
+    actorGroupsLoaded = false; actorRelationshipsLoaded = false; actorProjectionLimitations.clear();
+    q<HTMLTextAreaElement>("#association-comment").value = "";
+    q("#actor-association-detail").textContent = "";
+    updateReviewSelection();
+    renderActorAssociations();
     for (const type of Object.keys(analysisCursors) as AnalysisItemType[]) delete analysisCursors[type];
-    for (const selector of ["#case-sources", "#selected-sources", "#statements", "#comparisons", "#actors", "#actor_mentions", "#evidence_links", "#followup-steps"])
+    for (const selector of ["#case-sources", "#selected-sources", "#statements", "#comparisons", "#actors", "#actor_mentions", "#evidence_links", "#followup-steps", "#actor_groups", "#actor_relationships", "#association_reviews"])
       q(selector).replaceChildren();
     q<HTMLButtonElement>("#start-analysis").disabled = true;
     q<HTMLButtonElement>("#statements-more").hidden = true;
     q<HTMLButtonElement>("#comparisons-more").hidden = true;
-    for (const type of ["actors", "actor_mentions", "evidence_links"])
+    for (const type of ["actors", "actor_mentions", "evidence_links", "actor_groups", "actor_relationships", "association_reviews"])
       q<HTMLButtonElement>(`#${type}-more`).hidden = true;
     renderedVisualizationUri = "";
     selectedEntity = ""; selectedRelation = ""; selectedEvent = "";
@@ -125,6 +143,9 @@ if (!window.__investigationWorkspace) {
     void loadAnalysisItems("actors");
     void loadAnalysisItems("actor_mentions");
     void loadAnalysisItems("evidence_links");
+    void loadAnalysisItems("actor_groups");
+    void loadAnalysisItems("actor_relationships");
+    void loadAnalysisItems("association_reviews");
   }
   async function loadCaseClaims() {
     if (!currentCase) return;
@@ -227,8 +248,19 @@ if (!window.__investigationWorkspace) {
       const value = await call("investigation.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type, limit: 50, ...(continuation ? { cursor } : {}) }, token);
       if (!value || token !== generation) return;
-      if (!continuation) target.replaceChildren();
+      if (!continuation) {
+        target.replaceChildren();
+        if (type === "actors") actorCandidates.clear();
+        if (type === "statements") sourceStatements.clear();
+        if (type === "actor_mentions") actorMentions.clear();
+        if (type === "actor_groups") actorGroups.clear();
+        if (type === "actor_relationships") actorRelationships.clear();
+      }
       analysisCursors[type] = String(value.next_cursor ?? "");
+      if (type === "actor_groups") actorGroupsLoaded = true;
+      if (type === "actor_relationships") actorRelationshipsLoaded = true;
+      if (type === "actor_groups" || type === "actor_relationships")
+        for (const limitation of value.limitations ?? []) actorProjectionLimitations.add(String(limitation));
       const rows = Array.isArray(value.items) ? value.items : [];
       if (!rows.length && !continuation) {
         const empty = document.createElement("p"); empty.textContent = `No ${type.replaceAll("_", " ")} recorded.`; target.append(empty);
@@ -236,15 +268,25 @@ if (!window.__investigationWorkspace) {
       for (const item of rows) {
         const box = document.createElement("div"); box.className = "analysis-item";
         if (type === "statements") {
+          sourceStatements.set(String(item.id),item);
           const title = document.createElement("strong"); title.textContent = `${item.kind}: ${item.text}`;
           const quote = document.createElement("blockquote"); quote.textContent = `“${item.anchor?.quote ?? ""}”`;
           const meta = document.createElement("small"); meta.textContent = `${item.anchor?.source_id ?? "source"} · ${item.anchor?.resource_uri ?? ""} · byte ${item.anchor?.byte_offset ?? 0}${item.anchor?.page_number ? ` · page ${item.anchor.page_number}` : ""}`;
           box.append(title, quote, meta);
         } else if (type === "actors") {
+          actorCandidates.set(String(item.id),item);
+          const choose = document.createElement("input"); choose.type = "checkbox"; choose.value = String(item.id);
+          choose.checked = selectedActors.has(String(item.id)); choose.setAttribute("aria-label", `Select actor ${item.display_name ?? item.id}`);
+          choose.addEventListener("change", () => {
+            if (choose.checked) selectedActors.add(String(item.id)); else selectedActors.delete(String(item.id));
+            updateReviewSelection();
+          });
+          box.append(choose);
           const title = document.createElement("strong"); title.textContent = String(item.display_name ?? item.id);
           const detail = document.createElement("small"); detail.textContent = `${item.id} · candidate · ${item.mention_ids?.length ?? 0} anchored mentions`;
           box.append(title, detail);
         } else if (type === "actor_mentions") {
+          actorMentions.set(String(item.id),item);
           const title = document.createElement("strong"); title.textContent = `${item.name} (${item.kind})`;
           const detail = document.createElement("small"); detail.textContent = `${item.id} · statement ${item.statement_id} · ${item.anchor?.source_id} · byte ${item.anchor?.byte_offset}`;
           box.append(title, detail);
@@ -252,6 +294,37 @@ if (!window.__investigationWorkspace) {
           const title = document.createElement("strong"); title.textContent = `${item.kind}: ${item.left_id} ↔ ${item.right_id}`;
           const detail = document.createElement("small"); detail.textContent = `Proposed, no merge · ${item.rationale} · evidence ${(item.supporting_statement_ids ?? []).join(", ")}`;
           box.append(title, detail);
+          if (item.kind === "possible_same_actor") {
+            const review = document.createElement("button"); review.type = "button"; review.textContent = "Review this identity proposal";
+            review.addEventListener("click", () => {
+              if (reviewBusy || reviewAttempt) return;
+              selectedActors.clear(); selectedActors.add(String(item.left_id)); selectedActors.add(String(item.right_id));
+              updateReviewSelection();
+            });
+            box.append(review);
+          }
+        } else if (type === "actor_groups") {
+          actorGroups.set(String(item.id),item);
+          const title = document.createElement("strong"); title.textContent = `${item.display_name}: ${item.actor_count} candidate(s)`;
+          const detail = document.createElement("small"); detail.textContent = `${item.assessment_origin} · ${item.mention_count} mentions · ${(item.actor_ids ?? []).join(", ")}${item.members_truncated ? " · member list abbreviated" : ""}`;
+          box.append(title,detail);
+        } else if (type === "actor_relationships") {
+          actorRelationships.set(String(item.id),item);
+          const title = document.createElement("strong"); title.textContent = `${item.source} → ${item.target}: ${item.type}`;
+          const detail = document.createElement("small"); detail.textContent = `Analyst confirmed · ${item.reviewer_id}`;
+          box.append(title,detail);
+        } else if (type === "association_reviews") {
+          const title = document.createElement("strong"); title.textContent = `${item.decision}: ${item.left_actor_id} ↔ ${item.right_actor_id}`;
+          const detail = document.createElement("small"); detail.textContent = `${item.id} · ${item.reviewer_id} · ${new Date(item.created_at_ms).toLocaleString()} · r${item.published_revision}${item.supersedes_id ? ` · supersedes ${item.supersedes_id}` : ""} · ${item.comment || "No comment"}`;
+          box.append(title,detail);
+          const reconsider = document.createElement("button"); reconsider.type = "button"; reconsider.textContent = "Select this pair for reconsideration";
+          reconsider.addEventListener("click", () => {
+            selectedActors.clear(); selectedActors.add(String(item.left_actor_id)); selectedActors.add(String(item.right_actor_id));
+            if (item.kind === "relationship") q<HTMLSelectElement>("#association-relation-type").value = String(item.relation_type);
+            updateReviewSelection();
+            q("#actor-association-detail").textContent = `Selected ${item.left_actor_id} and ${item.right_actor_id}. Choose a new decision; prior records remain in history.`;
+          });
+          box.append(reconsider);
         } else {
           const title = document.createElement("strong"); title.textContent = `${item.kind}: ${item.left_statement_id} ↔ ${item.right_statement_id}`;
           const detail = document.createElement("small"); detail.textContent = `${item.assessment_origin ?? "model_proposal"} · ${item.rationale ?? "No rationale provided."}`;
@@ -260,11 +333,83 @@ if (!window.__investigationWorkspace) {
         target.append(box);
       }
       q<HTMLButtonElement>(`#${type}-more`).hidden = !value.has_more;
+      updateReviewSelection();
+      if (type === "actor_groups" || type === "actor_relationships") renderActorAssociations();
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
     finally {
       if (analysisReads[type] === token) delete analysisReads[type];
       if (token === generation) q<HTMLButtonElement>(`#${type}-more`).disabled = false;
     }
+  }
+  function updateReviewSelection() {
+    const target = q<HTMLDivElement>("#association-selection"); target.replaceChildren();
+    for (const id of selectedActors) {
+      const actor = actorCandidates.get(id);
+      const line = document.createElement("p"); line.textContent = `${actor?.display_name ?? id} · ${id}`; target.append(line);
+      for (const mentionId of actor?.mention_ids ?? []) {
+        const mention = actorMentions.get(String(mentionId));
+        if (!mention) continue;
+        const statement = sourceStatements.get(String(mention.statement_id));
+        const quote = document.createElement("blockquote"); quote.textContent = `“${statement?.anchor?.quote ?? mention.anchor?.quote ?? mention.name}” · ${mention.anchor?.resource_uri} · byte ${mention.anchor?.byte_offset} · statement ${mention.statement_id}`;
+        target.append(quote);
+      }
+    }
+    if (!selectedActors.size) target.textContent = "Select actor candidates to review. More mentions can be loaded below.";
+    const locked = reviewBusy || reviewAttempt !== null;
+    for (const checkbox of q("#actors").querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) checkbox.disabled = locked;
+    for (const id of ["same-actor", "different-actors", "confirm-actor-relation", "unresolve-identity", "withdraw-actor-relation"])
+      q<HTMLButtonElement>(`#${id}`).disabled = !currentCase || locked || (id === "same-actor" ? selectedActors.size < 2 || selectedActors.size > 32 : selectedActors.size !== 2);
+    q<HTMLButtonElement>("#retry-association-review").hidden = !reviewAttempt;
+    q<HTMLButtonElement>("#retry-association-review").disabled = reviewBusy;
+    q<HTMLButtonElement>("#edit-association-review").hidden = !reviewAttempt;
+    q<HTMLButtonElement>("#edit-association-review").disabled = reviewBusy;
+    q<HTMLTextAreaElement>("#association-comment").disabled = locked;
+    q<HTMLSelectElement>("#association-relation-type").disabled = locked;
+  }
+  async function reviewAssociations(decision: string, kind: "identity" | "relationship") {
+    if (!currentCase || reviewBusy || reviewAttempt) return;
+    const actors = [...selectedActors];
+    if (actors.length < 2 || actors.length > 32 || (decision !== "same_actor" && actors.length !== 2)) {
+      setStatus("Select two candidates, or up to 32 for a shared identity.",true); return;
+    }
+    reviewAttempt = { case_id: currentCase.case_id, expected_revision: currentCase.revision,
+      idempotency_key: crypto.randomUUID(), actor_ids: actors, kind, decision,
+      ...(kind === "relationship" ? { relation_type: q<HTMLSelectElement>("#association-relation-type").value } : {}),
+      comment: q<HTMLTextAreaElement>("#association-comment").value };
+    await publishAssociationReview();
+  }
+  async function publishAssociationReview() {
+    if (!reviewAttempt || reviewBusy) return;
+    const token = generation, attempt = reviewAttempt;
+    reviewBusy = true; updateReviewSelection();
+    try {
+      const result = await call("investigation.association.review",attempt,token);
+      if (!result || token !== generation) return;
+      reviewAttempt = null;
+      await openCase(String(attempt.case_id));
+    } catch (error) {
+      if (token === generation) setStatus(`${error instanceof Error ? error.message : String(error)} Retry the same decision, or reload the case to inspect its current state.`,true);
+    } finally {
+      if (token === generation) { reviewBusy = false; updateReviewSelection(); }
+    }
+  }
+  function renderActorAssociations() {
+    if (!actorGraph) actorGraph = new RelationshipRenderer(q<HTMLDivElement>("#actor-association-graph"), { onSelect: (selection) => {
+      const value = selection.kind === "node" ? actorGroups.get(selection.id) : actorRelationships.get(selection.id);
+      q("#actor-association-detail").textContent = JSON.stringify(value ?? {},null,2);
+    } });
+    const groups = [...actorGroups.values()].slice(0,500);
+    const ids = new Set(groups.map((group) => String(group.id)));
+    const relationships = [...actorRelationships.values()];
+    const edges = relationships.filter((edge) => ids.has(String(edge.source)) && ids.has(String(edge.target))).slice(0,1000);
+    const complete = actorGroupsLoaded && actorRelationshipsLoaded && actorProjectionLimitations.size === 0 && !analysisCursors.actor_groups && !analysisCursors.actor_relationships && actorGroups.size <= 500 &&
+      actorRelationships.size <= 1000 && edges.length === relationships.length;
+    actorGraph.update({ schema_version: 1, kind: "relationship", title: "Reviewed actor associations",
+      data_revision: String(currentCase?.revision ?? ""),
+      nodes: groups.map((group) => ({ id: String(group.id), label: String(group.display_name), kind: String(group.assessment_origin) })),
+      edges: edges.map((edge) => ({ id: String(edge.id), source: String(edge.source), target: String(edge.target),
+        label: `Analyst confirmed: ${edge.type}`, directed: true, provenance_refs: [String(edge.id)] })),
+      complete, truncated: !complete, limitations: complete ? [] : [...actorProjectionLimitations,"Only loaded actor groups and relations are shown; load more pages to inspect further associations."] }, { replace: true });
   }
   async function browseResources(continuation = false) {
     if (continuation && !resourceCursor) return;
@@ -736,7 +881,18 @@ if (!window.__investigationWorkspace) {
   q("#attach-search-source").addEventListener("click", () => void attachSearchSource());
   q("#start-analysis").addEventListener("click", () => void startAnalysis());
   q("#suggest-followup").addEventListener("click", () => void suggestFollowup());
-  for (const type of ["actors", "actor_mentions", "evidence_links"] as AnalysisItemType[])
+  q("#same-actor").addEventListener("click", () => void reviewAssociations("same_actor","identity"));
+  q("#different-actors").addEventListener("click", () => void reviewAssociations("different_actors","identity"));
+  q("#confirm-actor-relation").addEventListener("click", () => void reviewAssociations("related","relationship"));
+  q("#unresolve-identity").addEventListener("click", () => void reviewAssociations("unresolved","identity"));
+  q("#withdraw-actor-relation").addEventListener("click", () => void reviewAssociations("unresolved","relationship"));
+  q("#retry-association-review").addEventListener("click", () => void publishAssociationReview());
+  q("#edit-association-review").addEventListener("click", () => {
+    if (reviewBusy) return;
+    reviewAttempt = null; updateReviewSelection();
+    setStatus("Decision draft unlocked. If the previous request reached the host, a new submission will require reloading the current case revision.");
+  });
+  for (const type of ["actors", "actor_mentions", "evidence_links", "actor_groups", "actor_relationships", "association_reviews"] as AnalysisItemType[])
     q(`#${type}-more`).addEventListener("click", () => void loadAnalysisItems(type, true));
   q("#statements-more").addEventListener("click", () => void loadAnalysisItems("statements", true));
   q("#comparisons-more").addEventListener("click", () => void loadAnalysisItems("comparisons", true));

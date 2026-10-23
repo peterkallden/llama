@@ -259,6 +259,10 @@ bool investigation_publish_revision(const common_native_tool_bindings & bindings
 common_tool_execution_result execute_investigation_tool(
         const common_native_tool_bindings & bindings, const std::string & operation,
         const json & arguments) {
+    if (operation == "investigation.association.review" && bindings.investigation_reviewer_id.empty())
+        return common_adapter_failure("tool.investigation.user_review_required",common_tool_failure_class::policy,false,
+            "Association decisions require the authenticated Investigation Workspace user path.",
+            "ordinary native/model execution cannot authorize analyst decisions");
     if (!bindings.data_store) return common_adapter_execution_failure(
         "tool.investigation.store_unavailable", "investigation persistence is unavailable",
         "Investigation storage is unavailable.");
@@ -793,6 +797,81 @@ common_tool_execution_result execute_investigation_tool(
             {"analysis_id", analysis_id}, {"statement_count", published.statements.size()},
             {"comparison_count", published.comparisons.size()}, {"reused", false}});
     }
+    if (operation == "investigation.association.review") {
+        if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
+                (!arguments["expected_revision"].is_number_unsigned() && arguments["expected_revision"].get<int64_t>() < 1) ||
+                !arguments.contains("idempotency_key") || !arguments["idempotency_key"].is_string() ||
+                !arguments.contains("actor_ids") || !arguments["actor_ids"].is_array() ||
+                !arguments.contains("kind") || !arguments["kind"].is_string() ||
+                !arguments.contains("decision") || !arguments["decision"].is_string() ||
+                (arguments.contains("comment") && !arguments["comment"].is_string()) ||
+                (arguments.contains("relation_type") && !arguments["relation_type"].is_string()))
+            return common_adapter_validation_failure("tool.investigation.review_invalid", "review fields have invalid types");
+        const auto expected = arguments["expected_revision"].get<uint64_t>();
+        const auto key = arguments["idempotency_key"].get<std::string>();
+        const auto kind = arguments["kind"].get<std::string>(), decision = arguments["decision"].get<std::string>();
+        const auto relation_type = arguments.value("relation_type",std::string{}), comment = arguments.value("comment",std::string{});
+        if (key.empty() || key.size() > 128 || comment.size() > 4096 || arguments["actor_ids"].size() < 2 ||
+                arguments["actor_ids"].size() > 32 || (decision != "same_actor" && arguments["actor_ids"].size() != 2) ||
+                (kind != "identity" && kind != "relationship"))
+            return common_adapter_validation_failure("tool.investigation.review_invalid", "review selection or operation exceeds its bounds");
+        std::vector<std::string> selected;
+        std::set<std::string> unique;
+        for (const auto & id : arguments["actor_ids"]) {
+            if (!id.is_string() || !unique.insert(id.get<std::string>()).second ||
+                    std::none_of(value.actors.begin(),value.actors.end(),[&](const auto & actor) { return actor.id == id.get<std::string>(); }))
+                return common_adapter_validation_failure("tool.investigation.review_actor_invalid", "choose distinct actor candidates in the current case");
+            selected.push_back(id.get<std::string>());
+        }
+        nlohmann::json payload = arguments; payload.erase("expected_revision"); payload.erase("idempotency_key");
+        const auto serialized = payload.dump();
+        const auto fingerprint = "sha256:" + hash_sha256_hex(serialized.data(),serialized.size());
+        const auto operation_identity = json::array({value.case_id,bindings.investigation_reviewer_id,key}).dump();
+        const auto operation_id = "review-op-" + hash_sha256_hex(operation_identity.data(),operation_identity.size()).substr(0,40);
+        json previous_ids = json::array();
+        uint64_t published_revision = 0;
+        for (const auto & review : value.association_reviews) if (review.operation_id == operation_id) {
+            if (review.parameters_fingerprint != fingerprint) return common_adapter_failure(
+                "tool.investigation.idempotency_conflict", common_tool_failure_class::conflict, false,
+                "This review key already belongs to a different decision.","association review idempotency mismatch");
+            previous_ids.push_back(review.id); published_revision = review.published_revision;
+        }
+        if (!previous_ids.empty()) return common_adapter_success_json({{"case_id",value.case_id},{"revision",value.revision},
+            {"published_revision",published_revision},{"review_ids",previous_ids},{"reused",true}});
+        if (expected != value.revision) return common_adapter_failure("tool.investigation.revision_conflict",
+            common_tool_failure_class::conflict,false,"The case changed. Reload and review its current evidence.","stale association review");
+        json review_ids = json::array();
+        for (size_t i = 1; i < selected.size(); ++i) {
+            common_investigation_association_review review;
+            const auto identity = operation_id + ":" + std::to_string(i);
+            review.id = "review-" + hash_sha256_hex(identity.data(),identity.size()).substr(0,40);
+            review.operation_id = operation_id; review.parameters_fingerprint = fingerprint;
+            review.left_actor_id = selected.front(); review.right_actor_id = selected[i];
+            review.kind = kind; review.decision = decision; review.relation_type = relation_type; review.comment = comment;
+            review.reviewer_id = bindings.investigation_reviewer_id;
+            review.created_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            review.published_revision = expected + 1;
+            for (auto old = value.association_reviews.rbegin(); old != value.association_reviews.rend(); ++old)
+                if (old->kind == kind &&
+                        ((kind == "identity" && ((old->left_actor_id == review.left_actor_id && old->right_actor_id == review.right_actor_id) ||
+                            (old->left_actor_id == review.right_actor_id && old->right_actor_id == review.left_actor_id))) ||
+                         (kind == "relationship" && old->relation_type == relation_type &&
+                            old->left_actor_id == review.left_actor_id && old->right_actor_id == review.right_actor_id))) {
+                    review.supersedes_id = old->id; break;
+                }
+            review_ids.push_back(review.id); value.association_reviews.push_back(std::move(review));
+        }
+        auto proposed = value; proposed.revision = expected + 1;
+        json associations;
+        if (!common_investigation_actor_associations(proposed,associations,error))
+            return common_adapter_validation_failure("tool.investigation.review_conflict",error);
+        common_investigation_case_revision published;
+        if (!investigation_publish_revision(bindings,std::move(value),expected,published,error))
+            return common_adapter_failure("tool.investigation.review_publish_failed",common_tool_failure_class::conflict,false,
+                "The decision was not published. Reload before retrying.",error);
+        return common_adapter_success_json({{"case_id",published.case_id},{"revision",published.revision},
+            {"published_revision",published.revision},{"review_ids",review_ids},{"reused",false}});
+    }
     if (operation == "investigation.case.open") {
         const std::string first_entity_id = value.entities.empty() ? std::string() : value.entities.front().id;
         return common_adapter_success_json({{"case", {{"case_id", value.case_id}, {"revision", value.revision},
@@ -802,7 +881,8 @@ common_tool_execution_result execute_investigation_tool(
                 {"relations", value.relations.size()}, {"claims", value.claims.size()}, {"gaps", value.gaps.size()},
                 {"sources", value.sources.size()}, {"statements", value.statements.size()},
                 {"comparisons", value.comparisons.size()}, {"analyses", value.analyses.size()},
-                {"actors",value.actors.size()},{"actor_mentions",value.actor_mentions.size()},{"evidence_links",value.evidence_links.size()}}},
+                {"actors",value.actors.size()},{"actor_mentions",value.actor_mentions.size()},{"evidence_links",value.evidence_links.size()},
+                {"association_reviews",value.association_reviews.size()}}},
             {"first_entity_id", first_entity_id}, {"status", value.gaps.empty() ? "open" : "qualified"}}}});
     }
     if (operation == "investigation.case.items") {
@@ -829,6 +909,7 @@ common_tool_execution_result execute_investigation_tool(
                 "case item cursor does not match this case revision and filter",
                 "The page cursor is invalid or stale; reopen the case and start again.");
         json source;
+        json projection_limitations = json::array();
         if (item_type == "reports") {
             if (!bindings.data_store) return common_adapter_execution_failure(
                 "tool.investigation.report_index_unavailable", "investigation report index is unavailable",
@@ -849,21 +930,30 @@ common_tool_execution_result execute_investigation_tool(
         } else {
             const auto serialized = common_investigation_case_to_json(value);
             const char * collection = nullptr;
-            if (item_type == "sources") collection = "sources";
+            if (item_type == "actor_groups" || item_type == "actor_relationships") {
+                json associations;
+                if (!common_investigation_actor_associations(value,associations,error))
+                    return common_adapter_validation_failure("tool.investigation.associations_invalid",error);
+                source = associations.at(item_type == "actor_groups" ? "groups" : "relationships");
+                projection_limitations = associations.at("limitations");
+            }
+            else if (item_type == "sources") collection = "sources";
             else if (item_type == "statements") collection = "statements";
             else if (item_type == "comparisons") collection = "comparisons";
             else if (item_type == "analyses") collection = "analyses";
             else if (item_type == "actors") collection = "actors";
             else if (item_type == "actor_mentions") collection = "actor_mentions";
             else if (item_type == "evidence_links") collection = "evidence_links";
+            else if (item_type == "association_reviews") collection = "association_reviews";
             else if (item_type == "entities") collection = "entities";
             else if (item_type == "events") collection = "events";
             else if (item_type == "relations") collection = "relations";
             else if (item_type == "claims") collection = "claims";
             else if (item_type == "gaps") collection = "gaps";
             else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
-                "type must be sources, statements, comparisons, analyses, actors, actor_mentions, evidence_links, entities, events, relations, claims, gaps or reports");
-            source = serialized.at(collection);
+                "type must be sources, statements, comparisons, analyses, actors, actor_mentions, evidence_links, actor_groups, actor_relationships, association_reviews, entities, events, relations, claims, gaps or reports");
+            if (collection) source = serialized.at(collection);
+            if (item_type == "association_reviews") std::reverse(source.begin(),source.end());
         }
         json items = json::array();
         if (offset > source.size()) return common_adapter_execution_failure(
@@ -884,7 +974,7 @@ common_tool_execution_result execute_investigation_tool(
         const std::string next_cursor = has_more ? investigation_page_cursor(value.revision, end, binding) : std::string();
         return common_adapter_success_json({{"case_id", value.case_id}, {"case_revision", value.revision},
             {"type", item_type}, {"items", std::move(items)}, {"next_cursor", next_cursor},
-            {"has_more", has_more}, {"total", source.size()}});
+            {"has_more", has_more}, {"total", source.size()}, {"limitations",projection_limitations}});
     }
     if (operation == "investigation.report.compose") {
         for (auto it = arguments.begin(); it != arguments.end(); ++it) {
@@ -1047,6 +1137,12 @@ common_tool_execution_result execute_investigation_tool(
             for (const auto & id : link.supporting_statement_ids) markdown += " `" + safe_text(id) + "`";
             markdown += "\n";
         }
+        markdown += "\n### Analyst association decisions\n\n";
+        for (const auto & review : value.association_reviews) markdown += "- `" + safe_text(review.id) + "`: " +
+            safe_text(review.decision) + " (`" + safe_text(review.left_actor_id) + "`, `" + safe_text(review.right_actor_id) +
+            "`), relation `" + safe_text(review.relation_type) + "`; authenticated reviewer `" + safe_text(review.reviewer_id) +
+            "`; revision " + std::to_string(review.published_revision) + "; supersedes `" + safe_text(review.supersedes_id) +
+            "`; " + safe_text(review.comment) + ". Analyst decision, not machine-verified causality.\n";
         markdown += "\n## Source statements\n\n";
         if (value.statements.empty()) markdown += "No source-anchored statements are recorded.\n\n";
         for (const auto & statement : value.statements) {
@@ -1104,6 +1200,9 @@ common_tool_execution_result execute_investigation_tool(
         if (markdown.size() > 2 * 1024 * 1024) return common_adapter_validation_failure(
             "tool.investigation.report_too_large", "frozen report exceeds the 2 MiB resource limit");
         const std::string fingerprint = "sha256:" + hash_sha256_hex(markdown.data(), markdown.size());
+        json frozen_associations;
+        if (!common_investigation_actor_associations(value,frozen_associations,error))
+            return common_adapter_validation_failure("tool.investigation.associations_invalid",error);
         const auto frozen_case_json = common_investigation_case_to_json(value);
         const json frozen_source{{"schema", "investigation-report-source.v1"}, {"case_id", value.case_id},
             {"case_revision", value.revision}, {"source_id", value.source_id},
@@ -1119,6 +1218,7 @@ common_tool_execution_result execute_investigation_tool(
             {"analyses", frozen_case_json.at("analyses")},
             {"actors", frozen_case_json.at("actors")},{"actor_mentions", frozen_case_json.at("actor_mentions")},
             {"evidence_links", frozen_case_json.at("evidence_links")},
+            {"association_reviews", frozen_case_json.at("association_reviews")},{"actor_associations",frozen_associations},
             {"events", frozen_case_json.at("events")},{"claims",frozen_case_json.at("claims")},
             {"gaps", report_limitations}};
         const auto source_json = frozen_source.dump();

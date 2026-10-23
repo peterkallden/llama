@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
+import { InvestigationAppAccess } from "./investigation-app-access";
 import { DocumentEditorAccess } from "./document-editor-access";
 
 const props = defineProps<{
@@ -36,6 +37,7 @@ let hostRequestId = 1_000_000_000;
 const hostRequests = new Map<number, { method: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let lastInvocationSignature = "";
 let documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
+let investigationAccess = new InvestigationAppAccess();
 
 function unwrap(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object") return {};
@@ -64,6 +66,7 @@ async function load() {
   busy.value = false; appMessage.value = "";
   lastInvocationSignature = "";
   documentAccess = new DocumentEditorAccess(props.sessionId, props.tool.provider_id ?? "");
+  investigationAccess = new InvestigationAppAccess();
   pendingHtml = ""; pendingCsp = {}; appHeight.value = 620;
   if (!uri.value || !appVisible.value) { error.value = "This tool does not advertise an app-visible UI resource."; return; }
   busy.value = true;
@@ -305,6 +308,9 @@ async function onMessage(event: MessageEvent) {
       } else {
         try {
           if (uri.value === "ui://llama-agent/apps/document-editor") documentAccess.authorize(name, args);
+          const investigationRequest = uri.value === "ui://llama-agent/apps/investigation-workspace" ? investigationAccess : null;
+          investigationRequest?.authorize(name,args);
+          const investigationEpoch = investigationRequest?.begin(name);
           const result = toolEnvelope(await props.callTool(props.tool.name, name, args));
           const structured = canonicalToolStructuredContent(result.structured_content ?? result.structuredContent);
           const nestedError = result.structured_content && typeof result.structured_content === "object" && !Array.isArray(result.structured_content)
@@ -316,6 +322,9 @@ async function onMessage(event: MessageEvent) {
               isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null)) {
             documentAccess.observe(name, args, structured);
           }
+          if (!failed && structured && investigationRequest && investigationEpoch !== undefined &&
+              isCurrentAppRequest({ generation: requestGeneration, target: targetWindow }, loadGeneration, frame.value?.contentWindow ?? null))
+            investigationRequest.observe(name,args,structured,investigationEpoch);
           reply({
             isError: failed,
             ...(structured ? { structuredContent: structured } : {}),

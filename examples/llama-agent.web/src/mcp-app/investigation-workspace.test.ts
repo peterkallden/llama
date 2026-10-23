@@ -108,9 +108,9 @@ it("shows isolated actor candidates without requiring graph edges", async () => 
   view.respond(read!.id, { items: [{ id: "actor-a", display_name: "Alex", mention_ids: ["mention-a"] }], has_more: false });
   await settle();
   const actor = view.node("#actors").children[0];
-  expect(actor.children[0].textContent).toBe("Alex");
-  expect(actor.children[1].textContent).toContain("candidate");
-  expect(actor.children[1].textContent).toContain("1 anchored mentions");
+  expect(actor.children[1].textContent).toBe("Alex");
+  expect(actor.children[2].textContent).toContain("candidate");
+  expect(actor.children[2].textContent).toContain("1 anchored mentions");
 });
 
 it("does not reopen the old case when an import completes after navigation", async () => {
@@ -130,6 +130,36 @@ it("does not reopen the old case when an import completes after navigation", asy
   view.open("case-b"); await settle();
   view.respond(request!.id, { case_id: "case-a", revision: 2, collected_events: 1 });
   await importing; await settle();
+  expect(view.requests.filter((item) => item.params?.name === "investigation.case.open").map((item) => item.params.arguments.case_id))
+    .toEqual(["case-a", "case-b"]);
+});
+
+it("requires actor selection and sends a user decision without starting a model turn", async () => {
+  const view = workspace();
+  view.deferTool("investigation.case.items", "actors");
+  view.deferTool("investigation.association.review");
+  view.open("case-a"); await settle();
+  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" && request.params.arguments.type === "actors");
+  view.respond(read!.id, { items: [
+    { id: "actor-a", display_name: "Alex", mention_ids: ["mention-a"] },
+    { id: "actor-b", display_name: "Alex", mention_ids: ["mention-b"] },
+  ] });
+  await settle();
+  expect(view.node("#same-actor").disabled).toBe(true);
+  for (const row of view.node("#actors").children) {
+    const checkbox = row.children[0]; checkbox.checked = true; checkbox.handlers.change();
+  }
+  expect(view.node("#same-actor").disabled).toBe(false);
+  view.node("#association-comment").value = "I know both records refer to the same company.";
+  view.node("#same-actor").handlers.click(); await settle();
+  const request = view.requests.find((item) => item.params?.name === "investigation.association.review");
+  expect(request?.params.arguments).toMatchObject({ case_id: "case-a", expected_revision: 1,
+    actor_ids: ["actor-a", "actor-b"], kind: "identity", decision: "same_actor",
+    comment: "I know both records refer to the same company." });
+  expect(request?.params.arguments.reviewer_id).toBeUndefined();
+  expect(view.requests.some((item) => item.method === "ui/message")).toBe(false);
+  view.open("case-b"); await settle();
+  view.respond(request!.id, { case_id: "case-a", revision: 2 }); await settle();
   expect(view.requests.filter((item) => item.params?.name === "investigation.case.open").map((item) => item.params.arguments.case_id))
     .toEqual(["case-a", "case-b"]);
 });

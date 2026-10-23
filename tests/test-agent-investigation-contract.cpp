@@ -335,6 +335,61 @@ int main() {
     check(common_investigation_case_from_json(common_investigation_case_to_json(actor_case),actor_reloaded,error) &&
         actor_reloaded.actor_mentions.size() == 2 && actor_reloaded.evidence_links.size() == 2,
         "actor structure and proposed cross-source links must survive case serialization");
+    const auto make_review = [](std::string id, std::string left, std::string right,
+            std::string decision, uint64_t revision, std::string supersedes = std::string()) {
+        common_investigation_association_review review;
+        review.id=id; review.operation_id=id; review.parameters_fingerprint="sha256:review-fixture";
+        review.left_actor_id=left; review.right_actor_id=right; review.decision=decision;
+        review.reviewer_id="authenticated-session:local/test-user"; review.created_at_ms=1000;
+        review.published_revision=revision; review.supersedes_id=supersedes; return review;
+    };
+    auto reviewed_actors = actor_reloaded;
+    reviewed_actors.revision = 2;
+    reviewed_actors.association_reviews.push_back(make_review("review-same","actor-a","actor-b","same_actor",2));
+    nlohmann::ordered_json associations;
+    check(common_investigation_case_validate(reviewed_actors,error) &&
+        common_investigation_actor_associations(reviewed_actors,associations,error) && associations["groups"].size() == 1 &&
+        associations["groups"][0]["assessment_origin"] == "analyst_confirmed_identity" &&
+        reviewed_actors.actors.size() == 2 && reviewed_actors.actor_mentions.size() == 2,
+        "user-confirmed identity must group the view without merging original candidates or mentions");
+    common_investigation_case_revision reviewed_reload;
+    check(common_investigation_case_from_json(common_investigation_case_to_json(reviewed_actors),reviewed_reload,error) &&
+        reviewed_reload.association_reviews.front().reviewer_id == "authenticated-session:local/test-user",
+        "review provenance must survive immutable revision roundtrip");
+    reviewed_actors.revision = 3;
+    reviewed_actors.association_reviews.push_back(make_review("review-withdraw","actor-a","actor-b","unresolved",3,"review-same"));
+    check(common_investigation_case_validate(reviewed_actors,error) &&
+        common_investigation_actor_associations(reviewed_actors,associations,error) && associations["groups"].size() == 2 &&
+        reviewed_actors.association_reviews.size() == 2,
+        "withdrawing a confirmation must restore separate groups while preserving decision history");
+    reviewed_actors.revision = 4;
+    reviewed_actors.association_reviews.push_back(make_review("review-different","actor-a","actor-b","different_actors",4,"review-withdraw"));
+    check(common_investigation_case_validate(reviewed_actors,error),"an analyst can distinguish same-name candidates after reconsideration");
+    auto relation_review = make_review("review-relation","actor-a","actor-b","related",4);
+    relation_review.kind="relationship"; relation_review.relation_type="employed_by";
+    reviewed_actors.association_reviews.push_back(relation_review);
+    check(common_investigation_case_validate(reviewed_actors,error) &&
+        common_investigation_actor_associations(reviewed_actors,associations,error) && associations["relationships"].size() == 1 &&
+        associations["relationships"][0]["source"] == "actor-a" && associations["relationships"][0]["target"] == "actor-b",
+        "reviewed directional relationships must remain separate from identity decisions");
+    auto ownership = relation_review;
+    ownership.id="review-ownership"; ownership.operation_id=ownership.id; ownership.relation_type="owns";
+    reviewed_actors.association_reviews.push_back(ownership);
+    check(common_investigation_case_validate(reviewed_actors,error) &&
+        common_investigation_actor_associations(reviewed_actors,associations,error) && associations["relationships"].size() == 2,
+        "different reviewed relationship types must coexist rather than silently overwrite each other");
+    auto broken_chain = reviewed_actors;
+    broken_chain.association_reviews[1].supersedes_id="nonexistent";
+    check(!common_investigation_case_validate(broken_chain,error),"review history must not skip or fabricate predecessor decisions");
+    auto transitive = actor_reloaded;
+    transitive.revision=4;
+    auto third_mention=transitive.actor_mentions.back(); third_mention.id="mention-c";
+    transitive.actor_mentions.push_back(third_mention); transitive.actors.push_back({"actor-c","Alex",{"mention-c"}});
+    transitive.association_reviews = {make_review("same-ab","actor-a","actor-b","same_actor",2),
+        make_review("same-bc","actor-b","actor-c","same_actor",3),
+        make_review("different-ac","actor-a","actor-c","different_actors",4)};
+    check(!common_investigation_case_validate(transitive,error),
+        "transitive identity confirmations must not hide an explicit different-actor decision");
     actor_case.actor_mentions[1].anchor.byte_offset = 8;
     check(!common_investigation_case_validate(actor_case,error),"actor anchors must match the exact named substring inside the statement");
     actor_case = actor_reloaded;

@@ -3,6 +3,7 @@
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
 
 #include <cassert>
+#include <algorithm>
 
 namespace {
 
@@ -184,5 +185,35 @@ int main() {
     view = provider.resolve_tools(context, error);
     assert(view && error.empty());
     assert(!view->call_mcp_app_tool("catalog_explorer", {"app", "unannotated.read", "{}"}, call_result, error));
+    // First-party app-only metadata is a presentation rule as well as an
+    // execution boundary. Factory-supplied reviewer flags are cleared for
+    // ordinary native calls by the provider itself.
+    common_tool_catalog native_catalog;
+    common_tool_bootstrap_result native_bootstrap;
+    if (!native_catalog.bootstrap("investigation",native_bootstrap,error)) return 20;
+    native_agent_tool_provider native(native_catalog,[](const agent_tool_context &,common_native_tool_bindings & bindings,std::string &) {
+        bindings.investigation_reviewer_id="must-not-leak-to-model"; return true;
+    });
+    agent_tool_context user_context;
+    user_context.profile_id="investigation";
+    user_context.scope.namespace_id="tenant-a"; user_context.scope.session_id="session-a";
+    user_context.allow_policy_gated_writes=true; user_context.max_calls=10;
+    auto native_view=native.resolve_tools(user_context,error);
+    if (!native_view) return 21;
+    agent_tool_call review_call{"review","investigation.association.review",
+        R"({"case_id":"case-a","expected_revision":1,"idempotency_key":"user-review","actor_ids":["a","b"],"kind":"identity","decision":"same_actor"})"};
+    auto denied=native_view->call(review_call,error);
+    if (denied.ok || denied.failure_code != "tool.investigation.user_review_required") return 22;
+    if (has_investigation_workspace) {
+        const auto & model_tools=native_view->chat_tools();
+        if (std::any_of(model_tools.begin(),model_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 23;
+        const auto & app_tools=native_view->app_tools();
+        if (std::none_of(app_tools.begin(),app_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 24;
+        agent_tool_result reviewed;
+        if (native_view->call_mcp_app_tool("investigation.case.open",review_call,reviewed,error) ||
+            reviewed.failure_code != "tool.investigation.store_unavailable") return 25;
+        // The app route reached its host executor; this fixture intentionally
+        // has no data store, so it cannot publish a decision.
+    }
     return 0;
 }

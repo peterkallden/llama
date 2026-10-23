@@ -154,7 +154,7 @@ int main() {
     assert(research_publish->risk_class == common_tool_risk_class::artifact_write &&
         research_publish->requires_confirmation && !research_publish->mcp_app_write_authorized);
     for (const auto * name : {"investigation.case.create", "investigation.source.attach", "investigation.document.prepare",
-            "investigation.statement.record", "investigation.collect", "investigation.log.import", "investigation.claim.hypothesize",
+            "investigation.statement.record", "investigation.association.review", "investigation.collect", "investigation.log.import", "investigation.claim.hypothesize",
             "investigation.report.compose", "visualization.snapshot"}) {
         const auto * definition = catalog.find_definition(name);
         assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
