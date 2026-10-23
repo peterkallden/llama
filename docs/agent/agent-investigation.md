@@ -1,9 +1,10 @@
 # Investigation Workspace
 
-Investigation is a host-owned, read-only search and evidence workflow. It uses
-configured Elasticsearch or OpenSearch sources, virtual datasets, Cozo case
-revision storage, immutable resources for collected evidence, and the packaged
-Vue/Cytoscape MCP App. It is disabled by default and requires a Cozo-enabled
+Investigation is a host-owned investigation and evidence workflow with
+read-only acquisition from its sources. A case can combine retained documents,
+explicitly imported JSONL/CSV logs and configured Elasticsearch or OpenSearch
+sources. It uses virtual datasets, Cozo case revision storage, immutable
+resources for collected evidence, and the packaged Vue/Cytoscape MCP App. It is disabled by default and requires a Cozo-enabled
 build and a Cozo data store. Configuration changes take effect after daemon
 restart.
 
@@ -150,9 +151,11 @@ The actor/relationship, narrative/comparison and document-provenance
 workflows record versioned source statements and comparisons. A statement
 must reference a case source and an exact, verified text anchor. Actor IDs are
 references attached to those statements, not verified real-world identities;
-name similarity does not merge actors. Model-produced comparisons remain
-`model_proposal`, and source-dependency claims remain proposals until an
-authorized analyst review or explicit deterministic rule is added. Reported
+name similarity does not merge actors. Model-produced comparisons and
+source-dependency claims remain `model_proposal`. The
+[actor association review path](#user-review-of-actor-associations) records
+explicit user decisions about actor identity or relationships; it does not
+establish source independence or verify the truth of a statement. Reported
 times in documents remain separate from event times observed in collected log
 records. A document statement does not become an independently observed log
 event by being linked to one.
@@ -186,10 +189,12 @@ draft.
 This is a bounded document-analysis path, not a general document-forensics
 engine: it does not provide OCR-region coordinates, native actor resolution,
 automatic source-independence verification, image/audio/video analysis,
-lie detection or formal chain-of-custody. Uploaded log files can be retained
-and processed as text, but they do not become normalized independent event
-records unless a configured structured collection path supplies those
-records.
+lie detection or formal chain-of-custody. Uploaded logs become ordinary case
+events only through an explicit `investigation.log.import` operation with a
+supported JSONL/CSV format and field mapping, described under
+[uploaded structured logs](#uploaded-structured-logs). Free-form log text stays
+retained source material unless a supported parser profile supplies events;
+uploading or reading text does not itself normalize events.
 
 The workspace can bind a selected case revision and selected entity, relation
 and event IDs to the next chat turn. The daemon reloads the case in the active

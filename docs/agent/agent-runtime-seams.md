@@ -593,6 +593,19 @@ This seam is particularly important for asynchronous operations. A pending
 operation has one owner for cancellation, deadline and completion. A UI retry
 or a protocol reconnect must not create a second hidden runtime call.
 
+A successful tool may additionally supply a bounded relationship visualization.
+The runtime parses that projection with the shared visualization contract before
+copying it into trace metadata. The daemon forwards only the validated
+`visualization` field in the completed tool event; it does not expose the whole
+native tool result through that field. Validation establishes the presentation
+shape, not evidence truth or permission beyond the originating operation.
+
+The web code-graph consumer requires the active session identity and a completed
+tool event, deduplicates delivery sequences and uses the shared relationship
+renderer. Reconnection does not rerun the tool. The code graph remains a
+transient event presentation; this transport addition does not create a saved
+artifact or a commit-pinned source snapshot. See [Source Code Analysis](code-analysis.md).
+
 ## Verification at the seams
 
 Tests should be named after the boundary they protect:

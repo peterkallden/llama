@@ -303,6 +303,29 @@ the next tool step and may replace `$choice`; `$from_step: "$previous"` binds
 the preceding completed host step. The model cannot invent an identifier,
 tool, URL, or transition.
 
+## Source code workflow starters
+
+The general starter package `docs/examples/agent-bootstrap-workflows-v1.json`
+(version `v30`) includes two code-analysis workflows:
+
+| Workflow | Blueprint | Intended result |
+| --- | --- | --- |
+| `workflow://code/overview` | `code-overview-v1` | Bounded repository orientation, capability availability and explicit semantic/text-fallback limits |
+| `workflow://code/entry-point-investigation` | `code-entry-point-investigation-v1` | A selected definition, one-hop semantic call relationships, source inspection and remaining uncertainty |
+
+Both use `code-analysis-evidence-v1`. Code navigation uses the canonical
+`code.*` family; compiler/test/crash output remains in `diagnostics.*`. The
+host resolves the repository and checks required capabilities and context.
+Importing definitions does not create a semantic provider: `code.inspect`
+reports actual operation availability, and missing call support is a limitation.
+The graph presents static relationships rather than executed behavior.
+
+These definitions become available through the existing configured bootstrap
+import. Their presence in the repository does not show that a running daemon
+has imported them or that a model has selected/executed them. Provider binding,
+projection and current verification limits are described in
+[Source Code Analysis](code-analysis.md).
+
 ## Current implementation boundary
 
 The route compiler evaluates workflow capabilities and host-context

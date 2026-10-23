@@ -48,6 +48,30 @@ stores on the agent branch. The SQLite store remains optional; the Android
 example uses it as its constrained native storage profile and does not enable
 Cozo, daemon or external sandbox backends.
 
+## Workspace capabilities and recent changes
+
+The following is a source-level overview of the recent workspace additions,
+reviewed on 2026-10-23. It describes implemented responsibilities, not a claim
+that all current paths have passed browser or model verification. Older test
+results apply to their recorded commit and environment; later additions need
+their own evidence in [Agent Assurance](agent-assurance.md).
+
+| Area | Current implementation | Detailed documentation |
+| --- | --- | --- |
+| Projects, chats and resources | Project/chat navigation, persisted transcripts, background turns, scoped resource browsing and titles from the latest completed turn's persisted plan goal | [Web client](../../examples/llama-agent.web/README.md) |
+| Research across chats | Scope-owned research identity, immutable published revisions, chat-owned drafts and compare-and-swap publication; evidence graphs use explicit saved anchors | [Persistent research and visualization](agent-runtime.md#persistent-research-and-visualization) |
+| Document authoring | New, Upload, Open/import, atomic title/body saves, protected draft switching and download of current editor content | [Document editor](document-editor.md) |
+| Visualizations and reports | Dataset projections, retained PNG snapshots and figures in saved report views; research and code share the generic relationship renderer | [Visualization and report integration](agent-investigation.md#dataset-visualizations), [report editor](document-editor.md) |
+| Mixed-source investigation | Documents, explicitly mapped JSONL/CSV logs and configured search sources in one revisioned case; nine workflow families | [Investigation Workspace](agent-investigation.md) |
+| Actors and associations | Anchored mentions, separate actor candidates, proposed links and host-authorized analyst decisions with immutable review history | [Actor review](agent-investigation.md#user-review-of-actor-associations) |
+| Source code analysis | `code.inspect`, `code.symbols`, `code.references`, `code.calls`, two starter workflows and bounded one-hop call graphs | [Source Code Analysis](code-analysis.md) |
+
+Code call graphs currently describe the host's live repository state; they do
+not freeze a commit or provide binary, control-flow or data-flow analysis.
+Structured log import requires an explicit supported format and mapping.
+Text anchors and analyst association decisions preserve provenance without
+establishing factual truth, independent corroboration or causality.
+
 ## Distribution
 
 - [Agent releases](https://github.com/peterkallden/llama/releases) contain

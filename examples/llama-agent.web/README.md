@@ -40,12 +40,17 @@ browser asks for microphone permission when recording starts. A prompt such as
 `Transcribe the attached recording` can be sent together with the audio
 resource; the web client does not perform speech recognition itself.
 
-The example submits turns in agent mode. Small models may reject the initial
-structured grammar before planning starts, especially for ordinary prompts
-that do not need tools. The planned host-side solution is to select tool
-families before exposing the full planner contract and route `needs_tools=false`
-to ordinary chat. The web client does not interpret model error strings or
-perform semantic fallback itself.
+The example submits turns through the existing agent runtime. When tool-family
+routing is enabled, the host invokes the model-based family selector over the
+authorized catalog before exposing individual tool contracts. A valid
+`needs_tools=false` selection uses the ordinary chat path when no host-bound
+operation requires tools. Invalid family selections take the explicit normal
+tool-route fallback with the authorized catalog and existing requirements;
+they do not imply a tool-free answer. Routing uses conversation context and
+host bindings rather than a browser keyword list. The web client does not
+interpret model error strings or perform semantic fallback itself. See
+[runtime seams](../../docs/agent/agent-runtime-seams.md) for prompt, selection
+and required-tool boundaries.
 
 Tools already emit `tool.artifact_created` events for generated resources. The
 example client renders a **Download** action for those events. The web adapter
@@ -241,6 +246,37 @@ first-party Data Explorer and Workflow Inspector resources
 corresponding dataset and `plan.get` tools. `resources/read` serves only those
 known first-party URIs for these bundled apps; external app resources remain
 provider-owned and are fetched through that provider.
+
+## Research, investigation and code views
+
+The Resources workspace exposes project/session research resources and saved
+work products. Research evidence graphs and report-block evidence graphs use
+`visualization.research_graph`; the host resolves either the selected active
+research resource or the report's exact frozen snapshot. Selecting a current
+research resource does not change an older report's saved evidence. Research identity,
+chat drafts and compare-and-swap publication are described in
+[persistent research](../../docs/agent/agent-runtime.md#persistent-research-and-visualization).
+
+The Investigation Workspace accepts documents, retained structured logs and
+configured search sources in the same case. Users explicitly select sources,
+parser mappings and analysis profiles; uploading does not start forensic
+analysis. Actor mentions remain separate candidates, and the app's analyst
+review path can confirm/withdraw associations without merging original source
+records. See [Investigation Workspace](../../docs/agent/agent-investigation.md)
+for the nine workflow families, import limits, permissions and frozen reports.
+
+Saved report cards load retained PNG figures and their visualization references
+through the scoped resource API. Figures remain tied to the saved report
+revision. A local layout or a user-supplied snapshot is presentation data and
+does not create independent evidence.
+
+Completed `code.calls` tool events carry a host-validated relationship projection
+that is displayed in the corresponding assistant turn. Delivery sequences are
+deduplicated and graph events must match the current chat session. The generic
+`RelationshipGraph` component is loaded on demand and is also used by the
+research wrapper. These code graphs are transient and their source locations
+are not pinned to a commit. See [Source Code Analysis](../../docs/agent/code-analysis.md)
+for provider configuration and current limits.
 
 ## Shared document and chat workspace
 

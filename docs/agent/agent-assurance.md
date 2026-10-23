@@ -10,6 +10,26 @@ It separates milestone criteria from the test evidence collected for a
 specific branch, commit, platform, and date. A checked item is only valid
 when the corresponding verification record contains evidence for it.
 
+## Current branch additions — 2026-10-23
+
+The milestone gates and dated runs below are historical evidence for their
+recorded source revisions and environments. They do not automatically certify
+later workspace or code-analysis changes.
+
+Recent implementation includes project/chat/resource navigation, persistent
+research drafts and revisions, document authoring, saved visualization figures,
+mixed-source investigation, actor association review and the `code.*` family.
+Use the [workspace overview](README.md#workspace-capabilities-and-recent-changes)
+to find each capability's current contract and limits.
+
+The latest code-analysis changes (`6e489fb92`, `5a14c4263`) have received source
+review and `git diff --check` only. Contract cases have been authored for LSP
+call projection, source positions, coverage metadata and web event routing;
+compilation, CTest, browser and model smokes have not been run for those commits.
+The structured-log/actor extensions also retain their explicit unrun checks in
+[Investigation Workspace](agent-investigation.md#verification-status-for-this-extension).
+This documentation audit executes no build or tests and adds no pass result.
+
 ## Milestone
 
 - Milestone: Agent runtime beta
@@ -277,7 +297,7 @@ builds.
 | Sandbox execution | [ ] | Kubernetes live smoke passed; Docker live smoke timed out after 300 seconds, so Docker execution is not assured |
 | Backend availability | [x] | Tools depending on unavailable backends are removed from the effective tool view |
 | Result normalization | [x] | Tool results expose bounded status, summaries, diagnostics and resource references where applicable |
-| Semantic diagnostics | [ ] | Symbol/reference keep a bounded text fallback and call hierarchy requires a semantic provider; clangd/LSP or a project index is not yet bound |
+| Semantic code analysis | [ ] | Optional clangd/LSP is bound through the shared host resolver to `code.*`, with legacy diagnostics aliases. The latest normalization changes have unexecuted contracts; a persistent project index and execution/model proof remain open |
 | Tool-specific smoke coverage | [x] | The complete model-free smoke executable set passed; model-backed resident coverage remains separate |
 
 The tool-repair path has separate deterministic coverage. The provider CTest
