@@ -1,4 +1,5 @@
 #include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/adapters/families/code-adapters.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
@@ -885,6 +886,37 @@ int main() {
     result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
     assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&
            result.output.find("\"items\"") != std::string::npos);
+    {
+        common_native_tool_bindings code_bindings = repository_bindings;
+        std::string provider_output = R"({"definitions":[],"count":0,"complete":false,"truncated":false,"limitations":["Provider index is incomplete."]})";
+        code_bindings.code_symbols = [&provider_output](const std::string &) {
+            return common_tool_execution_result::success(provider_output);
+        };
+        code_bindings.code_calls = [&provider_output](const std::string &) {
+            return common_tool_execution_result::success(provider_output);
+        };
+        common_tool_registry code_registry;
+        bool installed = false;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.symbols"),
+            code_bindings, code_registry, installed, error) && installed);
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.calls"),
+            code_bindings, code_registry, installed, error) && installed);
+        auto incomplete = code_registry.execute({"code.symbols", R"({"symbol":"needle"})"});
+        assert(incomplete.ok);
+        auto coverage = nlohmann::json::parse(incomplete.output);
+        assert(!coverage["complete"].get<bool>() && !coverage["truncated"].get<bool>() &&
+            incomplete.output.find("Provider index is incomplete") != std::string::npos);
+        provider_output = R"({"count":0})";
+        auto missing = code_registry.execute({"code.symbols", R"({"symbol":"needle"})"});
+        assert(!missing.ok && missing.failure_code == "tool.code.invalid_provider_result");
+        missing = code_registry.execute({"code.calls", R"({"symbol":"needle","path_hint":"src/sample.txt","line":1})"});
+        assert(!missing.ok && missing.failure_code == "tool.code.invalid_provider_result");
+        provider_output = R"({"callers":[],"callees":[],"count":0,"complete":false,"truncated":false,"limitations":["Provider index is incomplete."]})";
+        incomplete = code_registry.execute({"code.calls", R"({"symbol":"needle","path_hint":"src/sample.txt","line":1})"});
+        assert(incomplete.ok);
+        coverage = nlohmann::json::parse(incomplete.output);
+        assert(!coverage["complete"].get<bool>() && !coverage["truncated"].get<bool>());
+    }
     result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});
     assert(result.ok && result.output.find("missing symbol") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"PASS one\nFAILED two: assertion\n"})"});

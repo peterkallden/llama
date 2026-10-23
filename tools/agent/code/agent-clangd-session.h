@@ -41,6 +41,7 @@ private:
     bool send_request(const std::string & method, const agent_clangd_json & params, agent_clangd_json & response, std::string & error);
     bool read_message(agent_clangd_json & message, std::string & error);
     void shutdown();
+    void shutdown_locked();
 
     agent_clangd_session_config config_;
     std::unique_ptr<impl> state_;

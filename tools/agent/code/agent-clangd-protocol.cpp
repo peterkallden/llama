@@ -82,3 +82,19 @@ agent_clangd_json agent_clangd_request(int64_t id, const std::string & method, c
 agent_clangd_json agent_clangd_notification(const std::string & method, const agent_clangd_json & params) {
     return {{"jsonrpc", "2.0"}, {"method", method}, {"params", params}};
 }
+
+std::string agent_clangd_file_uri(const std::filesystem::path & path) {
+    const auto generic = path.generic_u8string();
+    std::string result = "file://";
+    if (!generic.empty() && generic.front() != '/') result.push_back('/');
+    for (const unsigned char c : generic) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.' || c == '~' || c == ':') {
+            result.push_back(static_cast<char>(c));
+        } else {
+            static constexpr char hex[] = "0123456789ABCDEF";
+            result.push_back('%'); result.push_back(hex[c >> 4]); result.push_back(hex[c & 15]);
+        }
+    }
+    return result;
+}

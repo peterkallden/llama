@@ -2307,8 +2307,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     common_agent_visualization_relationship visualization;
                     std::string visualization_error;
                     if (common_agent_visualization_relationship_from_json(
-                                tool_output["visualization"], visualization, visualization_error) &&
-                            common_agent_visualization_relationship_validate(visualization, visualization_error)) {
+                                tool_output["visualization"], visualization, visualization_error)) {
                         result.trace.back().visualization_json =
                             common_agent_visualization_relationship_to_json(visualization).dump();
                     }

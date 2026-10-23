@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeCallVisualization } from "./code-analysis-graph";
+import { codeCallVisualization, codeCallGraphsByTurn } from "./code-analysis-graph";
 
 const graph = {
   schema_version: 1,
@@ -28,5 +28,16 @@ describe("code analysis graph projection", () => {
   it("does not render another tool family or malformed visualization data", () => {
     expect(codeCallVisualization("repository.search", { visualization: graph })).toBeUndefined();
     expect(codeCallVisualization("code.calls", { visualization: { ...graph, edges: [{ id: "bad" }] } })).toBeUndefined();
+  });
+});
+
+describe("code graph event routing", () => {
+  it("isolates sessions and ignores replayed deliveries and unfinished operations", () => {
+    const event = { event_type: "tool.completed", session_id: "current", turn_id: "turn",
+      detail: "code.calls", sequence: 7, visualization: graph };
+    const groups = codeCallGraphsByTurn([event, { ...event }, { ...event, session_id: "other", sequence: 8 },
+      { ...event, event_type: "tool.started", sequence: 9 }, { ...event, session_id: undefined, sequence: 10 }], "current");
+    expect(groups.get("turn")).toHaveLength(1);
+    expect(groups.get("turn")?.[0]?.visualization.title).toBe(graph.title);
   });
 });

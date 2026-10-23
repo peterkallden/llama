@@ -497,6 +497,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-tool-family-index.cpp
         test-tool-navigation.cpp
         test-agent-clangd-protocol.cpp
+        test-agent-code-projection.cpp
         test-agent-native-crash.cpp
         test-agent-native-crash-smoke.cpp
         test-agent-native-crash-cdb-smoke.cpp
@@ -658,6 +659,11 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
             target_link_libraries(${TEST_NAME} PRIVATE server-context)
         endif()
+        if (TEST_NAME STREQUAL "test-agent-code-projection")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-clangd-protocol")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp)
@@ -703,6 +709,9 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+        if (TEST_NAME STREQUAL "test-agent-code-projection")
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "code;model-free")
+        endif()
         if (TEST_NAME MATCHES "^(test-agent-chat-routing|test-agent-prepared-generation|test-tool-family-index)$")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS model-free)
         endif()

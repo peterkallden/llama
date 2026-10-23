@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <string>
 
 using agent_clangd_json = nlohmann::ordered_json;
@@ -27,3 +28,6 @@ private:
 std::string agent_clangd_encode_message(const agent_clangd_json & message);
 agent_clangd_json agent_clangd_request(int64_t id, const std::string & method, const agent_clangd_json & params = agent_clangd_json::object());
 agent_clangd_json agent_clangd_notification(const std::string & method, const agent_clangd_json & params = agent_clangd_json::object());
+
+// Encode host-owned local paths for LSP requests and workspace initialization.
+std::string agent_clangd_file_uri(const std::filesystem::path & path);

@@ -401,8 +401,9 @@ bool resolve_agent_host_tool_selection(
                     resolved_tool_context, *resolved_profile->allow_policy_gated_writes);
             }
         }
-        const auto & repository_root = request.repository_root.empty()
+        const auto repository_root = request.repository_root.empty()
             ? resolved_tool_context.repository_root : request.repository_root;
+        resolved_tool_context.repository_root = repository_root;
         if (!repository_root.empty()) {
             selection.tooling.available_context.push_back("context.repository.available");
         }
@@ -413,9 +414,7 @@ bool resolve_agent_host_tool_selection(
         common_native_tool_bindings bindings;
         bindings.semi_oracle = request.semi_oracle_tool_call;
         bindings.prediction_predict = request.prediction_predict_tool_call;
-        if (!request.repository_root.empty()) {
-            bindings.repository_root = request.repository_root;
-        }
+        bindings.repository_root = repository_root;
         bindings.plan_store = plan_store;
         bindings.plan_id = current_plan_id;
         if (resource_store == nullptr) {
@@ -767,10 +766,10 @@ bool resolve_agent_host_tool_selection(
         bindings.memory_query = query;
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
         std::shared_ptr<agent_clangd_code_provider> clangd_provider;
-        if (request.diagnostics.semantic_backend == "clangd" && !request.repository_root.empty()) {
+        if (request.diagnostics.semantic_backend == "clangd" && !repository_root.empty()) {
             clangd_provider = std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
                 request.diagnostics.clangd_executable,
-                request.repository_root,
+                repository_root,
                 request.diagnostics.compile_commands,
                 request.tool_context.default_timeout_ms,
                 request.tool_context.default_timeout_ms,
@@ -794,7 +793,7 @@ bool resolve_agent_host_tool_selection(
                     backend = request.diagnostics.native_crash_backend,
                     gdb = request.diagnostics.gdb_executable,
                     cdb = request.diagnostics.cdb_executable,
-                    repository_root = request.repository_root,
+                    repository_root,
                     native_crash_limits](const std::string & input) {
                 return agent_execute_native_crash(input, backend, gdb, cdb, repository_root, native_crash_limits);
             };
@@ -811,9 +810,9 @@ bool resolve_agent_host_tool_selection(
         // root once here so subprocess adapters do not reinterpret relative
         // roots from inside that operation directory (for example, mutool).
         auto sandbox_config = request.sandbox;
-        const auto sandbox_path_base = request.repository_root.empty()
+        const auto sandbox_path_base = repository_root.empty()
             ? std::filesystem::current_path()
-            : std::filesystem::absolute(request.repository_root).lexically_normal();
+            : std::filesystem::absolute(repository_root).lexically_normal();
         const auto resolve_sandbox_path = [&sandbox_path_base](std::string & value) {
             if (value.empty()) return;
             auto path = std::filesystem::path(value);

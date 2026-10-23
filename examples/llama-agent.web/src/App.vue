@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "./session";
 import type { AgentEvent } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
@@ -12,9 +12,10 @@ import ReportCard from "./components/ReportCard.vue";
 import SourceInspector from "./components/SourceInspector.vue";
 import ChatMenu from "./components/ChatMenu.vue";
 import ResourceBrowser from "./components/ResourceBrowser.vue";
-import ResearchEvidenceGraph from "./components/ResearchEvidenceGraph.vue";
-import { codeCallVisualization } from "./components/code-analysis-graph";
+import { codeCallGraphsByTurn } from "./components/code-analysis-graph";
 import { reportReferences, type InspectionTarget } from "./components/report-view";
+
+const RelationshipGraph = defineAsyncComponent(() => import("./components/RelationshipGraph.vue"));
 
 const session = useAgentSession();
 const prompt = ref("");
@@ -47,21 +48,7 @@ const canEdit = computed(() => !documentMode.value && session.tools.some((tool) 
 const navigationLocked = computed(() => documentMode.value || workspaceNavigating.value || Boolean(openingAttachmentUri.value));
 const sessionEvents = computed(() => session.events.filter((event) => !event.session_id || event.session_id === session.sessionId));
 function reportsForTurn(turnId: string) { return reports.value.filter((report) => report.turnId === turnId); }
-const codeGraphsByTurn = computed(() => {
-  const byTurn = new Map<string, Array<{ event: AgentEvent; visualization: NonNullable<ReturnType<typeof codeCallVisualization>> }>>();
-  for (const event of session.events) {
-    if (!event.turn_id) continue;
-    const type = String(event.event_type ?? event.type ?? "");
-    const toolName = event.tool_name ?? (type === "tool.completed" ? String(event.detail ?? "") : undefined);
-    const payload = event.visualization ?? event.tool_result;
-    const visualization = codeCallVisualization(toolName, payload);
-    if (!visualization) continue;
-    const turnGraphs = byTurn.get(event.turn_id) ?? [];
-    turnGraphs.push({ event, visualization });
-    byTurn.set(event.turn_id, turnGraphs);
-  }
-  return byTurn;
-});
+const codeGraphsByTurn = computed(() => codeCallGraphsByTurn(session.events, session.sessionId));
 function codeGraphsForTurn(turnId: string) { return codeGraphsByTurn.value.get(turnId) ?? []; }
 function openReportRead(uri: string) { return session.callReadOnlyTool("document.open", { document_uri: uri }); }
 function handoff(text: string) { prompt.value = text; void navigateWorkspace("chat"); }
@@ -526,7 +513,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
             <template v-if="message.role === 'assistant'">
               <section v-for="(graph, graphIndex) in codeGraphsForTurn(message.turnId)" :key="`${graph.event.sequence ?? graphIndex}-code-graph`" class="report-card code-analysis-graph">
                 <div class="report-heading"><strong>Static call relationships</strong><span>One hop · source analysis</span></div>
-                <ResearchEvidenceGraph :visualization="graph.visualization" />
+                <RelationshipGraph :visualization="graph.visualization" />
                 <p v-if="graph.visualization.limitations?.length" class="muted">{{ graph.visualization.limitations.join(" ") }}</p>
               </section>
               <ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />

@@ -1,36 +1,19 @@
 #include "agent-clangd-provider.h"
+#include "agent-clangd-projection.h"
+
+#include <algorithm>
 
 #include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <sstream>
 #include <system_error>
+#include <utility>
 
 namespace {
 using json = agent_clangd_json;
 
 common_tool_execution_result provider_error(const std::string & code, const std::string & detail) {
     return common_tool_execution_result::failure(code, common_tool_failure_class::execution, false, "Clangd semantic code analysis is unavailable.", detail);
-}
-
-std::string uri_path(const std::string & uri) {
-    if (uri.rfind("file://", 0) == 0) return uri.substr(7);
-    return uri;
-}
-
-std::string file_uri(const std::filesystem::path & path) {
-    std::string result = "file://";
-    for (const unsigned char c : path.generic_string()) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.' || c == '~' || c == ':') {
-            result.push_back(static_cast<char>(c));
-        } else {
-            static constexpr char hex[] = "0123456789ABCDEF";
-            result.push_back('%');
-            result.push_back(hex[c >> 4]);
-            result.push_back(hex[c & 0x0f]);
-        }
-    }
-    return result;
 }
 
 std::string language_id(const std::filesystem::path & path) {
@@ -54,54 +37,95 @@ size_t utf16_units(const std::string & utf8, size_t byte_count) {
     return units;
 }
 
-json location_json(const json & location) {
-    const auto & range = location.value("range", json::object());
-    const auto & start = range.value("start", json::object());
-    return {
-        {"uri", location.value("uri", location.value("targetUri", std::string()))},
-        {"path", uri_path(location.value("uri", location.value("targetUri", std::string())))},
-        {"line", start.value("line", 0) + 1},
-        {"column", start.value("character", 0) + 1},
-    };
+bool valid_arguments(const json & args, int limit) {
+    if (!args.is_object() || !args.contains("symbol") || !args["symbol"].is_string() ||
+            args["symbol"].get_ref<const std::string &>().empty() ||
+            args["symbol"].get_ref<const std::string &>().size() > 256) return false;
+    for (const auto * key : {"definition_path", "path_hint"})
+        if (args.contains(key) && (!args[key].is_string() ||
+                args[key].get_ref<const std::string &>().size() > 512 ||
+                args[key].get_ref<const std::string &>().find('\0') != std::string::npos)) return false;
+    for (const auto * key : {"definition_line", "definition_column", "line", "column", "max_results"})
+        if (args.contains(key) && (!args[key].is_number_integer() || args[key] < 1 ||
+                args[key] > (std::string(key) == "max_results" ? limit : 1000000))) return false;
+    return !args.contains("direction") || (args["direction"].is_string() &&
+        (args["direction"] == "callers" || args["direction"] == "callees" || args["direction"] == "both"));
 }
+
+bool result_array(const json & response, json & result) {
+    if (!response.is_object() || !response.contains("result")) return false;
+    result = response["result"].is_null() ? json::array() : response["result"];
+    return result.is_array();
+}
+
+json coverage(bool truncated, bool incomplete) {
+    json limitations = json::array();
+    if (incomplete) limitations.push_back("Some provider entries were invalid or outside the authorized repository.");
+    if (truncated) limitations.push_back("The configured result limit was reached.");
+    return {{"complete", !truncated && !incomplete}, {"truncated", truncated}, {"limitations", limitations}};
+}
+
 }
 
 agent_clangd_code_provider::agent_clangd_code_provider(agent_clangd_session_config config)
     : session_(std::make_unique<agent_clangd_session>(config)), repository_root_(std::move(config.repository_root)) {}
 
 common_tool_execution_result agent_clangd_code_provider::symbol(const std::string & arguments_json) {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto arguments = json::parse(arguments_json, nullptr, false);
-    if (!arguments.is_object() || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments", common_tool_failure_class::validation, false, "Symbol arguments are invalid.");
+    if (!valid_arguments(arguments, 64)) return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments", common_tool_failure_class::validation, false, "Symbol arguments are invalid.");
     return workspace_symbol(arguments);
 }
 
 common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const json & arguments) {
     json response;
     std::string error;
+    std::filesystem::path hint;
+    if (arguments.contains("path_hint") &&
+            !agent_clangd_repository_path(repository_root_, arguments["path_hint"].get<std::string>(), hint, error))
+        return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments",
+            common_tool_failure_class::validation, false, "Symbol path is outside the repository.", error);
     if (!session_->request("workspace/symbol", {{"query", arguments["symbol"]}}, response, error)) return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
-    json definitions = json::array();
-    const auto result = response.value("result", json::array());
+    json definitions = json::array(), result;
+    if (!result_array(response, result)) return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned an invalid symbol result");
     const auto limit = std::min<size_t>(arguments.value("max_results", 64), 64);
-    if (result.is_array()) for (const auto & item : result) {
-        if (definitions.size() >= limit || !item.is_object() || !item.contains("location")) break;
-        auto definition = location_json(item["location"]);
-        definition["name"] = item.value("name", arguments["symbol"]);
-        definition["kind"] = item.value("kind", 0);
+    bool incomplete = false;
+    for (const auto & item : result) {
+        if (definitions.size() >= limit) break;
+        json definition;
+        if (!item.is_object() || !item.contains("location") ||
+                !agent_clangd_project_location(item["location"], repository_root_, definition, error)) {
+            incomplete = true; continue;
+        }
+        if (!hint.empty()) {
+            std::filesystem::path candidate;
+            if (!agent_clangd_repository_path(repository_root_, definition["path"].get<std::string>(), candidate, error)) {
+                incomplete = true; continue;
+            }
+            const auto relative = candidate.lexically_relative(hint);
+            if (relative.is_absolute() || (!relative.empty() && *relative.begin() == "..")) continue;
+        }
+        if (item.contains("name") && item["name"].is_string()) definition["name"] = item["name"];
+        if (item.contains("kind") && item["kind"].is_number_integer()) definition["kind"] = item["kind"];
         definitions.push_back(std::move(definition));
     }
-    return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"symbol", arguments["symbol"]}, {"definitions", definitions}, {"count", definitions.size()}, {"truncated", definitions.size() >= limit}}).dump());
+    auto output = coverage(result.size() > definitions.size() && definitions.size() >= limit, incomplete);
+    output.update({{"backend", "clangd"}, {"semantic", true}, {"symbol", arguments["symbol"]},
+        {"definitions", definitions}, {"count", definitions.size()}});
+    return common_tool_execution_result::success(output.dump());
 }
 
-bool agent_clangd_code_provider::resolve_location(const json & arguments, json & location, std::string & error) {
+bool agent_clangd_code_provider::resolve_location(const json & arguments, source_location & location, std::string & error) {
+    if (repository_root_.empty()) { error = "semantic source requires a host repository"; return false; }
     std::filesystem::path requested;
     int line = 0;
     int column = 1;
     if (arguments.contains("definition_path") && arguments.contains("definition_line")) {
-        requested = arguments["definition_path"].get<std::string>();
+        requested = std::filesystem::u8path(arguments["definition_path"].get<std::string>());
         line = arguments["definition_line"].get<int>();
         column = arguments.value("definition_column", 1);
     } else if (arguments.contains("path_hint") && arguments.contains("line")) {
-        requested = arguments["path_hint"].get<std::string>();
+        requested = std::filesystem::u8path(arguments["path_hint"].get<std::string>());
         line = arguments["line"].get<int>();
         column = arguments.value("column", 1);
     } else {
@@ -109,13 +133,11 @@ bool agent_clangd_code_provider::resolve_location(const json & arguments, json &
         return false;
     }
 
-    const auto root = std::filesystem::weakly_canonical(repository_root_);
-    const auto candidate = std::filesystem::weakly_canonical(requested.is_absolute() ? requested : root / requested);
-    const auto relative = candidate.lexically_relative(root);
-    if (relative.empty() || relative.is_absolute() || *relative.begin() == ".." ||
-            !std::filesystem::is_regular_file(candidate)) {
-        error = "semantic diagnostics source must be a file inside the configured repository";
-        return false;
+    std::filesystem::path candidate;
+    if (!agent_clangd_repository_path(repository_root_, requested, candidate, error)) return false;
+    std::error_code path_error;
+    if (!std::filesystem::is_regular_file(candidate, path_error) || path_error) {
+        error = "semantic source must be a file inside the configured repository"; return false;
     }
     if (line < 1 || column < 1) {
         error = "semantic diagnostics source position is invalid";
@@ -126,17 +148,33 @@ bool agent_clangd_code_provider::resolve_location(const json & arguments, json &
         error = "semantic diagnostics source is unavailable or exceeds the 4 MiB limit";
         return false;
     }
+    constexpr size_t source_limit = 4 * 1024 * 1024;
     std::ifstream source(candidate, std::ios::binary);
+    if (!source) { error = "source could not be opened"; return false; }
+    std::string text(source_limit + 1, '\0');
+    source.read(&text[0], static_cast<std::streamsize>(text.size()));
+    text.resize(static_cast<size_t>(source.gcount()));
+    if (source.bad() || text.size() > source_limit) { error = "source read failed or exceeded its byte limit"; return false; }
+    std::istringstream lines(text);
     std::string source_line;
     bool line_found = false;
-    for (int current = 1; current <= line && std::getline(source, source_line); ++current) {
+    for (int current = 1; current <= line && std::getline(lines, source_line); ++current) {
         if (current != line) continue;
         line_found = true;
         const auto symbol = arguments.value("symbol", std::string{});
-        const auto symbol_offset = source_line.find(symbol);
+        auto symbol_offset = source_line.find(symbol);
         if (symbol.empty() || symbol_offset == std::string::npos) {
             error = "symbol does not occur on the requested source line; choose a matching path and line";
             return false;
+        }
+        const bool explicit_column = arguments.contains("definition_path") && arguments.contains("definition_line")
+            ? arguments.contains("definition_column") : arguments.contains("column");
+        if (explicit_column) {
+            while (symbol_offset != std::string::npos && utf16_units(source_line, symbol_offset) != static_cast<size_t>(column - 1))
+                symbol_offset = source_line.find(symbol, symbol_offset + symbol.size());
+            if (symbol_offset == std::string::npos) { error = "symbol does not match the explicit UTF-16 source column"; return false; }
+        } else if (source_line.find(symbol, symbol_offset + symbol.size()) != std::string::npos) {
+            error = "symbol occurs more than once on the source line; provide an explicit column"; return false;
         }
         column = static_cast<int>(utf16_units(source_line, symbol_offset)) + 1;
     }
@@ -144,91 +182,88 @@ bool agent_clangd_code_provider::resolve_location(const json & arguments, json &
         error = "requested source line is unavailable";
         return false;
     }
-    location = {{"uri", file_uri(candidate)}, {"path", candidate.string()},
-        {"range", {{"start", {{"line", line - 1}, {"character", column - 1}}}}}};
+    location = {candidate, agent_clangd_file_uri(candidate), std::move(text), line - 1, column - 1};
     return true;
 }
 
-bool agent_clangd_code_provider::open_location(const json & location, std::string & error) {
-    constexpr uintmax_t max_source_bytes = 4 * 1024 * 1024;
-    const std::filesystem::path path(location.at("path").get<std::string>());
-    std::error_code file_error;
-    const auto size = std::filesystem::file_size(path, file_error);
-    if (file_error) {
-        error = "semantic diagnostics source could not be inspected";
-        return false;
-    }
-    if (size > max_source_bytes) {
-        error = "semantic diagnostics source exceeds the 4 MiB limit";
-        return false;
-    }
-    std::ifstream source(path, std::ios::binary);
-    if (!source) {
-        error = "semantic diagnostics source could not be opened";
-        return false;
-    }
-    const std::string text((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
-    return session_->open_document(location.at("uri").get<std::string>(), language_id(path), text, error);
+bool agent_clangd_code_provider::open_location(const source_location & location, std::string & error) {
+    return session_->open_document(location.uri, language_id(location.path), location.text, error);
 }
 
 common_tool_execution_result agent_clangd_code_provider::location_query(const json & arguments, const std::string & method) {
-    json location;
+    source_location location;
     std::string error;
     if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.semantic.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for this semantic query.", error);
     if (!open_location(location, error)) return provider_error("tool.diagnostics.semantic.provider_unavailable", error);
     json response;
-    const auto params = json{{"textDocument", {{"uri", location["uri"]}}}, {"position", location["range"]["start"]}};
+    auto params = json{{"textDocument", {{"uri", location.uri}}}, {"position", {{"line", location.line}, {"character", location.column}}}};
+    if (method == "textDocument/references") params["context"] = {{"includeDeclaration", true}};
     if (!session_->request(method, params, response, error)) return provider_error("tool.diagnostics.semantic.provider_unavailable", error);
-    json entries = json::array();
-    const auto result = response.value("result", json::array());
+    json entries = json::array(), result;
+    if (!result_array(response, result)) return provider_error("tool.diagnostics.semantic.invalid_result", "clangd returned an invalid reference result");
     const auto limit = std::min<size_t>(arguments.value("max_results", 128), 128);
-    if (result.is_array()) for (const auto & item : result) {
-        if (entries.size() >= limit || !item.is_object()) break;
-        auto entry = item.contains("location") ? location_json(item["location"]) : location_json(item);
-        if (item.contains("from")) entry["from"] = location_json(item["from"]);
-        if (item.contains("to")) entry["to"] = location_json(item["to"]);
-        if (item.contains("name")) entry["name"] = item["name"];
+    bool incomplete = false;
+    for (const auto & item : result) {
+        if (entries.size() >= limit) break;
+        json entry;
+        if (!agent_clangd_project_location(item, repository_root_, entry, error)) { incomplete = true; continue; }
         entries.push_back(std::move(entry));
     }
-    return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"results", entries}, {"count", entries.size()}, {"truncated", entries.size() >= limit}}).dump());
+    auto output = coverage(result.size() > entries.size() && entries.size() >= limit, incomplete);
+    output.update({{"backend", "clangd"}, {"semantic", true}, {"results", entries}, {"count", entries.size()}});
+    return common_tool_execution_result::success(output.dump());
 }
 
 common_tool_execution_result agent_clangd_code_provider::references(const std::string & arguments_json) {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto arguments = json::parse(arguments_json, nullptr, false);
-    if (!arguments.is_object() || !arguments.contains("symbol")) return common_tool_execution_result::failure("tool.diagnostics.references.invalid_arguments", common_tool_failure_class::validation, false, "Reference arguments are invalid.");
+    if (!valid_arguments(arguments, 128)) return common_tool_execution_result::failure("tool.diagnostics.references.invalid_arguments", common_tool_failure_class::validation, false, "Reference arguments are invalid.");
     return location_query(arguments, "textDocument/references");
 }
 
 common_tool_execution_result agent_clangd_code_provider::call_hierarchy(const std::string & arguments_json) {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto arguments = json::parse(arguments_json, nullptr, false);
-    if (!arguments.is_object() || !arguments.contains("symbol")) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "Call hierarchy arguments are invalid.");
-    json location;
+    if (!valid_arguments(arguments, 128)) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "Call hierarchy arguments are invalid.");
+    source_location location;
     std::string error;
     if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for call hierarchy.", error);
     if (!open_location(location, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
     json prepared;
-    if (!session_->request("textDocument/prepareCallHierarchy", {{"textDocument", {{"uri", location["uri"]}}}, {"position", location["range"]["start"]}}, prepared, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
-    const auto items = prepared.value("result", json::array());
-    if (!items.is_array() || items.empty()) return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"callers", json::array()}, {"callees", json::array()}, {"count", 0}}).dump());
-    const auto item = items[0];
+    if (!session_->request("textDocument/prepareCallHierarchy", {{"textDocument", {{"uri", location.uri}}}, {"position", {{"line", location.line}, {"character", location.column}}}}, prepared, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
+    json items;
+    if (!result_array(prepared, items)) return provider_error("tool.diagnostics.call_hierarchy.invalid_result", "clangd returned an invalid call hierarchy selection");
+    if (items.size() > 1) return provider_error("tool.diagnostics.call_hierarchy.ambiguous", "source position resolved to multiple call hierarchy items");
     const auto direction = arguments.value("direction", std::string("both"));
     json callers = json::array(), callees = json::array();
     const auto limit = std::min<size_t>(arguments.value("max_results", 128), 128);
-    auto collect = [&](const char * method, json & output) {
-        json response;
-        if (!session_->request(method, {{"item", item}}, response, error)) return false;
-        const auto result = response.value("result", json::array());
-        if (!result.is_array()) return true;
-        for (const auto & entry : result) {
-            if (output.size() >= limit || !entry.is_object()) break;
-            json normalized = entry;
-            if (entry.contains("from")) normalized["from"] = location_json(entry["from"]);
-            if (entry.contains("to")) normalized["to"] = location_json(entry["to"]);
-            output.push_back(std::move(normalized));
-        }
-        return true;
-    };
-    if ((direction == "callers" || direction == "both") && !collect("callHierarchy/incomingCalls", callers)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
-    if ((direction == "callees" || direction == "both") && !collect("callHierarchy/outgoingCalls", callees)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
-    return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"callers", callers}, {"callees", callees}, {"count", callers.size() + callees.size()}}).dump());
+    bool truncated = false, incomplete = false;
+    if (!items.empty()) {
+        const auto & item = items[0];
+        json selected;
+        if (!agent_clangd_project_location(item, repository_root_, selected, error))
+            return provider_error("tool.diagnostics.call_hierarchy.invalid_result", error);
+        auto collect = [&](const char * method, json & output, bool incoming) {
+            json response, result;
+            if (!session_->request(method, {{"item", item}}, response, error)) return false;
+            if (!result_array(response, result)) { error = "clangd returned an invalid call hierarchy result"; return false; }
+            for (const auto & entry : result) {
+                if (callers.size() + callees.size() >= limit) { truncated = true; break; }
+                json normalized;
+                if (!agent_clangd_project_call(entry, item, incoming, repository_root_, normalized, error)) {
+                    incomplete = true; continue;
+                }
+                output.push_back(std::move(normalized));
+            }
+            return true;
+        };
+        if ((direction == "callers" || direction == "both") && !collect("callHierarchy/incomingCalls", callers, true))
+            return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
+        if ((direction == "callees" || direction == "both") && !collect("callHierarchy/outgoingCalls", callees, false))
+            return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
+    }
+    auto output = coverage(truncated, incomplete);
+    output.update({{"backend", "clangd"}, {"semantic", true}, {"callers", callers}, {"callees", callees},
+        {"count", callers.size() + callees.size()}});
+    return common_tool_execution_result::success(output.dump());
 }

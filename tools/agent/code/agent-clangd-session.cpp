@@ -3,8 +3,9 @@
 #include <sheredom/subprocess.h>
 
 #include <cstdio>
+#include <exception>
 #include <future>
-#include <set>
+#include <map>
 #include <thread>
 #include <utility>
 #ifdef _WIN32
@@ -31,7 +32,8 @@ struct agent_clangd_session::impl {
     int exit_code = 1;
     int64_t next_id = 1;
     agent_clangd_message_decoder decoder;
-    std::set<std::string> open_documents;
+    struct document { int64_t version; std::string text; };
+    std::map<std::string, document> open_documents;
 };
 
 agent_clangd_session::agent_clangd_session(agent_clangd_session_config config)
@@ -59,18 +61,18 @@ bool agent_clangd_session::ensure_started(std::string & error) {
             error = "failed to start clangd";
             return false;
         }
+        state_->running = true;
+        state_->joined = false;
         state_->input = subprocess_stdin(&state_->process);
         state_->output = subprocess_stdout(&state_->process);
-        if (!state_->input || !state_->output) { error = "failed to acquire clangd pipes"; shutdown(); return false; }
+        if (!state_->input || !state_->output) { error = "failed to acquire clangd pipes"; return false; }
 #ifdef _WIN32
         _setmode(_fileno(state_->input), _O_BINARY);
         _setmode(_fileno(state_->output), _O_BINARY);
 #endif
-        state_->running = true;
-        state_->joined = false;
     }
     agent_clangd_json response;
-    const auto root_uri = config_.repository_root.empty() ? agent_clangd_json(nullptr) : agent_clangd_json("file://" + config_.repository_root);
+    const auto root_uri = config_.repository_root.empty() ? agent_clangd_json(nullptr) : agent_clangd_json(agent_clangd_file_uri(std::filesystem::absolute(config_.repository_root)));
     const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri}, {"capabilities", agent_clangd_json::object()}, {"workspaceFolders", agent_clangd_json::array()}};
     if (!send_request("initialize", params, response, error)) return false;
     if (!response.contains("result")) { error = "clangd initialize response did not contain result"; return false; }
@@ -80,7 +82,9 @@ bool agent_clangd_session::ensure_started(std::string & error) {
 }
 
 bool agent_clangd_session::send_notification(const std::string & method, const agent_clangd_json & params, std::string & error) {
-    const auto framed = agent_clangd_encode_message(agent_clangd_notification(method, params));
+    std::string framed;
+    try { framed = agent_clangd_encode_message(agent_clangd_notification(method, params)); }
+    catch (const std::exception &) { error = "clangd notification contains invalid UTF-8 or JSON data"; return false; }
     if (!state_->input || std::fwrite(framed.data(), 1, framed.size(), state_->input) != framed.size() || std::fflush(state_->input) != 0) { error = "failed to write clangd notification"; return false; }
     return true;
 }
@@ -97,7 +101,9 @@ bool agent_clangd_session::read_message(agent_clangd_json & message, std::string
 
 bool agent_clangd_session::send_request(const std::string & method, const agent_clangd_json & params, agent_clangd_json & response, std::string & error) {
     const auto id = state_->next_id++;
-    const auto framed = agent_clangd_encode_message(agent_clangd_request(id, method, params));
+    std::string framed;
+    try { framed = agent_clangd_encode_message(agent_clangd_request(id, method, params)); }
+    catch (const std::exception &) { error = "clangd request contains invalid UTF-8 or JSON data"; return false; }
     if (!state_->input || std::fwrite(framed.data(), 1, framed.size(), state_->input) != framed.size() || std::fflush(state_->input) != 0) { error = "failed to write clangd request"; return false; }
     auto read = [this, id, &response, &error]() {
         for (;;) {
@@ -112,7 +118,10 @@ bool agent_clangd_session::send_request(const std::string & method, const agent_
     if (config_.request_timeout_ms == 0) return read();
     std::promise<bool> promise;
     auto future = promise.get_future();
-    std::thread reader([&promise, read = std::move(read)]() mutable { promise.set_value(read()); });
+    std::thread reader([&promise, &error, read = std::move(read)]() mutable {
+        try { promise.set_value(read()); }
+        catch (const std::exception &) { error = "clangd response could not be decoded"; promise.set_value(false); }
+    });
     if (future.wait_for(std::chrono::milliseconds(config_.request_timeout_ms)) != std::future_status::ready) {
         subprocess_terminate(&state_->process);
         reader.join();
@@ -126,30 +135,62 @@ bool agent_clangd_session::send_request(const std::string & method, const agent_
 
 bool agent_clangd_session::request(const std::string & method, const agent_clangd_json & params, agent_clangd_json & response, std::string & error) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ensure_started(error)) return false;
-    return send_request(method, params, response, error);
+    if (ensure_started(error) && send_request(method, params, response, error)) return true;
+    state_->initialized = false;
+    shutdown_locked();
+    return false;
 }
 
 bool agent_clangd_session::open_document(const std::string & uri, const std::string & language_id,
         const std::string & text, std::string & error) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!ensure_started(error)) return false;
-    if (state_->open_documents.find(uri) != state_->open_documents.end()) return true;
+    if (text.size() > 4 * 1024 * 1024) { error = "clangd document exceeds the 4 MiB limit"; return false; }
+    if (!ensure_started(error)) {
+        state_->initialized = false;
+        shutdown_locked();
+        return false;
+    }
+    auto found = state_->open_documents.find(uri);
+    if (found != state_->open_documents.end()) {
+        if (found->second.text == text) return true;
+        const int64_t version = found->second.version + 1;
+        if (!send_notification("textDocument/didChange", {
+                {"textDocument", {{"uri", uri}, {"version", version}}},
+                {"contentChanges", agent_clangd_json::array({{{"text", text}}})}}, error)) {
+            state_->initialized = false; shutdown_locked(); return false;
+        }
+        found->second = {version, text};
+        return true;
+    }
+    if (state_->open_documents.size() >= 8) {
+        const auto evicted = state_->open_documents.begin();
+        if (!send_notification("textDocument/didClose", {{"textDocument", {{"uri", evicted->first}}}}, error)) {
+            state_->initialized = false; shutdown_locked(); return false;
+        }
+        state_->open_documents.erase(evicted);
+    }
     if (!send_notification("textDocument/didOpen", {
             {"textDocument", {{"uri", uri}, {"languageId", language_id}, {"version", 1}, {"text", text}}}
-        }, error)) return false;
-    state_->open_documents.insert(uri);
+        }, error)) { state_->initialized = false; shutdown_locked(); return false; }
+    state_->open_documents.emplace(uri, impl::document{1, text});
     return true;
 }
 
 void agent_clangd_session::shutdown() {
     std::lock_guard<std::mutex> lock(mutex_);
+    shutdown_locked();
+}
+
+void agent_clangd_session::shutdown_locked() {
     if (!state_ || !state_->running) return;
     if (state_->initialized) {
         agent_clangd_json ignored;
         std::string error;
-        send_request("shutdown", agent_clangd_json::object(), ignored, error);
-        send_notification("exit", agent_clangd_json::object(), error);
+        const auto timeout = config_.request_timeout_ms;
+        config_.request_timeout_ms = config_.shutdown_timeout_ms;
+        const bool stopped = send_request("shutdown", agent_clangd_json::object(), ignored, error);
+        config_.request_timeout_ms = timeout;
+        if (stopped) send_notification("exit", agent_clangd_json::object(), error);
     }
     if (!state_->joined) {
         if (subprocess_alive(&state_->process)) subprocess_terminate(&state_->process);
@@ -164,4 +205,5 @@ void agent_clangd_session::shutdown() {
     state_->running = false;
     state_->initialized = false;
     state_->open_documents.clear();
+    state_->decoder = agent_clangd_message_decoder();
 }

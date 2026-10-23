@@ -107,9 +107,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .report-block:focu
 .report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .report-actions button:disabled { opacity: .45; cursor: default; }
 .report-section { margin: 24px 0; }
-.research-evidence-graph { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; background: #101d2d; }
-.research-evidence-graph-canvas { position: relative; width: 100%; height: min(54vh, 520px); min-height: 280px; }
-.research-evidence-graph small { display: block; margin-top: 8px; }
+.relationship-graph { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; background: #101d2d; }
+.relationship-graph-canvas { position: relative; width: 100%; height: min(54vh, 520px); min-height: 280px; }
+.relationship-graph small { display: block; margin-top: 8px; }
 .report-snapshots figure { margin: 18px 0; padding: 12px; border: 1px solid #385b7d; border-radius: 8px; }
 .report-snapshots img { display: block; max-width: 100%; height: auto; margin: 0 auto 10px; }
 .report-snapshots figcaption { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; overflow-wrap: anywhere; }

@@ -26,6 +26,23 @@ bool nonnegative_integer(const json & value, uint64_t maximum, uint64_t & output
     return output <= maximum;
 }
 
+bool provider_coverage(const json & output, bool & complete, bool & truncated, json & limitations) {
+    if ((output.contains("backend") && !output["backend"].is_string()) ||
+            (output.contains("complete") && !output["complete"].is_boolean()) ||
+            (output.contains("truncated") && !output["truncated"].is_boolean())) return false;
+    truncated = output.value("truncated", false);
+    complete = output.value("complete", !truncated);
+    if (complete && truncated) return false;
+    limitations = output.value("limitations", json::array());
+    if (!limitations.is_array() || limitations.size() > 24) return false;
+    for (const auto & value : limitations)
+        if (!value.is_string() || value.get_ref<const std::string &>().empty() ||
+                value.get_ref<const std::string &>().size() > 512 ||
+                value.get_ref<const std::string &>().find('\0') != std::string::npos) return false;
+    if ((!complete || truncated) && limitations.empty()) limitations.push_back("The semantic provider reported incomplete coverage.");
+    return true;
+}
+
 bool text_file(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     char buffer[1024];
@@ -69,7 +86,9 @@ common_tool_execution_result symbols_fallback(
         : args.value("path_hint", std::string{});
     if (!resolve_repository_path(bindings.repository_root, hint, root, error))
         return common_adapter_validation_failure("tool.code.invalid_path", std::move(error));
-    if (!std::filesystem::is_regular_file(root) && !std::filesystem::is_directory(root))
+    std::error_code initial_error;
+    const auto root_status = std::filesystem::status(root, initial_error);
+    if (initial_error || (!std::filesystem::is_regular_file(root_status) && !std::filesystem::is_directory(root_status)))
         return common_adapter_not_found_failure("tool.code.path_not_found", "code path was not found", "The selected code path was not found.");
 
     json matches = json::array();
@@ -123,6 +142,7 @@ common_tool_execution_result symbols_fallback(
         ++files_scanned;
         bytes_scanned += static_cast<size_t>(size);
         std::ifstream stream(canonical_file);
+        if (!stream) { ++files_skipped; coverage_complete = false; return; }
         std::string line;
         for (int number = 1; std::getline(stream, line) && matches.size() < static_cast<size_t>(limit); ++number) {
             for (size_t offset = line.find(symbol); offset != std::string::npos && matches.size() < static_cast<size_t>(limit);
@@ -175,10 +195,11 @@ common_tool_execution_result symbols_fallback(
         "Text matches do not resolve symbols or prove call relationships.",
         "Source locations refer to the host's current repository state; this response does not pin a commit or content snapshot."});
     if (files_skipped > 0) limitations.push_back("Some repository files were not inspected; see files_skipped.");
-    if (scan_limited) limitations.push_back("The configured file or byte scan budget was reached.");
+    if (scan_limited) limitations.push_back("The configured traversal, file or byte scan budget was reached.");
     return common_adapter_success_json({{"schema", "code-analysis.v1"},
         {"operation", references ? "references" : "symbols"},
         {"backend", "text-fallback"}, {"method", "text_match"}, {"semantic", false},
+        {"column_encoding", "utf-8-bytes"},
         {"symbol", symbol}, {"items", matches},
         {"count", matches.size()}, {"truncated", matches.size() >= static_cast<size_t>(limit)},
         {"complete", coverage_complete && !scan_limited && matches.size() < static_cast<size_t>(limit)},
@@ -195,16 +216,16 @@ std::string location_id(const json & location) {
     const auto path = location.value("path", std::string{});
     uint64_t line = 0;
     uint64_t column = 0;
-    if (path.empty() || path.size() > 480 ||
+    if (path.empty() || path.size() > 480 || path.find('\0') != std::string::npos ||
             !nonnegative_integer(location["line"], 1000000, line) || line == 0 ||
             (location.contains("column") && !nonnegative_integer(location["column"], 1000000, column))) return {};
     return "function:" + path + ":" + std::to_string(line) + ":" + std::to_string(column);
 }
 
-json call_visualization(const json & output, bool truncated, size_t limit) {
+json call_visualization(const json & output, bool complete, bool truncated, size_t limit) {
     common_agent_visualization_relationship graph;
     graph.title = "Static call relationships";
-    graph.complete = !truncated;
+    graph.complete = complete;
     graph.truncated = truncated;
     graph.limitations.push_back(
         "Source locations refer to the host's current repository state; this response does not pin a commit or content snapshot.");
@@ -212,21 +233,18 @@ json call_visualization(const json & output, bool truncated, size_t limit) {
         if (std::find(graph.limitations.begin(), graph.limitations.end(), value) == graph.limitations.end())
             graph.limitations.push_back(value);
     };
-    if (!graph.complete) graph.limitations.push_back("Call relationships were limited by the configured result bound.");
+    graph.limitations.push_back("Static call relationships do not establish feasible paths or observed execution.");
+    if (truncated) graph.limitations.push_back("Call relationships were limited by the configured result bound.");
+    for (const auto & value : output.value("limitations", json::array())) add_limitation(value.get<std::string>());
     bool invalid_location = false;
 
     std::map<std::string, std::string> labels;
     json edges = json::array();
+    std::map<std::pair<std::string, std::string>, size_t> relationships;
     const auto collect = [&](const char * field, const char * relation) {
         const auto values = output.value(field, json::array());
         if (!values.is_array()) return;
         for (const auto & value : values) {
-            if (edges.size() >= limit) {
-                graph.complete = false;
-                graph.truncated = true;
-                add_limitation("The relationship projection reached its edge limit.");
-                break;
-            }
             if (!value.is_object() || !value.contains("from") || !value.contains("to")) {
                 invalid_location = true;
                 continue;
@@ -237,11 +255,21 @@ json call_visualization(const json & output, bool truncated, size_t limit) {
                 invalid_location = true;
                 continue;
             }
+            const auto existing = relationships.find({from_id, to_id});
+            if (existing == relationships.end() && edges.size() >= limit) {
+                graph.complete = false; graph.truncated = true;
+                add_limitation("The relationship projection reached its edge limit.");
+                continue;
+            }
             const auto remember = [&](const std::string & id, const json & location) {
                 const auto path = location.value("path", std::string{});
                 const auto line = location["line"].get<uint64_t>();
                 const auto column = location.contains("column") ? location["column"].get<uint64_t>() : 0;
-                labels.emplace(id, path + ":" + std::to_string(line) + ":" + std::to_string(column));
+                auto label = path + ":" + std::to_string(line) + ":" + std::to_string(column);
+                if (location.contains("name") && location["name"].is_string() &&
+                        location["name"].get_ref<const std::string &>().size() + label.size() + 3 <= 512)
+                    label = location["name"].get<std::string>() + " @ " + label;
+                labels.emplace(id, std::move(label));
             };
             remember(from_id, value["from"]);
             remember(to_id, value["to"]);
@@ -255,19 +283,51 @@ json call_visualization(const json & output, bool truncated, size_t limit) {
                 add_limitation("Some source anchors exceeded visualization limits.");
                 continue;
             }
+            json refs = json::array({from_path + "#L" + std::to_string(from_line),
+                to_path + "#L" + std::to_string(to_line)});
+            if (value.contains("call_sites")) {
+                if (!value["call_sites"].is_array()) invalid_location = true;
+                else for (const auto & site : value["call_sites"]) {
+                    if (location_id(site).empty() || site["path"] != from_path) { invalid_location = true; continue; }
+                    uint64_t end_line = 0, end_column = 0;
+                    const auto line = site["line"].get<uint64_t>();
+                    const auto column = site.value("column", uint64_t{0});
+                    if (!site.contains("end_line") || !site.contains("end_column") || column == 0 ||
+                            !nonnegative_integer(site["end_line"], 1000000, end_line) ||
+                            !nonnegative_integer(site["end_column"], 1000000, end_column) || end_column == 0 ||
+                            end_line < line || (end_line == line && end_column < column)) {
+                        invalid_location = true; continue;
+                    }
+                    const auto ref = from_path + "#L" + std::to_string(line) + "C" + std::to_string(column) +
+                        "-L" + std::to_string(end_line) + "C" + std::to_string(end_column);
+                    if (ref.size() > 512) { graph.complete = false; graph.truncated = true;
+                        add_limitation("Some call-site references exceeded the visualization limit."); continue; }
+                    if (std::find(refs.begin(), refs.end(), ref) != refs.end()) continue;
+                    if (refs.size() >= 64) { graph.complete = false; graph.truncated = true;
+                        add_limitation("Some call-site references exceeded the visualization limit."); break; }
+                    refs.push_back(ref);
+                }
+            }
+            if (existing != relationships.end()) {
+                auto & retained = edges[existing->second]["provenance_refs"];
+                for (const auto & ref : refs) {
+                    if (std::find(retained.begin(), retained.end(), ref) != retained.end()) continue;
+                    if (retained.size() >= 64) { graph.complete = false; graph.truncated = true;
+                        add_limitation("Some call-site references exceeded the visualization limit."); break; }
+                    retained.push_back(ref);
+                }
+                continue;
+            }
+            relationships.emplace(std::make_pair(from_id, to_id), edges.size());
             edges.push_back({{"id", "call:" + std::to_string(edges.size())},
                 {"source", from_id}, {"target", to_id}, {"directed", true},
-                {"relation", relation}, {"label", "calls"},
-                {"provenance_refs", json::array({
-                    from_path + "#L" + std::to_string(from_line),
-                    to_path + "#L" + std::to_string(to_line)})}});
+                {"relation", relation}, {"label", "calls"}, {"provenance_refs", refs}});
         }
     };
     collect("callers", "static_call");
     collect("callees", "static_call");
     if (invalid_location) {
         graph.complete = false;
-        graph.truncated = true;
         add_limitation("Some provider call relationships lacked usable source locations.");
     }
     for (const auto & entry : labels) {
@@ -299,7 +359,8 @@ json call_visualization(const json & output, bool truncated, size_t limit) {
 bool valid_optional_string(const json & value, const char * key, size_t maximum,
         std::string & error) {
     if (!value.contains(key)) return true;
-    if (!value[key].is_string() || value[key].get_ref<const std::string &>().size() > maximum) {
+    if (!value[key].is_string() || value[key].get_ref<const std::string &>().size() > maximum ||
+            value[key].get_ref<const std::string &>().find('\0') != std::string::npos) {
         error = std::string(key) + " must be a bounded string";
         return false;
     }
@@ -359,7 +420,11 @@ bool common_try_register_code_tool_adapter(
     if (!inspect && !symbols && !references && !calls) return false;
 
     if (inspect) {
-        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string &) {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            json args;
+            std::string parse_error;
+            if (!common_adapter_parse_object(input, args, parse_error) || !args.empty())
+                return common_adapter_validation_failure("tool.code.invalid_arguments", "code.inspect requires an empty argument object");
             std::error_code root_error;
             const bool repository_available = !bindings.repository_root.empty() &&
                 std::filesystem::is_directory(bindings.repository_root, root_error) && !root_error;
@@ -386,7 +451,8 @@ bool common_try_register_code_tool_adapter(
             json args;
             if (!common_adapter_parse_object(input, args, parse_error) || !args.contains("symbol") ||
                     !args["symbol"].is_string() || args["symbol"].get_ref<const std::string &>().empty() ||
-                    args["symbol"].get_ref<const std::string &>().size() > 256)
+                    args["symbol"].get_ref<const std::string &>().size() > 256 ||
+                    args["symbol"].get_ref<const std::string &>().find('\0') != std::string::npos)
                 return common_adapter_validation_failure("tool.code.invalid_arguments", "code operation requires a symbol of at most 256 bytes");
             if (!valid_optional_string(args, references ? "definition_path" : "path_hint", 512, parse_error) ||
                     !valid_optional_string(args, references ? "path_hint" : "definition_path", 512, parse_error) ||
@@ -397,49 +463,61 @@ bool common_try_register_code_tool_adapter(
                     !valid_optional_integer(args, "max_results", 1, references ? 128 : 64, parse_error))
                 return common_adapter_validation_failure("tool.code.invalid_arguments", std::move(parse_error));
             const auto & semantic = references
-                ? (bindings.code_references ? bindings.code_references : (legacy ? bindings.diagnostics_references : bindings.code_references))
-                : (bindings.code_symbols ? bindings.code_symbols : (legacy ? bindings.diagnostics_symbol : bindings.code_symbols));
+                ? (legacy ? bindings.diagnostics_references : bindings.code_references)
+                : (legacy ? bindings.diagnostics_symbol : bindings.code_symbols);
             if (semantic) {
                 auto result = semantic(input);
                 if (!result.ok) return canonical_provider_result(std::move(result), legacy);
                 auto output = json::parse(result.output, nullptr, false);
+                bool provider_complete = true, provider_truncated = false;
+                json provider_limitations = json::array();
+                if (!output.is_object() || !provider_coverage(output, provider_complete, provider_truncated, provider_limitations))
+                    return common_adapter_execution_failure("tool.code.invalid_provider_result",
+                        "semantic provider result has invalid coverage metadata", "Code analysis returned an invalid provider response.");
                 const bool semantic_empty = legacy && output.is_object() &&
                     output.contains("backend") && output["backend"].is_string() &&
                     output["backend"].get_ref<const std::string &>() == "clangd" &&
                     output.contains("semantic") && output["semantic"].is_boolean() && output["semantic"].get<bool>() &&
                     output.contains("count") && output["count"].is_number_integer() &&
-                    output["count"].is_number_unsigned() && output["count"].get<uint64_t>() == 0;
+                    output["count"] == 0 && output.value("complete", true) && !output.value("truncated", false);
                 if (semantic_empty)
                     return symbols_fallback(bindings, args, references, true);
                 if (legacy) return result;
                 if (!output.is_object())
                     return common_adapter_execution_failure("tool.code.invalid_provider_result",
                         "semantic provider returned an invalid result", "Code analysis returned an invalid provider response.");
-                auto items = references
-                    ? output.value("results", output.value("references", json::array()))
-                    : output.value("definitions", json::array());
+                const auto items_key = references ? (output.contains("results") ? "results" : "references") : "definitions";
+                if (!output.contains(items_key)) return common_adapter_execution_failure("tool.code.invalid_provider_result",
+                    "semantic provider omitted its result array", "Code analysis returned an invalid provider response.");
+                auto items = output[items_key];
                 if (!items.is_array() ||
                         (output.contains("backend") && !output["backend"].is_string()) ||
                         (output.contains("truncated") && !output["truncated"].is_boolean()) ||
                         (output.contains("count") && !output["count"].is_number_integer()))
                     return common_adapter_execution_failure("tool.code.invalid_provider_result",
                         "semantic provider result has invalid metadata or omitted its result array", "Code analysis returned an invalid provider response.");
-                const bool truncated = output.value("truncated", false);
-                uint64_t count = items.size();
-                if (output.contains("count") && !nonnegative_integer(output["count"], items.size(), count))
+                const auto limit = static_cast<size_t>(args.value("max_results", references ? 128 : 64));
+                if (items.size() > limit) {
+                    while (items.size() > limit) items.erase(items.end() - 1);
+                    provider_complete = false; provider_truncated = true;
+                    provider_limitations.push_back("The adapter limited the provider result to the requested result count.");
+                }
+                const auto provider_item_count = output[items_key].size();
+                uint64_t count = provider_item_count;
+                if (output.contains("count") && !nonnegative_integer(output["count"], provider_item_count, count))
                     return common_adapter_execution_failure("tool.code.invalid_provider_result",
                         "semantic provider result count did not match its result array", "Code analysis returned an invalid provider response.");
-                if (count != items.size())
+                if (count != provider_item_count)
                     return common_adapter_execution_failure("tool.code.invalid_provider_result",
                         "semantic provider result count did not match its result array", "Code analysis returned an invalid provider response.");
+                provider_limitations.push_back("Source locations refer to the host's current repository state; this response does not pin a commit or content snapshot.");
                 return common_adapter_success_json({{"schema", "code-analysis.v1"},
                     {"operation", references ? "references" : "symbols"},
                     {"backend", output.value("backend", std::string("semantic_provider"))},
-                    {"method", "semantic"}, {"semantic", true}, {"symbol", args["symbol"]},
-                    {"items", items}, {"count", count},
-                    {"truncated", truncated}, {"complete", !truncated},
-                    {"limitations", json::array({
-                        "Source locations refer to the host's current repository state; this response does not pin a commit or content snapshot."})}});
+                    {"method", "semantic"}, {"semantic", true}, {"column_encoding", "utf-16"}, {"symbol", args["symbol"]},
+                    {"items", items}, {"count", items.size()},
+                    {"truncated", provider_truncated}, {"complete", provider_complete},
+                    {"limitations", provider_limitations}});
             }
             return symbols_fallback(bindings, args, references, legacy);
         }, error);
@@ -450,7 +528,8 @@ bool common_try_register_code_tool_adapter(
             json args;
             if (!common_adapter_parse_object(input, args, parse_error) || !args.contains("symbol") ||
                     !args["symbol"].is_string() || args["symbol"].get_ref<const std::string &>().empty() ||
-                    args["symbol"].get_ref<const std::string &>().size() > 256)
+                    args["symbol"].get_ref<const std::string &>().size() > 256 ||
+                    args["symbol"].get_ref<const std::string &>().find('\0') != std::string::npos)
                 return common_adapter_validation_failure("tool.code.calls.invalid_arguments", "code.calls requires a symbol of at most 256 bytes");
             const int maximum_results = legacy ? 128 : 16;
             if (!valid_optional_string(args, "path_hint", 512, parse_error) ||
@@ -467,17 +546,20 @@ bool common_try_register_code_tool_adapter(
             const auto limit = args.value("max_results", maximum_results);
             if ((direction != "callers" && direction != "callees" && direction != "both") || limit < 1 || limit > maximum_results)
                 return common_adapter_validation_failure("tool.code.calls.invalid_arguments", "code.calls arguments are out of bounds");
-            const auto & semantic = bindings.code_calls ? bindings.code_calls : (legacy ? bindings.diagnostics_call_hierarchy : bindings.code_calls);
+            const auto & semantic = legacy ? bindings.diagnostics_call_hierarchy : bindings.code_calls;
             if (!semantic) return common_adapter_execution_failure(legacy ? "tool.diagnostics.call_hierarchy.unavailable" : "tool.code.calls.unavailable",
                 legacy ? "diagnostics.call_hierarchy requires a semantic provider" : "semantic call analysis is not configured",
                 "Call relationships are unavailable until a semantic code provider is configured.");
+            if (!legacy && !((args.contains("definition_path") && args.contains("definition_line")) ||
+                    (args.contains("path_hint") && args.contains("line"))))
+                return common_adapter_validation_failure("tool.code.calls.invalid_arguments", "code.calls requires an explicit source location");
             args["max_results"] = limit;
             auto result = semantic(args.dump());
             if (!result.ok) return canonical_provider_result(std::move(result), legacy);
             if (legacy) return result;
             auto output = json::parse(result.output, nullptr, false);
-            if (!output.is_object() || !output.value("callers", json::array()).is_array() ||
-                    !output.value("callees", json::array()).is_array() ||
+            if (!output.is_object() || !output.contains("callers") || !output["callers"].is_array() ||
+                    !output.contains("callees") || !output["callees"].is_array() ||
                     !output.contains("count") || !output["count"].is_number_integer() ||
                     (output.contains("backend") && !output["backend"].is_string()) ||
                     (output.contains("truncated") && !output["truncated"].is_boolean()))
@@ -491,20 +573,29 @@ bool common_try_register_code_tool_adapter(
             if (!count_matches)
                 return common_adapter_execution_failure("tool.code.invalid_provider_result",
                     "semantic provider result count did not match its call relationships", "Code analysis returned an invalid provider response.");
-            const auto count = actual_count;
-            const bool provider_truncated =
+            bool provider_complete = true, provider_truncated = false;
+            json provider_limitations;
+            if (!provider_coverage(output, provider_complete, provider_truncated, provider_limitations))
+                return common_adapter_execution_failure("tool.code.invalid_provider_result", "invalid provider coverage", "Code analysis returned invalid coverage metadata.");
+            if (!output.contains("truncated")) provider_truncated =
                 ((direction == "callers" || direction == "both") && output["callers"].size() >= static_cast<size_t>(limit)) ||
                 ((direction == "callees" || direction == "both") && output["callees"].size() >= static_cast<size_t>(limit));
-            const auto graph = call_visualization(output, provider_truncated, static_cast<size_t>(limit));
-            const bool truncated = provider_truncated || !graph.value("complete", true);
+            provider_complete = provider_complete && !provider_truncated;
+            output["limitations"] = provider_limitations;
+            const auto graph = call_visualization(output, provider_complete, provider_truncated, static_cast<size_t>(limit));
+            common_agent_visualization_relationship validated_graph;
+            std::string graph_error;
+            if (!common_agent_visualization_relationship_from_json(graph, validated_graph, graph_error))
+                return common_adapter_execution_failure("tool.code.invalid_provider_result", graph_error,
+                    "Code analysis could not produce a valid relationship projection.");
             auto limitations = json::array({
                 "The provider returns one-hop call relationships, not a proof of feasible execution."});
             for (const auto & limitation : graph.value("limitations", json::array())) limitations.push_back(limitation);
             auto canonical_output = json{{"schema", "code-analysis.v1"},
                 {"operation", "calls"}, {"backend", output.value("backend", std::string("semantic_provider"))},
-                {"method", "semantic_call_hierarchy"}, {"semantic", true}, {"depth", 1},
-                {"symbol", args["symbol"]}, {"count", count}, {"truncated", truncated},
-                {"complete", !truncated},
+                {"method", "semantic_call_hierarchy"}, {"semantic", true}, {"column_encoding", "utf-16"}, {"depth", 1},
+                {"symbol", args["symbol"]}, {"count", graph["edges"].size()}, {"provider_count", actual_count},
+                {"truncated", graph["truncated"]}, {"complete", graph["complete"]},
                 {"limitations", limitations},
                 {"visualization", graph}};
             const auto serialized = canonical_output.dump();

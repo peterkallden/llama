@@ -53,6 +53,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-protocol.cpp
@@ -253,6 +254,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-catalog-cozo.cpp
 )
 
@@ -390,6 +392,7 @@ add_library(llama-agent-code
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp
 )
 target_include_directories(llama-agent-code PUBLIC
     ${PROJECT_SOURCE_DIR}

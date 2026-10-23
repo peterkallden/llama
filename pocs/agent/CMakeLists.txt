@@ -2022,6 +2022,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-semi-oracle-tool-adapter
     test-agent-semi-oracle-cozo
     test-agent-clangd-protocol
+    test-agent-code-projection
     test-agent-native-crash
     test-agent-native-crash-smoke
     test-agent-native-crash-cdb-smoke
