@@ -8,6 +8,7 @@
 #include "agent/dataset-contracts.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/schema/tool-dsl-grammar.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include "tools/agent/cli/agent-cli-scope.h"
@@ -71,78 +72,19 @@ namespace {
 
 std::string workflow_action_grammar(
         const std::vector<common_chat_tool> & tools,
-        const std::vector<std::string> & host_resolved_dataset_tools) {
-    std::set<std::string> fields;
-    std::function<void(const json &, const std::string &)> collect_paths =
-        [&](const json & schema, const std::string & path) {
-            if (!schema.is_object()) return;
-            if (schema.value("type", std::string{}) == "object") {
-                const auto properties = schema.value("properties", json::object());
-                if (!properties.is_object()) return;
-                for (const auto & item : properties.items()) {
-                    const std::string child = path.empty() ? item.key() : path + "." + item.key();
-                    fields.insert(child);
-                    collect_paths(item.value(), child);
-                }
-            } else if (schema.value("type", std::string{}) == "array") {
-                const auto annotation = schema.value("x-agent-flat", json::object());
-                if (annotation.is_object()) {
-                    const auto directive = annotation.value("directive", std::string{});
-                    if (!directive.empty()) fields.insert(directive);
-                }
-                const auto items = schema.value("items", json::object());
-                if (items.value("type", std::string{}) == "object") {
-                    const auto properties = items.value("properties", json::object());
-                    if (properties.is_object()) {
-                        for (const auto & item : properties.items()) {
-                            const std::string child = path + "[%INDEX%]." + item.key();
-                            fields.insert(child);
-                            collect_paths(item.value(), child);
-                        }
-                    }
-                } else if (!path.empty()) {
-                    fields.insert(path);
-                }
-            }
-        };
-    std::set<std::string> tool_names;
-    for (const auto & tool : tools) {
-        tool_names.insert(tool.name);
+        const std::vector<std::string> & host_resolved_dataset_tools,
+        std::string & error) {
+    auto projected = tools;
+    for (auto & tool : projected) {
+        if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) ==
+                host_resolved_dataset_tools.end()) continue;
         auto schema = json::parse(tool.parameters, nullptr, false);
-        if (schema.is_object() &&
-                std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
-                    host_resolved_dataset_tools.end()) {
+        if (schema.is_object() && schema.contains("properties") && schema["properties"].is_object()) {
             schema["properties"].erase("dataset");
-        }
-        if (schema.is_object()) collect_paths(schema, {});
-    }
-    if (tool_names.empty() || fields.empty()) return {};
-
-    auto quote = [](const std::string & value) { return "\"" + value + "\""; };
-    std::string grammar = "root ::= \"open! \" tool-name (\"\\n\" field-line)*\ntool-name ::= ";
-    bool first = true;
-    for (const auto & name : tool_names) {
-        if (!first) grammar += " | ";
-        first = false;
-        grammar += quote(name);
-    }
-    grammar += "\nfield-line ::= field-name \": \" value\nfield-name ::= ";
-    first = true;
-    for (const auto & path : fields) {
-        if (!first) grammar += " | ";
-        first = false;
-        size_t position = 0;
-        while (position < path.size()) {
-            const size_t marker = path.find("%INDEX%", position);
-            const size_t end = marker == std::string::npos ? path.size() : marker;
-            if (end > position) grammar += quote(path.substr(position, end - position));
-            if (marker == std::string::npos) break;
-            grammar += " \"[\" index \"]\"";
-            position = marker + 7;
+            tool.parameters = schema.dump();
         }
     }
-    grammar += "\nindex ::= [0-9]+\nvalue ::= [^\\n]+";
-    return grammar;
+    return common_build_tool_dsl_grammar(projected, common_tool_dsl_grammar_form::action, error);
 }
 
 std::string workflow_action_contracts(
@@ -513,7 +455,11 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             output_format == common_agent_tool_output_format::compact_dsl
                 ? std::string{} : schema.dump());
         if (output_format == common_agent_tool_output_format::compact_dsl) {
-            generation_request.grammar = workflow_action_grammar(model_tools, host_resolved_dataset_tools);
+            generation_request.grammar = workflow_action_grammar(model_tools, host_resolved_dataset_tools, error);
+            if (generation_request.grammar.empty()) {
+                error = "workflow action DSL grammar failed: " + error;
+                return result;
+            }
         }
         const auto generated = inference.generate_result(generation_request);
         result.generation = common_agent_generated_text_result_from_generation_result(generated);

@@ -94,6 +94,8 @@ static void check_planner_prompt_contracts() {
     const auto & first = inference.requests.front();
     const auto & repaired = inference.requests.back();
     require(first.json_schema.empty() && repaired.json_schema.empty(), "DSL planning silently switched to JSON");
+    require(!first.grammar.empty() && first.grammar == repaired.grammar,
+        "DSL planner or structural repair lost its schema-derived grammar");
     const auto & instructions = first.messages[1].content;
     require(instructions.find("dataset.list") == std::string::npos &&
         instructions.find("Scalar arrays") == std::string::npos &&
@@ -147,6 +149,21 @@ static void check_planner_prompt_contracts() {
 
 int main() {
     check_planner_prompt_contracts();
+    {
+        common_agent_generation_config config;
+        common_agent_request action_request;
+        action_request.prompt = "Inspect repository capabilities.";
+        common_chat_tool inspect{"code.inspect", "Inspect", R"({"type":"object","additionalProperties":false})", "{}"};
+        planner_prompt_inference action_inference;
+        action_inference.replies = {"open! code.inspect"};
+        std::string action_error;
+        const auto selected = select_llama_cli_workflow_action(action_inference, config, action_request,
+            {inspect}, {}, {}, common_agent_tool_output_format::compact_dsl, action_error);
+        require(action_error.empty() && selected.action && selected.action->tool_name == inspect.name,
+            "no-argument workflow action failed selection");
+        require(action_inference.requests.size() == 1 && !action_inference.requests.front().grammar.empty(),
+            "no-argument workflow action escaped grammar-constrained generation");
+    }
     require(common_agent_resolve_tool_round_limit(0) == 16, "zero must resolve to the shared default");
     require(common_agent_resolve_tool_round_limit(1) == 1, "explicit one-call limit changed");
     for (const size_t budget : {size_t(0), size_t(1)}) {

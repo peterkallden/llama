@@ -494,6 +494,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-tool-chat-bridge.cpp
         test-tool-registry.cpp
         test-agent-tool-output-codec.cpp
+        test-agent-dsl-grammar.cpp
         test-tool-family-index.cpp
         test-tool-navigation.cpp
         test-agent-clangd-protocol.cpp
@@ -659,6 +660,10 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
             target_link_libraries(${TEST_NAME} PRIVATE server-context)
         endif()
+        if (TEST_NAME STREQUAL "test-agent-dsl-grammar")
+            target_compile_definitions(${TEST_NAME} PRIVATE NDEBUG)
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
+        endif()
         if (TEST_NAME STREQUAL "test-agent-code-projection")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp)
@@ -709,6 +714,10 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+        if (TEST_NAME STREQUAL "test-agent-dsl-grammar")
+            target_compile_definitions(${TEST_NAME} PRIVATE NDEBUG)
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
+        endif()
         if (TEST_NAME STREQUAL "test-agent-code-projection")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "code;model-free")
         endif()

@@ -148,6 +148,7 @@ struct fixture {
         require(inference.requests.size() == expected_requests, "unexpected planner regeneration count");
         for (const auto & generated : inference.requests) {
             require(generated.json_schema.empty(), "DSL planner silently switched to JSON");
+            require(!generated.grammar.empty(), "DSL planner or repair lost sampling-time grammar");
             require(generated.scope && generated.scope->namespace_id == request.namespace_id &&
                 generated.scope->project_id == request.project_id &&
                 generated.scope->session_id == request.session_id && generated.scope->turn_id == request.turn_id,
@@ -218,6 +219,23 @@ void recovery_contracts() {
     test.check_completed(result, "code.inspect");
     test.check_generation_context(2);
     require(json::parse(test.calls.front().arguments_json).empty(), "repaired no-argument call acquired arguments");
+
+    fixture missing_argument;
+    missing_argument.inference.replies = {
+        reply("plan goal=\"Locate definition\"\nstep | open! code.symbols"),
+        reply("symbol: selected_symbol"),
+    };
+    missing_argument.check_completed(missing_argument.run(), "code.symbols");
+    missing_argument.check_generation_context(2);
+    require(json::parse(missing_argument.calls.front().arguments_json).value("symbol", "") == "selected_symbol",
+        "DSL argument repair was not consumed as host-canonical plan data");
+
+    fixture bad_repair;
+    bad_repair.inference.replies = {
+        reply("plan goal=\"Locate definition\"\nstep | open! code.symbols"),
+        reply("symbol: 42"),
+    };
+    bad_repair.check_rejected(bad_repair.run(), 2);
 }
 
 void dispatch_contracts() {

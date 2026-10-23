@@ -652,8 +652,41 @@ four independent cases, all compiled with `NDEBUG` and explicit failure checks:
 
 Run them with `ctest --test-dir <build> --output-on-failure -R '^test-agent-planner-'`.
 These tests protect execution semantics, not exact prompt wording or model
-accuracy. They do not require unconstrained generation: a future schema-derived
-DSL grammar can satisfy the same contracts.
+accuracy. Schema-derived sampling constraints are checked separately by
+`test-agent-dsl-grammar` using llama's actual GBNF engine.
+
+### DSL sampling constraints
+
+`common/agent/tooling/schema/tool-dsl-grammar` projects authorized input schemas
+into the same DSL consumed by the existing codec. Workflow action selection,
+ordinary planning and selected-step argument repair use its action, plan and
+argument-only forms. Host-specific input projections happen before this shared
+builder; it does not interpret resource scope or choose a workflow.
+
+Each tool has its own field productions. A no-argument tool permits no field
+lines, including when every tool in the catalog has no arguments. Plan grammars
+also enforce the host's step limit and bound goal/alias lengths. Nested fields,
+indexed fields, flat directives and declared schema alternatives remain
+available. An invalid grammar projection is an explicit error before inference,
+never an implicit switch to unconstrained output or JSON.
+
+This is a structural sampling constraint, not a complete JSON Schema validator.
+Field values, required properties, duplicate fields/aliases, cross-field
+conditions, source bindings and semantic correctness still pass through the
+ordinary codec and host validation. The shared generation preparation path
+installs the grammar eagerly and clears native tool-parser triggers. The host
+continues to own normalized plans, retries, execution authority and synthesis.
+
+Targeted argument repair preserves the model response as DSL and carries the
+host-rebuilt canonical plan separately. That plan returns directly to ordinary
+plan and binding validation; it must not be parsed a second time as model DSL.
+An invalid repair remains a rejection and cannot dispatch the unrepaired plan.
+
+The Qwen2.5-Coder 1.5B reproduction requesting exactly one `code.inspect`
+call still selects additional tools and supplies insufficient arguments. The
+grammar removes invented fields on the no-argument call, and targeted repairs
+now reach subsequent schema checks, but the bounded run remains rejected.
+This is not evidence of successful semantic planning or tool execution.
 
 ## Change checklist
 

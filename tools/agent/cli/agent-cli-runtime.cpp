@@ -11,6 +11,7 @@
 #include "agent/structured-regeneration.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/schema/tool-output-codec.h"
+#include "agent/tooling/schema/tool-dsl-grammar.h"
 #include "memory/memory-context.h"
 #include "plan/plan-context.h"
 #include "plan/plan-json.h"
@@ -1500,6 +1501,19 @@ public:
         // still validates and materializes the ordinary plan below.
         const size_t model_max_steps = singleton_host_bound_tool ? 1 : 5;
         const size_t model_max_goal_length = singleton_host_bound_tool ? 96 : 256;
+        std::string planner_grammar;
+        if (compact_dsl_output) {
+            auto projected_tools = tool_definitions;
+            for (auto & tool : projected_tools) {
+                tool.parameters = planner_tool_schema_for_request(tool, request, true).dump();
+            }
+            planner_grammar = common_build_tool_dsl_grammar(projected_tools,
+                common_tool_dsl_grammar_form::plan, error, model_max_steps, model_max_goal_length);
+            if (planner_grammar.empty()) {
+                error = "planner DSL grammar failed: " + error;
+                return proposal;
+            }
+        }
         std::string plan_schema_error;
         const std::string compact_plan_schema = common_render_compact_plan_schema(
             common_plan_model_facing_json_schema(
@@ -1609,10 +1623,14 @@ public:
         bool parsed = false;
         std::optional<planner_argument_repair_target> pending_argument_repair;
         std::set<size_t> attempted_argument_repairs;
+        std::optional<std::string> repaired_candidate_json;
+        std::string argument_repair_error;
         const int planner_n_predict = generation_config.planner_n_predict > 0
             ? generation_config.planner_n_predict
             : std::max(generation_config.n_predict, 512);
         auto generate_plan = [&](bool regeneration) {
+            repaired_candidate_json.reset();
+            argument_repair_error.clear();
             if (regeneration && pending_argument_repair.has_value() &&
                     !attempted_argument_repairs.count(pending_argument_repair->step_index)) {
                 const auto target = *pending_argument_repair;
@@ -1646,12 +1664,32 @@ public:
                     "\nargs: " + target.base_arguments_json +
                     "\n[Host validation error]\n" + json(target.validation_error).dump(),
                 };
-                auto repaired = inference.generate_result(make_agent_cli_generation_request(
+                auto repair_request = make_agent_cli_generation_request(
                     request,
                     common_agent_generation_purpose::planner,
                     {repair_system, repair_user},
                     make_agent_cli_generation_options(generation_config, std::min(planner_n_predict, 256)),
-                    compact_dsl_output ? std::string() : planner_argument_repair_schema(target, tool_definitions)));
+                    compact_dsl_output ? std::string() : planner_argument_repair_schema(target, tool_definitions));
+                if (compact_dsl_output) {
+                    const auto selected = std::find_if(tool_definitions.begin(), tool_definitions.end(),
+                        [&](const common_chat_tool & tool) { return tool.name == target.tool_name; });
+                    if (selected == tool_definitions.end()) {
+                        common_agent_generation_result failed;
+                        failed.error_message = "planner argument repair has no authorized tool";
+                        return failed;
+                    }
+                    auto projected_tool = *selected;
+                    projected_tool.parameters = planner_tool_schema_for_request(*selected, request, true).dump();
+                    std::string grammar_error;
+                    repair_request.grammar = common_build_tool_dsl_grammar({projected_tool},
+                        common_tool_dsl_grammar_form::arguments, grammar_error);
+                    if (repair_request.grammar.empty()) {
+                        common_agent_generation_result failed;
+                        failed.error_message = "planner argument DSL grammar failed: " + grammar_error;
+                        return failed;
+                    }
+                }
+                auto repaired = inference.generate_result(repair_request);
                 if (common_agent_generation_succeeded(repaired)) {
                     std::string repaired_plan;
                     std::string repair_error;
@@ -1676,10 +1714,11 @@ public:
                     }
                     if (repair_error.empty() && apply_planner_argument_repair(
                             target, repair_payload, repaired_plan, repair_error)) {
-                        repaired.content = std::move(repaired_plan);
+                        // This is host-owned canonical plan IR, not another
+                        // model DSL response. Keep its provenance separate.
+                        repaired_candidate_json = std::move(repaired_plan);
                     } else {
-                        repaired.content = target.candidate_plan_json;
-                        repaired.error_message = repair_error;
+                        argument_repair_error = repair_error;
                     }
                 }
                 return repaired;
@@ -1694,6 +1733,7 @@ public:
                 make_agent_cli_generation_options(generation_config, planner_n_predict),
                 compact_dsl_output ? std::string() : common_plan_model_facing_json_schema(
                     allowed_tools, request.require_tool_execution, model_max_steps, model_max_goal_length));
+            generation_request.grammar = planner_grammar;
             // The shared builder prepends cognitive mode at message zero.
             generation_request.prompt_sections = {
                 {"cognitive_mode", 0, 0, generation_request.messages.front().content.size()},
@@ -1715,7 +1755,9 @@ public:
                 // Each bounded-regeneration candidate starts from its own
                 // parse state. JSON/native text is already the shared plan
                 // representation; compact DSL must first pass its parser.
-                parsed = !compact_dsl_output;
+                parsed = argument_repair_error.empty() &&
+                    (!compact_dsl_output || repaired_candidate_json.has_value());
+                if (!argument_repair_error.empty()) parse_error = argument_repair_error;
                 // Keep each regeneration attempt isolated.  A rejected
                 // candidate must not partially replace the proposal that will
                 // be returned or become input state for the next attempt.
@@ -1725,8 +1767,8 @@ public:
                 std::string model_normalized_candidate;
                 common_plan_state model_candidate_plan = proposal.plan;
                 std::vector<common_plan_operation> model_candidate_operations;
-                std::string model_candidate_text = candidate.content;
-                if (compact_dsl_output) {
+                std::string model_candidate_text = repaired_candidate_json.value_or(candidate.content);
+                if (compact_dsl_output && !repaired_candidate_json && argument_repair_error.empty()) {
                     parsed = common_parse_compact_dsl_plan(
                         candidate.content, tool_definitions, model_candidate_text, parse_error);
                 }
