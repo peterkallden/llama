@@ -251,7 +251,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v32");
+        checked_in_starter.version == "v33");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });

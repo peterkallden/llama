@@ -154,8 +154,12 @@ bool git_read(const std::string & root, const std::vector<std::string> & git_arg
 std::mutex & workspace_write_mutex(const std::string & root) {
     static std::mutex registry_mutex;
     static std::map<std::string, std::shared_ptr<std::mutex>> locks;
+    std::error_code canonical_error;
+    const auto canonical_root = std::filesystem::weakly_canonical(root, canonical_error);
+    const std::string key = canonical_error ? std::filesystem::path(root).lexically_normal().generic_string()
+        : canonical_root.generic_string();
     std::lock_guard<std::mutex> guard(registry_mutex);
-    auto & lock = locks[root];
+    auto & lock = locks[key];
     if (!lock) lock = std::make_shared<std::mutex>();
     return *lock;
 }
@@ -251,6 +255,8 @@ bool common_try_register_repository_tool_adapter(
                 "tool.repository.snapshot.resource_store_unavailable", common_tool_failure_class::execution,
                 false, "A resource store is required to retain a source manifest.",
                 "repository.snapshot has no host resource store binding");
+            auto & write_mutex = workspace_write_mutex(bindings.repository_root);
+            std::lock_guard<std::mutex> workspace_guard(write_mutex);
             std::string revision;
             if (!git_read(bindings.repository_root, {"rev-parse", "--verify", "HEAD"}, revision, error))
                 return common_adapter_execution_failure("tool.repository.snapshot.git_failed", std::move(error), "The Git revision could not be read.");
@@ -286,13 +292,18 @@ bool common_try_register_repository_tool_adapter(
             for (const auto & entry : paths) {
                 if (files.size() >= 8192) { complete = false; break; }
                 std::filesystem::path file_path;
-                if (!repository_path(bindings.repository_root, entry.first, file_path, error) ||
-                        !std::filesystem::is_regular_file(file_path)) {
+                std::error_code size_error;
+                if (!repository_path(bindings.repository_root, entry.first, file_path, error)) {
                     complete = false;
                     if (unavailable.size() < 32) unavailable.push_back(entry.first);
                     continue;
                 }
-                std::error_code size_error;
+                const auto file_status = std::filesystem::symlink_status(file_path, size_error);
+                if (size_error || std::filesystem::is_symlink(file_status) || !std::filesystem::is_regular_file(file_status)) {
+                    complete = false;
+                    if (unavailable.size() < 32) unavailable.push_back(entry.first);
+                    continue;
+                }
                 const auto file_size = std::filesystem::file_size(file_path, size_error);
                 if (size_error || file_size > 64 * 1024 * 1024 || total_bytes + file_size > 256 * 1024 * 1024) {
                     complete = false;
@@ -300,20 +311,52 @@ bool common_try_register_repository_tool_adapter(
                     continue;
                 }
                 std::ifstream file(file_path, std::ios::binary);
-                const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-                if (file.bad()) {
+                std::string content(static_cast<size_t>(file_size), '\0');
+                if (file_size != 0) file.read(content.data(), static_cast<std::streamsize>(file_size));
+                if (file.bad() || static_cast<uintmax_t>(file.gcount()) != file_size ||
+                        file.peek() != std::char_traits<char>::eof()) {
                     complete = false;
                     if (unavailable.size() < 32) unavailable.push_back(entry.first);
                     continue;
                 }
                 total_bytes += content.size();
-                const auto permissions = std::filesystem::status(file_path, size_error).permissions();
+                const auto file_permissions = std::filesystem::status(file_path, size_error).permissions();
+                if (size_error) {
+                    complete = false;
+                    if (unavailable.size() < 32) unavailable.push_back(entry.first);
+                    continue;
+                }
+                const auto permissions = file_permissions;
+                const auto content_hash = "sha256:" + hash_sha256_hex(content.data(), content.size());
+                const std::string file_identity = entry.first + "\n" + content_hash;
+                agent_resource_put_request file_put;
+                file_put.name = "code-source-file-" + hash_sha256_hex(file_identity.data(), file_identity.size()).substr(0, 24);
+                file_put.description = "Immutable source file captured for a repository snapshot.";
+                file_put.mime_type = "application/vnd.llama-agent.code-source-file";
+                file_put.bytes = content;
+                file_put.bytes_are_authoritative = true;
+                file_put.scope = bindings.tool_scope.project_id.empty()
+                    ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+                file_put.source_provider = "native";
+                file_put.source_tool = "repository.snapshot";
+                file_put.created_at = static_cast<int64_t>(std::time(nullptr));
+                file_put.metadata.purpose = "code_source_file";
+                file_put.metadata.content_summary = "Exact bytes of a source file in a bounded repository snapshot.";
+                file_put.metadata.content_hash = content_hash;
+                file_put.lineage.derivation = "code-source-snapshot-file:v1";
+                apply_agent_resource_runtime(bindings.resource_runtime, file_put);
+                agent_resource_descriptor file_descriptor;
+                if (!bindings.resource_runtime.store->put_bytes(file_put, file_descriptor, error) || file_descriptor.uri.empty()) {
+                    complete = false;
+                    if (unavailable.size() < 32) unavailable.push_back(entry.first);
+                    continue;
+                }
                 files.push_back({{"path", entry.first}, {"kind", entry.second},
-                    {"bytes", content.size()}, {"sha256", "sha256:" + hash_sha256_hex(content.data(), content.size())},
-                    {"permissions", static_cast<uint32_t>(permissions)}});
+                    {"bytes", content.size()}, {"sha256", content_hash},
+                    {"permissions", static_cast<uint32_t>(permissions)}, {"resource_uri", file_descriptor.uri}});
             }
             const auto status_hash = "sha256:" + hash_sha256_hex(status.data(), status.size());
-            const json manifest = {{"schema", "code-source-manifest.v1"},
+            const json manifest = {{"schema", "code-source-snapshot.v1"},
                 {"source_revision", revision}, {"git_status", status}, {"git_status_sha256", status_hash},
                 {"files", files}, {"file_count", files.size()}, {"total_bytes", total_bytes},
                 {"complete", complete}, {"unavailable_paths", unavailable},
@@ -322,8 +365,8 @@ bool common_try_register_repository_tool_adapter(
             const std::string serialized = manifest.dump(2);
             agent_resource_put_request put;
             put.name = "code-source-manifest-" + hash_sha256_hex(serialized.data(), serialized.size()).substr(0, 20) + ".json";
-            put.description = "Bounded source manifest for the current repository workspace.";
-            put.mime_type = "application/vnd.llama-agent.code-source-manifest+json";
+            put.description = "Bounded, immutable source snapshot for the current repository workspace.";
+            put.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
             put.text = serialized;
             put.scope = bindings.tool_scope.project_id.empty()
                 ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
@@ -331,14 +374,14 @@ bool common_try_register_repository_tool_adapter(
             put.source_tool = "repository.snapshot";
             put.created_at = static_cast<int64_t>(std::time(nullptr));
             put.metadata.purpose = "code_source_manifest";
-            put.metadata.content_summary = "Hashes of the Git revision and bounded current workspace files.";
+            put.metadata.content_summary = "Git revision, workspace status and immutable file-resource references for a bounded source snapshot.";
             put.metadata.content_hash = "sha256:" + hash_sha256_hex(serialized.data(), serialized.size());
-            put.lineage.derivation = "code-source-manifest:v1";
+            put.lineage.derivation = "code-source-snapshot:v1";
             apply_agent_resource_runtime(bindings.resource_runtime, put);
             agent_resource_descriptor descriptor;
             if (!bindings.resource_runtime.store->put_text(put, descriptor, error) || descriptor.uri.empty())
                 return common_adapter_execution_failure("tool.repository.snapshot.store_failed", std::move(error), "The source manifest could not be retained.");
-            return common_adapter_success_json({{"schema", "code-source-manifest.v1"},
+            return common_adapter_success_json({{"schema", "code-source-snapshot.v1"},
                 {"source_revision", revision}, {"complete", complete}, {"file_count", files.size()},
                 {"total_bytes", total_bytes}, {"resource_uri", descriptor.uri},
                 {"sha256", descriptor.sha256}});
@@ -414,6 +457,44 @@ bool common_try_register_repository_tool_adapter(
                 const auto stable = "sha256:" + hash_sha256_hex(content.data(), content.size());
                 if (expected != stable && expected != legacy_workspace_content_token(content)) return common_adapter_failure("tool.workspace.patch.conflict", common_tool_failure_class::policy, false, "Workspace content changed since it was read.", "expected_hash does not match current workspace content");
             }
+            std::string source_snapshot_ref;
+            if (arguments.contains("source_snapshot_ref")) {
+                if (!arguments["source_snapshot_ref"].is_string()) return common_adapter_validation_failure(
+                    "tool.workspace.patch.invalid_snapshot_ref", "source_snapshot_ref must be a resource URI");
+                source_snapshot_ref = arguments["source_snapshot_ref"].get<std::string>();
+                if (source_snapshot_ref.rfind("resource://", 0) != 0 || bindings.resource_runtime.store == nullptr) {
+                    return common_adapter_validation_failure("tool.workspace.patch.invalid_snapshot_ref",
+                        "source_snapshot_ref must resolve through the host resource store");
+                }
+                const auto source_path = std::filesystem::relative(path, bindings.repository_root).generic_string();
+                const auto authority = make_agent_resource_read_authority(bindings.resource_runtime);
+                agent_resource_descriptor snapshot_descriptor;
+                std::string snapshot_json;
+                if (!bindings.resource_runtime.store->stat(source_snapshot_ref, authority, snapshot_descriptor, error) ||
+                        snapshot_descriptor.mime_type != "application/vnd.llama-agent.code-source-snapshot+json" ||
+                        !bindings.resource_runtime.store->read_text(source_snapshot_ref, authority, 16 * 1024 * 1024, snapshot_json, error)) {
+                    return common_adapter_failure("tool.workspace.patch.snapshot_unavailable", common_tool_failure_class::policy,
+                        false, "The source snapshot is unavailable or has the wrong type.", error);
+                }
+                const auto snapshot = json::parse(snapshot_json, nullptr, false);
+                if (!snapshot.is_object() || snapshot.value("schema", std::string{}) != "code-source-snapshot.v1" ||
+                        !snapshot.value("complete", false) || !snapshot.contains("files") || !snapshot["files"].is_array()) {
+                    return common_adapter_validation_failure("tool.workspace.patch.snapshot_incomplete",
+                        "workspace.patch requires a complete code-source-snapshot.v1 resource");
+                }
+                const auto source_file = std::find_if(snapshot["files"].begin(), snapshot["files"].end(),
+                    [&source_path](const json & file) {
+                        return file.is_object() && file.value("path", std::string{}) == source_path;
+                    });
+                if (source_file == snapshot["files"].end() || !source_file->contains("sha256") ||
+                        !source_file->at("sha256").is_string() ||
+                        source_file->at("sha256").get<std::string>() !=
+                            "sha256:" + hash_sha256_hex(content.data(), content.size())) {
+                    return common_adapter_failure("tool.workspace.patch.snapshot_stale", common_tool_failure_class::policy,
+                        false, "The workspace file no longer matches the supplied source snapshot.",
+                        "source snapshot file hash does not match the current exact file bytes");
+                }
+            }
             const bool trailing_newline = !content.empty() && content.back() == '\n';
             const std::string line_ending = content.find("\r\n") != std::string::npos ? "\r\n" : "\n";
             std::vector<std::string> lines;
@@ -443,12 +524,52 @@ bool common_try_register_repository_tool_adapter(
             if (trailing_newline && !updated_content.empty() && updated_content.back() != '\n') updated_content += line_ending;
             const auto before_hash = "sha256:" + hash_sha256_hex(content.data(), content.size());
             const auto after_hash = "sha256:" + hash_sha256_hex(updated_content.data(), updated_content.size());
-            if (content == updated_content) return common_adapter_success_json({
+            const bool changed = content != updated_content;
+            if (changed && !write_file_atomically(path, updated_content)) return common_adapter_execution_failure("tool.workspace.patch.write_failed", "workspace.patch could not atomically replace the target", "Workspace patch could not be written.");
+            json patch_receipt = {{"schema", "workspace-change-receipt.v1"},
                 {"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
-                {"before_sha256", before_hash}, {"after_sha256", after_hash}, {"changed", false},
-                {"status", "unchanged"}});
-            if (!write_file_atomically(path, updated_content)) return common_adapter_execution_failure("tool.workspace.patch.write_failed", "workspace.patch could not atomically replace the target", "Workspace patch could not be written.");
-            return common_adapter_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"content_hash", after_hash}, {"before_sha256", before_hash}, {"after_sha256", after_hash}, {"sha256", after_hash}, {"changed", true}, {"status", "applied"}});
+                {"source_snapshot_ref", source_snapshot_ref.empty() ? json(nullptr) : json(source_snapshot_ref)},
+                {"expected_hash", arguments.value("expected_hash", std::string{})},
+                {"before_sha256", before_hash}, {"after_sha256", after_hash},
+                {"changed", changed}, {"status", changed ? "applied" : "unchanged"},
+                {"operations", arguments["operations"]}, {"created_at", static_cast<int64_t>(std::time(nullptr))}};
+            common_runtime_resource_ref receipt_ref;
+            if (bindings.resource_runtime.store != nullptr) {
+                const auto receipt_content = patch_receipt.dump(2);
+                agent_resource_put_request receipt_put;
+                receipt_put.name = "workspace-change-" + hash_sha256_hex(receipt_content.data(), receipt_content.size()).substr(0, 20) + ".json";
+                receipt_put.description = "Immutable receipt for a guarded workspace patch.";
+                receipt_put.mime_type = "application/vnd.llama-agent.workspace-change-receipt+json";
+                receipt_put.text = receipt_content;
+                receipt_put.scope = bindings.tool_scope.project_id.empty()
+                    ? common_runtime_resource_scope::session : common_runtime_resource_scope::project;
+                receipt_put.source_provider = "native";
+                receipt_put.source_tool = "workspace.patch";
+                receipt_put.created_at = static_cast<int64_t>(std::time(nullptr));
+                receipt_put.metadata.purpose = "workspace_change_receipt";
+                receipt_put.metadata.content_summary = "Exact before/after hashes, optional source snapshot binding and accepted line operations.";
+                receipt_put.metadata.content_hash = "sha256:" + hash_sha256_hex(receipt_content.data(), receipt_content.size());
+                receipt_put.lineage.derivation = "workspace-change-receipt:v1";
+                apply_agent_resource_runtime(bindings.resource_runtime, receipt_put);
+                agent_resource_descriptor receipt_descriptor;
+                if (!bindings.resource_runtime.store->put_text(receipt_put, receipt_descriptor, error) || receipt_descriptor.uri.empty()) {
+                    if (changed) return common_adapter_execution_failure("tool.workspace.patch.receipt_failed",
+                        "workspace.patch was applied but its durable change receipt could not be retained: " + error,
+                        "Workspace patch applied, but its receipt could not be saved.");
+                    return common_adapter_execution_failure("tool.workspace.patch.receipt_failed",
+                        "workspace.patch receipt could not be retained: " + error,
+                        "Workspace patch result could not be saved.");
+                }
+                receipt_ref = receipt_descriptor;
+                patch_receipt["receipt_uri"] = receipt_ref.uri;
+            }
+            json output = {{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
+                {"content_hash", after_hash}, {"before_sha256", before_hash}, {"after_sha256", after_hash},
+                {"sha256", after_hash}, {"changed", changed}, {"status", changed ? "applied" : "unchanged"},
+                {"receipt_uri", receipt_ref.uri}, {"source_snapshot_ref", source_snapshot_ref.empty() ? json(nullptr) : json(source_snapshot_ref)}};
+            auto result = common_adapter_success_json(output);
+            if (!receipt_ref.uri.empty()) result.resource_refs.push_back(receipt_ref);
+            return result;
         }, error, false, true);
     } else if (definition.executor_id == "builtin.repository.diff" && !bindings.repository_root.empty()) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {

@@ -246,14 +246,34 @@ configured process runner; no shell is involved. A missing target, configuration
 or operation fails closed. Images must provide the configured executables. A Docker or
 Kubernetes backend does not invent a project-specific command translation.
 
-Execution operation IDs are unique per invocation. The current workspace manager creates
-an operation directory and materializes explicitly supplied resource inputs; it does not
-yet stage the repository checkout or turn `repository.snapshot` into a build-input archive.
-The snapshot tool therefore identifies a bounded set of current file hashes for analysis,
-but is not proof that a build used those exact bytes. Do not treat a successful build result
-as source-bound until the execution receipt includes the staged-source manifest. The host
-records the selected logical target and effective non-secret command metadata; it must not
-retain credential values.
+Execution operation IDs are unique per invocation. The workspace manager creates an
+operation directory and materializes explicitly supplied resource inputs. A
+`repository.snapshot` resource uses `code-source-snapshot.v1`: the manifest points to
+immutable, scoped resources containing captured file bytes, modes and SHA-256 hashes.
+When a complete snapshot is passed in `source_snapshot_ref`, the host verifies every file entry
+and materializes the exact bytes beneath `/workspace/source` before running the configured
+target. The execution receipt records the snapshot URI and manifest hash. Incomplete,
+escaping, duplicate, oversized or hash-mismatched snapshots are rejected before execution.
+The snapshot is bounded to 8,192 files, 64 MiB per file and 256 MiB total. Symlinks,
+submodules and unreadable files make it incomplete; it cannot be used for source-bound
+execution. Receipts and bounded stdout/stderr excerpts are retained as scoped resources.
+The host records the selected logical target, configuration, test filter, configured
+executable, status, timing, usage, artifact references and output hashes; it does not
+retain command credentials or raw command argument vectors.
+
+The binding is exact for the immutable staged source tree, not for external dependencies,
+compiler images, generated inputs or the host toolchain. Those are covered only when the
+operator-owned profile and runner provide that provenance. A successful build is not
+evidence that requested acceptance criteria passed; test outcomes remain separate
+verification receipts. A target that does not consume `/workspace/source` is not source-
+bound even when a snapshot was staged, so profiles must be reviewed accordingly.
+
+For mutations, `workspace.patch` can take `source_snapshot_ref`. The host checks that the
+current exact file hash still matches the selected snapshot before applying the patch. It
+then returns a `workspace-change-receipt.v1` resource with the snapshot reference,
+expected/before/after hashes, requested line operations and applied/unchanged status. A
+stale snapshot is rejected even if a caller supplies the current file hash; the workflow
+must capture a new baseline and review the changed source first.
 
 CTest och smoke
 

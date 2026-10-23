@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v32",
+  "version": "v33",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -20,7 +20,7 @@
     {
       "id": "development-source-evidence-v1",
       "summary": "source identity and verification evidence",
-      "content": "Before a code change, capture the current repository revision and bounded workspace manifest with repository.snapshot when available. Treat this manifest as file-hash evidence only; it is not a build-input archive. Use repository.read SHA-256 values as freshness guards for workspace.patch. After changes, inspect repository.diff and record which configured build or test operations actually ran. A successful command is evidence only for its reported target and configuration; do not infer acceptance of unrelated criteria. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
+      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. Pass the same complete source_snapshot_ref to development.build or development.test; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
       "importance": 0.95,
       "confidence": 1.0
     },
@@ -1457,11 +1457,11 @@
     },
     {
       "id": "repository-change-v2",
-      "source_revision": "agent-workflows-starter@v1",
+      "source_revision": "agent-workflows-starter@v33",
       "selection_description": "Implement a scoped repository change and verify the result.",
       "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
       "goal": "Implement the requested repository change safely.",
-      "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified, and the resulting diff is inspected.",
+      "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified against a retained immutable source snapshot, and the resulting diff and execution receipt are inspected.",
       "required_capabilities": [
         "tool.repository",
         "tool.workspace"
@@ -1503,7 +1503,7 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Capture the available source identity, then identify affected code, contracts, direct callers and relevant tests. Use bounded code.impact only when code.inspect reports impact support; otherwise describe the missing semantic coverage and continue with repository evidence."
+          "objective": "Capture a complete repository.snapshot when the source is buildable through the configured target, then identify affected code, contracts, direct callers and relevant tests. Use bounded code.impact only when code.inspect reports impact support; otherwise describe the missing semantic coverage and continue with repository evidence."
         },
         {
           "id": "design",
@@ -1516,7 +1516,7 @@
         {
           "id": "implement",
           "title": "Implement",
-          "objective": "Apply the scoped implementation change using current byte hashes as freshness guards where supported.",
+          "objective": "Apply the scoped implementation change using current byte hashes and source_snapshot_ref freshness validation where supported; retain the returned immutable change receipt.",
           "depends_on": [
             "design"
           ]
@@ -1524,7 +1524,7 @@
         {
           "id": "verify",
           "title": "Verify",
-          "objective": "Run only host-configured verification targets and retain the actual outcomes and limitations.",
+          "objective": "Pass the immutable source_snapshot_ref to host-configured build and test targets when available. Inspect the retained execution receipt, source snapshot binding and output resources; distinguish build success from test and acceptance-criteria outcomes.",
           "depends_on": [
             "implement"
           ]

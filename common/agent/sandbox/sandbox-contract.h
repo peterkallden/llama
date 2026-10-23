@@ -102,6 +102,9 @@ struct common_agent_sandbox_workspace {
     std::string source_path;
     std::string writable_path;
     std::string artifact_path;
+    // Host-verified identity of a materialized immutable code-source snapshot.
+    std::string source_snapshot_uri;
+    std::string source_snapshot_sha256;
     std::vector<common_runtime_resource_ref> input_resources;
 };
 
@@ -113,6 +116,10 @@ struct common_agent_sandbox_artifact_policy {
 
 struct common_agent_sandbox_request {
     std::string operation_id;
+    std::string logical_target;
+    std::string requested_configuration;
+    std::string requested_test_filter;
+    bool require_source_snapshot = false;
     std::string project_id;
     std::string workspace_id;
     std::string execution_class;

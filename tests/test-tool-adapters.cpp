@@ -6,6 +6,7 @@
 #include "agent/artifact/artifact-contract.h"
 #include "agent/investigation-access.h"
 #include "agent/sandbox/sandbox-host-config.h"
+#include "tools/agent/tooling/agent-sandbox-helper.h"
 #include "hash/hash.h"
 #include "base64.hpp"
 #include "memory/memory-in-memory.h"
@@ -729,12 +730,84 @@ int main() {
     result = foundation_registry.execute({"repository.snapshot", "{}"});
     assert(result.ok);
     const auto source_manifest_result = nlohmann::json::parse(result.output);
-    assert(source_manifest_result["schema"] == "code-source-manifest.v1" &&
+    assert(source_manifest_result["schema"] == "code-source-snapshot.v1" &&
         source_manifest_result["complete"] == true &&
         source_manifest_result["source_revision"].get<std::string>().size() == 40 &&
         source_manifest_result["resource_uri"].get<std::string>().rfind("resource://", 0) == 0);
     const auto manifest_uri = source_manifest_result["resource_uri"].get<std::string>();
-    assert(foundation_resources.contents.at(manifest_uri).find("src/sample.txt") != std::string::npos);
+    const auto manifest_payload = nlohmann::json::parse(foundation_resources.contents.at(manifest_uri));
+    assert(manifest_payload.at("files").is_array());
+    const auto sample_snapshot = std::find_if(manifest_payload.at("files").begin(), manifest_payload.at("files").end(),
+        [](const auto & file) { return file.value("path", std::string{}) == "src/sample.txt"; });
+    assert(sample_snapshot != manifest_payload.at("files").end());
+    const auto sample_snapshot_uri = sample_snapshot->at("resource_uri").get<std::string>();
+    assert(foundation_resources.contents.at(sample_snapshot_uri).find("needle") != std::string::npos);
+    {
+        const auto operation_root = std::filesystem::temp_directory_path() / "llama-agent-source-snapshot-smoke";
+        std::error_code ignored;
+        std::filesystem::remove_all(operation_root, ignored);
+        common_agent_workspace_manager workspace_manager({operation_root.string(), {}, "ephemeral", "persistent"});
+        common_agent_sandbox_local_test_runtime sandbox_runtime;
+        common_agent_sandbox_policy policy;
+        policy.execution_class = "developer-build";
+        policy.limits.timeout_ms = 120000;
+        policy.limits.cpu_count = 1;
+        policy.limits.max_output_bytes = 65536;
+        policy.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
+        common_agent_sandbox_tool_helper sandbox_helper(sandbox_runtime, policy);
+        sandbox_helper.set_workspace_manager(&workspace_manager);
+        sandbox_helper.set_resource_store(&foundation_resources);
+        common_agent_workspace_context workspace_context;
+        workspace_context.workspace_id = "snapshot-test";
+        workspace_context.namespace_id = "local";
+        workspace_context.session_id = "session-snapshot";
+        workspace_context.turn_id = "turn-snapshot";
+        common_agent_sandbox_request sandbox_request;
+        sandbox_request.operation_id = "build-snapshot-test";
+        sandbox_request.logical_target = "test-target";
+        sandbox_request.execution_class = "developer-build";
+        sandbox_request.command.program = "agent.development.build";
+        sandbox_request.command.arguments = {"test-target"};
+        sandbox_request.limits.timeout_ms = 120000;
+        sandbox_request.limits.cpu_count = 1;
+        sandbox_request.limits.max_output_bytes = 65536;
+        sandbox_request.network = common_agent_sandbox_network_scope::none;
+        sandbox_request.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
+        common_runtime_resource_ref snapshot_ref = foundation_resources.resources.at(manifest_uri);
+        sandbox_request.workspace.input_resources.push_back(snapshot_ref);
+        const auto execution = sandbox_helper.run_for_workspace(workspace_context, "build-snapshot-test", sandbox_request);
+        assert(execution.ok && execution.resource_refs.size() == 2);
+        assert(sandbox_runtime.last_request.workspace.source_snapshot_uri == manifest_uri);
+        const auto staged_sample = std::filesystem::path(sandbox_runtime.last_request.workspace.source_path) / "src" / "sample.txt";
+        std::ifstream staged_file(staged_sample, std::ios::binary);
+        const std::string staged_bytes((std::istreambuf_iterator<char>(staged_file)), std::istreambuf_iterator<char>());
+        assert(staged_bytes == foundation_resources.contents.at(sample_snapshot_uri));
+        const auto execution_output = nlohmann::json::parse(execution.output);
+        assert(execution_output.at("source_snapshot").at("resource_uri") == manifest_uri);
+        assert(execution_output.at("receipt_uri").get<std::string>().rfind("resource://", 0) == 0);
+        const auto receipt_uri = execution_output.at("receipt_uri").get<std::string>();
+        const auto receipt = nlohmann::json::parse(foundation_resources.contents.at(receipt_uri));
+        assert(receipt.at("schema") == "development-execution-receipt.v1" &&
+            receipt.at("status") == "completed" &&
+            receipt.at("source_snapshot").at("resource_uri") == manifest_uri &&
+            receipt.at("output_resources").size() == 1);
+        agent_resource_put_request unsafe_snapshot_request;
+        unsafe_snapshot_request.name = "unsafe-code-snapshot.json";
+        unsafe_snapshot_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        unsafe_snapshot_request.text = nlohmann::json{{"schema", "code-source-snapshot.v1"}, {"complete", true},
+            {"files", nlohmann::json::array({{{"path", "../escape.txt"}, {"resource_uri", sample_snapshot_uri},
+                {"bytes", foundation_resources.contents.at(sample_snapshot_uri).size()},
+                {"sha256", sample_snapshot->at("sha256")}, {"permissions", 420}}})}}.dump();
+        agent_resource_descriptor unsafe_snapshot_descriptor;
+        assert(foundation_resources.put_text(unsafe_snapshot_request, unsafe_snapshot_descriptor, error));
+        auto unsafe_request = sandbox_request;
+        unsafe_request.operation_id = "unsafe-snapshot-test";
+        unsafe_request.workspace.input_resources = {unsafe_snapshot_descriptor};
+        const auto rejected_snapshot = sandbox_helper.run_for_workspace(workspace_context, "unsafe-snapshot-test", unsafe_request);
+        assert(!rejected_snapshot.ok && rejected_snapshot.failure_code == "sandbox.resource_materialization_failed");
+        assert(!std::filesystem::exists(operation_root / "snapshot-test" / "unsafe-snapshot-test" / "escape.txt"));
+        std::filesystem::remove_all(operation_root, ignored);
+    }
     {
         result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
         assert(result.ok);
@@ -928,12 +1001,19 @@ int main() {
     assert(before_patch.ok);
     const auto expected_hash = nlohmann::json::parse(before_patch.output).at("sha256").get<std::string>();
     result = foundation_registry.execute({"workspace.patch", nlohmann::json{
-        {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
+        {"path", "src/sample.txt"}, {"expected_hash", expected_hash}, {"source_snapshot_ref", manifest_uri},
         {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "patched"}}})}}.dump()});
     assert(result.ok);
     const auto patch_receipt = nlohmann::json::parse(result.output);
     assert(patch_receipt.contains("content_hash") && patch_receipt["content_hash"] == patch_receipt["after_sha256"] &&
-        patch_receipt["content_hash"].get<std::string>().rfind("sha256:", 0) == 0);
+        patch_receipt["content_hash"].get<std::string>().rfind("sha256:", 0) == 0 &&
+        patch_receipt["receipt_uri"].get<std::string>().rfind("resource://", 0) == 0 &&
+        result.resource_refs.size() == 1);
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", patch_receipt.at("after_sha256")},
+        {"source_snapshot_ref", manifest_uri},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale snapshot"}}})}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.workspace.patch.snapshot_stale");
     result = foundation_registry.execute({"workspace.patch", nlohmann::json{
         {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
         {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale"}}})}}.dump()});
@@ -1533,6 +1613,10 @@ int main() {
     result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
     assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
             captured_request.workspace.input_resources[0].uri == "resource://input.txt");
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","source_snapshot_ref":"resource://snapshot/code.json"})"});
+    assert(result.ok && captured_request.require_source_snapshot &&
+        captured_request.workspace.input_resources.size() == 1 &&
+        captured_request.workspace.input_resources[0].uri == "resource://snapshot/code.json");
     common_tool_registry native_network_registry;
     common_native_tool_bindings native_network_bindings;
     assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));

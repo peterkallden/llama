@@ -92,6 +92,27 @@ silently replaced during import.
 ## Presentation and current limits
 
 `code.calls` and `code.impact` include a `relationship` visualization projection in their results.
+
+## Source-bound development evidence
+
+`repository.snapshot` captures the current Git revision and a bounded manifest of tracked
+and non-ignored untracked files. The manifest points to immutable scoped resources for
+each file's exact bytes and mode. A complete `code-source-snapshot.v1` can be supplied to
+`workspace.patch`, `development.build` or `development.test` through
+`source_snapshot_ref`. The host verifies that a patched file still matches the selected
+baseline, then verifies and materializes the snapshot under `/workspace/source` before
+invoking the configured host-owned target. Incomplete snapshots are retained for
+inspection but rejected for mutation binding or materialization. Successful patches
+retain an immutable `workspace-change-receipt.v1` with before/after hashes and applied
+operations.
+
+Configured development runs retain a `development-execution-receipt.v1` resource and
+bounded stdout/stderr resources. The receipt binds the logical target, selected
+configuration/filter, terminal status, runner identity, usage and source manifest hash
+when a snapshot was supplied. This proves which source bytes were staged, not that every
+acceptance criterion passed, and does not by itself pin external dependencies, generated
+inputs, build images or compiler/toolchain state. `code.impact` also remains a bounded
+semantic call-neighborhood projection rather than complete change-impact analysis.
 The runtime validates visualization projections against the shared contract
 and forwards only that projection in the completed tool event; it does not
 expose the full tool result in the event stream. The web client renders it with

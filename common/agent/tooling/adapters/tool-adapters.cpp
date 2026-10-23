@@ -317,6 +317,7 @@ bool make_sandbox_request(
     }
     request = {};
     const bool is_test = tool_name == "development.test";
+    request.logical_target = target;
     static std::atomic<uint64_t> execution_sequence{0};
     request.operation_id = tool_name + "/" + target + "/" +
         std::to_string(execution_sequence.fetch_add(1, std::memory_order_relaxed));
@@ -325,15 +326,18 @@ bool make_sandbox_request(
     request.command.arguments.push_back(target);
     if (arguments.contains("configuration")) {
         if (!arguments["configuration"].is_string()) { error = tool_name + " configuration must be a string"; return false; }
-        request.command.arguments.push_back("--configuration=" + arguments["configuration"].get<std::string>());
+        request.requested_configuration = arguments["configuration"].get<std::string>();
+        request.command.arguments.push_back("--configuration=" + request.requested_configuration);
     }
     if (is_test && arguments.contains("filter")) {
         if (!arguments["filter"].is_string()) { error = "development.test filter must be a string"; return false; }
-        request.command.arguments.push_back("--filter=" + arguments["filter"].get<std::string>());
+        request.requested_test_filter = arguments["filter"].get<std::string>();
+        request.command.arguments.push_back("--filter=" + request.requested_test_filter);
     }
     request.limits.timeout_ms = arguments.value("timeout_ms", 120000u);
     request.limits.cpu_count = 1;
     request.limits.max_output_bytes = 65536;
+    request.limits.max_input_resource_bytes = 64 * 1024 * 1024;
     request.network = common_agent_sandbox_network_scope::none;
     request.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
     request.artifacts.collect = true;
@@ -351,6 +355,17 @@ bool make_sandbox_request(
             resource.uri = value.get<std::string>();
             request.workspace.input_resources.push_back(std::move(resource));
         }
+    }
+    if (arguments.contains("source_snapshot_ref")) {
+        if (!arguments["source_snapshot_ref"].is_string() ||
+                arguments["source_snapshot_ref"].get<std::string>().rfind("resource://", 0) != 0) {
+            error = tool_name + " source_snapshot_ref must be an opaque resource URI";
+            return false;
+        }
+        request.require_source_snapshot = true;
+        common_runtime_resource_ref snapshot;
+        snapshot.uri = arguments["source_snapshot_ref"].get<std::string>();
+        request.workspace.input_resources.push_back(std::move(snapshot));
     }
     error.clear();
     return true;
