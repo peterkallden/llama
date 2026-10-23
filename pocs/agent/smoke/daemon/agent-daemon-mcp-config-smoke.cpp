@@ -763,6 +763,18 @@ int main(int argc, char ** argv) {
                     {"allow_artifacts", true},
                 }},
             }},
+            {"development_targets", {
+                {"agent-build-pack", {
+                    {"build_program", "cmake"},
+                    {"build_arguments", json::array({"--build", "/workspace/writable/build", "--target", "llama-agent-build-pack"})},
+                    {"test_program", "ctest"},
+                    {"test_arguments", json::array({"--test-dir", "/workspace/writable/build", "--output-on-failure"})},
+                    {"working_directory", "/workspace/source"},
+                    {"configurations", {{"Debug", json::array({"--config", "Debug"})}}},
+                    {"test_filters", {{"agent", json::array({"-L", "agent"})}}},
+                    {"max_timeout_ms", 900000},
+                }},
+            }},
         }},
     };
     if (!parse_agent_host_config_json(capability_config_json, capability_config, error) ||
@@ -789,7 +801,10 @@ int main(int argc, char ** argv) {
             capability_config.sandbox.workspace.workspace_root != "C:/agent-workspaces" ||
             capability_config.sandbox.workspace.operation_mode != "ephemeral" ||
             capability_config.sandbox.workspace.project_mode != "persistent" ||
-            capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write) {
+            capability_config.sandbox.classes.at("developer-build").filesystem != common_agent_sandbox_filesystem_scope::workspace_write ||
+            capability_config.sandbox.development_targets.at("agent-build-pack").build_program != "cmake" ||
+            capability_config.sandbox.development_targets.at("agent-build-pack").test_filters.at("agent").size() != 2 ||
+            capability_config.sandbox.development_targets.at("agent-build-pack").max_timeout_ms != 900000) {
         std::fprintf(stderr, "capability/profile host config was not parsed\n");
         return 1;
     }
@@ -810,7 +825,9 @@ int main(int argc, char ** argv) {
             capability_roundtrip["sandbox"]["defaults"]["image"] != "llama-agent-default:latest" ||
             capability_roundtrip["sandbox"]["kubernetes"]["namespace"] != "llama-agent-jobs" ||
             capability_roundtrip["sandbox"]["docker"]["default_image"] != "llama-agent-dev:latest" ||
-            capability_roundtrip["sandbox"]["workspace"]["operation_mode"] != "ephemeral") {
+            capability_roundtrip["sandbox"]["workspace"]["operation_mode"] != "ephemeral" ||
+            capability_roundtrip["sandbox"]["development_targets"]["agent-build-pack"]["build_arguments"][0] != "--build" ||
+            capability_roundtrip["sandbox"]["development_targets"]["agent-build-pack"]["test_filters"]["agent"][1] != "agent") {
         std::fprintf(stderr, "capability/profile host config roundtrip failed\n");
         return 1;
     }

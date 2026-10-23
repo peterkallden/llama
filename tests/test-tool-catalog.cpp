@@ -285,6 +285,11 @@ int main() {
     assert(build->requires_confirmation && test->requires_confirmation);
     assert(build->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
     assert(test->input_schema_json.find("required\":[\"target\"]") != std::string::npos);
+    const auto * source_snapshot = catalog.find_definition("repository.snapshot");
+    assert(source_snapshot != nullptr &&
+        source_snapshot->executor_id == "builtin.repository.snapshot" &&
+        std::find(source_snapshot->capabilities.begin(), source_snapshot->capabilities.end(), "repository.snapshot") !=
+            source_snapshot->capabilities.end());
     for (const auto * name : {"resource.inspect", "resource.read", "web.search",
             "web.fetch", "diagnostics.compile", "diagnostics.test_failures"}) {
         const auto * definition = catalog.find_definition(name);

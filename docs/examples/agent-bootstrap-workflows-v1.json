@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v30",
+  "version": "v31",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -15,6 +15,13 @@
       "summary": "code analysis evidence",
       "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for a bounded one-hop semantic call neighborhood. Preserve the returned source locations and analysis method. Text fallback results are text matches only. Static call relations are not proof that a path is feasible or was executed. Report missing provider support and incomplete results explicitly.",
       "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-source-evidence-v1",
+      "summary": "source identity and verification evidence",
+      "content": "Before a code change, capture the current repository revision and bounded workspace manifest with repository.snapshot when available. Treat this manifest as file-hash evidence only; it is not a build-input archive. Use repository.read SHA-256 values as freshness guards for workspace.patch. After changes, inspect repository.diff and record which configured build or test operations actually ran. A successful command is evidence only for its reported target and configuration; do not infer acceptance of unrelated criteria. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
+      "importance": 0.95,
       "confidence": 1.0
     },
     {
@@ -1223,6 +1230,12 @@
         "tool.repository"
       ],
       "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "small-coherent-change-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1"
+      ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://repository/inspection",
@@ -1288,6 +1301,11 @@
         "code.inspect"
       ],
       "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1"
+      ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://code/overview",
@@ -1449,6 +1467,12 @@
         "tool.workspace"
       ],
       "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "small-coherent-change-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1"
+      ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://repository/change",
@@ -1479,7 +1503,7 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Identify affected code, contracts and relevant tests."
+          "objective": "Capture the available source identity, then identify affected code, contracts, direct callers and relevant tests."
         },
         {
           "id": "design",
@@ -1492,7 +1516,7 @@
         {
           "id": "implement",
           "title": "Implement",
-          "objective": "Apply the scoped implementation change.",
+          "objective": "Apply the scoped implementation change using current byte hashes as freshness guards where supported.",
           "depends_on": [
             "design"
           ]
@@ -1500,7 +1524,7 @@
         {
           "id": "verify",
           "title": "Verify",
-          "objective": "Run focused verification and retain the evidence.",
+          "objective": "Run only host-configured verification targets and retain the actual outcomes and limitations.",
           "depends_on": [
             "implement"
           ]
@@ -1535,6 +1559,11 @@
         "tool.workspace"
       ],
       "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1"
+      ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://development/regression-repair",

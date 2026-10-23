@@ -10,6 +10,7 @@
 #include "tools/agent/tooling/agent-sandbox-helper.h"
 
 #include <utility>
+#include <algorithm>
 
 namespace {
 
@@ -88,9 +89,18 @@ agent_host_sandbox_assembly make_agent_host_sandbox_assembly(
         const auto lxc_runtime = result.lxc_runtime;
         const auto workspace_manager = result.workspace_manager;
         const auto policies = config.classes;
+        const auto development_targets = config.development_targets;
         const auto defaults = config.defaults;
         result.execute = [backend, docker_runtime, kubernetes_runtime, lxc_runtime, workspace_manager,
-                policies, defaults, scope, resource_store](common_agent_sandbox_request sandbox_request) {
+                policies, development_targets, defaults, scope, resource_store](common_agent_sandbox_request sandbox_request) {
+            std::string resolution_error;
+            if (!common_agent_sandbox_resolve_development_target(
+                    sandbox_request, development_targets, resolution_error)) {
+                return common_tool_execution_result::failure(
+                    "sandbox.development_target_rejected", common_tool_failure_class::policy,
+                    false, "The development request does not match a host-approved target profile.",
+                    std::move(resolution_error));
+            }
             auto policy = defaults;
             const auto it = policies.find(sandbox_request.execution_class);
             if (it != policies.end()) policy = it->second;

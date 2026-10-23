@@ -20,6 +20,7 @@
 #include "memory/memory-tool-service.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cmath>
@@ -316,17 +317,19 @@ bool make_sandbox_request(
     }
     request = {};
     const bool is_test = tool_name == "development.test";
-    request.operation_id = tool_name + "/" + target;
+    static std::atomic<uint64_t> execution_sequence{0};
+    request.operation_id = tool_name + "/" + target + "/" +
+        std::to_string(execution_sequence.fetch_add(1, std::memory_order_relaxed));
     request.execution_class = "developer-build";
     request.command.program = is_test ? "agent.development.test" : "agent.development.build";
     request.command.arguments.push_back(target);
     if (arguments.contains("configuration")) {
         if (!arguments["configuration"].is_string()) { error = tool_name + " configuration must be a string"; return false; }
-        request.command.arguments.push_back(arguments["configuration"].get<std::string>());
+        request.command.arguments.push_back("--configuration=" + arguments["configuration"].get<std::string>());
     }
     if (is_test && arguments.contains("filter")) {
         if (!arguments["filter"].is_string()) { error = "development.test filter must be a string"; return false; }
-        request.command.arguments.push_back(arguments["filter"].get<std::string>());
+        request.command.arguments.push_back("--filter=" + arguments["filter"].get<std::string>());
     }
     request.limits.timeout_ms = arguments.value("timeout_ms", 120000u);
     request.limits.cpu_count = 1;

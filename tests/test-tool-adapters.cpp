@@ -5,6 +5,7 @@
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "agent/artifact/artifact-contract.h"
 #include "agent/investigation-access.h"
+#include "agent/sandbox/sandbox-host-config.h"
 #include "hash/hash.h"
 #include "base64.hpp"
 #include "memory/memory-in-memory.h"
@@ -334,6 +335,46 @@ public:
 };
 
 int main() {
+    common_agent_development_target_profile target_profile;
+    target_profile.build_program = "cmake";
+    target_profile.build_arguments = {"--build", "/workspace/writable/build", "--target", "agent-pack"};
+    target_profile.test_program = "ctest";
+    target_profile.test_arguments = {"--test-dir", "/workspace/writable/build"};
+    target_profile.configurations["Release"] = {"--config", "Release"};
+    target_profile.test_filters["agent-contracts"] = {"-L", "agent"};
+    target_profile.max_timeout_ms = 900000;
+    const std::map<std::string, common_agent_development_target_profile> target_profiles = {
+        {"agent-pack", target_profile},
+    };
+    common_agent_sandbox_request development_request;
+    development_request.command.program = "agent.development.build";
+    development_request.command.arguments = {"agent-pack", "--configuration=Release"};
+    development_request.limits.timeout_ms = 1200000;
+    std::string target_error;
+    assert(common_agent_sandbox_resolve_development_target(
+        development_request, target_profiles, target_error));
+    assert(development_request.command.program == "cmake");
+    assert((development_request.command.arguments == std::vector<std::string>{
+        "--build", "/workspace/writable/build", "--target", "agent-pack", "--config", "Release"}));
+    assert(development_request.command.working_directory == "/workspace/source");
+    assert(development_request.limits.timeout_ms == 900000);
+    common_agent_sandbox_request unapproved_request;
+    unapproved_request.command.program = "agent.development.build";
+    unapproved_request.command.arguments = {"agent-pack", "--raw=command"};
+    assert(!common_agent_sandbox_resolve_development_target(
+        unapproved_request, target_profiles, target_error));
+    unapproved_request.command.arguments = {"unlisted-target"};
+    assert(!common_agent_sandbox_resolve_development_target(
+        unapproved_request, target_profiles, target_error));
+    common_agent_sandbox_request test_request;
+    test_request.command.program = "agent.development.test";
+    test_request.command.arguments = {"agent-pack", "--filter=agent-contracts"};
+    assert(common_agent_sandbox_resolve_development_target(
+        test_request, target_profiles, target_error));
+    assert(test_request.command.program == "ctest" &&
+        test_request.command.arguments.back() == "agent" &&
+        test_request.command.working_directory == "/workspace/source");
+
     // Report export feeds Markdown to the processor and requests DOCX. The
     // configured DOCX policy must therefore be selected for text/markdown,
     // not only for DOCX inputs that are being read.
@@ -429,6 +470,14 @@ int main() {
     { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
     const auto git_init = "git -C \"" + repository.string() + "\" init -q";
     assert(std::system(git_init.c_str()) == 0);
+    const auto git_user_name = "git -C \"" + repository.string() + "\" config user.name Agent-Test";
+    const auto git_user_email = "git -C \"" + repository.string() + "\" config user.email agent-test@example.invalid";
+    const auto git_add = "git -C \"" + repository.string() + "\" add -- src/sample.txt";
+    const auto git_commit = "git -C \"" + repository.string() + "\" commit -q -m fixture";
+    assert(std::system(git_user_name.c_str()) == 0);
+    assert(std::system(git_user_email.c_str()) == 0);
+    assert(std::system(git_add.c_str()) == 0);
+    assert(std::system(git_commit.c_str()) == 0);
     common_tool_catalog research_catalog;
     assert(research_catalog.bootstrap("research", bootstrap, error));
     common_tool_registry repository_registry;
@@ -469,7 +518,8 @@ int main() {
     result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/missing.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::not_found);
     result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
-    assert(result.ok && result.output.find("needle in a haystack") != std::string::npos);
+    assert(result.ok && result.output.find("needle in a haystack") != std::string::npos &&
+           result.output.find("sha256:") != std::string::npos);
     result = repository_registry.execute({"web.search", R"({"query":"llama","limit":1})"});
     assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
     result = repository_registry.execute({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});
@@ -494,6 +544,7 @@ int main() {
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     result = developer_registry.execute({"workspace.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
     assert(result.ok && result.output.find("alpha") != std::string::npos);
+    { std::ofstream file(repository / "src" / "sample.txt", std::ios::app); file << "working change\n"; }
     result = developer_registry.execute({"repository.status", "{}"});
     assert(result.ok && result.output.find("src") != std::string::npos);
     result = developer_registry.execute({"repository.changed_files", "{}"});
@@ -516,6 +567,8 @@ int main() {
     foundation_profile.id = "developer-foundation";
     foundation_profile.members = {
         {"workspace.patch", 1, true, "{}"},
+        {"repository.snapshot", 1, true, "{}"},
+        {"repository.read", 1, true, "{}"},
         {"diagnostics.compile", 1, true, "{}"},
         {"dataset.list", 1, true, "{}"},
         {"dataset.select", 1, true, "{}"},
@@ -672,6 +725,15 @@ int main() {
             R"({"backend":"clangd","semantic":true,"callers":[{"from":{"path":"src/caller.cpp","line":4,"column":2},"to":{"path":"src/sample.txt","line":1,"column":1}}],"callees":[{"from":{"path":"src/sample.txt","line":1,"column":1},"to":{"path":"src/child.cpp","line":9,"column":3}}],"count":2,"truncated":false})");
     };
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    result = foundation_registry.execute({"repository.snapshot", "{}"});
+    assert(result.ok);
+    const auto source_manifest_result = nlohmann::json::parse(result.output);
+    assert(source_manifest_result["schema"] == "code-source-manifest.v1" &&
+        source_manifest_result["complete"] == true &&
+        source_manifest_result["source_revision"].get<std::string>().size() == 40 &&
+        source_manifest_result["resource_uri"].get<std::string>().rfind("resource://", 0) == 0);
+    const auto manifest_uri = source_manifest_result["resource_uri"].get<std::string>();
+    assert(foundation_resources.contents.at(manifest_uri).find("src/sample.txt") != std::string::npos);
     {
         result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
         assert(result.ok);
@@ -861,8 +923,30 @@ int main() {
     assert(result.ok && result.resource_refs.size() == 1);
     assert(result.resource_refs.front().uri == "resource://session/long-text");
     assert(result.resource_refs.front().size_bytes == 16000);
-    result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
-    assert(result.ok && result.output.find("content_hash") != std::string::npos);
+    const auto before_patch = foundation_registry.execute({"repository.read", R"({"path":"src/sample.txt"})"});
+    assert(before_patch.ok);
+    const auto expected_hash = nlohmann::json::parse(before_patch.output).at("sha256").get<std::string>();
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "patched"}}})}}.dump()});
+    assert(result.ok && result.output.find("content_hash") != std::string::npos &&
+           result.output.find("sha256:") != std::string::npos);
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale"}}})}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.workspace.patch.conflict");
+    const auto crlf_path = repository / "src" / "crlf.txt";
+    { std::ofstream file(crlf_path, std::ios::binary); file << "first\r\nsecond\r\n"; }
+    const auto crlf_read = foundation_registry.execute({"repository.read", R"({"path":"src/crlf.txt"})"});
+    assert(crlf_read.ok);
+    const auto crlf_hash = nlohmann::json::parse(crlf_read.output).at("sha256").get<std::string>();
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/crlf.txt"}, {"expected_hash", crlf_hash},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 2}, {"end_line", 2}, {"content", "updated"}}})}}.dump()});
+    assert(result.ok && nlohmann::json::parse(result.output)["status"] == "applied");
+    std::ifstream crlf_file(crlf_path, std::ios::binary);
+    const std::string crlf_result((std::istreambuf_iterator<char>(crlf_file)), std::istreambuf_iterator<char>());
+    assert(crlf_result == "first\r\nupdated\r\n");
     result = foundation_registry.execute({"code.inspect", "{}"});
     assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
            result.output.find("semantic") != std::string::npos);
@@ -1347,7 +1431,8 @@ int main() {
     result = execution_registry.execute({"development.build", R"({"target":"llama-agent","configuration":"Debug"})"});
     assert(result.ok && captured_request.command.program == "agent.development.build" && captured_request.command.arguments[0] == "llama-agent");
     result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","filter":"workspace"})"});
-    assert(result.ok && captured_request.command.program == "agent.development.test" && captured_request.command.arguments[1] == "workspace");
+    assert(result.ok && captured_request.command.program == "agent.development.test" &&
+        captured_request.command.arguments[1] == "--filter=workspace");
     result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
     assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
             captured_request.workspace.input_resources[0].uri == "resource://input.txt");
@@ -1850,6 +1935,9 @@ int main() {
         {"case_id",uploaded_case_id},{"case_revision",3}}.dump()});
     if (!result.ok || nlohmann::json::parse(result.output).at("events").size() != 2)
         { std::cerr << "uploaded log events require a window-free read in document-only cases\n"; return 34; }
+    result = investigation_registry.execute({"investigation.events",nlohmann::json{
+        {"case_id",uploaded_case_id},{"case_revision",3},{"entity_id","entity:any"},{"relation_id","relation:any"}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.events_invalid") return 43;
     const auto & log_source = imported_case.sources.front();
     const auto actor_offset = uploaded_log.bytes.find("alex");
     result = investigation_registry.execute({"investigation.statement.record",nlohmann::json{

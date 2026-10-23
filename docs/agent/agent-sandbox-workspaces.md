@@ -216,10 +216,44 @@ Job and policy when cleanup is enabled.
 
 ## Semantic developer tools
 
-`development.build` and `development.test` create bounded `developer-build` requests. The
-native adapter emits semantic commands such as `agent.development.build` and
-`agent.development.test`; Docker translates those requests into container execution
-details. Kubernetes translates the same semantic request into a Job.
+development.build and development.test create bounded developer-build requests.
+The model supplies a logical target identifier, never a command line. The host resolves
+that identifier through sandbox.development_targets and builds a fixed argv vector for
+the configured sandbox. Configuration names and test-filter names are accepted only when
+the selected target profile defines them.
+
+Example host configuration:
+
+    {
+      "sandbox": {
+        "development_targets": {
+          "agent-build-pack": {
+            "build_program": "cmake",
+            "build_arguments": ["--build", "/workspace/writable/build", "--target", "llama-agent-build-pack"],
+            "test_program": "ctest",
+            "test_arguments": ["--test-dir", "/workspace/writable/build", "--output-on-failure"],
+            "working_directory": "/workspace/source",
+            "configurations": {"Release": ["--config", "Release"]},
+            "test_filters": {"agent-contracts": ["-L", "agent"]},
+            "max_timeout_ms": 1200000
+          }
+        }
+      }
+    }
+
+Each target is an operator-owned allowlist entry. Arguments are passed directly to the
+configured process runner; no shell is involved. A missing target, configuration, filter
+or operation fails closed. Images must provide the configured executables. A Docker or
+Kubernetes backend does not invent a project-specific command translation.
+
+Execution operation IDs are unique per invocation. The current workspace manager creates
+an operation directory and materializes explicitly supplied resource inputs; it does not
+yet stage the repository checkout or turn `repository.snapshot` into a build-input archive.
+The snapshot tool therefore identifies a bounded set of current file hashes for analysis,
+but is not proof that a build used those exact bytes. Do not treat a successful build result
+as source-bound until the execution receipt includes the staged-source manifest. The host
+records the selected logical target and effective non-secret command metadata; it must not
+retain credential values.
 
 CTest och smoke
 

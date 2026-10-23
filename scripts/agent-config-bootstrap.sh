@@ -151,9 +151,10 @@ External catalog tools (exposure is policy-controlled):
   memory.link, memory.compact_propose
   oracle.ruleset.define, oracle.action.verify, oracle.goal.search
   plan.get, plan.propose
-  repository.list, repository.search, repository.read
+  repository.list, repository.search, repository.read, repository.snapshot
   repository.diff, repository.log, repository.status, repository.changed_files
   workspace.list, workspace.read, workspace.search, workspace.patch
+  code.inspect, code.symbols, code.references, code.calls
   diagnostics.compile, diagnostics.symbol, diagnostics.references
   diagnostics.call_hierarchy, diagnostics.test_failures, diagnostics.format
   diagnostics.include_graph, diagnostics.native_crash

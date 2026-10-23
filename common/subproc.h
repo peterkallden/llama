@@ -13,6 +13,7 @@ struct subprocess_s {};
 static constexpr int subprocess_option_no_window = 0;
 static constexpr int subprocess_option_combined_stdout_stderr = 0;
 static constexpr int subprocess_option_enable_async = 0;
+static constexpr int subprocess_option_enable_async_no_wait = 0;
 static constexpr int subprocess_option_inherit_environment = 0;
 static constexpr int subprocess_option_search_user_path = 0;
 #endif

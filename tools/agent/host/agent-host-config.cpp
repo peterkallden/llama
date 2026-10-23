@@ -1114,6 +1114,44 @@ bool parse_agent_host_config_json(
                 config.sandbox.classes.emplace(it.key(), std::move(policy));
             }
         }
+        if (sandbox.contains("development_targets")) {
+            if (!sandbox["development_targets"].is_object()) { error = "sandbox.development_targets must be an object"; return false; }
+            config.sandbox.development_targets.clear();
+            for (auto it = sandbox["development_targets"].begin(); it != sandbox["development_targets"].end(); ++it) {
+                if (!it.value().is_object()) { error = "sandbox.development_targets entries must be objects"; return false; }
+                const auto & value = it.value();
+                common_agent_development_target_profile profile;
+                read_optional(value, "build_program", profile.build_program);
+                read_optional(value, "test_program", profile.test_program);
+                read_optional(value, "working_directory", profile.working_directory);
+                read_optional(value, "max_timeout_ms", profile.max_timeout_ms);
+                if (value.contains("build_arguments") && !read_string_array(value["build_arguments"], profile.build_arguments, "sandbox.development_targets.build_arguments", error)) return false;
+                if (value.contains("test_arguments") && !read_string_array(value["test_arguments"], profile.test_arguments, "sandbox.development_targets.test_arguments", error)) return false;
+                const auto read_argument_map = [&](const char * key, auto & target) {
+                    if (!value.contains(key)) return true;
+                    if (!value[key].is_object()) { error = std::string("sandbox.development_targets.") + key + " must be an object"; return false; }
+                    for (auto entry = value[key].begin(); entry != value[key].end(); ++entry) {
+                        if (entry.key().empty() || entry.key().size() > 128 || entry.key().find('\0') != std::string::npos) {
+                            error = std::string("sandbox.development_targets.") + key + " contains an invalid alias";
+                            return false;
+                        }
+                        std::vector<std::string> arguments;
+                        if (!read_string_array(entry.value(), arguments, key, error)) return false;
+                        if (arguments.size() > 64 || std::any_of(arguments.begin(), arguments.end(), [](const std::string & argument) {
+                                return argument.size() > 4096 || argument.find('\0') != std::string::npos;
+                            })) {
+                            error = std::string("sandbox.development_targets.") + key + " arguments exceed their limits";
+                            return false;
+                        }
+                        target.emplace(entry.key(), std::move(arguments));
+                    }
+                    return true;
+                };
+                if (!read_argument_map("configurations", profile.configurations) ||
+                        !read_argument_map("test_filters", profile.test_filters)) return false;
+                config.sandbox.development_targets.emplace(it.key(), std::move(profile));
+            }
+        }
     }
 
     if (parsed.contains("tools") && parsed["tools"].is_object()) {
@@ -1611,6 +1649,23 @@ nlohmann::ordered_json agent_host_config_to_json(
     }
     json sandbox_classes = json::object();
     for (const auto & entry : config.sandbox.classes) sandbox_classes[entry.first] = sandbox_class_to_json(entry.second);
+    json development_targets = json::object();
+    for (const auto & entry : config.sandbox.development_targets) {
+        json configurations = json::object();
+        for (const auto & item : entry.second.configurations) configurations[item.first] = item.second;
+        json test_filters = json::object();
+        for (const auto & item : entry.second.test_filters) test_filters[item.first] = item.second;
+        development_targets[entry.first] = {
+            {"build_program", entry.second.build_program},
+            {"build_arguments", entry.second.build_arguments},
+            {"test_program", entry.second.test_program},
+            {"test_arguments", entry.second.test_arguments},
+            {"working_directory", entry.second.working_directory},
+            {"configurations", std::move(configurations)},
+            {"test_filters", std::move(test_filters)},
+            {"max_timeout_ms", entry.second.max_timeout_ms},
+        };
+    }
     json result = {
         {"schema_version", config.schema_version},
         {"model", {
@@ -1894,6 +1949,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             }},
             {"defaults", sandbox_defaults_to_json(config.sandbox.defaults)},
             {"classes", std::move(sandbox_classes)},
+            {"development_targets", std::move(development_targets)},
         }},
         {"mcp", {
             {"inbound", {
@@ -2450,6 +2506,33 @@ bool validate_agent_host_config(
                 entry.second.limits.timeout_ms == 0 || entry.second.limits.cpu_count == 0 ||
                 entry.second.limits.max_output_bytes == 0) {
             error = "sandbox class has invalid identity or limits: " + entry.first;
+            return false;
+        }
+    }
+    for (const auto & entry : config.sandbox.development_targets) {
+        const auto & profile = entry.second;
+        if (entry.first.empty() || profile.build_program.empty() || profile.max_timeout_ms < 1000 ||
+                profile.max_timeout_ms > 1800000 ||
+                (profile.working_directory != "/workspace/source" &&
+                    profile.working_directory != "/workspace/writable" &&
+                    profile.working_directory != "/workspace/artifacts") ||
+                profile.build_program.find('\0') != std::string::npos ||
+                profile.test_program.find('\0') != std::string::npos ||
+                profile.build_arguments.size() > 64 || profile.test_arguments.size() > 64) {
+            error = "sandbox development target has invalid identity, command, timeout or working directory: " + entry.first;
+            return false;
+        }
+        const auto valid_arguments = [](const std::vector<std::string> & arguments) {
+            return std::all_of(arguments.begin(), arguments.end(), [](const std::string & argument) {
+                return argument.size() <= 4096 && argument.find('\0') == std::string::npos;
+            });
+        };
+        if (!valid_arguments(profile.build_arguments) || !valid_arguments(profile.test_arguments)) {
+            error = "sandbox development target contains invalid command arguments: " + entry.first;
+            return false;
+        }
+        if (profile.test_program.empty() && !profile.test_arguments.empty()) {
+            error = "sandbox development target test arguments require a test program: " + entry.first;
             return false;
         }
     }

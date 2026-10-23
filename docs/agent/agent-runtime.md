@@ -5176,7 +5176,7 @@ backend is configured.
 | Memory proposals: `memory.remember`, `memory.propose_update`, `memory.propose_forget`, `memory.link`, `memory.compact_propose` | Yes, when bound and allowed | A write-capable profile, memory store and host policy allowing proposals |
 | Semi-oracle: `oracle.ruleset.define`, `oracle.problem.define`, `oracle.action.verify`, `oracle.goal.search` | Yes, when bound | The `semi-oracle` profile; Target Hunt problem admission and moves use host-owned session state |
 | Planning: `plan.get`, `plan.propose` | Yes, when bound | A matching profile and plan store; `plan.get` is useful with a bound `plan_id` |
-| Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; `repository.search` accepts either a file or directory path |
+| Repository: `repository.list`, `repository.search`, `repository.read`, `repository.snapshot`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; snapshots retain a bounded hash manifest, not a build-input archive |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
 | Code analysis: `code.inspect`, `code.symbols`, `code.references`, `code.calls` | Yes | A matching profile and host repository root; call relationships require the semantic provider and are one hop |

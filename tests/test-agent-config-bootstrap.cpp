@@ -27,7 +27,7 @@ std::set<std::string> expected_tools() {
         "memory.propose_update", "memory.propose_forget", "memory.link",
         "memory.compact_propose", "oracle.ruleset.define", "oracle.action.verify",
         "oracle.goal.search", "plan.get", "plan.propose",
-        "repository.list", "repository.search", "repository.read",
+        "repository.list", "repository.search", "repository.read", "repository.snapshot",
         "repository.diff", "repository.log", "repository.status",
         "repository.changed_files", "workspace.list", "workspace.read",
         "workspace.search", "workspace.patch", "code.inspect", "code.symbols",
