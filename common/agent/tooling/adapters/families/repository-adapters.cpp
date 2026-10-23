@@ -59,7 +59,7 @@ bool repository_path(const std::string & root, const std::string & relative,
     return true;
 }
 
-std::string workspace_content_token(const std::string & content) {
+std::string legacy_workspace_content_token(const std::string & content) {
     return "host:" + std::to_string(std::hash<std::string>{}(content));
 }
 
@@ -412,7 +412,7 @@ bool common_try_register_repository_tool_adapter(
                 if (!arguments["expected_hash"].is_string()) return common_adapter_validation_failure("tool.workspace.patch.invalid_hash", "workspace.patch expected_hash must be a string");
                 const auto expected = arguments["expected_hash"].get<std::string>();
                 const auto stable = "sha256:" + hash_sha256_hex(content.data(), content.size());
-                if (expected != stable && expected != workspace_content_token(content)) return common_adapter_failure("tool.workspace.patch.conflict", common_tool_failure_class::policy, false, "Workspace content changed since it was read.", "expected_hash does not match current workspace content");
+                if (expected != stable && expected != legacy_workspace_content_token(content)) return common_adapter_failure("tool.workspace.patch.conflict", common_tool_failure_class::policy, false, "Workspace content changed since it was read.", "expected_hash does not match current workspace content");
             }
             const bool trailing_newline = !content.empty() && content.back() == '\n';
             const std::string line_ending = content.find("\r\n") != std::string::npos ? "\r\n" : "\n";
@@ -448,7 +448,7 @@ bool common_try_register_repository_tool_adapter(
                 {"before_sha256", before_hash}, {"after_sha256", after_hash}, {"changed", false},
                 {"status", "unchanged"}});
             if (!write_file_atomically(path, updated_content)) return common_adapter_execution_failure("tool.workspace.patch.write_failed", "workspace.patch could not atomically replace the target", "Workspace patch could not be written.");
-            return common_adapter_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"content_hash", workspace_content_token(updated_content)}, {"before_sha256", before_hash}, {"after_sha256", after_hash}, {"sha256", after_hash}, {"changed", true}, {"status", "applied"}});
+            return common_adapter_success_json({{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()}, {"content_hash", after_hash}, {"before_sha256", before_hash}, {"after_sha256", after_hash}, {"sha256", after_hash}, {"changed", true}, {"status", "applied"}});
         }, error, false, true);
     } else if (definition.executor_id == "builtin.repository.diff" && !bindings.repository_root.empty()) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {

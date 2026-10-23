@@ -25,6 +25,10 @@ describe("code analysis graph projection", () => {
     expect(result?.edges[0]?.provenance_refs).toEqual(["src/a.cpp#L1", "src/b.cpp#L2"]);
   });
 
+  it("renders code.impact with the same generic relationship renderer contract", () => {
+    expect(codeCallVisualization("code.impact", { visualization: graph })?.edges).toHaveLength(1);
+  });
+
   it("does not render another tool family or malformed visualization data", () => {
     expect(codeCallVisualization("repository.search", { visualization: graph })).toBeUndefined();
     expect(codeCallVisualization("code.calls", { visualization: { ...graph, edges: [{ id: "bad" }] } })).toBeUndefined();

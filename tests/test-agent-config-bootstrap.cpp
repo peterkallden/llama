@@ -31,7 +31,7 @@ std::set<std::string> expected_tools() {
         "repository.diff", "repository.log", "repository.status",
         "repository.changed_files", "workspace.list", "workspace.read",
         "workspace.search", "workspace.patch", "code.inspect", "code.symbols",
-        "code.references", "code.calls", "diagnostics.compile",
+        "code.references", "code.calls", "code.impact", "diagnostics.compile",
         "diagnostics.symbol", "diagnostics.references",
         "diagnostics.call_hierarchy", "diagnostics.test_failures",
         "diagnostics.format", "diagnostics.include_graph", "diagnostics.native_crash",

@@ -74,7 +74,7 @@ if ($ListTools) {
         'External catalog tools: calculator, time_now, memory_search, memory_get, memory_inspect, memory_conflict_check'
         '  repository.list, repository.search, repository.read, repository.snapshot, repository.diff, repository.log, repository.status'
         '  workspace.list, workspace.read, workspace.search, workspace.patch'
-        '  code.inspect, code.symbols, code.references, code.calls'
+        '  code.inspect, code.symbols, code.references, code.calls, code.impact'
         '  diagnostics.compile, diagnostics.symbol, diagnostics.references, diagnostics.call_hierarchy'
         '  dataset.list, dataset.inspect, dataset.schema, dataset.sample, dataset.validate'
         '  data.query, data.filter, data.aggregate, data.join, data.transform'

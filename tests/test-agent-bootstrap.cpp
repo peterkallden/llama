@@ -242,7 +242,7 @@ int main() {
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v30");
+        checked_in_starter.version == "v31");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -426,7 +426,7 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 23 &&
+    assert(checked_in_starter.procedures.size() == 24 &&
         checked_in_starter.blueprints.size() == 19);
     assert(checked_in_starter.workflows.size() == 20);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
@@ -694,9 +694,13 @@ int main() {
             "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"}));
     assert(checked_in_starter.workflows[0].definition.required_context ==
         std::vector<std::string>({"context.dataset.available"}));
-    assert(checked_in_starter.blueprints[3].workflow_bindings.size() == 3);
-    assert(checked_in_starter.blueprints[3].id == "dataset-analysis-v2");
-    assert(checked_in_starter.blueprints[3].source_revision ==
+    const auto checked_in_dataset_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(checked_in_dataset_blueprint != checked_in_starter.blueprints.end());
+    assert(checked_in_dataset_blueprint->workflow_bindings.size() == 3);
+    assert(checked_in_dataset_blueprint->source_revision ==
         "agent-workflows-starter@v3");
 
     common_memory_in_memory_store checked_in_memory;
@@ -707,9 +711,26 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
         checked_in_import, error));
-    assert(checked_in_import.installed_memory_ids.size() == 22 &&
-        checked_in_import.installed_blueprint_ids.size() == 17);
-    assert(checked_in_import.installed_workflow_ids.size() == 18);
+    assert(checked_in_import.installed_memory_ids.size() == checked_in_starter.procedures.size());
+    assert(checked_in_import.rejected_items.empty());
+    assert(checked_in_import.installed_blueprint_ids.size() == checked_in_starter.blueprints.size());
+    assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
+        checked_in_import.installed_blueprint_ids.end(),
+        "bootstrap:local:project:project-a:blueprint:code-overview-v1") !=
+            checked_in_import.installed_blueprint_ids.end());
+    assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
+        checked_in_import.installed_blueprint_ids.end(),
+        "bootstrap:local:project:project-a:blueprint:code-entry-point-investigation-v1") !=
+            checked_in_import.installed_blueprint_ids.end());
+    assert(checked_in_import.installed_workflow_ids.size() == checked_in_starter.workflows.size());
+    assert(std::find(checked_in_import.installed_workflow_ids.begin(),
+        checked_in_import.installed_workflow_ids.end(),
+        "bootstrap:local:project:project-a:workflow:code-overview-path-v1") !=
+            checked_in_import.installed_workflow_ids.end());
+    assert(std::find(checked_in_import.installed_workflow_ids.begin(),
+        checked_in_import.installed_workflow_ids.end(),
+        "bootstrap:local:project:project-a:workflow:code-entry-point-investigation-path-v1") !=
+            checked_in_import.installed_workflow_ids.end());
     const auto checked_in_openapi_blueprint = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:openapi-resource-onboarding-v1", error);
     assert(checked_in_openapi_blueprint &&
@@ -739,8 +760,13 @@ int main() {
     assert(common_agent_package_to_json(checked_in_starter, checked_in_round_trip, error));
     common_agent_bootstrap_package reparsed_starter;
     assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
-    assert(reparsed_starter.blueprints[3].selection_description ==
-        checked_in_starter.blueprints[3].selection_description);
+    const auto reparsed_dataset_blueprint = std::find_if(reparsed_starter.blueprints.begin(),
+        reparsed_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(reparsed_dataset_blueprint != reparsed_starter.blueprints.end() &&
+        reparsed_dataset_blueprint->selection_description ==
+            checked_in_dataset_blueprint->selection_description);
     const auto reparsed_eurostat_link_source = std::find_if(
         reparsed_starter.workflows.begin(), reparsed_starter.workflows.end(), [](const auto & workflow) {
             return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
@@ -757,7 +783,7 @@ int main() {
         reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
             eurostat_metadata_workflow->definition.transitions.front().model_instruction);
     assert(reparsed_starter.workflows.size() == 20 &&
-        reparsed_starter.blueprints[3].workflow_bindings.size() == 3 &&
+        reparsed_dataset_blueprint->workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
         reparsed_starter.workflows[5].definition.optional_capabilities ==
@@ -766,7 +792,12 @@ int main() {
             checked_in_starter.workflows[0].definition.required_context);
 
     auto partial_package = checked_in_starter;
-    partial_package.blueprints[3].workflow_bindings.push_back({"workflow://missing", "v1"});
+    const auto partial_dataset_blueprint = std::find_if(partial_package.blueprints.begin(),
+        partial_package.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(partial_dataset_blueprint != partial_package.blueprints.end());
+    partial_dataset_blueprint->workflow_bindings.push_back({"workflow://missing", "v1"});
     common_memory_in_memory_store partial_memory;
     common_plan_in_memory_store partial_plans;
     assert(partial_memory.open("", error));
@@ -775,7 +806,8 @@ int main() {
     assert(common_agent_install_bootstrap_package(
         partial_memory, partial_plans, config, partial_package, embed,
         partial_import, error));
-    assert(partial_import.installed_blueprint_ids.size() == 16 &&
+    assert(partial_import.installed_blueprint_ids.size() + 1 ==
+        checked_in_import.installed_blueprint_ids.size() &&
         partial_import.rejected_items.size() == 1 &&
         partial_import.rejected_items.front().id == "dataset-analysis-v2");
 

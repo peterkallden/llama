@@ -518,6 +518,9 @@ int main() {
     assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "code.calls" && definition.risk_class == common_tool_risk_class::local_read;
     }));
+    assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "code.impact" && definition.risk_class == common_tool_risk_class::local_read;
+    }));
     assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "diagnostics.call_hierarchy";
     }));

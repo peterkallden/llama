@@ -270,7 +270,7 @@ through the scoped resource API. Figures remain tied to the saved report
 revision. A local layout or a user-supplied snapshot is presentation data and
 does not create independent evidence.
 
-Completed `code.calls` tool events carry a host-validated relationship projection
+Completed `code.calls` and `code.impact` tool events carry a host-validated relationship projection
 that is displayed in the corresponding assistant turn. Delivery sequences are
 deduplicated and graph events must match the current chat session. The generic
 `RelationshipGraph` component is loaded on demand and is also used by the

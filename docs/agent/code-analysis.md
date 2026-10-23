@@ -12,10 +12,15 @@ failures, formatting, include traces and native crash reports.
 | `code.symbols` | Finds symbol definitions through the semantic provider, or bounded text matches when no provider is configured. |
 | `code.references` | Finds references through the semantic provider, or bounded text matches when no provider is configured. |
 | `code.calls` | Returns one-hop callers/callees from a semantic provider and a relationship projection using the shared visualization contract. |
+| `code.impact` | Traverses a bounded multi-hop call neighborhood from an explicit source location and returns the same generic relationship projection. |
 
 Text matches are not resolved symbols. Static call relationships describe
 provider-reported source structure; they do not establish path feasibility,
-runtime behavior or execution.
+runtime behavior, execution, or complete change impact. `code.impact` is
+bounded to depth 1–3, 2–64 nodes and 1–128 edges. It requires a semantic call
+provider and source locations (including symbol names) from that provider to
+continue traversal. If a provider omits a name or reports partial coverage, the
+result is marked incomplete rather than filled with guessed relationships.
 
 The host owns the repository root and provider configuration. The current
 clangd provider is enabled through the existing
@@ -64,11 +69,12 @@ The starter bootstrap package defines:
 Their blueprints are `code-overview-v1` and
 `code-entry-point-investigation-v1`. Both workflows preserve source locations,
 provider limitations and the distinction between text matches and semantic
-relationships.
+relationships. `code.impact` is optional and is used only when `code.inspect`
+reports bounded semantic call support.
 
 ## Presentation and current limits
 
-`code.calls` includes a `relationship` visualization projection in its result.
+`code.calls` and `code.impact` include a `relationship` visualization projection in their results.
 The runtime validates visualization projections against the shared contract
 and forwards only that projection in the completed tool event; it does not
 expose the full tool result in the event stream. The web client renders it with
@@ -81,9 +87,10 @@ the host's current repository state; results do not yet pin a commit or content
 snapshot, so they should not be treated as revision-stable evidence.
 
 The current provider offers symbol navigation, references and one-hop call
-hierarchy. It does not yet provide AST/CFG/data-flow analysis, external-effect
-classification, deeper graph traversal, a persistent code index, binary
-analysis, symbolic execution or dynamic sandbox evidence. Those require
+hierarchy; `code.impact` composes bounded repeated call-hierarchy requests and
+does not add a deeper semantic index or analysis engine. It does not yet provide
+AST/CFG/data-flow analysis, external-effect classification, a persistent code
+index, binary analysis, symbolic execution or dynamic sandbox evidence. Those require
 separate host-bound adapters and evidence contracts; they must not be inferred
 from a call graph.
 

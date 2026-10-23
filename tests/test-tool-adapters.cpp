@@ -590,6 +590,7 @@ int main() {
         {"code.symbols", 1, true, "{}"},
         {"code.references", 1, true, "{}"},
         {"code.calls", 1, true, "{}"},
+        {"code.impact", 1, true, "{}"},
         {"diagnostics.test_failures", 1, true, "{}"},
         {"diagnostics.symbol", 1, true, "{}"},
         {"diagnostics.references", 1, true, "{}"},
@@ -929,8 +930,10 @@ int main() {
     result = foundation_registry.execute({"workspace.patch", nlohmann::json{
         {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
         {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "patched"}}})}}.dump()});
-    assert(result.ok && result.output.find("content_hash") != std::string::npos &&
-           result.output.find("sha256:") != std::string::npos);
+    assert(result.ok);
+    const auto patch_receipt = nlohmann::json::parse(result.output);
+    assert(patch_receipt.contains("content_hash") && patch_receipt["content_hash"] == patch_receipt["after_sha256"] &&
+        patch_receipt["content_hash"].get<std::string>().rfind("sha256:", 0) == 0);
     result = foundation_registry.execute({"workspace.patch", nlohmann::json{
         {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
         {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale"}}})}}.dump()});
@@ -949,7 +952,7 @@ int main() {
     assert(crlf_result == "first\r\nupdated\r\n");
     result = foundation_registry.execute({"code.inspect", "{}"});
     assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
-           result.output.find("semantic") != std::string::npos);
+           result.output.find("semantic") != std::string::npos && result.output.find("bounded_semantic") != std::string::npos);
     result = foundation_registry.execute({"code.symbols", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
     assert(result.ok && result.output.find("code-analysis.v1") != std::string::npos &&
            result.output.find("text-fallback") != std::string::npos);
@@ -967,6 +970,40 @@ int main() {
     malformed_code_calls = false;
     result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1,"max_results":"many"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+    {
+        common_native_tool_bindings impact_bindings = repository_bindings;
+        impact_bindings.code_calls = [](const std::string & input) {
+            const auto request = nlohmann::json::parse(input);
+            const auto path = request.value("path_hint", request.value("definition_path", std::string{}));
+            const auto line = request.value("line", request.value("definition_line", 0));
+            if (path == "src/entry.cpp" && line == 1) return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"call_sites":[{"path":"src/entry.cpp","line":3,"column":4,"end_line":3,"end_column":11}]}],"count":1,"complete":true,"truncated":false})");
+            if (path == "src/service.cpp" && line == 10) return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[{"from":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"to":{"path":"src/store.cpp","line":20,"column":1,"name":"store"},"call_sites":[{"path":"src/service.cpp","line":12,"column":5,"end_line":12,"end_column":10}]}],"count":1,"complete":true,"truncated":false})");
+            return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[],"count":0,"complete":true,"truncated":false})");
+        };
+        common_tool_registry impact_registry;
+        bool impact_installed = false;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.impact"),
+            impact_bindings, impact_registry, impact_installed, error) && impact_installed);
+        auto impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":3})"});
+        assert(impact_result.ok);
+        const auto impact_json = nlohmann::json::parse(impact_result.output);
+        assert(impact_json["operation"] == "bounded_call_neighborhood" &&
+            impact_json["relationship_count"] == 2 && impact_json["complete"] == true &&
+            impact_json["visualization"]["nodes"].size() == 3);
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":1})"});
+        assert(impact_result.ok);
+        const auto depth_limited = nlohmann::json::parse(impact_result.output);
+        assert(depth_limited["truncated"] == true && depth_limited["complete"] == false);
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2})"});
+        assert(impact_result.ok);
+        const auto node_limited = nlohmann::json::parse(impact_result.output);
+        assert(node_limited["truncated"] == true && node_limited["visualization"]["nodes"].size() == 2);
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"direction":"sideways"})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::validation);
+    }
     result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
     assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&
            result.output.find("\"items\"") != std::string::npos);

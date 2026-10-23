@@ -6,14 +6,14 @@
     {
       "id": "code-orientation-v1",
       "summary": "code orientation",
-      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer code.symbols, code.references and code.calls when the host reports semantic support; otherwise use bounded repository search and reads, and label text matches as non-semantic.",
+      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer code.symbols, code.references, code.calls and code.impact when the host reports semantic support; otherwise use bounded repository search and reads, and label text matches as non-semantic. code.impact is a bounded multi-hop static call neighborhood, not proof of feasible execution or complete change impact.",
       "importance": 0.9,
       "confidence": 1.0
     },
     {
       "id": "code-analysis-evidence-v1",
       "summary": "code analysis evidence",
-      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for a bounded one-hop semantic call neighborhood. Preserve the returned source locations and analysis method. Text fallback results are text matches only. Static call relations are not proof that a path is feasible or was executed. Report missing provider support and incomplete results explicitly.",
+      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for one-hop and code.impact for bounded multi-hop semantic call neighborhoods. Preserve the returned source locations, depth, analysis method and coverage. Text fallback results are text matches only. Static call relations are not proof that a path is feasible, was executed, or captures every dependency of a change. Report missing provider support and incomplete results explicitly.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -260,7 +260,7 @@
     },
     {
       "id": "code-overview-path-v1",
-      "source_revision": "agent-workflows-starter@v30",
+      "source_revision": "agent-workflows-starter@v31",
       "workflow_ref": "workflow://code/overview",
       "workflow_revision": "v1",
       "family": "code",
@@ -274,6 +274,7 @@
         "code.symbols",
         "code.references",
         "code.calls",
+        "code.impact",
         "artifact.export"
       ],
       "required_context": [
@@ -282,7 +283,7 @@
     },
     {
       "id": "code-entry-point-investigation-path-v1",
-      "source_revision": "agent-workflows-starter@v30",
+      "source_revision": "agent-workflows-starter@v31",
       "workflow_ref": "workflow://code/entry-point-investigation",
       "workflow_revision": "v1",
       "family": "code",
@@ -295,6 +296,7 @@
       ],
       "optional_capabilities": [
         "code.references",
+        "code.impact",
         "visualization.create",
         "visualization.snapshot",
         "investigation.case.items",
@@ -1291,7 +1293,7 @@
     },
     {
       "id": "code-overview-v1",
-      "source_revision": "agent-workflows-starter@v30",
+      "source_revision": "agent-workflows-starter@v31",
       "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
       "purpose": "Orient the user in a codebase using host-provided structure and analysis capabilities.",
       "goal": "Describe the relevant repository structure and available semantic analysis without inventing relationships.",
@@ -1369,7 +1371,7 @@
     },
     {
       "id": "code-entry-point-investigation-v1",
-      "source_revision": "agent-workflows-starter@v30",
+      "source_revision": "agent-workflows-starter@v31",
       "selection_description": "Trace an explicitly selected source symbol through its immediate call relationships.",
       "purpose": "Investigate what a source entry point may call while preserving code anchors and uncertainty.",
       "goal": "Return a bounded semantic call neighborhood and explain what the analysis cannot establish.",
@@ -1503,12 +1505,12 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Capture the available source identity, then identify affected code, contracts, direct callers and relevant tests."
+          "objective": "Capture the available source identity, then identify affected code, contracts, direct callers and relevant tests. Use bounded code.impact only when code.inspect reports impact support; otherwise describe the missing semantic coverage and continue with repository evidence."
         },
         {
           "id": "design",
           "title": "Design",
-          "objective": "Choose the smallest coherent change that satisfies the request.",
+          "objective": "Choose the smallest coherent change that satisfies the request, map proposed behavior to explicit contracts and verification, and record unresolved assumptions before editing.",
           "depends_on": [
             "orient"
           ]

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <deque>
 
 namespace {
 
@@ -356,6 +357,149 @@ json call_visualization(const json & output, bool complete, bool truncated, size
     return common_agent_visualization_relationship_to_json(graph);
 }
 
+json call_neighborhood(const common_native_tool_bindings & bindings, const json & args,
+        const std::string & direction, size_t max_depth, size_t max_nodes, size_t max_edges,
+        bool & complete, bool & truncated, std::string & error) {
+    struct pending_location {
+        json location;
+        std::string symbol;
+        size_t depth = 0;
+    };
+    std::deque<pending_location> pending;
+    const bool has_definition = args.contains("definition_path");
+    const auto path_key = has_definition ? "definition_path" : "path_hint";
+    const auto line_key = has_definition ? "definition_line" : "line";
+    const auto column_key = has_definition ? "definition_column" : "column";
+    json seed = {{"path", args.value(path_key, std::string{})}, {"line", args.value(line_key, 0)}};
+    if (args.contains(column_key)) seed["column"] = args[column_key];
+    pending.push_back({seed, args.value("symbol", std::string{}), 0});
+
+    json relationships = {{"callers", json::array()}, {"callees", json::array()}};
+    std::set<std::string> queued_locations;
+    std::set<std::string> expanded_locations;
+    std::set<std::pair<std::string, std::string>> edges;
+    size_t discovered_nodes = 0;
+    json limitations = json::array();
+    complete = true;
+    truncated = false;
+
+    const auto & provider = bindings.code_calls;
+    while (!pending.empty()) {
+        auto current = std::move(pending.front());
+        pending.pop_front();
+        const auto current_id = location_id(current.location);
+        if (current_id.empty() || current.symbol.empty()) {
+            complete = false;
+            if (std::find(limitations.begin(), limitations.end(), "A relationship did not provide a usable symbol and location for expansion.") == limitations.end())
+                limitations.push_back("A relationship did not provide a usable symbol and location for expansion.");
+            continue;
+        }
+        if (!expanded_locations.insert(current_id).second) continue;
+        if (current.depth >= max_depth) {
+            complete = false;
+            truncated = true;
+            if (std::find(limitations.begin(), limitations.end(), "The requested call-neighborhood depth limit was reached.") == limitations.end())
+                limitations.push_back("The requested call-neighborhood depth limit was reached.");
+            continue;
+        }
+        if (edges.size() >= max_edges || discovered_nodes >= max_nodes) {
+            complete = false;
+            truncated = true;
+            if (std::find(limitations.begin(), limitations.end(), "The call-neighborhood node or edge limit was reached.") == limitations.end())
+                limitations.push_back("The call-neighborhood node or edge limit was reached.");
+            break;
+        }
+
+        const auto page_limit = std::min<size_t>(16, max_edges - edges.size());
+        json request = {{"symbol", current.symbol}, {"direction", direction},
+            {"max_results", static_cast<int>(page_limit)}};
+        request[has_definition ? "definition_path" : "path_hint"] = current.location.value("path", std::string{});
+        request[has_definition ? "definition_line" : "line"] = current.location.value("line", 0);
+        if (current.location.contains("column"))
+            request[has_definition ? "definition_column" : "column"] = current.location["column"];
+
+        auto result = provider(request.dump());
+        if (!result.ok) {
+            error = result.failure_code.empty() ? "semantic call provider failed during bounded expansion" : result.failure_code;
+            return nullptr;
+        }
+        auto output = json::parse(result.output, nullptr, false);
+        if (!output.is_object() || !output.contains("callers") || !output["callers"].is_array() ||
+                !output.contains("callees") || !output["callees"].is_array() ||
+                (output.contains("backend") && !output["backend"].is_string()) ||
+                output["callers"].size() + output["callees"].size() > page_limit ||
+                !output.contains("count") || !output["count"].is_number_integer()) {
+            error = "semantic call provider returned an invalid neighborhood page";
+            return nullptr;
+        }
+        const auto result_count = output["callers"].size() + output["callees"].size();
+        uint64_t reported_count = 0;
+        if (!nonnegative_integer(output["count"], result_count, reported_count) || reported_count != result_count) {
+            error = "semantic call provider returned an inconsistent relationship count";
+            return nullptr;
+        }
+        bool page_complete = true, page_truncated = false;
+        json page_limitations;
+        if (!provider_coverage(output, page_complete, page_truncated, page_limitations)) {
+            error = "semantic call provider returned invalid coverage metadata";
+            return nullptr;
+        }
+        complete = complete && page_complete && !page_truncated;
+        truncated = truncated || page_truncated;
+        for (const auto & limitation : page_limitations)
+            if (std::find(limitations.begin(), limitations.end(), limitation) == limitations.end()) limitations.push_back(limitation);
+
+        for (const auto * key : {"callers", "callees"}) {
+            for (const auto & relation : output[key]) {
+                if (!relation.is_object() || !relation.contains("from") || !relation.contains("to")) {
+                    complete = false;
+                    continue;
+                }
+                const auto from_id = location_id(relation["from"]);
+                const auto to_id = location_id(relation["to"]);
+                if (from_id.empty() || to_id.empty()) { complete = false; continue; }
+                const auto edge_key = std::make_pair(from_id, to_id);
+                if (!edges.insert(edge_key).second) continue;
+                const size_t new_nodes = static_cast<size_t>(queued_locations.count(from_id) == 0) +
+                    static_cast<size_t>(queued_locations.count(to_id) == 0);
+                if (discovered_nodes + new_nodes > max_nodes) {
+                    edges.erase(edge_key);
+                    complete = false;
+                    truncated = true;
+                    if (std::find(limitations.begin(), limitations.end(), "The call-neighborhood node or edge limit was reached.") == limitations.end())
+                        limitations.push_back("The call-neighborhood node or edge limit was reached.");
+                    continue;
+                }
+                if (edges.size() > max_edges) {
+                    edges.erase(edge_key);
+                    complete = false;
+                    truncated = true;
+                    continue;
+                }
+                relationships[key].push_back(relation);
+                for (const auto * endpoint : {"from", "to"}) {
+                    const auto & location = relation[endpoint];
+                    const auto id = location_id(location);
+                    if (id.empty() || !queued_locations.insert(id).second) continue;
+                    if (discovered_nodes >= max_nodes) {
+                        queued_locations.erase(id);
+                        complete = false;
+                        truncated = true;
+                        continue;
+                    }
+                    ++discovered_nodes;
+                    const auto name = location.value("name", std::string{});
+                    pending.push_back({location, name, current.depth + 1});
+                }
+            }
+        }
+    }
+    relationships["limitations"] = std::move(limitations);
+    if (!complete && relationships["limitations"].empty())
+        relationships["limitations"].push_back("The provider or bounded traversal returned incomplete coverage.");
+    return relationships;
+}
+
 bool valid_optional_string(const json & value, const char * key, size_t maximum,
         std::string & error) {
     if (!value.contains(key)) return true;
@@ -417,7 +561,8 @@ bool common_try_register_code_tool_adapter(
     const bool symbols = has_executor(id, "builtin.code.symbols", "builtin.diagnostics.symbol");
     const bool references = has_executor(id, "builtin.code.references", "builtin.diagnostics.references");
     const bool calls = has_executor(id, "builtin.code.calls", "builtin.diagnostics.call_hierarchy");
-    if (!inspect && !symbols && !references && !calls) return false;
+    const bool impact = id == "builtin.code.impact";
+    if (!inspect && !symbols && !references && !calls && !impact) return false;
 
     if (inspect) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
@@ -438,7 +583,8 @@ bool common_try_register_code_tool_adapter(
                 {"backend", semantic_provider ? "semantic_provider" : "bounded_text"},
                 {"capabilities", {{"symbols", repository_available ? (symbols_semantic ? "semantic" : "text_fallback") : "unavailable"},
                     {"references", repository_available ? (references_semantic ? "semantic" : "text_fallback") : "unavailable"},
-                    {"calls", repository_available && calls_semantic ? "semantic" : "unavailable"}}},
+                    {"calls", repository_available && calls_semantic ? "semantic" : "unavailable"},
+                    {"impact", repository_available && calls_semantic ? "bounded_semantic" : "unavailable"}}},
                 {"execution", "read_only"},
                 {"limitations", json::array({
                     "Text fallback finds text occurrences only; it does not resolve code semantics.",
@@ -520,6 +666,61 @@ bool common_try_register_code_tool_adapter(
                     {"limitations", provider_limitations}});
             }
             return symbols_fallback(bindings, args, references, legacy);
+        }, error);
+    } else if (impact) {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            std::string parse_error;
+            json args;
+            if (!common_adapter_parse_object(input, args, parse_error) || !args.contains("symbol") ||
+                    !args["symbol"].is_string() || args["symbol"].get_ref<const std::string &>().empty() ||
+                    args["symbol"].get_ref<const std::string &>().size() > 256 ||
+                    args["symbol"].get_ref<const std::string &>().find('\0') != std::string::npos)
+                return common_adapter_validation_failure("tool.code.impact.invalid_arguments", "code.impact requires a symbol of at most 256 bytes");
+            if (!valid_optional_string(args, "path_hint", 512, parse_error) ||
+                    !valid_optional_string(args, "definition_path", 512, parse_error) ||
+                    !valid_optional_integer(args, "line", 1, 1000000, parse_error) ||
+                    !valid_optional_integer(args, "column", 1, 1000000, parse_error) ||
+                    !valid_optional_integer(args, "definition_line", 1, 1000000, parse_error) ||
+                    !valid_optional_integer(args, "definition_column", 1, 1000000, parse_error) ||
+                    !valid_optional_integer(args, "max_depth", 1, 3, parse_error) ||
+                    !valid_optional_integer(args, "max_nodes", 2, 64, parse_error) ||
+                    !valid_optional_integer(args, "max_edges", 1, 128, parse_error) ||
+                    (args.contains("direction") && !args["direction"].is_string()))
+                return common_adapter_validation_failure("tool.code.impact.invalid_arguments",
+                    parse_error.empty() ? "direction must be a string" : std::move(parse_error));
+            const bool has_hint = args.contains("path_hint") && args.contains("line");
+            const bool has_definition = args.contains("definition_path") && args.contains("definition_line");
+            if (has_hint == has_definition)
+                return common_adapter_validation_failure("tool.code.impact.invalid_arguments", "code.impact requires exactly one explicit source location");
+            const auto direction = args.value("direction", std::string("both"));
+            if (direction != "callers" && direction != "callees" && direction != "both")
+                return common_adapter_validation_failure("tool.code.impact.invalid_arguments", "direction is outside its permitted values");
+            if (!bindings.code_calls)
+                return common_adapter_execution_failure("tool.code.impact.unavailable",
+                    "semantic call analysis is not configured", "Bounded call-neighborhood analysis requires a semantic code provider.");
+
+            bool complete = true, truncated = false;
+            std::string error;
+            const auto neighborhood = call_neighborhood(bindings, args, direction,
+                static_cast<size_t>(args.value("max_depth", 2)),
+                static_cast<size_t>(args.value("max_nodes", 32)),
+                static_cast<size_t>(args.value("max_edges", 64)), complete, truncated, error);
+            if (neighborhood.is_null())
+                return common_adapter_execution_failure("tool.code.impact.provider_failed", error,
+                    "The semantic provider could not complete the bounded code analysis.");
+            auto graph_json = call_visualization(neighborhood, complete, truncated,
+                static_cast<size_t>(args.value("max_edges", 64)));
+            common_agent_visualization_relationship graph;
+            if (!common_agent_visualization_relationship_from_json(graph_json, graph, error))
+                return common_adapter_execution_failure("tool.code.impact.invalid_projection", error,
+                    "The bounded code analysis could not be projected as a valid relationship graph.");
+            return common_adapter_success_json({{"schema", "code-analysis.v1"},
+                {"operation", "bounded_call_neighborhood"}, {"backend", "semantic_provider"},
+                {"semantic", true}, {"direction", direction},
+                {"max_depth", args.value("max_depth", 2)},
+                {"complete", complete && !truncated}, {"truncated", truncated},
+                {"relationship_count", graph.edges.size()}, {"visualization", graph_json},
+                {"limitations", neighborhood.value("limitations", json::array())}});
         }, error);
     } else if (calls) {
         const bool legacy = id.rfind("builtin.diagnostics.", 0) == 0;
