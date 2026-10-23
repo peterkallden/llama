@@ -707,3 +707,30 @@ The final documentation should name the owner of every identity, permission,
 retry, pagination decision and materialization step. If ownership cannot be
 named, the design is probably introducing an accidental second orchestration
 path.
+
+## Bounded code workflow handoffs
+
+The starter JSON package v35 revises five blueprints: repository investigation,
+code overview, entry-point investigation, repository change and regression
+repair. Their workflow URIs and revisions remain unchanged. Each phase names a
+concrete result (selected code locations, evidence, patch or verification
+receipt) rather than treating every available tool as a checklist. The shared
+`code-phase-handoff-v1` procedure keeps the current question, source identity,
+evidence references and limits together; it does not introduce a new context
+store or executable phase gate.
+
+Entry-point investigation uses returned definition locations to disambiguate
+symbols before call queries. Missing semantic support and ambiguous selections
+remain explicit limitations. Change verification uses the post-change snapshot;
+regression repair distinguishes confirmed causes from diagnostic hypotheses.
+The common report headings are Findings, Evidence, Limitations and, when needed,
+Next step.
+
+Updated blueprint IDs preserve previously installed immutable records. Importing
+v35 installs the new candidates without modifying existing plans or workflow
+identities. Older candidates can remain in an existing project's store; this
+change does not silently migrate active plans or force selection of the newest
+candidate. The package must be imported through the existing bootstrap path;
+editing the JSON alone does not update a running daemon. Phase-specific tool
+catalog filtering and automatic reference bindings are not added by these
+content changes and must not be claimed as enforced runtime behavior.

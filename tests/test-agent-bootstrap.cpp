@@ -12,6 +12,7 @@
 #include <cassert>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 class fixed_selector final : public common_blueprint_selector {
 public:
@@ -251,7 +252,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v34");
+        checked_in_starter.version == "v35");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -294,6 +295,47 @@ int main() {
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v2"));
     assert(has_procedure("json-stat-dataset-interpretation-v1"));
+
+    // Exercise the actual installer against an existing immutable blueprint.
+    // These checks must remain active independently of assert configuration.
+    const auto require_code_workflow = [](bool ok, const char * message) {
+        if (!ok) throw std::runtime_error(message);
+    };
+    common_memory_in_memory_store code_memory;
+    common_plan_in_memory_store code_plans;
+    require_code_workflow(code_memory.open("", error) && code_plans.open("", error),
+        "code workflow stores failed to open");
+    auto older_package = checked_in_starter;
+    auto old_blueprint = std::find_if(older_package.blueprints.begin(), older_package.blueprints.end(),
+        [](const auto & b) { return b.id == "repository-change-v3"; });
+    require_code_workflow(old_blueprint != older_package.blueprints.end(), "change blueprint is missing");
+    old_blueprint->id = "repository-change-v2";
+    old_blueprint->source_revision = "agent-workflows-starter@v34";
+    old_blueprint->goal = "Preserved older change goal";
+    common_agent_bootstrap_result older_result, code_result, code_repeat;
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, older_package, embed, older_result, error), "old code package install failed");
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, checked_in_starter, embed, code_result, error), "improved code package install failed");
+    const auto old_change = code_plans.get("bootstrap:local:project:project-a:blueprint:repository-change-v2", error);
+    require_code_workflow(old_change && old_change->goal == "Preserved older change goal",
+        "upgrade overwrote an immutable blueprint");
+    for (const auto * id : {"repository-investigation-v2", "code-overview-v2",
+            "code-entry-point-investigation-v2", "repository-change-v3", "regression-repair-v3"}) {
+        const auto plan = code_plans.get(std::string("bootstrap:local:project:project-a:blueprint:") + id, error);
+        require_code_workflow(plan.has_value(), "improved code blueprint was not installed");
+        require_code_workflow(plan->source_revision == "agent-workflows-starter@v35",
+            "improved blueprint source identity is missing");
+        require_code_workflow(plan->next_action.has_value() && !plan->workflow_bindings.empty(),
+            "code phase entry or workflow binding is missing");
+        require_code_workflow(std::find(plan->procedure_refs.begin(), plan->procedure_refs.end(),
+            "code-phase-handoff-v1") != plan->procedure_refs.end(), "shared phase handoff is missing");
+    }
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, checked_in_starter, embed, code_repeat, error), "code package retry failed");
+    require_code_workflow(code_repeat.installed_blueprint_ids.empty() && code_repeat.installed_memory_ids.empty(),
+        "reinstall duplicated immutable code content");
+
 
     std::ifstream investigation_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
         "/docs/examples/agent-investigation-workflows-v1.json");
@@ -435,22 +477,22 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 24 &&
+    assert(checked_in_starter.procedures.size() == 25 &&
         checked_in_starter.blueprints.size() == 19);
     assert(checked_in_starter.workflows.size() == 20);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "code-overview-v1";
+            return blueprint.id == "code-overview-v2";
         });
     assert(code_overview_blueprint != checked_in_starter.blueprints.end() &&
         code_overview_blueprint->workflow_bindings.size() == 1 &&
         code_overview_blueprint->workflow_bindings.front().workflow_ref == "workflow://code/overview");
     assert(code_overview_blueprint->procedure_refs == std::vector<std::string>({
         "code-orientation-v1", "development-source-evidence-v1", "verification-ladder-v1",
-        "code-analysis-evidence-v1"}));
+        "code-analysis-evidence-v1", "code-phase-handoff-v1"}));
     const auto code_entry_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "code-entry-point-investigation-v1";
+            return blueprint.id == "code-entry-point-investigation-v2";
         });
     assert(code_entry_blueprint != checked_in_starter.blueprints.end() &&
         code_entry_blueprint->workflow_bindings.size() == 1 &&
@@ -728,11 +770,11 @@ int main() {
     assert(checked_in_import.installed_blueprint_ids.size() == checked_in_starter.blueprints.size());
     assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
         checked_in_import.installed_blueprint_ids.end(),
-        "bootstrap:local:project:project-a:blueprint:code-overview-v1") !=
+        "bootstrap:local:project:project-a:blueprint:code-overview-v2") !=
             checked_in_import.installed_blueprint_ids.end());
     assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
         checked_in_import.installed_blueprint_ids.end(),
-        "bootstrap:local:project:project-a:blueprint:code-entry-point-investigation-v1") !=
+        "bootstrap:local:project:project-a:blueprint:code-entry-point-investigation-v2") !=
             checked_in_import.installed_blueprint_ids.end());
     assert(checked_in_import.installed_workflow_ids.size() == checked_in_starter.workflows.size());
     assert(std::find(checked_in_import.installed_workflow_ids.begin(),

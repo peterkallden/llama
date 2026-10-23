@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v34",
+  "version": "v35",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -169,6 +169,13 @@
       "summary": "structured resource to dataset",
       "content": "When a host resource contains JSON records, JSON-stat, a recognized catalogue XML, SDMX structural XML or simple repeated-record XML, use the host dataset importer rather than manually reconstructing rows. Keep the original resource and derived dataset provenance; use only bounded, host-normalized records and report unsupported structures or truncation explicitly.",
       "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "code-phase-handoff-v1",
+      "summary": "bounded code phase handoff",
+      "content": "Carry forward the current question, acceptance criteria and invariants, selected code locations, source snapshot or revision, evidence references and unresolved limits. Reuse returned paths and positions exactly; ask for clarification when the entry point is ambiguous. Choose the smallest supported operation needed for the current phase; optional capabilities are not a checklist. Reuse sufficient evidence from the same source state. Report Findings, Evidence, Limitations and Next step when relevant. Inspection stays read-only unless the user authorizes a change.",
+      "importance": 0.9,
       "confidence": 1.0
     }
   ],
@@ -1222,8 +1229,8 @@
   ],
   "blueprints": [
     {
-      "id": "repository-investigation-v1",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "repository-investigation-v2",
+      "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Investigate a repository question without modifying the workspace.",
       "purpose": "Establish repository evidence before proposing a change.",
       "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
@@ -1236,7 +1243,8 @@
         "code-orientation-v1",
         "small-coherent-change-v1",
         "development-source-evidence-v1",
-        "verification-ladder-v1"
+        "verification-ladder-v1",
+        "code-phase-handoff-v1"
       ],
       "workflow_bindings": [
         {
@@ -1263,12 +1271,12 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Identify the relevant repository area and available evidence."
+          "objective": "Identify the bounded question and relevant repository area. Result: inspected paths and source revision when available."
         },
         {
           "id": "trace",
           "title": "Trace contract",
-          "objective": "Inspect the contract, implementation, direct callers and relevant tests.",
+          "objective": "Follow contract, implementation, direct callers and relevant tests using available tools. Result: exact code locations and evidence references; distinguish semantic results from text matches.",
           "depends_on": [
             "orient"
           ]
@@ -1276,7 +1284,7 @@
         {
           "id": "establish-evidence",
           "title": "Establish evidence",
-          "objective": "Distinguish observed behavior from unverified inference.",
+          "objective": "Check whether the inspected evidence answers the question. Result: supported findings and explicit unknowns; request a missing selection or report unavailable support instead of guessing.",
           "depends_on": [
             "trace"
           ]
@@ -1284,7 +1292,7 @@
         {
           "id": "answer",
           "title": "Answer",
-          "objective": "Answer from the established evidence.",
+          "objective": "Answer the question with Findings, Evidence and Limitations; offer a Next step only when needed. Keep proposed changes separate from this read-only investigation.",
           "depends_on": [
             "establish-evidence"
           ]
@@ -1292,8 +1300,8 @@
       ]
     },
     {
-      "id": "code-overview-v1",
-      "source_revision": "agent-workflows-starter@v32",
+      "id": "code-overview-v2",
+      "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
       "purpose": "Orient the user in a codebase using host-provided structure and analysis capabilities.",
       "goal": "Describe the relevant repository structure and available semantic analysis without inventing relationships.",
@@ -1307,7 +1315,8 @@
         "code-orientation-v1",
         "development-source-evidence-v1",
         "verification-ladder-v1",
-        "code-analysis-evidence-v1"
+        "code-analysis-evidence-v1",
+        "code-phase-handoff-v1"
       ],
       "workflow_bindings": [
         {
@@ -1339,12 +1348,12 @@
         {
           "id": "inspect-capabilities",
           "title": "Inspect capabilities",
-          "objective": "Check the authorized repository and report which semantic code operations are available."
+          "objective": "Inspect available repository analysis support, reusing a current capability result when present. Result: supported operations and provider limitations; do not call every listed operation."
         },
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "List and read only the repository areas needed to answer the user's question.",
+          "objective": "List and read only the repository areas needed for the question. Result: a bounded module map with inspected paths.",
           "depends_on": [
             "inspect-capabilities"
           ]
@@ -1352,7 +1361,7 @@
         {
           "id": "map-symbols",
           "title": "Map symbols",
-          "objective": "Use semantic symbol and reference operations when available; otherwise keep text matches explicitly non-semantic.",
+          "objective": "Resolve only symbols needed to explain that map. Result: returned definitions and references, or explicitly non-semantic text matches when semantic support is absent.",
           "depends_on": [
             "orient"
           ]
@@ -1360,7 +1369,7 @@
         {
           "id": "report",
           "title": "Report overview",
-          "objective": "Summarize inspected structure, analysis coverage and unresolved limitations.",
+          "objective": "Report Findings, Evidence and Limitations for the inspected structure. Include Next step only for unresolved work; no code changes.",
           "depends_on": [
             "map-symbols"
           ]
@@ -1368,8 +1377,8 @@
       ]
     },
     {
-      "id": "code-entry-point-investigation-v1",
-      "source_revision": "agent-workflows-starter@v31",
+      "id": "code-entry-point-investigation-v2",
+      "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Trace an explicitly selected source symbol through its immediate call relationships.",
       "purpose": "Investigate what a source entry point may call while preserving code anchors and uncertainty.",
       "goal": "Return a bounded semantic call neighborhood and explain what the analysis cannot establish.",
@@ -1416,12 +1425,12 @@
         {
           "id": "check-provider",
           "title": "Check provider",
-          "objective": "Inspect repository analysis capabilities and confirm semantic call support."
+          "objective": "Inspect or reuse current semantic call capabilities. Result: supported call analysis and limits; if unavailable, report the limitation without inventing edges."
         },
         {
           "id": "select-entry",
           "title": "Select entry point",
-          "objective": "Resolve the requested symbol to a host-returned definition and exact code location.",
+          "objective": "Resolve the requested entry point from returned definitions or a user-supplied location. Result: symbol, path, line and column when available; clarify ambiguous candidates before expansion.",
           "depends_on": [
             "check-provider"
           ]
@@ -1429,7 +1438,7 @@
         {
           "id": "expand-calls",
           "title": "Expand calls",
-          "objective": "Request one-hop callers or callees for the selected definition and preserve provider results and limitations.",
+          "objective": "Use the selected definition location for one bounded callers or callees query. Result: provider-returned edges, code anchors and coverage; expand further only if the question requires it.",
           "depends_on": [
             "select-entry"
           ]
@@ -1437,7 +1446,7 @@
         {
           "id": "inspect-code",
           "title": "Inspect code",
-          "objective": "Read the bounded source ranges needed to explain returned relationships and identify unresolved calls.",
+          "objective": "Read the bounded source ranges needed to explain returned edges. Result: source observations, conditions and unresolved calls, kept separate from interpretation.",
           "depends_on": [
             "expand-calls"
           ]
@@ -1445,19 +1454,20 @@
         {
           "id": "summarize",
           "title": "Summarize",
-          "objective": "Separate provider-resolved relations, source observations, interpretation and unknowns.",
+          "objective": "Report Findings, Evidence, Limitations and any needed Next step. Static calls describe possible relationships, not observed execution or a proven feasible path.",
           "depends_on": [
             "inspect-code"
           ]
         }
       ],
       "procedure_refs": [
-        "code-analysis-evidence-v1"
+        "code-analysis-evidence-v1",
+        "code-phase-handoff-v1"
       ]
     },
     {
-      "id": "repository-change-v2",
-      "source_revision": "agent-workflows-starter@v34",
+      "id": "repository-change-v3",
+      "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Implement a scoped repository change and verify the result.",
       "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
       "goal": "Implement the requested repository change safely.",
@@ -1471,7 +1481,8 @@
         "code-orientation-v1",
         "small-coherent-change-v1",
         "development-source-evidence-v1",
-        "verification-ladder-v1"
+        "verification-ladder-v1",
+        "code-phase-handoff-v1"
       ],
       "workflow_bindings": [
         {
@@ -1503,12 +1514,12 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Capture a complete repository.snapshot when the source is buildable through the configured target, then identify affected code, contracts, direct callers and relevant tests. Use bounded code.impact only when code.inspect reports impact support; otherwise describe the missing semantic coverage and continue with repository evidence."
+          "objective": "Identify requested behavior, affected contracts, callers and tests. Capture a complete repository.snapshot where supported. Result: bounded change locations, baseline reference and semantic coverage limits."
         },
         {
           "id": "design",
           "title": "Design",
-          "objective": "Choose the smallest coherent change that satisfies the request, map proposed behavior to explicit contracts and verification, and record unresolved assumptions before editing.",
+          "objective": "Choose the smallest coherent change. Result: acceptance criteria mapped to inspected contracts and planned checks, reusable components and explicit unresolved assumptions.",
           "depends_on": [
             "orient"
           ]
@@ -1516,7 +1527,7 @@
         {
           "id": "implement",
           "title": "Implement",
-          "objective": "Apply the scoped implementation change using current byte hashes and source_snapshot_ref freshness validation where supported; retain the returned immutable change receipt.",
+          "objective": "Apply the scoped patch with current byte hashes and source_snapshot_ref freshness guards where supported. Result: immutable change receipt and changed paths; preserve unrelated work.",
           "depends_on": [
             "design"
           ]
@@ -1524,7 +1535,7 @@
         {
           "id": "verify",
           "title": "Verify",
-          "objective": "Capture a new complete repository.snapshot after the last patch and pass that post-change source_snapshot_ref to host-configured build and test targets. Never use the pre-change baseline as evidence that the patch passed. Inspect the retained execution receipt, source snapshot binding and output resources; distinguish build success from test and acceptance-criteria outcomes.",
+          "objective": "Capture a complete post-change repository.snapshot after the last patch and bind configured build/test targets to it. Result: execution receipts and outputs mapped to acceptance criteria; distinguish passed, failed and unrun checks. A baseline build does not verify the patch.",
           "depends_on": [
             "implement"
           ]
@@ -1532,7 +1543,7 @@
         {
           "id": "inspect-diff",
           "title": "Inspect diff",
-          "objective": "Inspect the resulting diff for scope and unintended changes.",
+          "objective": "Inspect repository.diff for intended scope and unintended effects. Result: reviewed changed paths and any remaining corrections; corrected code requires justified re-verification.",
           "depends_on": [
             "verify"
           ]
@@ -1540,7 +1551,7 @@
         {
           "id": "answer",
           "title": "Answer",
-          "objective": "Report the verified outcome and remaining limits.",
+          "objective": "Report Findings, Evidence, Limitations and any remaining Next step. Retain baseline, patch and post-change verification references; separate build success from behavioral proof.",
           "depends_on": [
             "inspect-diff"
           ]
@@ -1548,8 +1559,8 @@
       ]
     },
     {
-      "id": "regression-repair-v2",
-      "source_revision": "agent-workflows-starter@v1",
+      "id": "regression-repair-v3",
+      "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Reproduce, isolate and repair a regression with a focused guard.",
       "purpose": "Repair a regression while preserving the responsible trust boundary.",
       "goal": "Diagnose and correct the reported regression.",
@@ -1562,7 +1573,8 @@
       "procedure_refs": [
         "code-orientation-v1",
         "development-source-evidence-v1",
-        "verification-ladder-v1"
+        "verification-ladder-v1",
+        "code-phase-handoff-v1"
       ],
       "workflow_bindings": [
         {
@@ -1589,12 +1601,12 @@
         {
           "id": "reproduce",
           "title": "Reproduce",
-          "objective": "Establish a minimal failing scenario and capture its evidence."
+          "objective": "Inspect or reproduce a bounded failing scenario. Result: failure evidence and source state; preserve diagnostics before restarting or changing code."
         },
         {
           "id": "classify",
           "title": "Classify",
-          "objective": "Classify the failure and establish expected behavior.",
+          "objective": "Establish expected behavior from the contract and observations. Result: confirmed facts separated from hypotheses and missing evidence.",
           "depends_on": [
             "reproduce"
           ]
@@ -1602,7 +1614,7 @@
         {
           "id": "isolate",
           "title": "Isolate boundary",
-          "objective": "Locate the responsible contract, implementation and execution boundary.",
+          "objective": "Trace contract, implementation, callers and execution boundary. Result: the responsible seam and evidence for the diagnosis; investigate uncertain causes before patching.",
           "depends_on": [
             "classify"
           ]
@@ -1610,7 +1622,7 @@
         {
           "id": "guard",
           "title": "Establish guard",
-          "objective": "Add or identify a focused regression guard before the repair.",
+          "objective": "Identify or add a focused regression guard. Result: a check tied to the observed failure, with unrun coverage stated explicitly.",
           "depends_on": [
             "isolate"
           ]
@@ -1618,7 +1630,7 @@
         {
           "id": "repair",
           "title": "Repair",
-          "objective": "Make the smallest correction at the responsible boundary.",
+          "objective": "Correct the responsible boundary without broadening authority. Result: scoped patch receipt and preserved invariants; retain baseline and freshness guards where supported.",
           "depends_on": [
             "guard"
           ]
@@ -1626,7 +1638,7 @@
         {
           "id": "verify",
           "title": "Verify",
-          "objective": "Run the focused guard and adjacent affected verification.",
+          "objective": "Verify the guard and adjacent affected behavior against a complete post-change snapshot where supported. Result: retained execution receipts, outcomes and remaining failures; continue diagnosing related failures within scope.",
           "depends_on": [
             "repair"
           ]
@@ -1634,7 +1646,7 @@
         {
           "id": "answer",
           "title": "Answer",
-          "objective": "Report diagnosis, correction and verification evidence.",
+          "objective": "Report Findings, Evidence, Limitations and any needed Next step, distinguishing confirmed cause, correction and verification.",
           "depends_on": [
             "verify"
           ]
