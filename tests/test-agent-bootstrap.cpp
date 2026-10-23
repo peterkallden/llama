@@ -252,7 +252,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v35");
+        checked_in_starter.version == "v36");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -344,11 +344,8 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
-    // Existing bootstrap objects are immutable; this package deliberately uses
-    // new identities so previously installed v1 procedures are not reused.
-    if (investigation_package.version != "v2" ||
-            std::any_of(investigation_package.procedures.begin(), investigation_package.procedures.end(),
-                [](const auto & p) { return p.id.size() < 3 || p.id.substr(p.id.size() - 3) != "-v2"; })) return 1;
+    require_code_workflow(investigation_package.version == "v3",
+        "investigation package revision is stale");
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
         "workflow://investigation/communication-analysis",
@@ -377,6 +374,21 @@ int main() {
         assert(std::find(investigation_workflows.begin(), investigation_workflows.end(),
             blueprint.workflow_bindings.front().workflow_ref) != investigation_workflows.end());
         assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
+    }
+    for (const auto & blueprint : investigation_package.blueprints) {
+        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v3" &&
+            blueprint.workflow_bindings.front().workflow_revision == "v3",
+            "investigation immutable identity does not match revised authority");
+        require_code_workflow(blueprint.next_action == blueprint.steps.front().id,
+            "investigation entry phase is not explicit");
+        for (size_t i = 1; i < blueprint.steps.size(); ++i) {
+            require_code_workflow(blueprint.steps[i].depends_on ==
+                std::vector<std::string>{blueprint.steps[i - 1].id},
+                "investigation phase can precede its evidence producer");
+        }
+        require_code_workflow(std::find(blueprint.procedure_refs.begin(), blueprint.procedure_refs.end(),
+            "investigation-phase-handoff-v3") != blueprint.procedure_refs.end(),
+            "investigation source preparation handoff is missing");
     }
     common_memory_in_memory_store investigation_memory;
     common_plan_in_memory_store investigation_plans;
@@ -477,7 +489,7 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 25 &&
+    assert(checked_in_starter.procedures.size() == 26 &&
         checked_in_starter.blueprints.size() == 19);
     assert(checked_in_starter.workflows.size() == 20);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),

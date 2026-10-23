@@ -11,6 +11,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -61,6 +62,40 @@ common_blueprint_candidate make_candidate() {
 } // namespace
 
 int main() {
+    // Exercise the checked-in package against a host with saved-report tools
+    // only. Optional acquisition tools must neither block nor be invented.
+    {
+        const auto require_report = [](bool ok, const char * message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        std::ifstream input(std::string(LLAMA_AGENT_SOURCE_DIR) +
+            "/docs/examples/agent-investigation-workflows-v1.json");
+        std::stringstream text; text << input.rdbuf();
+        common_agent_bootstrap_package package;
+        std::string error;
+        require_report(common_agent_package_parse_json(text.str(), package, error),
+            "investigation workflow package did not parse");
+        const auto report = std::find_if(package.workflows.begin(), package.workflows.end(),
+            [](const auto & w) { return w.definition.workflow_ref == "workflow://investigation/report-composition"; });
+        require_report(report != package.workflows.end(), "report workflow missing");
+        common_agent_runtime_tooling minimal;
+        minimal.capability_tools = {
+            {"investigation.case", {"investigation.case.open", "investigation.case.items"}},
+            {"investigation.report", {"investigation.report.compose"}},
+            {"resource.read", {"resource.read"}}};
+        for (const auto & binding : minimal.capability_tools) {
+            for (const auto & name : binding.second) minimal.tools.push_back({name, name, R"({"type":"object"})"});
+        }
+        std::vector<std::string> resolved;
+        require_report(common_agent_resolve_workflow_tools(report->definition, minimal, resolved, error),
+            "saved report unnecessarily requires collection or analysis");
+        require_report(resolved.size() == 4 && std::find(resolved.begin(), resolved.end(),
+            "investigation.collect") == resolved.end(), "absent optional tool was granted");
+        minimal.capability_tools.erase("investigation.report");
+        require_report(!common_agent_resolve_workflow_tools(report->definition, minimal, resolved, error),
+            "report admitted without required composition capability");
+    }
+
     common_plan_workflow_transition static_fetch{
         "fetch-toc", "catalog_pending", "catalog_fetched",
         common_plan_workflow_transition_kind::tool, "web.fetch",

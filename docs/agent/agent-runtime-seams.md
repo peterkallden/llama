@@ -734,3 +734,37 @@ candidate. The package must be imported through the existing bootstrap path;
 editing the JSON alone does not update a running daemon. Phase-specific tool
 catalog filtering and automatic reference bindings are not added by these
 content changes and must not be claimed as enforced runtime behavior.
+
+## Document and investigation phase results
+
+Starter package v36 adds a revised document-analysis blueprint. Table inspection
+is conditional on the question and available tables; a non-applicable table
+phase can finish explicitly without fabricating a dataset. Resource versions,
+representations, inspected coverage and extraction limits are carried forward.
+The existing resource workflow URI/revision is unchanged.
+
+Investigation package v3 publishes new immutable workflow and blueprint records,
+retaining workflow URIs with revision v3. Its nine blueprints now declare their
+entry step and sequential evidence dependencies. A shared source-preparation
+procedure distinguishes retained document text/anchors, mapped uploaded-log
+imports and configured search collection. Previously prepared evidence may be
+reused only for matching source versions and sufficient coverage. Revised phase
+objectives state the expected evidence or an explicit limitation, preserve
+reported events separately from log observations, and keep analyst review out
+of model decisions. These objectives do not add automatic extraction caching,
+new reference bindings or executable workflow transitions.
+
+Required capabilities now describe each analysis's core operations. Supplemental
+collection, hypothesis and analysis capabilities remain optional where not
+needed by the core task. Frozen report composition requires case access,
+composition and resource reading, not fresh collection or graph analysis.
+Host capability resolution still filters optional tools against the authorized
+catalog; unavailable tools must be reported rather than assumed. Report review
+continues to use the chosen immutable revision.
+
+Import the revised packages through the existing package path. Existing plans,
+workflow revisions and procedure records remain untouched; old candidates can
+coexist with new ones. No automatic migration or newest-candidate selection is
+introduced. Contract tests cover phase dependencies, bootstrap admission and
+report tool resolution with a minimal host view; model and browser behavior
+require separate smoke verification.

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v35",
+  "version": "v36",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -175,6 +175,13 @@
       "id": "code-phase-handoff-v1",
       "summary": "bounded code phase handoff",
       "content": "Carry forward the current question, acceptance criteria and invariants, selected code locations, source snapshot or revision, evidence references and unresolved limits. Reuse returned paths and positions exactly; ask for clarification when the entry point is ambiguous. Choose the smallest supported operation needed for the current phase; optional capabilities are not a checklist. Reuse sufficient evidence from the same source state. Report Findings, Evidence, Limitations and Next step when relevant. Inspection stays read-only unless the user authorizes a change.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "document-phase-handoff-v1",
+      "summary": "Bounded document evidence handoff.",
+      "content": "Carry forward the selected resource version, representation, question, verified text or table references, inspected coverage and extraction limits. Reuse adequate evidence from that version. Read text for narrative questions and use structured tables only when needed; no tables is a valid outcome, not a failed phase. Keep quoted text, interpretation and OCR limitations distinct. Do not infer a forensic investigation or external research from upload alone.",
       "importance": 0.9,
       "confidence": 1.0
     }
@@ -1855,8 +1862,8 @@
       ]
     },
     {
-      "id": "resource-document-analysis-v8",
-      "source_revision": "agent-workflows-starter@v29",
+      "id": "resource-document-analysis-v9",
+      "source_revision": "agent-workflows-starter@v36",
       "selection_description": "Give an initial orientation to an uploaded document or answer an explicit question about a supplied resource, using host-resolved representations.",
       "purpose": "Orient the user to a supplied resource or answer their explicit document question from bounded content and structured tables.",
       "goal": "Establish a concise, source-grounded understanding of the supplied resource and identify what the user may want to do next.",
@@ -1868,7 +1875,8 @@
       "procedure_refs": [
         "document-table-analysis-v1",
         "data-understanding-v1",
-        "analysis-evidence-v1"
+        "analysis-evidence-v1",
+        "document-phase-handoff-v1"
       ],
       "workflow_bindings": [
         {
@@ -1897,12 +1905,12 @@
         {
           "id": "resolve-resource",
           "title": "Resolve resource",
-          "objective": "Use the host-provided resource identity."
+          "objective": "Resolve the selected host resource and version, and the user question when given. Result: authorized reference and explicit analysis scope; an upload alone does not request forensic analysis."
         },
         {
           "id": "inspect-resource",
           "title": "Inspect resource",
-          "objective": "Inspect available representations and relevant structure.",
+          "objective": "Inspect available representations and relevant structure, reusing prepared results for the selected version. Result: selected representation, inspected coverage and extraction limits.",
           "depends_on": [
             "resolve-resource"
           ]
@@ -1910,7 +1918,7 @@
         {
           "id": "inspect-tables",
           "title": "Inspect tables",
-          "objective": "If structured tables are present, resolve one through its host identity.",
+          "objective": "If the question needs exposed tables, select one by its host identity and use its dataset handle. Otherwise record not needed or unavailable and continue with text. Result: bounded table evidence or an explicit non-applicability outcome.",
           "depends_on": [
             "inspect-resource"
           ]
@@ -1918,7 +1926,7 @@
         {
           "id": "establish-evidence",
           "title": "Establish evidence",
-          "objective": "Ground the answer in returned text or bounded table results.",
+          "objective": "Inspect only text ranges or table results needed for the question. Result: evidence references, supported findings, unknowns and coverage; a partial read does not establish document-wide absence.",
           "depends_on": [
             "inspect-resource",
             "inspect-tables"
@@ -1927,12 +1935,13 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Give a concise overview grounded in inspected resource content, disclose extraction limits, and ask what the user wants to do next if no specific question was supplied.",
+          "objective": "Answer the explicit question or provide a concise initial orientation. Report findings, evidence and extraction limits; ask the next goal only when it remains open. Do not introduce unrequested editing or external research.",
           "depends_on": [
             "establish-evidence"
           ]
         }
-      ]
+      ],
+      "next_action": "resolve-resource"
     },
     {
       "id": "web-research-v4",

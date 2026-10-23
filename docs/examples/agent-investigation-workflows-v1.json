@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v2",
+  "version": "v3",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -79,121 +79,138 @@
       "content": "Inspect host-provided metadata, content hashes, original resource references, processor versions, and available version lineage. Separate verified integrity and processing facts from model-proposed anomalies. Missing metadata is an information gap, not evidence of manipulation. OCR anchors refer to the OCR text representation and do not establish image content beyond that representation.",
       "importance": 0.95,
       "confidence": 1.0
+    },
+    {
+      "id": "investigation-phase-handoff-v3",
+      "summary": "Bounded source preparation and analysis handoff.",
+      "content": "Carry forward the selected case revision, source IDs and versions, question, evidence references, coverage and unresolved limits. Inspect saved items first and reuse sufficient prepared evidence from those source versions; do not repeat collection merely because a new turn started. For documents, use the retained text representation and verified anchors; for uploaded logs, use an explicit parser mapping and bounded import; for configured search sources, use scoped collection and host cursors. Choose only the paths needed by the selected sources. Each phase records its result or an explicit limitation. Preserve proposed links and analyst review status. Report Findings, Evidence, Coverage and Limitations, with Next step only when needed.",
+      "importance": 1.0,
+      "confidence": 1.0
     }
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-identity-analysis-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v2",
+      "graph_revision": "investigation-identity-analysis@v3",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
+        "investigation.graph"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
         "investigation.analysis",
         "investigation.hypothesis"
-      ],
-      "required_context": []
+      ]
     },
     {
-      "id": "investigation-communication-analysis-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-communication-analysis-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/communication-analysis",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-communication-analysis@v2",
+      "graph_revision": "investigation-communication-analysis@v3",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
+        "investigation.graph"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
         "investigation.analysis",
         "investigation.hypothesis"
-      ],
-      "required_context": []
+      ]
     },
     {
-      "id": "investigation-event-chain-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-event-chain-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/event-chain",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-event-chain@v2",
+      "graph_revision": "investigation-event-chain@v3",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
         "investigation.graph",
-        "investigation.analysis",
+        "investigation.analysis"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
+        "investigation.collect",
         "investigation.hypothesis",
         "resource.read"
-      ],
-      "required_context": []
+      ]
     },
     {
-      "id": "investigation-integration-trace-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-integration-trace-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/integration-trace",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-integration-trace@v2",
+      "graph_revision": "investigation-integration-trace@v3",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
+        "investigation.graph"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
         "investigation.analysis",
         "investigation.hypothesis"
-      ],
-      "required_context": []
+      ]
     },
     {
-      "id": "investigation-hypothesis-testing-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-hypothesis-testing-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/hypothesis-testing",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-hypothesis-testing@v2",
+      "graph_revision": "investigation-hypothesis-testing@v3",
       "required_capabilities": [
         "investigation.case",
+        "investigation.hypothesis"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
         "investigation.collect",
         "investigation.graph",
         "investigation.analysis",
-        "investigation.hypothesis",
         "resource.read"
-      ],
-      "required_context": []
+      ]
     },
     {
-      "id": "investigation-report-composition-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-report-composition-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/report-composition",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-report-composition@v2",
+      "graph_revision": "investigation-report-composition@v3",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis",
         "investigation.report",
         "resource.read"
       ],
       "optional_capabilities": [
         "artifact.export",
         "document.open",
-        "document.save"
+        "document.save",
+        "investigation.collect",
+        "investigation.graph",
+        "investigation.analysis",
+        "investigation.hypothesis"
       ],
       "required_context": []
     },
     {
-      "id": "investigation-actor-relationship-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-actor-relationship-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/actor-relationship",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-actor-relationship@v2",
+      "graph_revision": "investigation-actor-relationship@v3",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -202,39 +219,43 @@
       "required_context": []
     },
     {
-      "id": "investigation-narrative-comparison-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-narrative-comparison-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/narrative-comparison",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-narrative-comparison@v2",
+      "graph_revision": "investigation-narrative-comparison@v3",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
-        "resource.read",
-        "investigation.collect"
+        "resource.read"
       ],
-      "required_context": []
+      "required_context": [],
+      "optional_capabilities": [
+        "investigation.collect"
+      ]
     },
     {
-      "id": "investigation-document-provenance-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-document-provenance-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "workflow_ref": "workflow://investigation/document-provenance",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "investigation",
-      "graph_revision": "investigation-document-provenance@v2",
+      "graph_revision": "investigation-document-provenance@v3",
       "required_capabilities": [
         "investigation.case",
-        "investigation.analysis",
         "resource.inspect"
       ],
-      "required_context": []
+      "required_context": [],
+      "optional_capabilities": [
+        "investigation.analysis"
+      ]
     }
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-identity-analysis-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
@@ -242,53 +263,65 @@
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.graph"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
-        "investigation-identity-analysis-v2"
+        "investigation-identity-analysis-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-scope",
           "title": "Select scope",
-          "objective": "Confirm the identity, source and case time window."
+          "objective": "Confirm exact identity, selected sources, case revision and time window. Result: scope and unresolved identity bindings."
         },
         {
           "id": "prepare-source-events",
           "title": "Prepare source observations",
-          "objective": "For selected uploaded logs, declare a JSONL/CSV mapping and import bounded pages with host-saved progress. Preserve rejected records and unknown times. Search collection and text extraction retain their existing paths."
+          "objective": "Inspect saved items for the selected source versions first. Prepare only missing evidence: retained text and anchors for documents, mapped bounded import for uploaded logs, or scoped paginated collection for search sources. Result: prepared source references, coverage, rejected records and unknown times; reuse sufficient evidence.",
+          "depends_on": [
+            "select-scope"
+          ]
         },
         {
           "id": "collect-events",
           "title": "Collect events",
-          "objective": "Collect a bounded page matching the exact identity."
+          "objective": "Collect only missing records matching the exact identity within scope. Result: retained event references, current revision and page coverage; do not recollect a sufficient imported page.",
+          "depends_on": [
+            "prepare-source-events"
+          ]
         },
         {
           "id": "inspect-relations",
           "title": "Inspect relations",
-          "objective": "Expand authentication relations and read their source events."
+          "objective": "Expand authentication relations and inspect their source events. Result: observed destinations with event references and identity-domain limits.",
+          "depends_on": [
+            "collect-events"
+          ]
         },
         {
           "id": "report-findings",
           "title": "Report findings",
-          "objective": "Separate observed destinations from hypotheses and gaps."
+          "objective": "Report observed destinations, supporting events, uncertain identities and coverage gaps. Keep explanations separate as hypotheses.",
+          "depends_on": [
+            "inspect-relations"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-scope"
     },
     {
-      "id": "investigation-communication-analysis-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-communication-analysis-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Trace observed network communication from a host or address.",
       "purpose": "Describe source-linked communication paths and their time coverage.",
       "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
@@ -296,108 +329,131 @@
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.graph"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
-        "investigation-communication-analysis-v2"
+        "investigation-communication-analysis-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/communication-analysis",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-scope",
           "title": "Select scope",
-          "objective": "Confirm the host/address, network source and time range."
+          "objective": "Confirm selected host/address, sources, case revision and time range. Result: exact scope and source-specific identity."
         },
         {
           "id": "prepare-source-events",
           "title": "Prepare source observations",
-          "objective": "For selected uploaded logs, declare a JSONL/CSV mapping and import bounded pages with host-saved progress. Preserve rejected records and unknown times. Search collection and text extraction retain their existing paths."
+          "objective": "Inspect saved items for the selected source versions first. Prepare only missing evidence: retained text and anchors for documents, mapped bounded import for uploaded logs, or scoped paginated collection for search sources. Result: prepared source references, coverage, rejected records and unknown times; reuse sufficient evidence.",
+          "depends_on": [
+            "select-scope"
+          ]
         },
         {
           "id": "collect-flows",
           "title": "Collect flow events",
-          "objective": "Collect bounded source/destination records."
+          "objective": "Collect only missing scoped flow records. Result: retained source/destination events, current revision and page coverage.",
+          "depends_on": [
+            "prepare-source-events"
+          ]
         },
         {
           "id": "expand-peers",
           "title": "Expand peers",
-          "objective": "Inspect graph peers and the evidence records behind each relation."
+          "objective": "Inspect peers and the events behind each relation. Result: directed communication edges with derivation rules and evidence.",
+          "depends_on": [
+            "collect-flows"
+          ]
         },
         {
           "id": "qualify",
           "title": "Qualify coverage",
-          "objective": "Report direction, time coverage, truncation and non-causal limits."
+          "objective": "Report observed peers, direction, time coverage and truncation. Communication alone establishes neither propagation nor causality.",
+          "depends_on": [
+            "expand-peers"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-scope"
     },
     {
-      "id": "investigation-event-chain-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-event-chain-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Find a bounded time-compatible chain between two entities.",
       "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
       "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
       "success_criteria": "Every path edge has source events and compatible event times; incomplete searches are marked partial.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
         "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis",
-        "resource.read"
+        "investigation.analysis"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-event-chain-v2",
-        "investigation-source-boundaries-v2"
+        "investigation-source-boundaries-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/event-chain",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "define-endpoints",
           "title": "Define endpoints",
-          "objective": "Select start, target and earliest allowed event time."
+          "objective": "Select source-bound start and target identities, case revision and earliest allowed event time. Result: explicit endpoints, time uncertainty and search bounds."
         },
         {
           "id": "prepare-source-events",
           "title": "Prepare source observations",
-          "objective": "For selected uploaded logs, declare a JSONL/CSV mapping and import bounded pages with host-saved progress. Preserve rejected records and unknown times. Search collection and text extraction retain their existing paths."
+          "objective": "Inspect saved items for the selected source versions first. Prepare only missing evidence: retained text and anchors for documents, mapped bounded import for uploaded logs, or scoped paginated collection for search sources. Result: prepared source references, coverage, rejected records and unknown times; reuse sufficient evidence.",
+          "depends_on": [
+            "define-endpoints"
+          ]
         },
         {
           "id": "collect-relations",
           "title": "Collect relations",
-          "objective": "Collect only source records needed to build candidate edges."
+          "objective": "Acquire only missing source records needed for candidate edges. Result: retained event references and coverage; reported document events remain distinct from log observations.",
+          "depends_on": [
+            "prepare-source-events"
+          ]
         },
         {
           "id": "search-chain",
           "title": "Search chain",
-          "objective": "Run bounded temporal path analysis."
+          "objective": "Run bounded temporal_path on the selected evidence. Result: a source-backed time-compatible path or the returned no-path, insufficient-data or budget stop status.",
+          "depends_on": [
+            "collect-relations"
+          ]
         },
         {
           "id": "inspect-proof",
           "title": "Inspect proof",
-          "objective": "Read supporting events and state optimality and clock limitations."
+          "objective": "Inspect supporting event times and references. Report the returned optimality status, clock limits and coverage; an exhausted bounded search is not proof that no real-world chain exists.",
+          "depends_on": [
+            "search-chain"
+          ]
         }
-      ]
+      ],
+      "next_action": "define-endpoints"
     },
     {
-      "id": "investigation-integration-trace-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-integration-trace-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Follow an exact trace, correlation or message identifier across services.",
       "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
       "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
@@ -405,102 +461,121 @@
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.graph"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-integration-trace-v2",
-        "investigation-source-boundaries-v2"
+        "investigation-source-boundaries-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/integration-trace",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-trace",
           "title": "Select identifier",
-          "objective": "Confirm exact trace/correlation/message ID and source."
+          "objective": "Confirm exact trace, span, correlation or message identifier, selected sources, case revision and time range. Result: scoped join keys without guessed identity equivalences."
         },
         {
           "id": "prepare-source-events",
           "title": "Prepare source observations",
-          "objective": "For selected uploaded logs, declare a JSONL/CSV mapping and import bounded pages with host-saved progress. Preserve rejected records and unknown times. Search collection and text extraction retain their existing paths."
+          "objective": "Inspect saved items for the selected source versions first. Prepare only missing evidence: retained text and anchors for documents, mapped bounded import for uploaded logs, or scoped paginated collection for search sources. Result: prepared source references, coverage, rejected records and unknown times; reuse sufficient evidence.",
+          "depends_on": [
+            "select-trace"
+          ]
         },
         {
           "id": "collect-spans",
           "title": "Collect spans",
-          "objective": "Collect a bounded page of exact identifier matches."
+          "objective": "Collect only missing exact-identifier matches. Result: retained spans/events, current revision and coverage.",
+          "depends_on": [
+            "prepare-source-events"
+          ]
         },
         {
           "id": "order-events",
           "title": "Order events",
-          "objective": "Build and inspect the observed time-ordered service path."
+          "objective": "Inspect the time-ordered service path from retained events. Result: source-backed steps, identifiers and explicit missing links.",
+          "depends_on": [
+            "collect-spans"
+          ]
         },
         {
           "id": "state-gaps",
           "title": "State gaps",
-          "objective": "Identify missing spans, clocks and unsupported transitions."
+          "objective": "Report observed sequence, evidence, missing spans, uncertain clocks and unsupported transitions.",
+          "depends_on": [
+            "order-events"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-trace"
     },
     {
-      "id": "investigation-hypothesis-testing-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-hypothesis-testing-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
       "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
       "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
       "success_criteria": "The claim remains a hypothesis; model output never records an analyst review decision.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis",
-        "resource.read"
+        "investigation.hypothesis"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
-        "investigation-hypothesis-testing-v2"
+        "investigation-hypothesis-testing-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/hypothesis-testing",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "state-claim",
           "title": "State claim",
-          "objective": "Write a testable explanation and identify alternatives."
+          "objective": "State a testable explanation, alternatives and what evidence would distinguish them. Result: selected case revision, hypothesis identity when existing, sources and scope."
         },
         {
           "id": "seek-support",
           "title": "Seek support",
-          "objective": "Collect events that would support the claim."
+          "objective": "Inspect existing scoped statements and events, then acquire missing support only when authorized and available. Result: supporting statement/event IDs and coverage limits.",
+          "depends_on": [
+            "state-claim"
+          ]
         },
         {
           "id": "seek-contradiction",
           "title": "Seek contradictions",
-          "objective": "Collect events that would challenge the claim."
+          "objective": "Examine evidence that challenges the claim and alternative explanations. Result: contradicting IDs, dependent sources, unresolved questions and any unavailable checks; absence is not disproof.",
+          "depends_on": [
+            "seek-support"
+          ]
         },
         {
           "id": "record-hypothesis",
           "title": "Record hypothesis",
-          "objective": "Store evidence references and limitations without reviewing the claim."
+          "objective": "Reuse an adequate saved hypothesis without writing it again; otherwise record a new unique claim_id with separate supporting and contradicting statement/event IDs. Result: hypothesis reference, current revision, alternatives and limitations. The recording tool does not update existing claims; preserve their review state.",
+          "depends_on": [
+            "seek-contradiction"
+          ]
         }
-      ]
+      ],
+      "next_action": "state-claim"
     },
     {
-      "id": "investigation-report-composition-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-report-composition-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Freeze a report from a selected investigation case revision.",
       "purpose": "Create an auditable report resource tied to one immutable case revision.",
       "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
@@ -518,35 +593,43 @@
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
-        "investigation-report-composition-v2"
+        "investigation-report-composition-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/report-composition",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "confirm-revision",
           "title": "Confirm revision",
-          "objective": "Open the exact case revision to freeze."
+          "objective": "Open the exact published case revision and inspect its saved items in bounded pages. Result: frozen source/evidence selection and coverage; do not collect new evidence while composing this revision."
         },
         {
           "id": "compose-report",
           "title": "Compose report",
-          "objective": "Create the frozen source-linked report resource."
+          "objective": "Use investigation.report.compose for the selected revision. Result: frozen report resource and fingerprint preserving source versions, processing provenance, evidence, hypotheses and gaps.",
+          "depends_on": [
+            "confirm-revision"
+          ]
         },
         {
           "id": "review-report",
           "title": "Review report",
-          "objective": "Check evidence references, claim states and gaps."
+          "objective": "Read the created report and verify references and claim states against the selected revision. Result: report reference with Findings, Evidence, Coverage and Limitations; unresolved issues require a later revision, not silent alteration.",
+          "depends_on": [
+            "compose-report"
+          ]
         }
-      ]
+      ],
+      "next_action": "confirm-revision"
     },
     {
-      "id": "investigation-actor-relationship-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-actor-relationship-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Compare named actors across explicitly selected source documents.",
       "purpose": "Record source-anchored actor mentions and proposed relationships without merging identities by name alone.",
       "goal": "Produce a paginated actor and relationship view with every mention linked to its retained source anchor.",
@@ -560,40 +643,51 @@
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
-        "investigation-actor-relationship-v2"
+        "investigation-actor-relationship-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/actor-relationship",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-sources",
           "title": "Select sources",
-          "objective": "Confirm the case and the exact authorized documents to compare."
+          "objective": "Confirm case revision and exact authorized old/new documents. Result: selected source IDs, versions and actor question."
         },
         {
           "id": "prepare-text",
           "title": "Prepare text",
-          "objective": "Read existing text or invoke the configured host processor for non-text sources."
+          "objective": "Reuse retained prepared text for the selected versions; invoke configured processing only where missing. Result: representation references, processor/OCR versions and coverage limits.",
+          "depends_on": [
+            "select-sources"
+          ]
         },
         {
           "id": "extract-mentions",
           "title": "Extract mentions",
-          "objective": "Save statements with exact anchored mentions. Read host-created actor candidates and mention IDs; isolated candidates are valid even without relationships."
+          "objective": "Reuse saved anchored statements, extract only missing mentions, then read host-created actors and actor_mentions through case.items. Result: verified anchors, mention IDs and distinct candidate IDs, including isolated actors.",
+          "depends_on": [
+            "prepare-text"
+          ]
         },
         {
           "id": "review-bindings",
           "title": "Qualify identities",
-          "objective": "Propose possible_same_actor links with explicit statement evidence. Preserve candidate identities and leave user review to its host-authorized path."
+          "objective": "Propose possible_same_actor links only between selected candidates with supporting statement IDs and rationale. Result: evidence-backed proposals and unresolved identities; user review uses the host-authorized path and never silently merges names.",
+          "depends_on": [
+            "extract-mentions"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-sources"
     },
     {
-      "id": "investigation-narrative-comparison-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-narrative-comparison-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Compare event descriptions and statements across selected documents and logs.",
       "purpose": "Find supported agreement, contradiction, qualification, source dependency, and unresolved differences.",
       "goal": "Record comparable source-anchored statements and explicitly qualified pairwise comparisons.",
@@ -601,100 +695,126 @@
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
-        "resource.read",
-        "investigation.collect"
+        "resource.read"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
-        "investigation-narrative-comparison-v2"
+        "investigation-narrative-comparison-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/narrative-comparison",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-sources",
           "title": "Select sources",
-          "objective": "Choose the documents and log sources in scope."
+          "objective": "Choose case revision, documents/log sources and the specific event or claim to compare. Result: bounded source selection and comparison question, not every possible source pair."
         },
         {
           "id": "prepare-source-events",
           "title": "Prepare source observations",
-          "objective": "For selected uploaded logs, declare a JSONL/CSV mapping and import bounded pages with host-saved progress. Preserve rejected records and unknown times. Search collection and text extraction retain their existing paths."
+          "objective": "Inspect saved items for the selected source versions first. Prepare only missing evidence: retained text and anchors for documents, mapped bounded import for uploaded logs, or scoped paginated collection for search sources. Result: prepared source references, coverage, rejected records and unknown times; reuse sufficient evidence.",
+          "depends_on": [
+            "select-sources"
+          ]
         },
         {
           "id": "extract-statements",
           "title": "Extract statements",
-          "objective": "Preserve the exact wording, source location, actor, and reported time where available."
+          "objective": "Reuse existing statements and extract missing comparable claims. Result: exact wording, verified source anchors, actors, reported times and separate independent log observations.",
+          "depends_on": [
+            "prepare-source-events"
+          ]
         },
         {
           "id": "compare",
           "title": "Compare accounts",
-          "objective": "Compare compatible statements and distinguish conflict, qualification, dependency, and inconclusive results."
+          "objective": "Check whether selected accounts concern compatible actors, places, definitions and times before comparing. Result: anchored agreement, contradiction, qualification, dependency or inconclusive comparison; dependent retellings are not independent support.",
+          "depends_on": [
+            "extract-statements"
+          ]
         },
         {
           "id": "state-gaps",
           "title": "State limits",
-          "objective": "Report missing links, unaligned clocks, and incomplete source coverage."
+          "objective": "Report compared claims, evidence, source dependencies, unaligned clocks and incomplete coverage. A verified quote does not verify the reported event.",
+          "depends_on": [
+            "compare"
+          ]
         },
         {
           "id": "identify-followup",
           "title": "Identify incremental work",
-          "objective": "Inspect structural source_followup suggestions for explicitly selected old and new sources; distinguish unexamined source pairs from asserted matches."
+          "objective": "If unresolved work remains, inspect bounded source_followup suggestions for selected old/new sources. Result: unexamined sources or pairs as possible next work, not asserted matches or automatic tool execution.",
+          "depends_on": [
+            "state-gaps"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-sources"
     },
     {
-      "id": "investigation-document-provenance-v2",
-      "source_revision": "agent-investigation-workflows@v2",
+      "id": "investigation-document-provenance-v3",
+      "source_revision": "agent-investigation-workflows@v3",
       "selection_description": "Inspect origin, versions, and processing history of selected investigation documents.",
       "purpose": "Summarize verifiable metadata and representation lineage for the case sources.",
       "goal": "Produce a source-by-source provenance account with explicit metadata gaps and processor history.",
       "success_criteria": "Integrity facts and processing provenance are host-derived; model-proposed anomalies are not presented as verified manipulation.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.analysis",
         "resource.inspect"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
-        "investigation-document-provenance-v2"
+        "investigation-document-provenance-v2",
+        "investigation-phase-handoff-v3"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/document-provenance",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "steps": [
         {
           "id": "select-sources",
           "title": "Select sources",
-          "objective": "Confirm the exact case resources under review."
+          "objective": "Confirm case revision and exact retained resources under review. Result: source identities and versions."
         },
         {
           "id": "inspect-origin",
           "title": "Inspect origin",
-          "objective": "Review host-provided content hash, scope, original reference, and available lineage."
+          "objective": "Inspect host-provided hashes, scope, original references and lineage. Result: verifiable integrity/metadata facts and missing fields, not a general authenticity verdict.",
+          "depends_on": [
+            "select-sources"
+          ]
         },
         {
           "id": "inspect-processing",
           "title": "Inspect processing",
-          "objective": "Record processor and OCR representation versions, coverage, and limitations."
+          "objective": "Inspect saved processor and OCR representations without reprocessing unchanged sources. Result: versions, representation lineage, coverage and anchor limitations.",
+          "depends_on": [
+            "inspect-origin"
+          ]
         },
         {
           "id": "report-gaps",
           "title": "Report gaps",
-          "objective": "Separate observed metadata from unverified authenticity questions."
+          "objective": "Report verified metadata and processing facts separately from proposed anomalies and unanswered authenticity questions. Missing metadata is not proof of manipulation.",
+          "depends_on": [
+            "inspect-processing"
+          ]
         }
-      ]
+      ],
+      "next_action": "select-sources"
     }
   ],
   "artifact_profiles": [
