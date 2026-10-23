@@ -858,11 +858,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     escalation_signals.multiple_constraints = request.objective &&
         request.objective->constraints.size() > 1;
     escalation_signals.resource_comparison_required = request.input_resources.size() > 1;
-    escalation_signals.user_requested_verification = request.prompt.find("verify") != std::string::npos ||
-        request.prompt.find("compare") != std::string::npos;
-    escalation_signals.external_uncertainty = request.prompt.find("latest") != std::string::npos ||
-        request.prompt.find("current") != std::string::npos ||
-        request.prompt.find("uncertain") != std::string::npos;
+    // Interpret request meaning through the model selectors and reflection.
+    // Initial host escalation uses declared constraints/resources, not words
+    // that may appear in ordinary conversation or quoted source content.
     const auto escalation = resolve_common_agent_escalation(
         request.deliberation_policy, escalation_signals);
     if (escalation.escalation_requested && escalation.allowed) {

@@ -717,6 +717,20 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
     endforeach()
 
+    add_executable(test-agent-planner-orchestration test-agent-planner-orchestration.cpp)
+    target_include_directories(test-agent-planner-orchestration PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(test-agent-planner-orchestration PRIVATE
+        llama-agent-core llama-agent-runtime-support)
+    target_compile_features(test-agent-planner-orchestration PRIVATE cxx_std_17)
+    # Exercise the contracts with release assertions disabled as in production.
+    target_compile_definitions(test-agent-planner-orchestration PRIVATE NDEBUG)
+    foreach(CONTRACT rejection recovery dispatch interruptions)
+        add_test(NAME test-agent-planner-${CONTRACT}
+            COMMAND test-agent-planner-orchestration ${CONTRACT})
+        set_tests_properties(test-agent-planner-${CONTRACT} PROPERTIES
+            LABELS "agent;orchestration;model-free" TIMEOUT 30)
+    endforeach()
+
     llama_build_and_test(test-agent-semi-oracle-teaching.cpp)
     target_link_libraries(test-agent-semi-oracle-teaching PRIVATE
         llama-agent-core llama-agent-flydelta)

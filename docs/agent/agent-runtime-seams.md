@@ -631,6 +631,30 @@ contracts. It checks that a compact model can follow the visible inventory and
 produce a useful plan, while deterministic tests prove that a malformed or
 ambiguous proposal cannot escape host validation.
 
+The planner orchestration contracts use scripted inference with the real CLI
+planner, runtime, plan store and schema-validating tool registry. CTest exposes
+four independent cases, all compiled with `NDEBUG` and explicit failure checks:
+
+- `test-agent-planner-rejection`: observed malformed DSL, unauthorized tools,
+  excessive steps and invalid trailing steps cannot dispatch tools, publish a
+  partial plan or produce a final answer.
+- `test-agent-planner-recovery`: bounded regeneration replaces a rejected
+  candidate without executing its otherwise valid prefix. Scope, turn context,
+  response reservation and the selected DSL format survive repair.
+- `test-agent-planner-dispatch`: a valid proposal reaches the selected tool and
+  recorded evidence before synthesis; catalog order and request language do not
+  override the proposal. Words such as `current` or quoted `verify` do not
+  trigger host-side mode escalation. Host argument bindings remain authoritative,
+  and a mandatory failed tool prevents unsupported synthesis.
+- `test-agent-planner-interruptions`: cancellation and backend errors propagate
+  without regeneration, including when their partial payload looks valid;
+  malformed token-limited output can use the existing bounded repair.
+
+Run them with `ctest --test-dir <build> --output-on-failure -R '^test-agent-planner-'`.
+These tests protect execution semantics, not exact prompt wording or model
+accuracy. They do not require unconstrained generation: a future schema-derived
+DSL grammar can satisfy the same contracts.
+
 ## Change checklist
 
 When changing one of these components, verify the adjacent seams in this
