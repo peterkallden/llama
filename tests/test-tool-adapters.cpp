@@ -972,14 +972,23 @@ int main() {
     assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
     {
         common_native_tool_bindings impact_bindings = repository_bindings;
-        impact_bindings.code_calls = [](const std::string & input) {
+        std::vector<nlohmann::json> neighborhood_requests;
+        std::string override_page;
+        bool provider_timed_out = false;
+        impact_bindings.code_calls = [&](const std::string & input) {
+            if (provider_timed_out) return common_tool_execution_result::failure(
+                "tool.diagnostics.call_hierarchy.timeout", common_tool_failure_class::timeout,
+                true, "Semantic provider timed out.");
             const auto request = nlohmann::json::parse(input);
+            neighborhood_requests.push_back(request);
             const auto path = request.value("path_hint", request.value("definition_path", std::string{}));
             const auto line = request.value("line", request.value("definition_line", 0));
+            if (!override_page.empty() && path == "src/entry.cpp")
+                return common_tool_execution_result::success(override_page);
             if (path == "src/entry.cpp" && line == 1) return common_tool_execution_result::success(
                 R"({"backend":"clangd","semantic":true,"callers":[],"callees":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"call_sites":[{"path":"src/entry.cpp","line":3,"column":4,"end_line":3,"end_column":11}]}],"count":1,"complete":true,"truncated":false})");
             if (path == "src/service.cpp" && line == 10) return common_tool_execution_result::success(
-                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[{"from":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"to":{"path":"src/store.cpp","line":20,"column":1,"name":"store"},"call_sites":[{"path":"src/service.cpp","line":12,"column":5,"end_line":12,"end_column":10}]}],"count":1,"complete":true,"truncated":false})");
+                R"({"backend":"clangd","semantic":true,"callers":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"call_sites":[{"path":"src/entry.cpp","line":5,"column":4,"end_line":5,"end_column":11}]}],"callees":[{"from":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"to":{"path":"src/store.cpp","line":20,"column":1,"name":"store"},"call_sites":[{"path":"src/service.cpp","line":12,"column":5,"end_line":12,"end_column":10}]}],"count":2,"complete":true,"truncated":false})");
             return common_tool_execution_result::success(
                 R"({"backend":"clangd","semantic":true,"callers":[],"callees":[],"count":0,"complete":true,"truncated":false})");
         };
@@ -993,6 +1002,10 @@ int main() {
         assert(impact_json["operation"] == "bounded_call_neighborhood" &&
             impact_json["relationship_count"] == 2 && impact_json["complete"] == true &&
             impact_json["visualization"]["nodes"].size() == 3);
+        assert(neighborhood_requests.size() == 3 && impact_json["provider_requests"] == 3 &&
+            impact_json["column_encoding"] == "utf-16");
+        assert(impact_result.output.find("src/entry.cpp#L3C4-L3C11") != std::string::npos &&
+            impact_result.output.find("src/entry.cpp#L5C4-L5C11") != std::string::npos);
         impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":1})"});
         assert(impact_result.ok);
         const auto depth_limited = nlohmann::json::parse(impact_result.output);
@@ -1003,6 +1016,53 @@ int main() {
         assert(node_limited["truncated"] == true && node_limited["visualization"]["nodes"].size() == 2);
         impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"direction":"sideways"})"});
         assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::validation);
+        for (const auto * invalid : {
+                R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"definition_path":"src/entry.cpp"})",
+                R"({"symbol":"entry","path_hint":"","line":1})",
+                R"({"symbol":"entry","definition_path":"src/entry.cpp","definition_line":1,"column":1})"}) {
+            impact_result = impact_registry.execute({"code.impact", invalid});
+            assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::validation);
+        }
+        auto provider_page = nlohmann::json::parse(R"({"callers":[],"callees":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"}}],"count":1,"complete":true,"truncated":false})");
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2})"});
+        assert(impact_result.ok);
+        auto reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == true && reviewed["provider_requests"] == 1 &&
+            reviewed["visualization"]["nodes"].size() == 1);
+        provider_page["callees"][0]["to"] = {{"path", "src/other.cpp"}, {"line", 2}, {"column", 1}, {"name", 42}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == false && reviewed["provider_requests"] == 1);
+        provider_page["callees"][0]["to"] = {{"path", std::string(250, 'a')}, {"line", 2}, {"column", 1}, {"name", "other"}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":3})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == reviewed["visualization"]["complete"] && reviewed["complete"] == false &&
+            reviewed["truncated"] == reviewed["visualization"]["truncated"] &&
+            reviewed["limitations"] == reviewed["visualization"]["limitations"]);
+        provider_page["callees"][0]["to"] = {{"path", "src/other.cpp"}, {"line", 2}, {"column", 1}, {"name", "other"}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2,"max_edges":1})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == true && reviewed["truncated"] == false && reviewed["provider_requests"] == 2);
+        provider_page["semantic"] = false;
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok);
+        provider_page.erase("semantic");
+        provider_page["padding"] = std::string(65536, 'x');
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::execution);
+        provider_timed_out = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::timeout &&
+            impact_result.retryable && impact_result.failure_code == "tool.code.call_hierarchy.timeout");
     }
     result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
     assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&

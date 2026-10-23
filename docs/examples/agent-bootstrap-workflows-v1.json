@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v31",
+  "version": "v32",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -1293,7 +1293,7 @@
     },
     {
       "id": "code-overview-v1",
-      "source_revision": "agent-workflows-starter@v31",
+      "source_revision": "agent-workflows-starter@v32",
       "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
       "purpose": "Orient the user in a codebase using host-provided structure and analysis capabilities.",
       "goal": "Describe the relevant repository structure and available semantic analysis without inventing relationships.",
@@ -1306,7 +1306,8 @@
       "procedure_refs": [
         "code-orientation-v1",
         "development-source-evidence-v1",
-        "verification-ladder-v1"
+        "verification-ladder-v1",
+        "code-analysis-evidence-v1"
       ],
       "workflow_bindings": [
         {
@@ -1364,9 +1365,6 @@
             "map-symbols"
           ]
         }
-      ],
-      "procedure_refs": [
-        "code-analysis-evidence-v1"
       ]
     },
     {

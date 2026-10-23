@@ -22,6 +22,21 @@ provider and source locations (including symbol names) from that provider to
 continue traversal. If a provider omits a name or reports partial coverage, the
 result is marked incomplete rather than filled with guessed relationships.
 
+Traversal expands only the opposite endpoint of each incoming/outgoing relation,
+resolves the starting selection to the provider's canonical location, and merges
+repeated edge observations without losing call-site provenance. A self-call does
+not consume two node slots. Reaching a node or edge count exactly does not imply
+truncation; excluded relationships or unexpanded depth boundaries do. Provider
+calls are bounded by the node budget and the tool's configured timeout, checked
+between calls and after each response. An in-flight provider call remains subject
+to the provider's own timeout; traversal does not interrupt that call.
+
+Each provider page and the final tool response are limited to 64 KiB. Provider
+failures retain their failure class and retryability. Result-level coverage and
+limitations come from the final validated graph so that projection exclusions
+cannot be presented as complete analysis. Responses declare UTF-16 columns and
+the number of provider requests. Accumulated limitations are bounded explicitly.
+
 The host owns the repository root and provider configuration. The current
 clangd provider is enabled through the existing
 `diagnostics.semantic_backend: clangd` host setting for compatibility with
@@ -70,7 +85,9 @@ Their blueprints are `code-overview-v1` and
 `code-entry-point-investigation-v1`. Both workflows preserve source locations,
 provider limitations and the distinction between text matches and semantic
 relationships. `code.impact` is optional and is used only when `code.inspect`
-reports bounded semantic call support.
+reports bounded semantic call support. The package parser rejects duplicate JSON
+object keys so that required procedure lists and other contracts cannot be
+silently replaced during import.
 
 ## Presentation and current limits
 
@@ -96,8 +113,14 @@ from a call graph.
 
 ## Review verification status
 
-The follow-up review added `test-agent-code-projection` to CTest for raw LSP
-call shapes, encoded paths, symbol positions, call-site ownership and repository
-boundaries. Adapter contracts cover malformed results and incomplete coverage;
-frontend contracts cover session isolation and duplicate event delivery. These
-follow-up checks were authored but not executed, and no build was performed.
+Deterministic contracts cover raw LSP call shapes, encoded paths, symbol positions,
+call-site ownership and repository boundaries. Adapter contracts cover canonical
+seed handling, repeated call-site provenance, self-calls, node and depth limits,
+malformed names, projection coverage, response bounds and preserved provider
+failures. Bootstrap contracts verify the code overview's complete procedure list
+and installed workflows, and reject duplicate package keys. Frontend contracts
+cover shared rendering, session isolation and duplicate event delivery. Run the
+focused contracts with CTest (`test-tool-adapters`, `test-agent-bootstrap`,
+`test-agent-code-projection`) and the web graph tests with
+`npm test -- --run src/components/code-analysis-graph.test.ts` from the web client.
+These contracts do not establish model or browser smoke coverage.

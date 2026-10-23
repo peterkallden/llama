@@ -443,8 +443,20 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
 }
 
 bool common_agent_package_parse_json(const std::string & text, common_agent_bootstrap_package & package, std::string & error) {
+    error.clear();
     try {
-        const auto root = json::parse(text, nullptr, false);
+        // Reject ambiguous contracts before the parser can replace an earlier key.
+        // Track each object separately so sibling objects may use the same fields.
+        std::vector<std::set<std::string>> object_keys;
+        bool duplicate_key = false;
+        const auto root = json::parse(text, [&](int, json::parse_event_t event, json & value) {
+            if (event == json::parse_event_t::object_start) object_keys.emplace_back();
+            else if (event == json::parse_event_t::object_end) object_keys.pop_back();
+            else if (event == json::parse_event_t::key &&
+                    !object_keys.back().insert(value.get<std::string>()).second) duplicate_key = true;
+            return true;
+        }, false);
+        if (duplicate_key) { error = "package contains a duplicate JSON object key"; return false; }
         if (!root.is_object() || (root.value("schema_version", 0) != 1 && root.value("schema_version", 0) != 2)) {
             error = "package requires supported schema_version (1 or 2)"; return false;
         }

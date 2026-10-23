@@ -234,6 +234,14 @@ int main() {
     // The checked-in package is the operator-facing import artifact. Parse and
     // install that exact file rather than relying only on the smaller inline
     // fixture above.
+    for (const auto * duplicate : {
+            R"({"schema_version":2,"schema_version":1})",
+            R"({"schema_version":2,"blueprints":[{"procedure_refs":["required"],"procedure_refs":["replacement"]}]})",
+            R"({"schema_version":2,"metadata":{"nested":{"x":1,"x":2}}})"}) {
+        common_agent_bootstrap_package rejected;
+        assert(!common_agent_package_parse_json(duplicate, rejected, error));
+        assert(error == "package contains a duplicate JSON object key");
+    }
     std::ifstream starter_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
         "/docs/examples/agent-bootstrap-workflows-v1.json");
     assert(starter_file);
@@ -241,8 +249,9 @@ int main() {
     starter_file_text << starter_file.rdbuf();
     common_agent_bootstrap_package checked_in_starter;
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
+    assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v31");
+        checked_in_starter.version == "v32");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -436,6 +445,9 @@ int main() {
     assert(code_overview_blueprint != checked_in_starter.blueprints.end() &&
         code_overview_blueprint->workflow_bindings.size() == 1 &&
         code_overview_blueprint->workflow_bindings.front().workflow_ref == "workflow://code/overview");
+    assert(code_overview_blueprint->procedure_refs == std::vector<std::string>({
+        "code-orientation-v1", "development-source-evidence-v1", "verification-ladder-v1",
+        "code-analysis-evidence-v1"}));
     const auto code_entry_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
             return blueprint.id == "code-entry-point-investigation-v1";
