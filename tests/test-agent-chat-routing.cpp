@@ -382,6 +382,9 @@ int main() {
     inference.selection = "NO_TOOLS";
     inference.fail_conversation = true;
     require(!run_agent_runtime_host(host_execution, result, error), "failed conversation was reported as success");
+    require(std::any_of(result.trace.begin(), result.trace.end(), [](const auto & entry) {
+        return entry.detail.find("tool family selection outcome=no_tools; source=model") != std::string::npos;
+    }), "host routing lost the model's explicit tool-free decision trace");
     require(result.total_decoded_tokens == 7 && !result.trace.empty(), "early failure lost partial tokens or trace");
     require(result.error.find("synthetic generation failure") != std::string::npos, "early failure lost provider reason");
     {

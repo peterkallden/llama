@@ -323,6 +323,11 @@ bool select_model_tool_families(
         error.clear();
         return true;
     }
+    std::string family_decision = selection.needs_tools ? "tools" : "no_tools";
+    for (const auto & family : selection.family_ids) family_decision += " " + family;
+    execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+        common_runtime_trace_kind::decided,
+        "tool family selection outcome=" + family_decision + "; source=model", {}});
     if (!selection.needs_tools) {
         if (execution.require_tool_execution) {
             error = "tool family selection declined tools for a tool-required request";

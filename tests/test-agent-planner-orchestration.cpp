@@ -189,6 +189,14 @@ struct fixture {
 };
 
 void rejection_contracts() {
+    // Tool routing and a mandatory-tool binding are separate decisions.
+    // Invalid planning must fail closed even without a forced tool binding.
+    fixture unbound;
+    unbound.request.require_tool_execution = false;
+    unbound.inference.replies = {reply("Here are the steps to inspect the repository."),
+        reply("I recommend opening the repository first.")};
+    unbound.check_rejected(unbound.run(), 2);
+
     std::string too_many_steps = "plan goal=\"Inspect\"";
     for (int step = 0; step < 7; ++step) too_many_steps += "\nstep | open! code.inspect";
     const std::vector<std::string> invalid = {

@@ -1,4 +1,5 @@
 #include "tools/agent/runtime/agent-server-context-host.h"
+#include "tools/agent/daemon/agent-daemon-runtime-config.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <string>
@@ -7,6 +8,21 @@
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
 int main() {
+    daemon_options daemon;
+    daemon.model = "model.gguf";
+    daemon.n_gpu_layers = 99;
+    daemon.context_size = 3072;
+    const auto resident = make_daemon_resident_model_config(daemon);
+    CHECK(resident.fit_params);
+    CHECK(resident.model == daemon.model && resident.n_gpu_layers == 99);
+    CHECK(resident.context_size_tokens == 3072);
+    common_agent_inference_options daemon_inference;
+    daemon_inference.model = resident.model;
+    daemon_inference.n_gpu_layers = resident.n_gpu_layers;
+    daemon_inference.fit_params = resident.fit_params;
+    CHECK(make_agent_server_context_params(daemon_inference).fit_params);
+    CHECK(make_agent_server_context_params(daemon_inference).n_gpu_layers == -1);
+
     common_agent_inference_options options;
     options.model = "model.gguf";
     options.n_parallel = 2;

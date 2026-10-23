@@ -688,6 +688,43 @@ grammar removes invented fields on the no-argument call, and targeted repairs
 now reach subsequent schema checks, but the bounded run remains rejected.
 This is not evidence of successful semantic planning or tool execution.
 
+### Daemon fitting and routing diagnostics
+
+The daemon's direct resident-model path uses the same automatic fitting policy
+as its model-profile loader. `make_daemon_resident_model_config()` projects named
+options into the shared request; it must not disable `fit_params` through a
+positional aggregate argument. The server-context host retains its existing
+translation of legacy full-offload requests into automatic fitting. The
+server-binding contract exercises this daemon projection as well as the host.
+
+An unsuccessful tool plan is an error even when the caller did not supply a
+mandatory-tool binding. The tool planner must not replace a rejected candidate
+with an answer-only plan. Ordinary conversation remains a separate, explicit
+model routing decision. Family selection describes local host operations as
+well as remote access, and successful tool/no-tool choices are recorded in the
+ordinary result trace with `source=model`.
+
+A traced Qwen2.5 1.5B request to list investigation cases selected the
+investigation family after bounded repair, but failed planner admission:
+3,193 prompt tokens plus a 512-token output reservation exceeded the configured
+3,072-token context. Standalone section counts were 1,952 tool-contract tokens,
+849 inventory tokens, 172 instruction tokens, 163 memory/policy tokens, 27
+cognitive-mode tokens and 13 request tokens. These counts exclude template
+interaction and therefore do not sum to the exact rendered admission count.
+The inventory remains relevant to `investigation.collect` in the same selected
+family; deleting it based on the words in the request would be incorrect.
+A narrower next-operation contract is needed before its corresponding inventory
+can be omitted safely. No automatic context increase or contract truncation is
+introduced by these corrections.
+
+Package installation is distinct from route availability. The preview daemon
+imports packages into `llama-agent-host`, whereas browser turns use `web`.
+Imported blueprint candidates are not currently propagated into the daemon
+session manager. A trace showing only `normal-plan` must not be reported as
+successful workflow selection. Connecting this library requires scoped
+materialization/registration through the existing bootstrap and template-scope
+contracts; bypassing namespace checks is not an acceptable shortcut.
+
 ## Change checklist
 
 When changing one of these components, verify the adjacent seams in this

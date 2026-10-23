@@ -1,5 +1,6 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent-daemon-adapter.h"
+#include "agent-daemon-runtime-config.h"
 #include "../adaptation/semi-oracle-store-factory.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 #include "agent/adaptation/semi-oracle-target.h"
@@ -326,23 +327,8 @@ common_agent_orchestration_config make_daemon_orchestration_config(const daemon_
 
 common_agent_runtime_resident_request_config make_resident_request_config(
         const daemon_options & options) {
-    common_agent_runtime_resident_request_config config{
-        "",
-        "",
-        "",
-        "",
-        make_daemon_policy_pack(options),
-        options.model,
-        options.n_predict,
-        options.n_gpu_layers,
-        false,
-        "server-context",
-        common_memory_scope::session,
-        common_plan_scope::turn,
-        options.n_threads,
-        static_cast<size_t>(std::max(0, options.context_size)),
-    };
-    config.mmproj = options.mmproj;
+    auto config = make_daemon_resident_model_config(options);
+    config.policy_pack = make_daemon_policy_pack(options);
     config.tool_argument_bindings = make_agent_host_openapi_argument_bindings(
         options.openapi_providers);
     return config;

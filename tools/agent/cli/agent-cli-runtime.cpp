@@ -1899,26 +1899,12 @@ public:
         const std::string final_planner_error = planner_attempt_errors.empty()
             ? parse_error
             : planner_attempt_errors.back();
-        if (request.require_tool_execution) {
-            error = "planner failed after bounded regeneration: " + final_planner_error;
-            for (size_t index = 0; index + 1 < planner_attempt_errors.size(); ++index) {
-                error += " [attempt " + std::to_string(index + 1) + ": " + planner_attempt_errors[index] + "]";
-            }
-            return proposal;
+        // This planner owns tool plans. An invalid candidate is not a
+        // model decision to converse and must not become an answer-only plan.
+        error = "planner failed after bounded regeneration: " + final_planner_error;
+        for (size_t index = 0; index + 1 < planner_attempt_errors.size(); ++index) {
+            error += " [attempt " + std::to_string(index + 1) + ": " + planner_attempt_errors[index] + "]";
         }
-        proposal.plan.goal = request.prompt;
-        proposal.plan.success_criteria = "Provide a grounded, concise response.";
-        proposal.plan.next_action = "draft answer";
-        common_plan_step step;
-        step.id = "answer";
-        step.title = "Prepare answer";
-        step.objective = "Answer the user using retrieved evidence.";
-        step.status = common_plan_step_status::active;
-        proposal.plan.steps.push_back(std::move(step));
-        proposal.plan.active_step_id = "answer";
-        const auto preview = generation_result.content.substr(0, 768);
-        fprintf(stderr, "warning: planner JSON rejected; using bounded fallback plan (%s): %s\n", final_planner_error.c_str(), preview.c_str());
-        error.clear();
         return proposal;
     }
 
