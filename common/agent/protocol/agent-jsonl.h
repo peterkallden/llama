@@ -71,6 +71,7 @@ struct common_agent_jsonl_event_entry {
     std::string server_tool_name;
     std::string tool_input_json;
     std::string tool_result_json;
+    std::string visualization_json;
 };
 
 struct common_agent_jsonl_turn_result {

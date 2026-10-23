@@ -125,6 +125,8 @@ json common_agent_jsonl_make_event_message(const common_agent_jsonl_event_entry 
         if (input.is_object()) payload["tool_input"] = input;
         if (result.is_object()) payload["tool_result"] = result;
     }
+    const auto visualization = json::parse(event.visualization_json, nullptr, false);
+    if (visualization.is_object()) payload["visualization"] = visualization;
     return {
         {"message_type", "event"},
         {"event", std::move(payload)},

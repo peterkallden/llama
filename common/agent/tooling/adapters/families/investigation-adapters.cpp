@@ -1984,8 +1984,8 @@ common_tool_execution_result execute_investigation_tool(
         if (requested_revision != value.revision) return common_adapter_execution_failure(
             "tool.investigation.stale_cursor", "requested case revision is no longer current",
             "Reload the case before continuing this event page.");
-        if (entity_id.empty() == relation_id.empty()) return common_adapter_validation_failure(
-            "tool.investigation.events_invalid", "events requires exactly one entity_id or relation_id");
+        if (!entity_id.empty() && !relation_id.empty()) return common_adapter_validation_failure(
+            "tool.investigation.events_invalid", "events accepts at most one entity_id or relation_id filter");
         std::set<std::string> evidence_ids;
         if (!relation_id.empty()) {
             const auto relation = std::find_if(value.relations.begin(), value.relations.end(),
