@@ -98,6 +98,7 @@ bool parse_event_entry_field(
     entry.server_tool_name = value.value("server_tool_name", std::string());
     if (value.contains("tool_input") && value["tool_input"].is_object()) entry.tool_input_json = value["tool_input"].dump();
     if (value.contains("tool_result") && value["tool_result"].is_object()) entry.tool_result_json = value["tool_result"].dump();
+    if (value.contains("visualization") && value["visualization"].is_object()) entry.visualization_json = value["visualization"].dump();
     return !entry.type.empty();
 }
 

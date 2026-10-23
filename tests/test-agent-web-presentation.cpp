@@ -57,12 +57,17 @@ int main() {
     delivery.event.server_tool_name = "dataset.sample";
     delivery.event.tool_input_json = R"({"dataset":"dataset://sample"})";
     delivery.event.tool_result_json = R"({"isError":false,"structuredContent":{"rows":[{"value":4}]}})";
+    delivery.event.visualization_json = R"({"schema_version":1,"kind":"relationship","title":"Call relationships","nodes":[],"edges":[],"complete":true,"truncated":false,"limitations":[],"view":{"layout":"cose","selected_nodes":[],"selected_edges":[]}})";
     const auto app_wire = make_agent_daemon_jsonl_event_message("browser", delivery);
     assert(app_wire["event"] == common_agent_daemon_event_to_json(delivery.event));
     assert(app_wire["event"]["app_context_available"] == true);
     assert(app_wire["event"]["tool_input"]["dataset"] == "dataset://sample");
     assert(app_wire["event"]["tool_result"]["structuredContent"]["rows"][0]["value"] == 4);
     assert(app_wire["event"]["provider_id"] == "catalog");
+    assert(app_wire["event"]["visualization"]["kind"] == "relationship");
+
+    delivery.event.visualization_json = "not-json";
+    assert(!common_agent_daemon_event_to_json(delivery.event).contains("visualization"));
 
     delivery.event.tool_result_json = "not-json";
     assert(!make_agent_daemon_jsonl_event_message("browser", delivery)["event"].contains("tool_result"));

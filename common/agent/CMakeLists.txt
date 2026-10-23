@@ -260,6 +260,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     tooling/adapters/families/data-adapters.cpp tooling/adapters/families/data-adapters.h
     tooling/adapters/families/document-adapters.cpp tooling/adapters/families/document-adapters.h
     tooling/adapters/families/repository-adapters.cpp tooling/adapters/families/repository-adapters.h
+    tooling/adapters/families/code-adapters.cpp tooling/adapters/families/code-adapters.h
     tooling/adapters/families/diagnostics-adapters.cpp tooling/adapters/families/diagnostics-adapters.h
     tooling/adapters/families/resource-adapters.cpp tooling/adapters/families/resource-adapters.h
     tooling/adapters/support/adapter-support.h
@@ -292,6 +293,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/adapters/families/investigation-adapters.h
     tooling/adapters/families/document-adapters.cpp
     tooling/adapters/families/repository-adapters.cpp
+    tooling/adapters/families/code-adapters.cpp
     tooling/adapters/families/diagnostics-adapters.cpp
     tooling/adapters/families/resource-adapters.cpp
     tooling/adapters/families/visualization-adapters.cpp

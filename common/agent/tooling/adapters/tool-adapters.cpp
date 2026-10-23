@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/data-adapters.h"
+#include "agent/tooling/adapters/families/code-adapters.h"
 #include "agent/tooling/adapters/families/diagnostics-adapters.h"
 #include "agent/tooling/adapters/families/document-adapters.h"
 #include "agent/tooling/adapters/families/investigation-adapters.h"
@@ -1294,6 +1295,9 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (common_try_register_repository_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The repository family owns repository/workspace filesystem and Git adapters.
+        } else if (common_try_register_code_tool_adapter(
+                definition, bindings, registry, installed, error)) {
+            // Code analysis consumes repository-scoped sources through declared providers.
         } else if (common_try_register_diagnostics_tool_adapter(
                 definition, bindings, registry, installed, error)) {
             // The diagnostics family owns compiler, symbol and test-analysis adapters.

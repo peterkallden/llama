@@ -38,6 +38,10 @@ Runtime blueprints, workflow contracts, route compilation and domain-adapter
 boundaries are documented in [Agent Workflows](agent-workflows.md); these are
 separate from the CI workflows listed above.
 
+Source repository navigation, semantic code operations, their bootstrap
+workflows and current graph-presentation limits are documented in
+[Source Code Analysis](code-analysis.md).
+
 The Android development workflow currently validates the Android example, the
 arm64 native build and an emulator smoke for the native SQLite memory/plan
 stores on the agent branch. The SQLite store remains optional; the Android

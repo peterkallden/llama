@@ -582,8 +582,10 @@ llama-agent-resource
 llama-agent-data
     data-store selection and dataset import
 
+llama-agent-code
+    clangd protocol, sessions and source-code analysis provider
 llama-agent-diagnostics
-    clangd protocol, sessions and diagnostics provider
+    native crash diagnostics provider
 
 llama-agent-runtime-support
     CLI, daemon, host/session assembly, MCP and runtime executors
@@ -716,9 +718,11 @@ do not select implementations or host paths.
 | `development.build` | Sandbox-backed | Declarative target request through the configured sandbox backend | Contract-level | Full backend execution, diagnostics parsing and artifact import per tool |
 | `development.test` | Sandbox-backed | Declarative test request through the configured sandbox backend | Contract-level | CTest/JUnit result parsing, cancellation and persistent test history |
 | `diagnostics.compile` | Host-native analysis | Parses bounded GCC/Clang- and MSVC-style compiler output | Limited | Compiler invocation, richer formats and source-linked diagnostics |
-| `diagnostics.symbol` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | clangd/LSP or project-index backend and definition-kind ranking |
-| `diagnostics.references` | Host-native analysis | Host provider seam with bounded text fallback | Experimental | Semantic references, reference kinds and project-index persistence |
-| `diagnostics.call_hierarchy` | Host-native analysis | Semantic-provider contract; unavailable without a provider | Experimental | clangd/LSP callers/callees, depth bounds and project-index persistence |
+| `code.inspect` | Host-native analysis | Reports repository availability and semantic/text-fallback capabilities | Limited | Snapshot identity and analyzer-version reporting |
+| `code.symbols` | Host-native analysis | clangd/LSP provider or explicitly labeled bounded text fallback | Experimental | Definition-kind ranking and persisted project index |
+| `code.references` | Host-native analysis | clangd/LSP provider or explicitly labeled bounded text fallback | Experimental | Reference kinds and persisted project index |
+| `code.calls` | Host-native analysis | One-hop clangd/LSP callers and callees with a shared relationship projection rendered in the chat turn | Experimental | Deeper bounded traversal and persisted project index |
+| `diagnostics.symbol`, `diagnostics.references`, `diagnostics.call_hierarchy` | Compatibility aliases | Preserve the earlier tool names for explicitly configured profiles and stored plans | Compatibility | Migrate stored plans to the canonical `code.*` names |
 | `dataset.list` | Host-native | Lists bounded host-approved dataset references and legacy files | Limited | Dataset registry, permissions/provenance and non-file sources |
 | `dataset.inspect` | Host-native | Accepts exactly one registered dataset, host-owned CSV resource or repository-relative path | Limited | Workbook/sheet metadata and richer lineage |
 | `dataset.schema` | Host-native | Returns a bounded typed column schema from exactly one approved source | Limited | Type confidence, constraints and backend parity |
@@ -2116,23 +2120,24 @@ The first diagnostic/data implementations are intentionally bounded. CSV
 validation currently supports `not_null`, `unique`, `numeric_range`,
 `allowed_values` and `unique_combination`; compiler diagnostics parse
 existing output, formatter diagnostics inspect formatter output, and include-graph
-diagnostics consume normalized `source -> include` lines. Symbol and reference
-tools accept a host-owned semantic callback, for example clangd/LSP or a project
-index; when absent they return `backend: text-fallback` and `semantic: false`.
-`diagnostics.call_hierarchy` is stricter because a text match cannot provide a
-meaningful caller/callee relation: it returns an explicit provider-unavailable
-result until a semantic provider is bound.
+diagnostics consume normalized `source -> include` lines. `code.symbols` and
+`code.references` accept a host-owned semantic callback, such as clangd/LSP;
+absent a provider, they return bounded text matches labeled
+`backend: text-fallback` and `semantic: false`. `code.calls` requires a semantic
+provider and returns one hop only. The prior `diagnostics.*` symbol, reference
+and call-hierarchy names remain compatibility aliases; the standard developer
+profile exposes only the canonical `code.*` names.
 Test-failure analysis groups normalized messages and reports a bounded
 classification, count and up to three examples per group. These tools do not
 invoke an unbounded compiler, formatter or shell command themselves.
 
-Diagnostics scope is project-oriented. A future semantic index should be keyed
-by `project_id`, repository revision, compile-commands hash, toolchain id and
+Code-analysis scope is repository-oriented. A future semantic index should be
+keyed by repository identity, revision, compile-commands hash, toolchain id and
 index version. Session and research state may retain query results or evidence
 references, but should not become the canonical source for project symbols.
 Clang/clangd is an optional host capability: its absence does not disable the
-diagnostic contracts, but limits results to the explicit fallback backend until
-a semantic provider is configured.
+code-analysis contracts, but limits symbol and reference results to the
+explicit text-fallback backend; call hierarchy remains unavailable.
 
 ### Native crash diagnostics
 
@@ -5174,7 +5179,8 @@ backend is configured.
 | Repository: `repository.list`, `repository.search`, `repository.read`, `repository.diff`, `repository.log`, `repository.status`, `repository.changed_files` | Yes | A matching profile and host-owned `repository_root`; `repository.search` accepts either a file or directory path |
 | Workspace: `workspace.list`, `workspace.read`, `workspace.search`, `workspace.patch` | Yes | A matching developer profile and host-owned repository/workspace root; patch remains policy-gated |
 | Development: `development.build`, `development.test` | Yes, when bound | A matching profile and configured sandbox execution backend |
-| Diagnostics: `diagnostics.compile`, `diagnostics.symbol`, `diagnostics.references`, `diagnostics.call_hierarchy`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph`, `diagnostics.native_crash` | Yes | A matching profile and host repository root; symbol/reference results use a semantic provider or explicit text fallback |
+| Code analysis: `code.inspect`, `code.symbols`, `code.references`, `code.calls` | Yes | A matching profile and host repository root; call relationships require the semantic provider and are one hop |
+| Diagnostics: `diagnostics.compile`, `diagnostics.test_failures`, `diagnostics.format`, `diagnostics.include_graph`, `diagnostics.native_crash` | Yes | A matching profile and host repository root; legacy symbol/reference/call aliases remain available only through explicit configuration |
 | Dataset: `dataset.list`, `dataset.select`, `dataset.inspect`, `dataset.schema`, `dataset.sample`, `dataset.validate` | Yes | A matching profile and host-owned repository/workspace root; current file support is bounded, with CSV as the primary implementation |
 | Documents: `document.tables`, `document.table` | Yes, when bound | A matching profile and readable resource/document processor |
 | Structured data: `data.query`, `data.filter`, `data.aggregate`, `data.join`, `data.transform`, `statistics.describe`, `statistics.outliers` | Yes, when bound | A matching profile and configured host-owned data store, such as Cozo |
@@ -5980,6 +5986,7 @@ llama-agent-sandbox.so
 llama-agent-tooling.so
 llama-agent-resource.so
 llama-agent-data.so
+llama-agent-code.so
 llama-agent-diagnostics.so
 llama-agent-runtime-engine.so
 llama-agent-runtime-host.so

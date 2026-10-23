@@ -20,7 +20,7 @@
 #include "agent/sandbox/sandbox-local-runtime.h"
 #endif
 #include "agent/sandbox/sandbox-runtime.h"
-#include "../diagnostics/agent-clangd-provider.h"
+#include "../code/agent-clangd-provider.h"
 #include "../diagnostics/agent-native-crash.h"
 #include "../data/agent-data-store-factory.h"
 #include "../data/agent-dataset-importer.h"
@@ -766,15 +766,18 @@ bool resolve_agent_host_tool_selection(
         bindings.memory_store = &store;
         bindings.memory_query = query;
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
-        std::shared_ptr<agent_clangd_diagnostics_provider> clangd_provider;
+        std::shared_ptr<agent_clangd_code_provider> clangd_provider;
         if (request.diagnostics.semantic_backend == "clangd" && !request.repository_root.empty()) {
-            clangd_provider = std::make_shared<agent_clangd_diagnostics_provider>(agent_clangd_session_config{
+            clangd_provider = std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
                 request.diagnostics.clangd_executable,
                 request.repository_root,
                 request.diagnostics.compile_commands,
                 request.tool_context.default_timeout_ms,
                 request.tool_context.default_timeout_ms,
             });
+            bindings.code_symbols = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
+            bindings.code_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
+            bindings.code_calls = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };
             bindings.diagnostics_symbol = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
             bindings.diagnostics_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
             bindings.diagnostics_call_hierarchy = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };

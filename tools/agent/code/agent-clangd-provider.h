@@ -5,9 +5,9 @@
 
 #include <memory>
 
-class agent_clangd_diagnostics_provider {
+class agent_clangd_code_provider {
 public:
-    explicit agent_clangd_diagnostics_provider(agent_clangd_session_config config);
+    explicit agent_clangd_code_provider(agent_clangd_session_config config);
 
     common_tool_execution_result symbol(const std::string & arguments_json);
     common_tool_execution_result references(const std::string & arguments_json);

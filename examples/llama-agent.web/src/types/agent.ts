@@ -19,6 +19,7 @@ export type AgentEvent = {
   server_tool_name?: string;
   tool_input?: Record<string, unknown>;
   tool_result?: unknown;
+  visualization?: unknown;
   detail?: string;
   response?: string;
   error?: string;

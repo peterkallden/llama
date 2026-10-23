@@ -510,8 +510,19 @@ int main() {
     }));
     const auto developer_read = catalog.load_profile("developer-read", error);
     assert(error.empty());
+    assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "code.calls" && definition.risk_class == common_tool_risk_class::local_read;
+    }));
+    assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "diagnostics.call_hierarchy";
+    }));
     assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "artifact.export";
+    }));
+    const auto code_analysis = catalog.load_profile("code-analysis", error);
+    assert(error.empty() && !code_analysis.empty());
+    assert(std::all_of(code_analysis.begin(), code_analysis.end(), [](const auto & definition) {
+        return definition.risk_class == common_tool_risk_class::local_read && !definition.requires_confirmation;
     }));
 
     const auto all_configured = catalog.load_profile("all-configured", error);

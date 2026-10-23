@@ -532,6 +532,10 @@ int main() {
         {"statistics.describe", 1, true, "{}"},
         {"statistics.outliers", 1, true, "{}"},
         {"statistics.value_counts", 1, true, "{}"},
+        {"code.inspect", 1, true, "{}"},
+        {"code.symbols", 1, true, "{}"},
+        {"code.references", 1, true, "{}"},
+        {"code.calls", 1, true, "{}"},
         {"diagnostics.test_failures", 1, true, "{}"},
         {"diagnostics.symbol", 1, true, "{}"},
         {"diagnostics.references", 1, true, "{}"},
@@ -658,6 +662,13 @@ int main() {
     foundation_bindings.diagnostics_symbol = [](const std::string &) {
         return common_tool_execution_result::success(
             R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
+    };
+    bool malformed_code_calls = false;
+    foundation_bindings.code_calls = [&malformed_code_calls](const std::string &) {
+        if (malformed_code_calls) return common_tool_execution_result::success(
+            R"({"backend":"clangd","callers":[{"from":{"path":"src/caller.cpp","line":"4","column":2},"to":{"path":"src/sample.txt","line":1,"column":1}}],"callees":[],"count":1,"truncated":false})");
+        return common_tool_execution_result::success(
+            R"({"backend":"clangd","semantic":true,"callers":[{"from":{"path":"src/caller.cpp","line":4,"column":2},"to":{"path":"src/sample.txt","line":1,"column":1}}],"callees":[{"from":{"path":"src/sample.txt","line":1,"column":1},"to":{"path":"src/child.cpp","line":9,"column":3}}],"count":2,"truncated":false})");
     };
     assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
     {
@@ -851,6 +862,29 @@ int main() {
     assert(result.resource_refs.front().size_bytes == 16000);
     result = foundation_registry.execute({"workspace.patch", R"({"path":"src/sample.txt","operations":[{"type":"replace_range","start_line":1,"end_line":1,"content":"patched"}]})"});
     assert(result.ok && result.output.find("content_hash") != std::string::npos);
+    result = foundation_registry.execute({"code.inspect", "{}"});
+    assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
+           result.output.find("semantic") != std::string::npos);
+    result = foundation_registry.execute({"code.symbols", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("code-analysis.v1") != std::string::npos &&
+           result.output.find("text-fallback") != std::string::npos);
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1})"});
+    assert(result.ok && result.output.find("semantic_call_hierarchy") != std::string::npos &&
+           result.output.find("one-hop") != std::string::npos &&
+           result.output.find("\"visualization\"") != std::string::npos &&
+           result.output.find("\"schema_version\":1") != std::string::npos &&
+           result.output.find("static_call") != std::string::npos &&
+           result.output.find("src/caller.cpp#L4") != std::string::npos);
+    malformed_code_calls = true;
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1})"});
+    assert(result.ok && result.output.find("\"complete\":false") != std::string::npos &&
+        result.output.find("lacked usable source locations") != std::string::npos);
+    malformed_code_calls = false;
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1,"max_results":"many"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+    result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&
+           result.output.find("\"items\"") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});
     assert(result.ok && result.output.find("missing symbol") != std::string::npos);
     result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"PASS one\nFAILED two: assertion\n"})"});

@@ -30,5 +30,9 @@ inline nlohmann::ordered_json common_agent_daemon_event_to_json(const common_age
         if (input.is_object()) out["tool_input"] = input;
         if (result.is_object()) out["tool_result"] = result;
     }
+    if (!event.visualization_json.empty()) {
+        const auto visualization = json::parse(event.visualization_json, nullptr, false);
+        if (visualization.is_object()) out["visualization"] = visualization;
+    }
     return out;
 }

@@ -9,7 +9,7 @@ namespace {
 using json = agent_clangd_json;
 
 common_tool_execution_result provider_error(const std::string & code, const std::string & detail) {
-    return common_tool_execution_result::failure(code, common_tool_failure_class::execution, false, "Clangd semantic diagnostics are unavailable.", detail);
+    return common_tool_execution_result::failure(code, common_tool_failure_class::execution, false, "Clangd semantic code analysis is unavailable.", detail);
 }
 
 std::string uri_path(const std::string & uri) {
@@ -66,16 +66,16 @@ json location_json(const json & location) {
 }
 }
 
-agent_clangd_diagnostics_provider::agent_clangd_diagnostics_provider(agent_clangd_session_config config)
+agent_clangd_code_provider::agent_clangd_code_provider(agent_clangd_session_config config)
     : session_(std::make_unique<agent_clangd_session>(config)), repository_root_(std::move(config.repository_root)) {}
 
-common_tool_execution_result agent_clangd_diagnostics_provider::symbol(const std::string & arguments_json) {
+common_tool_execution_result agent_clangd_code_provider::symbol(const std::string & arguments_json) {
     const auto arguments = json::parse(arguments_json, nullptr, false);
     if (!arguments.is_object() || !arguments.contains("symbol") || !arguments["symbol"].is_string()) return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments", common_tool_failure_class::validation, false, "Symbol arguments are invalid.");
     return workspace_symbol(arguments);
 }
 
-common_tool_execution_result agent_clangd_diagnostics_provider::workspace_symbol(const json & arguments) {
+common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const json & arguments) {
     json response;
     std::string error;
     if (!session_->request("workspace/symbol", {{"query", arguments["symbol"]}}, response, error)) return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
@@ -92,7 +92,7 @@ common_tool_execution_result agent_clangd_diagnostics_provider::workspace_symbol
     return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"symbol", arguments["symbol"]}, {"definitions", definitions}, {"count", definitions.size()}, {"truncated", definitions.size() >= limit}}).dump());
 }
 
-bool agent_clangd_diagnostics_provider::resolve_location(const json & arguments, json & location, std::string & error) {
+bool agent_clangd_code_provider::resolve_location(const json & arguments, json & location, std::string & error) {
     std::filesystem::path requested;
     int line = 0;
     int column = 1;
@@ -149,7 +149,7 @@ bool agent_clangd_diagnostics_provider::resolve_location(const json & arguments,
     return true;
 }
 
-bool agent_clangd_diagnostics_provider::open_location(const json & location, std::string & error) {
+bool agent_clangd_code_provider::open_location(const json & location, std::string & error) {
     constexpr uintmax_t max_source_bytes = 4 * 1024 * 1024;
     const std::filesystem::path path(location.at("path").get<std::string>());
     std::error_code file_error;
@@ -171,7 +171,7 @@ bool agent_clangd_diagnostics_provider::open_location(const json & location, std
     return session_->open_document(location.at("uri").get<std::string>(), language_id(path), text, error);
 }
 
-common_tool_execution_result agent_clangd_diagnostics_provider::location_query(const json & arguments, const std::string & method) {
+common_tool_execution_result agent_clangd_code_provider::location_query(const json & arguments, const std::string & method) {
     json location;
     std::string error;
     if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.semantic.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for this semantic query.", error);
@@ -193,13 +193,13 @@ common_tool_execution_result agent_clangd_diagnostics_provider::location_query(c
     return common_tool_execution_result::success(json({{"backend", "clangd"}, {"semantic", true}, {"results", entries}, {"count", entries.size()}, {"truncated", entries.size() >= limit}}).dump());
 }
 
-common_tool_execution_result agent_clangd_diagnostics_provider::references(const std::string & arguments_json) {
+common_tool_execution_result agent_clangd_code_provider::references(const std::string & arguments_json) {
     const auto arguments = json::parse(arguments_json, nullptr, false);
     if (!arguments.is_object() || !arguments.contains("symbol")) return common_tool_execution_result::failure("tool.diagnostics.references.invalid_arguments", common_tool_failure_class::validation, false, "Reference arguments are invalid.");
     return location_query(arguments, "textDocument/references");
 }
 
-common_tool_execution_result agent_clangd_diagnostics_provider::call_hierarchy(const std::string & arguments_json) {
+common_tool_execution_result agent_clangd_code_provider::call_hierarchy(const std::string & arguments_json) {
     const auto arguments = json::parse(arguments_json, nullptr, false);
     if (!arguments.is_object() || !arguments.contains("symbol")) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "Call hierarchy arguments are invalid.");
     json location;

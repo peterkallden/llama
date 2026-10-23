@@ -50,9 +50,9 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-investigation-dataset-source.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-dataset-importer.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-protocol.cpp
@@ -229,7 +229,7 @@ set(AGENT_MCP_CLIENT_SOURCES
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_MCP_CLIENT_SOURCES})
 
 # Keep the host/runtime assembly independent from the high-churn resource,
-# data and diagnostics implementations. These are agent-only libraries; the
+# data, code-analysis and diagnostics implementations. These are agent-only libraries; the
 # upstream llama.cpp targets remain untouched.
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-catalog.cpp
@@ -250,9 +250,9 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/processors/agent-tesseract-ocr-processor.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-dataset-importer.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-provider.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-catalog-cozo.cpp
 )
 
@@ -386,10 +386,29 @@ if (BUILD_SHARED_LIBS)
     )
 endif()
 
+add_library(llama-agent-code
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
+)
+target_include_directories(llama-agent-code PUBLIC
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/code
+)
+target_compile_features(llama-agent-code PUBLIC cxx_std_17)
+target_link_libraries(llama-agent-code PUBLIC
+    llama-common
+    llama-agent-core
+    Threads::Threads
+)
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-code PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 add_library(llama-agent-diagnostics
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-protocol.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-session.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-clangd-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp
 )
 target_include_directories(llama-agent-diagnostics PUBLIC
@@ -571,6 +590,7 @@ target_include_directories(llama-agent-runtime-engine
         ${PROJECT_SOURCE_DIR}/tools/agent/tooling
         ${PROJECT_SOURCE_DIR}/tools/agent/resource
         ${PROJECT_SOURCE_DIR}/tools/agent/data
+        ${PROJECT_SOURCE_DIR}/tools/agent/code
         ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics
         ${PROJECT_SOURCE_DIR}/tools/mtmd
         ${PROJECT_SOURCE_DIR}/tools/server
@@ -588,6 +608,7 @@ target_link_libraries(llama-agent-runtime-engine
         llama-agent-flydelta
         llama-agent-resource
         llama-agent-data
+        llama-agent-code
         llama-agent-diagnostics
         llama-agent-runtime-adapters
         server-context
@@ -682,6 +703,7 @@ target_link_libraries(llama-agent-runtime-support
         llama-agent-flydelta
         llama-agent-resource
         llama-agent-data
+        llama-agent-code
         llama-agent-diagnostics
         llama-agent-runtime-engine
         llama-agent-runtime-host
@@ -967,6 +989,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         llama-agent-runtime-support
         llama-agent-resource
         llama-agent-data
+        llama-agent-code
         llama-agent-diagnostics
         llama-agent-adaptation-storage
     )

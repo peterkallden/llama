@@ -302,6 +302,7 @@ struct common_agent_daemon_event {
     std::string server_tool_name;
     std::string tool_input_json;
     std::string tool_result_json;
+    std::string visualization_json;
     std::string resource_uri;
     std::string resource_name;
     std::string resource_mime_type;

@@ -2351,6 +2351,7 @@ bool common_agent_daemon_service::execute_outcome(
                         trace.tool_name,
                         0,
                         std::move(event_context));
+                    completed_event.visualization_json = trace.visualization_json;
                     if (trace.app_context_available) {
                         completed_event.app_context_available = true;
                         completed_event.provider_id = trace.app_provider_id;

@@ -10,6 +10,7 @@
 #include "agent/artifact/artifact-contract.h"
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/routing/tool-navigation.h"
+#include "agent/visualization/visualization-contract.h"
 #include "plan/plan-bindings.h"
 #include "plan/plan-json.h"
 #include "plan/plan-goal.h"
@@ -2300,6 +2301,19 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::succeeded,
                 "registered tool result recorded", plan.id, tool_step_id, tool_call->name, observed.observation->id);
             attach_http_trace_metadata(result.trace.back(), execution.http);
+            if (execution.output.size() <= COMMON_AGENT_VISUALIZATION_MAX_BYTES) {
+                const auto tool_output = json::parse(execution.output, nullptr, false);
+                if (tool_output.is_object() && tool_output.contains("visualization")) {
+                    common_agent_visualization_relationship visualization;
+                    std::string visualization_error;
+                    if (common_agent_visualization_relationship_from_json(
+                                tool_output["visualization"], visualization, visualization_error) &&
+                            common_agent_visualization_relationship_validate(visualization, visualization_error)) {
+                        result.trace.back().visualization_json =
+                            common_agent_visualization_relationship_to_json(visualization).dump();
+                    }
+                }
+            }
             if (tools != nullptr) {
                 std::string app_provider_id;
                 std::string app_server_tool_name;

@@ -1,12 +1,19 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v29",
+  "version": "v30",
   "procedures": [
     {
       "id": "code-orientation-v1",
       "summary": "code orientation",
-      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer semantic symbol/reference diagnostics when available; otherwise use bounded repository search and reads.",
+      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer code.symbols, code.references and code.calls when the host reports semantic support; otherwise use bounded repository search and reads, and label text matches as non-semantic.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "code-analysis-evidence-v1",
+      "summary": "code analysis evidence",
+      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for a bounded one-hop semantic call neighborhood. Preserve the returned source locations and analysis method. Text fallback results are text matches only. Static call relations are not proof that a path is feasible or was executed. Report missing provider support and incomplete results explicitly.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -166,9 +173,23 @@
       "workflow_revision": "v2",
       "family": "dataset",
       "graph_revision": "dataset-analysis-graph@v2",
-      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.query", "data.filter", "data.aggregate", "data.transform", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.dataset.available"]
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "data.query",
+        "data.filter",
+        "data.aggregate",
+        "data.transform",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.available"
+      ]
     },
     {
       "id": "dataset-quality-path-v2",
@@ -177,9 +198,23 @@
       "workflow_revision": "v2",
       "family": "dataset",
       "graph_revision": "dataset-quality-graph@v2",
-      "required_capabilities": ["dataset.resolve", "dataset.inspect", "dataset.schema", "dataset.validate", "data.aggregate", "data.filter", "statistics.describe", "statistics.outliers", "statistics.value_counts"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.dataset.available"]
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.validate",
+        "data.aggregate",
+        "data.filter",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.available"
+      ]
     },
     {
       "id": "dataset-join-path-v2",
@@ -188,9 +223,17 @@
       "workflow_revision": "v2",
       "family": "dataset",
       "graph_revision": "dataset-join-graph@v2",
-      "required_capabilities": ["dataset.resolve", "dataset.inspect", "data.join"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.dataset.multiple_available"]
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "data.join"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.multiple_available"
+      ]
     },
     {
       "id": "repository-inspection-path-v1",
@@ -199,8 +242,61 @@
       "workflow_revision": "v1",
       "family": "repository",
       "graph_revision": "repository-inspection-graph@v1",
-      "required_capabilities": ["repository.list", "repository.search", "repository.read"],
-      "required_context": ["context.repository.available"]
+      "required_capabilities": [
+        "repository.list",
+        "repository.search",
+        "repository.read"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
+    },
+    {
+      "id": "code-overview-path-v1",
+      "source_revision": "agent-workflows-starter@v30",
+      "workflow_ref": "workflow://code/overview",
+      "workflow_revision": "v1",
+      "family": "code",
+      "graph_revision": "code-overview-graph@v1",
+      "required_capabilities": [
+        "code.inspect",
+        "repository.list",
+        "repository.read"
+      ],
+      "optional_capabilities": [
+        "code.symbols",
+        "code.references",
+        "code.calls",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
+    },
+    {
+      "id": "code-entry-point-investigation-path-v1",
+      "source_revision": "agent-workflows-starter@v30",
+      "workflow_ref": "workflow://code/entry-point-investigation",
+      "workflow_revision": "v1",
+      "family": "code",
+      "graph_revision": "code-entry-point-graph@v1",
+      "required_capabilities": [
+        "code.inspect",
+        "code.symbols",
+        "code.calls",
+        "repository.read"
+      ],
+      "optional_capabilities": [
+        "code.references",
+        "visualization.create",
+        "visualization.snapshot",
+        "investigation.case.items",
+        "investigation.report.compose",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
     },
     {
       "id": "repository-change-path-v1",
@@ -209,8 +305,17 @@
       "workflow_revision": "v1",
       "family": "repository",
       "graph_revision": "repository-change-graph@v1",
-      "required_capabilities": ["repository.search", "repository.read", "workspace.read", "workspace.modify", "development.build", "development.test"],
-      "required_context": ["context.repository.available"]
+      "required_capabilities": [
+        "repository.search",
+        "repository.read",
+        "workspace.read",
+        "workspace.modify",
+        "development.build",
+        "development.test"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
     },
     {
       "id": "resource-document-analysis-path-v8",
@@ -220,9 +325,18 @@
       "family": "resource",
       "graph_revision": "resource-document-analysis-graph@v7",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["resource.read"],
-      "optional_capabilities": ["resource.inspect", "document.inspect", "dataset.inspect", "artifact.export"],
-      "required_context": ["context.resource.available"]
+      "required_capabilities": [
+        "resource.read"
+      ],
+      "optional_capabilities": [
+        "resource.inspect",
+        "document.inspect",
+        "dataset.inspect",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.resource.available"
+      ]
     },
     {
       "id": "web-research-path-v4",
@@ -233,10 +347,23 @@
       "family": "web",
       "graph_revision": "web-research-graph@v5",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["web.search", "web.fetch"],
-      "optional_capabilities": ["resource.read", "dataset.inspect", "artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
-      "required_context": ["context.network.allowed"]
+      "required_capabilities": [
+        "web.search",
+        "web.fetch"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "dataset.inspect",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ]
     },
     {
       "id": "openapi-resource-onboarding-path-v1",
@@ -245,9 +372,18 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openapi-resource-onboarding-graph@v1",
-      "required_capabilities": ["web.fetch", "openapi.connect"],
-      "optional_capabilities": ["web.search", "openapi.read", "artifact.export"],
-      "required_context": ["context.network.allowed"]
+      "required_capabilities": [
+        "web.fetch",
+        "openapi.connect"
+      ],
+      "optional_capabilities": [
+        "web.search",
+        "openapi.read",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ]
     },
     {
       "id": "openalex-work-search-path-v2",
@@ -257,14 +393,34 @@
       "family": "openapi",
       "graph_revision": "openalex-work-search-graph@v3",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["openapi.read"],
-      "optional_capabilities": ["resource.read", "artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
-      "required_context": ["context.openapi.available"],
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "search_pending",
-      "terminal_states": ["works_retrieved"],
+      "terminal_states": [
+        "works_retrieved"
+      ],
       "transitions": [
-        {"id": "search-works", "from": "search_pending", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{}", "max_pages": 5}
+        {
+          "id": "search-works",
+          "from": "search_pending",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "max_pages": 5
+        }
       ]
     },
     {
@@ -274,13 +430,28 @@
       "workflow_revision": "v1",
       "family": "openapi",
       "graph_revision": "openalex-work-lookup-graph@v1",
-      "required_capabilities": ["openapi.read"],
-      "optional_capabilities": ["resource.read", "artifact.export"],
-      "required_context": ["context.openapi.available"],
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "identifier_pending",
-      "terminal_states": ["work_retrieved"],
+      "terminal_states": [
+        "work_retrieved"
+      ],
       "transitions": [
-        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"}
+        {
+          "id": "get-work",
+          "from": "identifier_pending",
+          "to": "work_retrieved",
+          "tool": "openalex.getWork",
+          "arguments": "{}"
+        }
       ]
     },
     {
@@ -291,14 +462,34 @@
       "family": "openapi",
       "graph_revision": "openalex-literature-review-graph@v3",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["openapi.read"],
-      "optional_capabilities": ["resource.read", "artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
-      "required_context": ["context.openapi.available"],
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "review_pending",
-      "terminal_states": ["candidates_retrieved"],
+      "terminal_states": [
+        "candidates_retrieved"
+      ],
       "transitions": [
-        {"id": "retrieve-candidates", "from": "review_pending", "to": "candidates_retrieved", "tool": "openalex.listWorks", "arguments": "{}", "max_pages": 5}
+        {
+          "id": "retrieve-candidates",
+          "from": "review_pending",
+          "to": "candidates_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "max_pages": 5
+        }
       ]
     },
     {
@@ -308,22 +499,89 @@
       "workflow_revision": "v2",
       "family": "openapi",
       "graph_revision": "openalex-entity-filtered-work-search-graph@v2",
-      "required_capabilities": ["openapi.read"],
-      "optional_capabilities": ["resource.read", "artifact.export"],
-      "continuation_workflow_targets": ["workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"],
-      "required_context": ["context.openapi.available"],
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "entity_pending",
-      "terminal_states": ["works_retrieved"],
+      "terminal_states": [
+        "works_retrieved"
+      ],
       "transitions": [
-        {"id": "resolve-author", "from": "entity_pending", "to": "author_candidates", "tool": "openalex.listAuthors", "arguments": "{}"},
-        {"id": "resolve-institution", "from": "entity_pending", "to": "institution_candidates", "tool": "openalex.listInstitutions", "arguments": "{}"},
-        {"id": "resolve-topic", "from": "entity_pending", "to": "topic_candidates", "tool": "openalex.listTopics", "arguments": "{}"},
-        {"id": "choose-author", "from": "author_candidates", "to": "author_selected", "kind": "model_choice", "candidates": "/results"},
-        {"id": "choose-institution", "from": "institution_candidates", "to": "institution_selected", "kind": "model_choice", "candidates": "/results"},
-        {"id": "choose-topic", "from": "topic_candidates", "to": "topic_selected", "kind": "model_choice", "candidates": "/results"},
-        {"id": "retrieve-author-works", "from": "author_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"author.id:$choice\"}"},
-        {"id": "retrieve-institution-works", "from": "institution_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"institutions.id:$choice\"}"},
-        {"id": "retrieve-topic-works", "from": "topic_selected", "to": "works_retrieved", "tool": "openalex.listWorks", "arguments": "{\"filter\":\"topics.id:$choice\"}"}
+        {
+          "id": "resolve-author",
+          "from": "entity_pending",
+          "to": "author_candidates",
+          "tool": "openalex.listAuthors",
+          "arguments": "{}"
+        },
+        {
+          "id": "resolve-institution",
+          "from": "entity_pending",
+          "to": "institution_candidates",
+          "tool": "openalex.listInstitutions",
+          "arguments": "{}"
+        },
+        {
+          "id": "resolve-topic",
+          "from": "entity_pending",
+          "to": "topic_candidates",
+          "tool": "openalex.listTopics",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-author",
+          "from": "author_candidates",
+          "to": "author_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "choose-institution",
+          "from": "institution_candidates",
+          "to": "institution_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "choose-topic",
+          "from": "topic_candidates",
+          "to": "topic_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "retrieve-author-works",
+          "from": "author_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"author.id:$choice\"}"
+        },
+        {
+          "id": "retrieve-institution-works",
+          "from": "institution_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"institutions.id:$choice\"}"
+        },
+        {
+          "id": "retrieve-topic-works",
+          "from": "topic_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"topics.id:$choice\"}"
+        }
       ]
     },
     {
@@ -334,26 +592,96 @@
       "family": "openapi",
       "graph_revision": "openalex-full-text-evidence-graph@v3",
       "resource_read_policy": "chunked",
-      "required_capabilities": ["openapi.read", "web.fetch", "resource.inspect", "resource.read"],
-      "optional_capabilities": ["artifact.export"],
-      "required_context": ["context.openapi.available", "context.network.allowed"],
+      "required_capabilities": [
+        "openapi.read",
+        "web.fetch",
+        "resource.inspect",
+        "resource.read"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.openapi.available",
+        "context.network.allowed"
+      ],
       "start_state": "identifier_pending",
-      "terminal_states": ["abstract_complete", "text_read"],
+      "terminal_states": [
+        "abstract_complete",
+        "text_read"
+      ],
       "transitions": [
-        {"id": "get-work", "from": "identifier_pending", "to": "work_retrieved", "tool": "openalex.getWork", "arguments": "{}"},
-        {"id": "choose-evidence-depth", "from": "work_retrieved", "to": "full_text_pending", "kind": "model_choice", "choices": [
-          {"id": "answer_from_abstract", "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.", "to": "abstract_complete"},
-          {"id": "fetch_full_text", "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract. The host prefers the returned PDF URL and otherwise uses an available content URL.", "to": "full_text_pending", "requires": ["/result/full_text_url"]}
-        ]},
-        {"id": "fetch-full-text", "from": "full_text_pending", "to": "full_text_fetched", "tool": "web.fetch", "arguments": "{\"max_bytes\":10485760}", "bindings": [
-          {"target": "/url", "from": "get-work", "source": "/result/full_text_url"}
-        ]},
-        {"id": "inspect-full-text", "from": "full_text_fetched", "to": "resource_inspected", "tool": "resource.inspect", "arguments": "{}", "bindings": [
-          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
-        ]},
-        {"id": "read-full-text", "from": "resource_inspected", "to": "text_read", "tool": "resource.read", "arguments": "{\"representation\":\"text\",\"max_bytes\":8192}", "optional": true, "bindings": [
-          {"target": "/uri", "from": "fetch-full-text", "source": "/resources/0/uri"}
-        ]}
+        {
+          "id": "get-work",
+          "from": "identifier_pending",
+          "to": "work_retrieved",
+          "tool": "openalex.getWork",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-evidence-depth",
+          "from": "work_retrieved",
+          "to": "full_text_pending",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "answer_from_abstract",
+              "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.",
+              "to": "abstract_complete"
+            },
+            {
+              "id": "fetch_full_text",
+              "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract. The host prefers the returned PDF URL and otherwise uses an available content URL.",
+              "to": "full_text_pending",
+              "requires": [
+                "/result/full_text_url"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "fetch-full-text",
+          "from": "full_text_pending",
+          "to": "full_text_fetched",
+          "tool": "web.fetch",
+          "arguments": "{\"max_bytes\":10485760}",
+          "bindings": [
+            {
+              "target": "/url",
+              "from": "get-work",
+              "source": "/result/full_text_url"
+            }
+          ]
+        },
+        {
+          "id": "inspect-full-text",
+          "from": "full_text_fetched",
+          "to": "resource_inspected",
+          "tool": "resource.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "fetch-full-text",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "read-full-text",
+          "from": "resource_inspected",
+          "to": "text_read",
+          "tool": "resource.read",
+          "arguments": "{\"representation\":\"text\",\"max_bytes\":8192}",
+          "optional": true,
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "fetch-full-text",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
       ]
     },
     {
@@ -364,22 +692,74 @@
       "preferred_thinking_mode": "deliberate",
       "family": "dataset",
       "graph_revision": "eurostat-catalog-discovery-graph@v7",
-      "required_capabilities": ["web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample"],
-      "optional_capabilities": ["artifact.export"],
-      "continuation_links": [{"from_transition": "inspect-toc-schema", "from_terminal_state": "catalog_schema_ready", "workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v9", "bindings": [
-        {"transition": "search-catalogue", "tool": "data.query", "target": "/dataset", "source": "/result/dataset"}
-      ]}],
-      "required_context": ["context.network.allowed"],
+      "required_capabilities": [
+        "web.fetch",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.sample"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "inspect-toc-schema",
+          "from_terminal_state": "catalog_schema_ready",
+          "workflow_ref": "workflow://eurostat/metadata-resolution",
+          "workflow_revision": "v9",
+          "bindings": [
+            {
+              "transition": "search-catalogue",
+              "tool": "data.query",
+              "target": "/dataset",
+              "source": "/result/dataset"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ],
       "start_state": "catalog_pending",
-      "terminal_states": ["catalog_schema_ready"],
+      "terminal_states": [
+        "catalog_schema_ready"
+      ],
       "transitions": [
-        {"id": "fetch-toc", "from": "catalog_pending", "to": "catalog_fetched", "tool": "web.fetch", "arguments": "{\"url\":\"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en\",\"accept\":\"text/plain\",\"max_bytes\":4194304}"},
-        {"id": "materialize-toc", "from": "catalog_fetched", "to": "catalog_dataset_ready", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
-          {"target": "/resource", "from": "fetch-toc", "source": "/resources/0/uri"}
-        ]},
-        {"id": "inspect-toc-schema", "from": "catalog_dataset_ready", "to": "catalog_schema_ready", "tool": "dataset.schema", "arguments": "{}", "bindings": [
-          {"target": "/dataset", "from": "materialize-toc", "source": "/result/dataset"}
-        ]}
+        {
+          "id": "fetch-toc",
+          "from": "catalog_pending",
+          "to": "catalog_fetched",
+          "tool": "web.fetch",
+          "arguments": "{\"url\":\"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en\",\"accept\":\"text/plain\",\"max_bytes\":4194304}"
+        },
+        {
+          "id": "materialize-toc",
+          "from": "catalog_fetched",
+          "to": "catalog_dataset_ready",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "fetch-toc",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "inspect-toc-schema",
+          "from": "catalog_dataset_ready",
+          "to": "catalog_schema_ready",
+          "tool": "dataset.schema",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/dataset",
+              "from": "materialize-toc",
+              "source": "/result/dataset"
+            }
+          ]
+        }
       ]
     },
     {
@@ -390,28 +770,113 @@
       "preferred_thinking_mode": "deliberate",
       "family": "openapi",
       "graph_revision": "eurostat-metadata-resolution-graph@v9",
-      "allowed_tools": ["eurostat_sdmx.getStructure", "dataset.inspect", "dataset.sample", "data.query"],
-      "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample", "data.query"],
-      "optional_capabilities": ["artifact.export"],
-      "continuation_links": [{"from_transition": "inspect-content-constraint", "from_terminal_state": "metadata_materialized", "workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v8", "bindings": [
-        {"transition": "request-observations", "tool": "eurostat.getData", "target": "/datasetCode", "source": "/choice", "from_transition": "choose-dataflow"}
-      ]}],
-      "required_context": ["context.openapi.available"],
+      "allowed_tools": [
+        "eurostat_sdmx.getStructure",
+        "dataset.inspect",
+        "dataset.sample",
+        "data.query"
+      ],
+      "required_capabilities": [
+        "openapi.read",
+        "dataset.inspect",
+        "dataset.sample",
+        "data.query"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "inspect-content-constraint",
+          "from_terminal_state": "metadata_materialized",
+          "workflow_ref": "workflow://eurostat/data-retrieval",
+          "workflow_revision": "v8",
+          "bindings": [
+            {
+              "transition": "request-observations",
+              "tool": "eurostat.getData",
+              "target": "/datasetCode",
+              "source": "/choice",
+              "from_transition": "choose-dataflow"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "dataflow_candidate_selected",
-      "terminal_states": ["metadata_materialized"],
+      "terminal_states": [
+        "metadata_materialized"
+      ],
       "transitions": [
-        {"id": "search-catalogue", "from": "dataflow_candidate_selected", "to": "catalogue_searched", "tool": "data.query", "arguments": "{\"select\":[\"code\",\"title\",\"type\",\"data start\",\"data end\"],\"limit\":64,\"max_result_rows\":64}", "model_supplies_arguments": true, "model_instruction": "Search only for the core statistical concept in the catalogue title. Use one case-insensitive title contains predicate. Do not add geography, period, unit, category or availability filters, sorting, or distinct; verify those later from SDMX metadata."},
-        {"id": "choose-dataflow", "from": "catalogue_searched", "to": "dataflow_code_selected", "kind": "model_choice", "candidates": "/result/rows", "candidate_id": "/code", "model_instruction": "Choose a returned candidate matching the statistical measure for metadata inspection. Titles are discovery hints; regional tables may also contain national aggregates. Verify the requested geography, period, measure and unit from SDMX dimensions and ContentConstraint before treating the candidate as suitable. If no candidate plausibly matches, report the gap rather than guessing."},
-        {"id": "get-dataflow-structure", "from": "dataflow_code_selected", "to": "dataflow_structure_resource", "tool": "eurostat_sdmx.getStructure", "arguments": "{\"artifactType\":\"dataflow\",\"agencyID\":\"ESTAT\",\"resourceID\":\"$choice\",\"version\":\"1.0\",\"references\":\"children\",\"detail\":\"full\"}"},
-        {"id": "inspect-dataflow-structure", "from": "dataflow_structure_resource", "to": "dataflow_structure_resolved", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
-          {"target": "/resource", "from": "get-dataflow-structure", "source": "/resources/0/uri"}
-        ]},
-        {"id": "get-content-constraint", "from": "dataflow_structure_resolved", "to": "content_constraint_resource", "tool": "eurostat_sdmx.getStructure", "arguments": "{\"artifactType\":\"contentconstraint\",\"agencyID\":\"ESTAT\",\"version\":\"1.0\"}", "bindings": [
-          {"target": "/resourceID", "from": "choose-dataflow", "source": "/choice"}
-        ]},
-        {"id": "inspect-content-constraint", "from": "content_constraint_resource", "to": "metadata_materialized", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
-          {"target": "/resource", "from": "get-content-constraint", "source": "/resources/0/uri"}
-        ]}
+        {
+          "id": "search-catalogue",
+          "from": "dataflow_candidate_selected",
+          "to": "catalogue_searched",
+          "tool": "data.query",
+          "arguments": "{\"select\":[\"code\",\"title\",\"type\",\"data start\",\"data end\"],\"limit\":64,\"max_result_rows\":64}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Search only for the core statistical concept in the catalogue title. Use one case-insensitive title contains predicate. Do not add geography, period, unit, category or availability filters, sorting, or distinct; verify those later from SDMX metadata."
+        },
+        {
+          "id": "choose-dataflow",
+          "from": "catalogue_searched",
+          "to": "dataflow_code_selected",
+          "kind": "model_choice",
+          "candidates": "/result/rows",
+          "candidate_id": "/code",
+          "model_instruction": "Choose a returned candidate matching the statistical measure for metadata inspection. Titles are discovery hints; regional tables may also contain national aggregates. Verify the requested geography, period, measure and unit from SDMX dimensions and ContentConstraint before treating the candidate as suitable. If no candidate plausibly matches, report the gap rather than guessing."
+        },
+        {
+          "id": "get-dataflow-structure",
+          "from": "dataflow_code_selected",
+          "to": "dataflow_structure_resource",
+          "tool": "eurostat_sdmx.getStructure",
+          "arguments": "{\"artifactType\":\"dataflow\",\"agencyID\":\"ESTAT\",\"resourceID\":\"$choice\",\"version\":\"1.0\",\"references\":\"children\",\"detail\":\"full\"}"
+        },
+        {
+          "id": "inspect-dataflow-structure",
+          "from": "dataflow_structure_resource",
+          "to": "dataflow_structure_resolved",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "get-dataflow-structure",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "get-content-constraint",
+          "from": "dataflow_structure_resolved",
+          "to": "content_constraint_resource",
+          "tool": "eurostat_sdmx.getStructure",
+          "arguments": "{\"artifactType\":\"contentconstraint\",\"agencyID\":\"ESTAT\",\"version\":\"1.0\"}",
+          "bindings": [
+            {
+              "target": "/resourceID",
+              "from": "choose-dataflow",
+              "source": "/choice"
+            }
+          ]
+        },
+        {
+          "id": "inspect-content-constraint",
+          "from": "content_constraint_resource",
+          "to": "metadata_materialized",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "get-content-constraint",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
       ]
     },
     {
@@ -423,39 +888,170 @@
       "require_declared_claims": true,
       "family": "openapi",
       "graph_revision": "eurostat-data-retrieval-graph@v8",
-      "allowed_tools": ["eurostat.getData", "dataset.inspect", "dataset.sample"],
-      "required_capabilities": ["openapi.read", "dataset.inspect", "dataset.sample"],
-      "optional_capabilities": ["artifact.export"],
-      "continuation_links": [
-        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"},
-        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
-        {"from_transition": "materialize-json-stat", "from_terminal_state": "json_stat_dataset_ready", "workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
+      "allowed_tools": [
+        "eurostat.getData",
+        "dataset.inspect",
+        "dataset.sample"
       ],
-      "required_context": ["context.openapi.available"],
+      "required_capabilities": [
+        "openapi.read",
+        "dataset.inspect",
+        "dataset.sample"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v2"
+        },
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v2"
+        },
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/join",
+          "workflow_revision": "v2"
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
       "start_state": "query_parameters_pending",
       "verification_checks": [
-        {"id":"geography-defined","transition":"request-observations","phase":"before_tool","operation":"required","left":{"source":"arguments","pointer":"/geo"},"clarification_question":"Which geographic area should the statistics cover?"},
-        {"id":"period-defined","transition":"request-observations","phase":"before_tool","operation":"required","left":{"source":"arguments","pointer":"/time"},"clarification_question":"Which year or period should be used?"},
-        {"id":"metadata-supports-query","transition":"request-observations","phase":"before_tool","operation":"dimension_membership",
-          "left":{"source":"arguments"},"right":{"source":"handoff","pointer":"/value/result/dataset","dataset_rows":true},
-          "dimension_mapping":{"geo":"geo","time":"TIME_PERIOD"}},
-        {"id":"returned-dimensions-match","transition":"materialize-json-stat","phase":"after_tool","operation":"coverage",
-          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},
-          "right":{"source":"transition_arguments","transition":"request-observations","pointer":"/arguments"},
-          "dimension_mapping":{"geo":"geo","time":"time"}},
-        {"id":"observation-status-usable","transition":"materialize-json-stat","phase":"after_tool","operation":"status",
-          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},"right":{"value":[null,""]}},
-        {"id":"returned-codes-supported","transition":"materialize-json-stat","phase":"after_tool","operation":"dimension_membership",
-          "left":{"source":"result","pointer":"/result/dataset","dataset_rows":true},
-          "right":{"source":"handoff","pointer":"/value/result/dataset","dataset_rows":true},
-          "dimension_mapping":{"geo":"geo","time":"TIME_PERIOD","unit":"unit","freq":"freq"}}
+        {
+          "id": "geography-defined",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "required",
+          "left": {
+            "source": "arguments",
+            "pointer": "/geo"
+          },
+          "clarification_question": "Which geographic area should the statistics cover?"
+        },
+        {
+          "id": "period-defined",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "required",
+          "left": {
+            "source": "arguments",
+            "pointer": "/time"
+          },
+          "clarification_question": "Which year or period should be used?"
+        },
+        {
+          "id": "metadata-supports-query",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "dimension_membership",
+          "left": {
+            "source": "arguments"
+          },
+          "right": {
+            "source": "handoff",
+            "pointer": "/value/result/dataset",
+            "dataset_rows": true
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "TIME_PERIOD"
+          }
+        },
+        {
+          "id": "returned-dimensions-match",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "coverage",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "source": "transition_arguments",
+            "transition": "request-observations",
+            "pointer": "/arguments"
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "time"
+          }
+        },
+        {
+          "id": "observation-status-usable",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "status",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "value": [
+              null,
+              ""
+            ]
+          }
+        },
+        {
+          "id": "returned-codes-supported",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "dimension_membership",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "source": "handoff",
+            "pointer": "/value/result/dataset",
+            "dataset_rows": true
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "TIME_PERIOD",
+            "unit": "unit",
+            "freq": "freq"
+          }
+        }
       ],
-      "terminal_states": ["json_stat_dataset_ready"],
+      "terminal_states": [
+        "json_stat_dataset_ready"
+      ],
       "transitions": [
-        {"id": "request-observations", "from": "query_parameters_pending", "to": "observations_retrieved", "tool": "eurostat.getData", "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}", "model_supplies_arguments": true},
-        {"id": "materialize-json-stat", "from": "observations_retrieved", "to": "json_stat_dataset_ready", "tool": "dataset.inspect", "arguments": "{}", "bindings": [
-          {"target": "/resource", "from": "request-observations", "source": "/resources/0/uri"}
-        ]}
+        {
+          "id": "request-observations",
+          "from": "query_parameters_pending",
+          "to": "observations_retrieved",
+          "tool": "eurostat.getData",
+          "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}",
+          "model_supplies_arguments": true
+        },
+        {
+          "id": "materialize-json-stat",
+          "from": "observations_retrieved",
+          "to": "json_stat_dataset_ready",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "request-observations",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
       ]
     },
     {
@@ -465,8 +1061,18 @@
       "workflow_revision": "v1",
       "family": "development",
       "graph_revision": "development-regression-repair-graph@v1",
-      "required_capabilities": ["repository.search", "repository.read", "workspace.modify", "development.build", "development.test", "diagnostics.compile", "diagnostics.test_failures"],
-      "required_context": ["context.repository.available"]
+      "required_capabilities": [
+        "repository.search",
+        "repository.read",
+        "workspace.modify",
+        "development.build",
+        "development.test",
+        "diagnostics.compile",
+        "diagnostics.test_failures"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
     },
     {
       "id": "research-report-composition-v1",
@@ -475,39 +1081,133 @@
       "workflow_revision": "v2",
       "family": "artifact",
       "graph_revision": "artifact-report-graph@v1",
-      "optional_capabilities": ["artifact.export"],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
       "start_state": "ready",
-      "terminal_states": ["complete"],
+      "terminal_states": [
+        "complete"
+      ],
       "transitions": [
-        {"id":"compose-findings","from":"ready","to":"findings","kind":"artifact_compose","artifact_profile_ref":"research","artifact_profile_revision":"v2","artifact_section_id":"findings"},
-        {"id":"compose-limitations","from":"findings","to":"render","kind":"artifact_compose","artifact_profile_ref":"research","artifact_profile_revision":"v2","artifact_section_id":"limitations"},
-        {"id":"publish-report","from":"render","to":"complete","kind":"tool","tool":"artifact.export","arguments":"{\"format\":\"markdown\",\"name\":\"research-report\"}"}
+        {
+          "id": "compose-findings",
+          "from": "ready",
+          "to": "findings",
+          "kind": "artifact_compose",
+          "artifact_profile_ref": "research",
+          "artifact_profile_revision": "v2",
+          "artifact_section_id": "findings"
+        },
+        {
+          "id": "compose-limitations",
+          "from": "findings",
+          "to": "render",
+          "kind": "artifact_compose",
+          "artifact_profile_ref": "research",
+          "artifact_profile_revision": "v2",
+          "artifact_section_id": "limitations"
+        },
+        {
+          "id": "publish-report",
+          "from": "render",
+          "to": "complete",
+          "kind": "tool",
+          "tool": "artifact.export",
+          "arguments": "{\"format\":\"markdown\",\"name\":\"research-report\"}"
+        }
       ]
     }
   ],
   "artifact_profiles": [
     {
-      "id":"research","revision":"v2","title":"Research report",
-      "purpose":"A source-grounded synthesis that distinguishes observations, conclusions and unresolved limitations.",
-      "sections":[
-        {"id":"findings","title":"Findings","purpose":"Summarize the findings supported by the provided research and plan observations.","required":true,"evidence_relations":["supports","contradicts","qualifies"],"allowed_block_kinds":["observation","conclusion"]},
-        {"id":"limitations","title":"Limitations and open questions","purpose":"Record contradictions, incomplete coverage, unsupported claims and unresolved questions.","required":false,"evidence_relations":["contradicts","qualifies","inconclusive"],"allowed_block_kinds":["observation","conclusion","recommendation"]}
+      "id": "research",
+      "revision": "v2",
+      "title": "Research report",
+      "purpose": "A source-grounded synthesis that distinguishes observations, conclusions and unresolved limitations.",
+      "sections": [
+        {
+          "id": "findings",
+          "title": "Findings",
+          "purpose": "Summarize the findings supported by the provided research and plan observations.",
+          "required": true,
+          "evidence_relations": [
+            "supports",
+            "contradicts",
+            "qualifies"
+          ],
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion"
+          ]
+        },
+        {
+          "id": "limitations",
+          "title": "Limitations and open questions",
+          "purpose": "Record contradictions, incomplete coverage, unsupported claims and unresolved questions.",
+          "required": false,
+          "evidence_relations": [
+            "contradicts",
+            "qualifies",
+            "inconclusive"
+          ],
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
       ]
     },
     {
-      "id":"technical_analysis","revision":"v1","title":"Technical analysis",
-      "purpose":"Compare verified observations and explain bounded conclusions and tradeoffs.",
-      "sections":[
-        {"id":"observations","title":"Observed facts","purpose":"Present directly observed tool and source results.","allowed_block_kinds":["observation"]},
-        {"id":"analysis","title":"Analysis and limitations","purpose":"Draw bounded conclusions and preserve uncertainty and conflicting evidence.","allowed_block_kinds":["observation","conclusion","recommendation"]}
+      "id": "technical_analysis",
+      "revision": "v1",
+      "title": "Technical analysis",
+      "purpose": "Compare verified observations and explain bounded conclusions and tradeoffs.",
+      "sections": [
+        {
+          "id": "observations",
+          "title": "Observed facts",
+          "purpose": "Present directly observed tool and source results.",
+          "allowed_block_kinds": [
+            "observation"
+          ]
+        },
+        {
+          "id": "analysis",
+          "title": "Analysis and limitations",
+          "purpose": "Draw bounded conclusions and preserve uncertainty and conflicting evidence.",
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
       ]
     },
     {
-      "id":"dataset_analysis","revision":"v1","title":"Dataset analysis",
-      "purpose":"Summarize a dataset analysis with source identity, method, results and limitations.",
-      "sections":[
-        {"id":"method","title":"Dataset and method","purpose":"Identify the dataset, relevant schema and transformations from host observations.","allowed_block_kinds":["observation"]},
-        {"id":"results","title":"Results and limitations","purpose":"Report calculated findings and coverage limits grounded in structured results.","allowed_block_kinds":["observation","conclusion","recommendation"]}
+      "id": "dataset_analysis",
+      "revision": "v1",
+      "title": "Dataset analysis",
+      "purpose": "Summarize a dataset analysis with source identity, method, results and limitations.",
+      "sections": [
+        {
+          "id": "method",
+          "title": "Dataset and method",
+          "purpose": "Identify the dataset, relevant schema and transformations from host observations.",
+          "allowed_block_kinds": [
+            "observation"
+          ]
+        },
+        {
+          "id": "results",
+          "title": "Results and limitations",
+          "purpose": "Report calculated findings and coverage limits grounded in structured results.",
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
       ]
     }
   ],
@@ -519,23 +1219,222 @@
       "purpose": "Establish repository evidence before proposing a change.",
       "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
       "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
-      "required_capabilities": ["tool.repository"],
+      "required_capabilities": [
+        "tool.repository"
+      ],
       "workflow_policy": "preferred",
       "workflow_bindings": [
-        {"workflow_ref": "workflow://repository/inspection", "workflow_revision": "v1"}
+        {
+          "workflow_ref": "workflow://repository/inspection",
+          "workflow_revision": "v1"
+        }
       ],
       "next_action": "orient",
       "constraints": [
-        {"id": "read-only", "description": "Do not modify the workspace during investigation.", "hard": true}
+        {
+          "id": "read-only",
+          "description": "Do not modify the workspace during investigation.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+        {
+          "id": "workspace",
+          "statement": "A controlled repository workspace is available.",
+          "confidence": 0.9
+        }
       ],
       "steps": [
-        {"id": "orient", "title": "Orient", "objective": "Identify the relevant repository area and available evidence."},
-        {"id": "trace", "title": "Trace contract", "objective": "Inspect the contract, implementation, direct callers and relevant tests.", "depends_on": ["orient"]},
-        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Distinguish observed behavior from unverified inference.", "depends_on": ["trace"]},
-        {"id": "answer", "title": "Answer", "objective": "Answer from the established evidence.", "depends_on": ["establish-evidence"]}
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Identify the relevant repository area and available evidence."
+        },
+        {
+          "id": "trace",
+          "title": "Trace contract",
+          "objective": "Inspect the contract, implementation, direct callers and relevant tests.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "establish-evidence",
+          "title": "Establish evidence",
+          "objective": "Distinguish observed behavior from unverified inference.",
+          "depends_on": [
+            "trace"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Answer from the established evidence.",
+          "depends_on": [
+            "establish-evidence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "code-overview-v1",
+      "source_revision": "agent-workflows-starter@v30",
+      "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
+      "purpose": "Orient the user in a codebase using host-provided structure and analysis capabilities.",
+      "goal": "Describe the relevant repository structure and available semantic analysis without inventing relationships.",
+      "success_criteria": "The overview distinguishes semantic results from text matches and records coverage and provider limitations.",
+      "required_capabilities": [
+        "tool.repository",
+        "code.inspect"
+      ],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://code/overview",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "inspect-capabilities",
+      "constraints": [
+        {
+          "id": "read-only",
+          "description": "Inspect repository content without modifying it.",
+          "hard": true
+        },
+        {
+          "id": "semantic-provenance",
+          "description": "Label the method and limits of every code relationship.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "repository",
+          "statement": "The host has bound an authorized repository root.",
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "id": "inspect-capabilities",
+          "title": "Inspect capabilities",
+          "objective": "Check the authorized repository and report which semantic code operations are available."
+        },
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "List and read only the repository areas needed to answer the user's question.",
+          "depends_on": [
+            "inspect-capabilities"
+          ]
+        },
+        {
+          "id": "map-symbols",
+          "title": "Map symbols",
+          "objective": "Use semantic symbol and reference operations when available; otherwise keep text matches explicitly non-semantic.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report overview",
+          "objective": "Summarize inspected structure, analysis coverage and unresolved limitations.",
+          "depends_on": [
+            "map-symbols"
+          ]
+        }
+      ],
+      "procedure_refs": [
+        "code-analysis-evidence-v1"
+      ]
+    },
+    {
+      "id": "code-entry-point-investigation-v1",
+      "source_revision": "agent-workflows-starter@v30",
+      "selection_description": "Trace an explicitly selected source symbol through its immediate call relationships.",
+      "purpose": "Investigate what a source entry point may call while preserving code anchors and uncertainty.",
+      "goal": "Return a bounded semantic call neighborhood and explain what the analysis cannot establish.",
+      "success_criteria": "Every returned edge comes from the configured semantic provider, includes code locations, and is described as a possible static relationship rather than observed execution.",
+      "required_capabilities": [
+        "tool.repository",
+        "code.inspect",
+        "code.symbols",
+        "code.calls"
+      ],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://code/entry-point-investigation",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "check-provider",
+      "constraints": [
+        {
+          "id": "explicit-entry",
+          "description": "Start only from a symbol and source location selected from host-returned code results or supplied by the user.",
+          "hard": true
+        },
+        {
+          "id": "no-execution-claim",
+          "description": "Do not describe static call relationships as an executed or feasible path.",
+          "hard": true
+        },
+        {
+          "id": "bounded-analysis",
+          "description": "Respect the provider's one-hop depth, result count and timeout limits.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "semantic-provider",
+          "statement": "Semantic call analysis may be unavailable; if so, report the limitation and do not replace it with guessed call edges.",
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "id": "check-provider",
+          "title": "Check provider",
+          "objective": "Inspect repository analysis capabilities and confirm semantic call support."
+        },
+        {
+          "id": "select-entry",
+          "title": "Select entry point",
+          "objective": "Resolve the requested symbol to a host-returned definition and exact code location.",
+          "depends_on": [
+            "check-provider"
+          ]
+        },
+        {
+          "id": "expand-calls",
+          "title": "Expand calls",
+          "objective": "Request one-hop callers or callees for the selected definition and preserve provider results and limitations.",
+          "depends_on": [
+            "select-entry"
+          ]
+        },
+        {
+          "id": "inspect-code",
+          "title": "Inspect code",
+          "objective": "Read the bounded source ranges needed to explain returned relationships and identify unresolved calls.",
+          "depends_on": [
+            "expand-calls"
+          ]
+        },
+        {
+          "id": "summarize",
+          "title": "Summarize",
+          "objective": "Separate provider-resolved relations, source observations, interpretation and unknowns.",
+          "depends_on": [
+            "inspect-code"
+          ]
+        }
+      ],
+      "procedure_refs": [
+        "code-analysis-evidence-v1"
       ]
     },
     {
@@ -545,26 +1444,83 @@
       "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
       "goal": "Implement the requested repository change safely.",
       "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified, and the resulting diff is inspected.",
-      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "required_capabilities": [
+        "tool.repository",
+        "tool.workspace"
+      ],
       "workflow_policy": "preferred",
       "workflow_bindings": [
-        {"workflow_ref": "workflow://repository/change", "workflow_revision": "v1"}
+        {
+          "workflow_ref": "workflow://repository/change",
+          "workflow_revision": "v1"
+        }
       ],
       "next_action": "orient",
       "constraints": [
-        {"id": "minimal-scope", "description": "Keep the change within the requested scope.", "hard": true},
-        {"id": "evidence", "description": "Do not claim verification without test or inspection evidence.", "hard": true}
+        {
+          "id": "minimal-scope",
+          "description": "Keep the change within the requested scope.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Do not claim verification without test or inspection evidence.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "workspace", "statement": "A controlled repository workspace is available.", "confidence": 0.9}
+        {
+          "id": "workspace",
+          "statement": "A controlled repository workspace is available.",
+          "confidence": 0.9
+        }
       ],
       "steps": [
-        {"id": "orient", "title": "Orient", "objective": "Identify affected code, contracts and relevant tests."},
-        {"id": "design", "title": "Design", "objective": "Choose the smallest coherent change that satisfies the request.", "depends_on": ["orient"]},
-        {"id": "implement", "title": "Implement", "objective": "Apply the scoped implementation change.", "depends_on": ["design"]},
-        {"id": "verify", "title": "Verify", "objective": "Run focused verification and retain the evidence.", "depends_on": ["implement"]},
-        {"id": "inspect-diff", "title": "Inspect diff", "objective": "Inspect the resulting diff for scope and unintended changes.", "depends_on": ["verify"]},
-        {"id": "answer", "title": "Answer", "objective": "Report the verified outcome and remaining limits.", "depends_on": ["inspect-diff"]}
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Identify affected code, contracts and relevant tests."
+        },
+        {
+          "id": "design",
+          "title": "Design",
+          "objective": "Choose the smallest coherent change that satisfies the request.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "implement",
+          "title": "Implement",
+          "objective": "Apply the scoped implementation change.",
+          "depends_on": [
+            "design"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "Run focused verification and retain the evidence.",
+          "depends_on": [
+            "implement"
+          ]
+        },
+        {
+          "id": "inspect-diff",
+          "title": "Inspect diff",
+          "objective": "Inspect the resulting diff for scope and unintended changes.",
+          "depends_on": [
+            "verify"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Report the verified outcome and remaining limits.",
+          "depends_on": [
+            "inspect-diff"
+          ]
+        }
       ]
     },
     {
@@ -574,26 +1530,86 @@
       "purpose": "Repair a regression while preserving the responsible trust boundary.",
       "goal": "Diagnose and correct the reported regression.",
       "success_criteria": "The failure is reproduced or bounded by evidence, the responsible boundary is isolated, a focused guard exists, and adjacent verification passes.",
-      "required_capabilities": ["tool.repository", "tool.workspace"],
+      "required_capabilities": [
+        "tool.repository",
+        "tool.workspace"
+      ],
       "workflow_policy": "preferred",
       "workflow_bindings": [
-        {"workflow_ref": "workflow://development/regression-repair", "workflow_revision": "v1"}
+        {
+          "workflow_ref": "workflow://development/regression-repair",
+          "workflow_revision": "v1"
+        }
       ],
       "next_action": "reproduce",
       "constraints": [
-        {"id": "trust-boundary", "description": "Do not broaden model authority while correcting the regression.", "hard": true}
+        {
+          "id": "trust-boundary",
+          "description": "Do not broaden model authority while correcting the regression.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "reproducible", "statement": "A bounded failing scenario can be reproduced or inspected.", "confidence": 0.8}
+        {
+          "id": "reproducible",
+          "statement": "A bounded failing scenario can be reproduced or inspected.",
+          "confidence": 0.8
+        }
       ],
       "steps": [
-        {"id": "reproduce", "title": "Reproduce", "objective": "Establish a minimal failing scenario and capture its evidence."},
-        {"id": "classify", "title": "Classify", "objective": "Classify the failure and establish expected behavior.", "depends_on": ["reproduce"]},
-        {"id": "isolate", "title": "Isolate boundary", "objective": "Locate the responsible contract, implementation and execution boundary.", "depends_on": ["classify"]},
-        {"id": "guard", "title": "Establish guard", "objective": "Add or identify a focused regression guard before the repair.", "depends_on": ["isolate"]},
-        {"id": "repair", "title": "Repair", "objective": "Make the smallest correction at the responsible boundary.", "depends_on": ["guard"]},
-        {"id": "verify", "title": "Verify", "objective": "Run the focused guard and adjacent affected verification.", "depends_on": ["repair"]},
-        {"id": "answer", "title": "Answer", "objective": "Report diagnosis, correction and verification evidence.", "depends_on": ["verify"]}
+        {
+          "id": "reproduce",
+          "title": "Reproduce",
+          "objective": "Establish a minimal failing scenario and capture its evidence."
+        },
+        {
+          "id": "classify",
+          "title": "Classify",
+          "objective": "Classify the failure and establish expected behavior.",
+          "depends_on": [
+            "reproduce"
+          ]
+        },
+        {
+          "id": "isolate",
+          "title": "Isolate boundary",
+          "objective": "Locate the responsible contract, implementation and execution boundary.",
+          "depends_on": [
+            "classify"
+          ]
+        },
+        {
+          "id": "guard",
+          "title": "Establish guard",
+          "objective": "Add or identify a focused regression guard before the repair.",
+          "depends_on": [
+            "isolate"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair",
+          "objective": "Make the smallest correction at the responsible boundary.",
+          "depends_on": [
+            "guard"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "Run the focused guard and adjacent affected verification.",
+          "depends_on": [
+            "repair"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Report diagnosis, correction and verification evidence.",
+          "depends_on": [
+            "verify"
+          ]
+        }
       ]
     },
     {
@@ -603,29 +1619,96 @@
       "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
       "goal": "Analyse a resolved dataset and explain the verified result.",
       "success_criteria": "Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
-      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "required_capabilities": [
+        "tool.dataset",
+        "workflow.dataset"
+      ],
       "workflow_policy": "preferred",
-      "procedure_refs": ["data-understanding-v1", "choose-data-operation-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "data-understanding-v1",
+        "choose-data-operation-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"},
-        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
-        {"workflow_ref": "workflow://dataset/join", "workflow_revision": "v2"}
+        {
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v2"
+        },
+        {
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v2"
+        },
+        {
+          "workflow_ref": "workflow://dataset/join",
+          "workflow_revision": "v2"
+        }
       ],
       "next_action": "resolve-dataset",
       "constraints": [
-        {"id": "host-tool-contract", "description": "Use host-resolved dataset contracts; do not invent tool names or arguments.", "hard": true},
-        {"id": "evidence-before-answer", "description": "Do not present an unverified tool result as a completed answer.", "hard": true}
+        {
+          "id": "host-tool-contract",
+          "description": "Use host-resolved dataset contracts; do not invent tool names or arguments.",
+          "hard": true
+        },
+        {
+          "id": "evidence-before-answer",
+          "description": "Do not present an unverified tool result as a completed answer.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "dataset-access", "statement": "The host exposes an applicable dataset operation.", "confidence": 0.8}
+        {
+          "id": "dataset-access",
+          "statement": "The host exposes an applicable dataset operation.",
+          "confidence": 0.8
+        }
       ],
       "steps": [
-        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned resource and dataset authority."},
-        {"id": "understand-data", "title": "Establish data understanding", "objective": "Establish the fields needed by the question, using trusted schema or bounded inspection.", "depends_on": ["resolve-dataset"]},
-        {"id": "choose-operation", "title": "Choose operation", "objective": "Choose the smallest semantic operation that answers the question.", "depends_on": ["understand-data"]},
-        {"id": "execute-analysis", "title": "Execute analysis", "objective": "Execute the host-validated operation and retain its result as evidence.", "depends_on": ["choose-operation"]},
-        {"id": "verify-result", "title": "Verify result", "objective": "Check that the result matches the requested dataset and operation.", "depends_on": ["execute-analysis"]},
-        {"id": "answer", "title": "Answer", "objective": "Explain the verified result and its material limitations.", "depends_on": ["verify-result"]}
+        {
+          "id": "resolve-dataset",
+          "title": "Resolve dataset",
+          "objective": "Resolve the dataset through host-owned resource and dataset authority."
+        },
+        {
+          "id": "understand-data",
+          "title": "Establish data understanding",
+          "objective": "Establish the fields needed by the question, using trusted schema or bounded inspection.",
+          "depends_on": [
+            "resolve-dataset"
+          ]
+        },
+        {
+          "id": "choose-operation",
+          "title": "Choose operation",
+          "objective": "Choose the smallest semantic operation that answers the question.",
+          "depends_on": [
+            "understand-data"
+          ]
+        },
+        {
+          "id": "execute-analysis",
+          "title": "Execute analysis",
+          "objective": "Execute the host-validated operation and retain its result as evidence.",
+          "depends_on": [
+            "choose-operation"
+          ]
+        },
+        {
+          "id": "verify-result",
+          "title": "Verify result",
+          "objective": "Check that the result matches the requested dataset and operation.",
+          "depends_on": [
+            "execute-analysis"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Explain the verified result and its material limitations.",
+          "depends_on": [
+            "verify-result"
+          ]
+        }
       ]
     },
     {
@@ -635,29 +1718,99 @@
       "purpose": "Separate declared data-quality violations from descriptive observations.",
       "goal": "Assess relevant quality properties of a resolved dataset.",
       "success_criteria": "Schema, explicit validation rules, bounded profile checks and relevant anomaly observations are evaluated before findings are summarized.",
-      "required_capabilities": ["tool.dataset", "workflow.dataset"],
+      "required_capabilities": [
+        "tool.dataset",
+        "workflow.dataset"
+      ],
       "workflow_policy": "preferred",
-      "procedure_refs": ["data-understanding-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "data-understanding-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://dataset/quality", "workflow_revision": "v2"},
-        {"workflow_ref": "workflow://dataset/analysis", "workflow_revision": "v2"}
+        {
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v2"
+        },
+        {
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v2"
+        }
       ],
       "next_action": "resolve-dataset",
       "constraints": [
-        {"id": "violations-versus-observations", "description": "Do not present an outlier or descriptive observation as a data-quality violation without an explicit rule.", "hard": true},
-        {"id": "bounded-analysis", "description": "Keep validation, profiling and anomaly checks within host-provided bounds.", "hard": true}
+        {
+          "id": "violations-versus-observations",
+          "description": "Do not present an outlier or descriptive observation as a data-quality violation without an explicit rule.",
+          "hard": true
+        },
+        {
+          "id": "bounded-analysis",
+          "description": "Keep validation, profiling and anomaly checks within host-provided bounds.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "dataset-access", "statement": "The host exposes applicable dataset validation or profiling operations.", "confidence": 0.8}
+        {
+          "id": "dataset-access",
+          "statement": "The host exposes applicable dataset validation or profiling operations.",
+          "confidence": 0.8
+        }
       ],
       "steps": [
-        {"id": "resolve-dataset", "title": "Resolve dataset", "objective": "Resolve the dataset through host-owned authority."},
-        {"id": "establish-schema", "title": "Establish schema", "objective": "Establish the relevant schema and field semantics.", "depends_on": ["resolve-dataset"]},
-        {"id": "validate-rules", "title": "Validate rules", "objective": "Evaluate explicit data-quality rules when available.", "depends_on": ["establish-schema"]},
-        {"id": "profile-data", "title": "Profile data", "objective": "Profile relevant missingness, distributions or cardinality within bounds.", "depends_on": ["validate-rules"]},
-        {"id": "inspect-anomalies", "title": "Inspect anomalies", "objective": "Inspect relevant anomalies without treating them as violations by default.", "depends_on": ["profile-data"]},
-        {"id": "verify-findings", "title": "Verify findings", "objective": "Separate verified violations from descriptive observations.", "depends_on": ["inspect-anomalies"]},
-        {"id": "answer", "title": "Answer", "objective": "Summarize verified quality findings and limitations.", "depends_on": ["verify-findings"]}
+        {
+          "id": "resolve-dataset",
+          "title": "Resolve dataset",
+          "objective": "Resolve the dataset through host-owned authority."
+        },
+        {
+          "id": "establish-schema",
+          "title": "Establish schema",
+          "objective": "Establish the relevant schema and field semantics.",
+          "depends_on": [
+            "resolve-dataset"
+          ]
+        },
+        {
+          "id": "validate-rules",
+          "title": "Validate rules",
+          "objective": "Evaluate explicit data-quality rules when available.",
+          "depends_on": [
+            "establish-schema"
+          ]
+        },
+        {
+          "id": "profile-data",
+          "title": "Profile data",
+          "objective": "Profile relevant missingness, distributions or cardinality within bounds.",
+          "depends_on": [
+            "validate-rules"
+          ]
+        },
+        {
+          "id": "inspect-anomalies",
+          "title": "Inspect anomalies",
+          "objective": "Inspect relevant anomalies without treating them as violations by default.",
+          "depends_on": [
+            "profile-data"
+          ]
+        },
+        {
+          "id": "verify-findings",
+          "title": "Verify findings",
+          "objective": "Separate verified violations from descriptive observations.",
+          "depends_on": [
+            "inspect-anomalies"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Summarize verified quality findings and limitations.",
+          "depends_on": [
+            "verify-findings"
+          ]
+        }
       ]
     },
     {
@@ -667,23 +1820,77 @@
       "purpose": "Orient the user to a supplied resource or answer their explicit document question from bounded content and structured tables.",
       "goal": "Establish a concise, source-grounded understanding of the supplied resource and identify what the user may want to do next.",
       "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, extraction limits are stated, no unsupported research or edits are introduced, and the user is asked what they want next when intent is still open.",
-      "required_capabilities": ["resource.read"],
+      "required_capabilities": [
+        "resource.read"
+      ],
       "workflow_policy": "preferred",
-      "procedure_refs": ["document-table-analysis-v1", "data-understanding-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "document-table-analysis-v1",
+        "data-understanding-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://resource/document-analysis", "workflow_revision": "v7"}
+        {
+          "workflow_ref": "workflow://resource/document-analysis",
+          "workflow_revision": "v7"
+        }
       ],
       "constraints": [
-        {"id": "resource-identity", "description": "Use only host-provided resource references and representations.", "hard": true},
-        {"id": "bounded-inspection", "description": "Keep resource reads and table analysis within host-provided bounds; host controls chunking and read cursors.", "hard": true},
-        {"id": "no-unsolicited-research", "description": "For an initial orientation, do not perform external research or edit the document; later workflows are selected only after the user states the next goal.", "hard": true}
+        {
+          "id": "resource-identity",
+          "description": "Use only host-provided resource references and representations.",
+          "hard": true
+        },
+        {
+          "id": "bounded-inspection",
+          "description": "Keep resource reads and table analysis within host-provided bounds; host controls chunking and read cursors.",
+          "hard": true
+        },
+        {
+          "id": "no-unsolicited-research",
+          "description": "For an initial orientation, do not perform external research or edit the document; later workflows are selected only after the user states the next goal.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "resolve-resource", "title": "Resolve resource", "objective": "Use the host-provided resource identity."},
-        {"id": "inspect-resource", "title": "Inspect resource", "objective": "Inspect available representations and relevant structure.", "depends_on": ["resolve-resource"]},
-        {"id": "inspect-tables", "title": "Inspect tables", "objective": "If structured tables are present, resolve one through its host identity.", "depends_on": ["inspect-resource"]},
-        {"id": "establish-evidence", "title": "Establish evidence", "objective": "Ground the answer in returned text or bounded table results.", "depends_on": ["inspect-resource", "inspect-tables"]},
-        {"id": "orient", "title": "Orient", "objective": "Give a concise overview grounded in inspected resource content, disclose extraction limits, and ask what the user wants to do next if no specific question was supplied.", "depends_on": ["establish-evidence"]}
+        {
+          "id": "resolve-resource",
+          "title": "Resolve resource",
+          "objective": "Use the host-provided resource identity."
+        },
+        {
+          "id": "inspect-resource",
+          "title": "Inspect resource",
+          "objective": "Inspect available representations and relevant structure.",
+          "depends_on": [
+            "resolve-resource"
+          ]
+        },
+        {
+          "id": "inspect-tables",
+          "title": "Inspect tables",
+          "objective": "If structured tables are present, resolve one through its host identity.",
+          "depends_on": [
+            "inspect-resource"
+          ]
+        },
+        {
+          "id": "establish-evidence",
+          "title": "Establish evidence",
+          "objective": "Ground the answer in returned text or bounded table results.",
+          "depends_on": [
+            "inspect-resource",
+            "inspect-tables"
+          ]
+        },
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Give a concise overview grounded in inspected resource content, disclose extraction limits, and ask what the user wants to do next if no specific question was supplied.",
+          "depends_on": [
+            "establish-evidence"
+          ]
+        }
       ]
     },
     {
@@ -693,22 +1900,71 @@
       "purpose": "Build a traceable answer from sources that directly support its claims.",
       "goal": "Answer the research question from retrieved source evidence.",
       "success_criteria": "Material claims are supported by fetched sources, time-sensitive details are checked, and inference is distinguished from retrieved fact.",
-      "required_capabilities": ["web.search", "web.fetch"],
+      "required_capabilities": [
+        "web.search",
+        "web.fetch"
+      ],
       "workflow_policy": "preferred",
-      "procedure_refs": ["web-source-evidence-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "web-source-evidence-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://web/research", "workflow_revision": "v5"}
+        {
+          "workflow_ref": "workflow://web/research",
+          "workflow_revision": "v5"
+        }
       ],
       "constraints": [
-        {"id": "source-grounding", "description": "Do not state material web claims without retrieved source evidence.", "hard": true},
-        {"id": "safe-fetch", "description": "Use only host-authorized safe HTTPS search and fetch tools.", "hard": true}
+        {
+          "id": "source-grounding",
+          "description": "Do not state material web claims without retrieved source evidence.",
+          "hard": true
+        },
+        {
+          "id": "safe-fetch",
+          "description": "Use only host-authorized safe HTTPS search and fetch tools.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "scope-question", "title": "Scope question", "objective": "Identify what evidence would answer the request."},
-        {"id": "discover-sources", "title": "Discover sources", "objective": "Search for relevant sources, favoring primary authorities.", "depends_on": ["scope-question"]},
-        {"id": "retrieve-evidence", "title": "Retrieve evidence", "objective": "Fetch candidate sources and inspect the supporting content.", "depends_on": ["discover-sources"]},
-        {"id": "verify-claims", "title": "Verify claims", "objective": "Match material claims to retrieved evidence and note dates or uncertainty.", "depends_on": ["retrieve-evidence"]},
-        {"id": "answer", "title": "Answer", "objective": "Provide a sourced answer and distinguish any inference.", "depends_on": ["verify-claims"]}
+        {
+          "id": "scope-question",
+          "title": "Scope question",
+          "objective": "Identify what evidence would answer the request."
+        },
+        {
+          "id": "discover-sources",
+          "title": "Discover sources",
+          "objective": "Search for relevant sources, favoring primary authorities.",
+          "depends_on": [
+            "scope-question"
+          ]
+        },
+        {
+          "id": "retrieve-evidence",
+          "title": "Retrieve evidence",
+          "objective": "Fetch candidate sources and inspect the supporting content.",
+          "depends_on": [
+            "discover-sources"
+          ]
+        },
+        {
+          "id": "verify-claims",
+          "title": "Verify claims",
+          "objective": "Match material claims to retrieved evidence and note dates or uncertainty.",
+          "depends_on": [
+            "retrieve-evidence"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Provide a sourced answer and distinguish any inference.",
+          "depends_on": [
+            "verify-claims"
+          ]
+        }
       ]
     },
     {
@@ -718,28 +1974,91 @@
       "purpose": "Turn a user-provided API or documentation URL into bounded, host-validated API tools.",
       "goal": "Answer the API request using an admitted OpenAPI operation and its verified response.",
       "success_criteria": "The OpenAPI document is fetched into a host resource, admitted by openapi.connect, and a permitted operation is used with bounded arguments and response evidence.",
-      "required_capabilities": ["workflow.openapi"],
+      "required_capabilities": [
+        "workflow.openapi"
+      ],
       "workflow_policy": "preferred",
-      "procedure_refs": ["openapi-resource-onboarding-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "openapi-resource-onboarding-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openapi/resource-onboarding", "workflow_revision": "v1"}
+        {
+          "workflow_ref": "workflow://openapi/resource-onboarding",
+          "workflow_revision": "v1"
+        }
       ],
       "next_action": "locate-specification",
       "constraints": [
-        {"id": "admitted-spec-only", "description": "Use only operations exposed from the admitted OpenAPI document; do not issue raw HTTP requests.", "hard": true},
-        {"id": "anonymous-read-only", "description": "Use only anonymous read-only HTTPS operations permitted by the host.", "hard": true},
-        {"id": "host-resource-identity", "description": "Pass only the host-returned resource_ref to openapi.connect.", "hard": true}
+        {
+          "id": "admitted-spec-only",
+          "description": "Use only operations exposed from the admitted OpenAPI document; do not issue raw HTTP requests.",
+          "hard": true
+        },
+        {
+          "id": "anonymous-read-only",
+          "description": "Use only anonymous read-only HTTPS operations permitted by the host.",
+          "hard": true
+        },
+        {
+          "id": "host-resource-identity",
+          "description": "Pass only the host-returned resource_ref to openapi.connect.",
+          "hard": true
+        }
       ],
       "assumptions": [
-        {"id": "network-authorized", "statement": "The host has enabled public HTTPS access for this request.", "confidence": 0.9}
+        {
+          "id": "network-authorized",
+          "statement": "The host has enabled public HTTPS access for this request.",
+          "confidence": 0.9
+        }
       ],
       "steps": [
-        {"id": "locate-specification", "title": "Locate specification", "objective": "Use the provided spec URL, or find the official JSON OpenAPI document for the requested API."},
-        {"id": "fetch-specification", "title": "Fetch specification", "objective": "Fetch the OpenAPI document with web.fetch and retain its host resource_ref.", "depends_on": ["locate-specification"]},
-        {"id": "admit-provider", "title": "Admit provider", "objective": "Pass the returned resource_ref to openapi.connect and use its admission result.", "depends_on": ["fetch-specification"]},
-        {"id": "invoke-operation", "title": "Invoke operation", "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.", "depends_on": ["admit-provider"]},
-        {"id": "verify-response", "title": "Verify response", "objective": "Ground the answer in the bounded API response and report relevant limitations.", "depends_on": ["invoke-operation"]},
-        {"id": "answer", "title": "Answer", "objective": "Answer the user from the verified API result.", "depends_on": ["verify-response"]}
+        {
+          "id": "locate-specification",
+          "title": "Locate specification",
+          "objective": "Use the provided spec URL, or find the official JSON OpenAPI document for the requested API."
+        },
+        {
+          "id": "fetch-specification",
+          "title": "Fetch specification",
+          "objective": "Fetch the OpenAPI document with web.fetch and retain its host resource_ref.",
+          "depends_on": [
+            "locate-specification"
+          ]
+        },
+        {
+          "id": "admit-provider",
+          "title": "Admit provider",
+          "objective": "Pass the returned resource_ref to openapi.connect and use its admission result.",
+          "depends_on": [
+            "fetch-specification"
+          ]
+        },
+        {
+          "id": "invoke-operation",
+          "title": "Invoke operation",
+          "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.",
+          "depends_on": [
+            "admit-provider"
+          ]
+        },
+        {
+          "id": "verify-response",
+          "title": "Verify response",
+          "objective": "Ground the answer in the bounded API response and report relevant limitations.",
+          "depends_on": [
+            "invoke-operation"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Answer the user from the verified API result.",
+          "depends_on": [
+            "verify-response"
+          ]
+        }
       ]
     },
     {
@@ -749,23 +2068,69 @@
       "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
       "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
       "success_criteria": "The search terms, bounded result set, record identities and material limitations are explicit before presenting candidates.",
-      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["scholarly-search-evidence-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "scholarly-search-evidence-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openalex/work-search", "workflow_revision": "v3"}
+        {
+          "workflow_ref": "workflow://openalex/work-search",
+          "workflow_revision": "v3"
+        }
       ],
       "next_action": "scope-search",
       "constraints": [
-        {"id": "configured-provider-only", "description": "Use only OpenAlex operations already exposed by the host provider.", "hard": true},
-        {"id": "bounded-result-set", "description": "Keep each API request within the host page and projection bounds.", "hard": true},
-        {"id": "ranking-is-not-quality", "description": "Do not present OpenAlex search ranking as a quality or relevance judgement without separate evidence.", "hard": true}
+        {
+          "id": "configured-provider-only",
+          "description": "Use only OpenAlex operations already exposed by the host provider.",
+          "hard": true
+        },
+        {
+          "id": "bounded-result-set",
+          "description": "Keep each API request within the host page and projection bounds.",
+          "hard": true
+        },
+        {
+          "id": "ranking-is-not-quality",
+          "description": "Do not present OpenAlex search ranking as a quality or relevance judgement without separate evidence.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "scope-search", "title": "Scope search", "objective": "Make the scholarly question and material search terms explicit."},
-        {"id": "search-works", "title": "Search works", "objective": "Use the configured OpenAlex works search with bounded projection and page size.", "depends_on": ["scope-search"]},
-        {"id": "inspect-records", "title": "Inspect records", "objective": "Retain returned work identities and inspect the metadata needed for the answer.", "depends_on": ["search-works"]},
-        {"id": "answer", "title": "Answer", "objective": "Present retrieved candidates, search boundaries and any inference separately.", "depends_on": ["inspect-records"]}
+        {
+          "id": "scope-search",
+          "title": "Scope search",
+          "objective": "Make the scholarly question and material search terms explicit."
+        },
+        {
+          "id": "search-works",
+          "title": "Search works",
+          "objective": "Use the configured OpenAlex works search with bounded projection and page size.",
+          "depends_on": [
+            "scope-search"
+          ]
+        },
+        {
+          "id": "inspect-records",
+          "title": "Inspect records",
+          "objective": "Retain returned work identities and inspect the metadata needed for the answer.",
+          "depends_on": [
+            "search-works"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Present retrieved candidates, search boundaries and any inference separately.",
+          "depends_on": [
+            "inspect-records"
+          ]
+        }
       ]
     },
     {
@@ -775,22 +2140,64 @@
       "purpose": "Establish bibliographic metadata for one identified scholarly work without relying on guessed citations.",
       "goal": "Retrieve and verify the requested OpenAlex work record.",
       "success_criteria": "A host-validated identifier is used and the returned title, authorship and publication metadata are distinguished from unavailable content or interpretation.",
-      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["bibliographic-record-validation-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "bibliographic-record-validation-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openalex/work-lookup", "workflow_revision": "v1"}
+        {
+          "workflow_ref": "workflow://openalex/work-lookup",
+          "workflow_revision": "v1"
+        }
       ],
       "next_action": "resolve-identifier",
       "constraints": [
-        {"id": "identifier-evidence", "description": "Use a user-provided identifier or one returned by an earlier host operation; do not invent work identities.", "hard": true},
-        {"id": "metadata-boundary", "description": "Do not infer full-text claims, study conclusions or citation context from bibliographic metadata alone.", "hard": true}
+        {
+          "id": "identifier-evidence",
+          "description": "Use a user-provided identifier or one returned by an earlier host operation; do not invent work identities.",
+          "hard": true
+        },
+        {
+          "id": "metadata-boundary",
+          "description": "Do not infer full-text claims, study conclusions or citation context from bibliographic metadata alone.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "resolve-identifier", "title": "Resolve identifier", "objective": "Use the supplied DOI/OpenAlex identifier or a host-returned candidate identity."},
-        {"id": "retrieve-work", "title": "Retrieve work", "objective": "Call the configured OpenAlex work lookup operation with its validated identifier.", "depends_on": ["resolve-identifier"]},
-        {"id": "verify-metadata", "title": "Verify metadata", "objective": "Verify the requested bibliographic fields against the returned record.", "depends_on": ["retrieve-work"]},
-        {"id": "answer", "title": "Answer", "objective": "Return verified metadata and state what the record does not establish.", "depends_on": ["verify-metadata"]}
+        {
+          "id": "resolve-identifier",
+          "title": "Resolve identifier",
+          "objective": "Use the supplied DOI/OpenAlex identifier or a host-returned candidate identity."
+        },
+        {
+          "id": "retrieve-work",
+          "title": "Retrieve work",
+          "objective": "Call the configured OpenAlex work lookup operation with its validated identifier.",
+          "depends_on": [
+            "resolve-identifier"
+          ]
+        },
+        {
+          "id": "verify-metadata",
+          "title": "Verify metadata",
+          "objective": "Verify the requested bibliographic fields against the returned record.",
+          "depends_on": [
+            "retrieve-work"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Return verified metadata and state what the record does not establish.",
+          "depends_on": [
+            "verify-metadata"
+          ]
+        }
       ]
     },
     {
@@ -800,22 +2207,65 @@
       "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
       "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
       "success_criteria": "Search scope, returned record identities, coverage limits and any exported artifact are grounded in the configured provider response.",
-      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["scholarly-search-evidence-v1", "literature-review-boundaries-v1", "analysis-evidence-v1"],
+      "procedure_refs": [
+        "scholarly-search-evidence-v1",
+        "literature-review-boundaries-v1",
+        "analysis-evidence-v1"
+      ],
       "workflow_bindings": [
-        {"workflow_ref": "workflow://openalex/literature-review", "workflow_revision": "v3"}
+        {
+          "workflow_ref": "workflow://openalex/literature-review",
+          "workflow_revision": "v3"
+        }
       ],
       "next_action": "define-review-scope",
       "constraints": [
-        {"id": "bounded-review", "description": "A single bounded OpenAlex retrieval is a candidate set, not a claim of exhaustive coverage.", "hard": true},
-        {"id": "preserve-provenance", "description": "Retain the returned provider resource or a user-requested exported artifact for follow-up work.", "hard": true}
+        {
+          "id": "bounded-review",
+          "description": "A single bounded OpenAlex retrieval is a candidate set, not a claim of exhaustive coverage.",
+          "hard": true
+        },
+        {
+          "id": "preserve-provenance",
+          "description": "Retain the returned provider resource or a user-requested exported artifact for follow-up work.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "define-review-scope", "title": "Define review scope", "objective": "State the question, search terms and intended limits for the candidate set."},
-        {"id": "retrieve-candidates", "title": "Retrieve candidates", "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.", "depends_on": ["define-review-scope"]},
-        {"id": "preserve-results", "title": "Preserve results", "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.", "depends_on": ["retrieve-candidates"]},
-        {"id": "answer", "title": "Answer", "objective": "Summarize the candidate set and make the review boundary explicit.", "depends_on": ["preserve-results"]}
+        {
+          "id": "define-review-scope",
+          "title": "Define review scope",
+          "objective": "State the question, search terms and intended limits for the candidate set."
+        },
+        {
+          "id": "retrieve-candidates",
+          "title": "Retrieve candidates",
+          "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.",
+          "depends_on": [
+            "define-review-scope"
+          ]
+        },
+        {
+          "id": "preserve-results",
+          "title": "Preserve results",
+          "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.",
+          "depends_on": [
+            "retrieve-candidates"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Summarize the candidate set and make the review boundary explicit.",
+          "depends_on": [
+            "preserve-results"
+          ]
+        }
       ]
     },
     {
@@ -825,22 +2275,78 @@
       "purpose": "Turn a research question into a traceable, bounded set of works using text and structured metadata.",
       "goal": "Return works grounded in explicit search terms, host-returned entity identities and OpenAlex filters.",
       "success_criteria": "Search terms, entity identity where used, applied filters, returned title/year/topic metadata and coverage limits are explicit.",
-      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["openalex-entity-resolution-v1", "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://openalex/entity-filtered-work-search", "workflow_revision": "v2"}],
+      "procedure_refs": [
+        "openalex-entity-resolution-v1",
+        "openalex-filtered-work-retrieval-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/entity-filtered-work-search",
+          "workflow_revision": "v2"
+        }
+      ],
       "next_action": "resolve-entity",
       "constraints": [
-        {"id": "returned-entity-only", "description": "Use only an author, institution or topic ID returned by the configured provider.", "hard": true},
-        {"id": "explicit-filter-boundary", "description": "Keep year and entity filters explicit and within the configured API contract.", "hard": true},
-        {"id": "text-search-boundary", "description": "Use works search for title and full-text discovery; use the returned metadata to verify title, year and topic.", "hard": true}
+        {
+          "id": "returned-entity-only",
+          "description": "Use only an author, institution or topic ID returned by the configured provider.",
+          "hard": true
+        },
+        {
+          "id": "explicit-filter-boundary",
+          "description": "Keep year and entity filters explicit and within the configured API contract.",
+          "hard": true
+        },
+        {
+          "id": "text-search-boundary",
+          "description": "Use works search for title and full-text discovery; use the returned metadata to verify title, year and topic.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "scope-search", "title": "Scope search", "objective": "Identify title/text terms and any author, institution, topic or year constraints."},
-        {"id": "resolve-entity", "title": "Resolve entity", "objective": "When a named author, institution or research topic is requested, search its configured collection and retain a returned identity.", "depends_on": ["scope-search"]},
-        {"id": "bind-filters", "title": "Bind filters", "objective": "Combine any returned entity identity with explicit year and other requested works filters.", "depends_on": ["resolve-entity"]},
-        {"id": "retrieve-works", "title": "Retrieve works", "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.", "depends_on": ["bind-filters"]},
-        {"id": "answer", "title": "Answer", "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.", "depends_on": ["retrieve-works"]}
+        {
+          "id": "scope-search",
+          "title": "Scope search",
+          "objective": "Identify title/text terms and any author, institution, topic or year constraints."
+        },
+        {
+          "id": "resolve-entity",
+          "title": "Resolve entity",
+          "objective": "When a named author, institution or research topic is requested, search its configured collection and retain a returned identity.",
+          "depends_on": [
+            "scope-search"
+          ]
+        },
+        {
+          "id": "bind-filters",
+          "title": "Bind filters",
+          "objective": "Combine any returned entity identity with explicit year and other requested works filters.",
+          "depends_on": [
+            "resolve-entity"
+          ]
+        },
+        {
+          "id": "retrieve-works",
+          "title": "Retrieve works",
+          "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.",
+          "depends_on": [
+            "bind-filters"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.",
+          "depends_on": [
+            "retrieve-works"
+          ]
+        }
       ]
     },
     {
@@ -850,23 +2356,87 @@
       "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
       "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
       "success_criteria": "The work identity is verified; abstract limits are explicit; any full-text resource is fetched from a returned open-access location and inspected before its claims are used.",
-      "required_capabilities": ["tool.openapi", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["bibliographic-record-validation-v1", "openalex-full-text-evidence-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://openalex/full-text-evidence", "workflow_revision": "v3"}],
+      "procedure_refs": [
+        "bibliographic-record-validation-v1",
+        "openalex-full-text-evidence-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v3"
+        }
+      ],
       "next_action": "resolve-work",
       "constraints": [
-        {"id": "abstract-first", "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.", "hard": true},
-        {"id": "returned-open-location-only", "description": "Fetch only a content URL or open-access location returned by the verified work record, using host-authorized web.fetch.", "hard": true},
-        {"id": "full-text-provenance", "description": "Ground full-text claims in the returned host resource and disclose truncation or unavailable text representation.", "hard": true}
+        {
+          "id": "abstract-first",
+          "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.",
+          "hard": true
+        },
+        {
+          "id": "returned-open-location-only",
+          "description": "Fetch only a content URL or open-access location returned by the verified work record, using host-authorized web.fetch.",
+          "hard": true
+        },
+        {
+          "id": "full-text-provenance",
+          "description": "Ground full-text claims in the returned host resource and disclose truncation or unavailable text representation.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "resolve-work", "title": "Resolve work", "objective": "Use a user-provided DOI/OpenAlex ID or a host-returned work identity."},
-        {"id": "retrieve-record", "title": "Retrieve record", "objective": "Retrieve the configured OpenAlex work record including abstract and declared open-access locations.", "depends_on": ["resolve-work"]},
-        {"id": "interpret-abstract", "title": "Interpret abstract", "objective": "Establish what the metadata and abstract directly support, and whether that answers the question.", "depends_on": ["retrieve-record"]},
-        {"id": "acquire-full-text", "title": "Acquire full text when needed", "objective": "If abstract evidence is insufficient and an open location is returned, fetch that exact URL into a host resource.", "depends_on": ["interpret-abstract"]},
-        {"id": "inspect-full-text", "title": "Inspect full text", "objective": "Read the host-materialized text representation; assess conclusions against results and methods, using discussion for interpretation and limitations.", "depends_on": ["acquire-full-text"]},
-        {"id": "answer", "title": "Answer", "objective": "State which claims come from metadata, abstract or full text, and disclose unavailable or truncated evidence.", "depends_on": ["interpret-abstract", "inspect-full-text"]}
+        {
+          "id": "resolve-work",
+          "title": "Resolve work",
+          "objective": "Use a user-provided DOI/OpenAlex ID or a host-returned work identity."
+        },
+        {
+          "id": "retrieve-record",
+          "title": "Retrieve record",
+          "objective": "Retrieve the configured OpenAlex work record including abstract and declared open-access locations.",
+          "depends_on": [
+            "resolve-work"
+          ]
+        },
+        {
+          "id": "interpret-abstract",
+          "title": "Interpret abstract",
+          "objective": "Establish what the metadata and abstract directly support, and whether that answers the question.",
+          "depends_on": [
+            "retrieve-record"
+          ]
+        },
+        {
+          "id": "acquire-full-text",
+          "title": "Acquire full text when needed",
+          "objective": "If abstract evidence is insufficient and an open location is returned, fetch that exact URL into a host resource.",
+          "depends_on": [
+            "interpret-abstract"
+          ]
+        },
+        {
+          "id": "inspect-full-text",
+          "title": "Inspect full text",
+          "objective": "Read the host-materialized text representation; assess conclusions against results and methods, using discussion for interpretation and limitations.",
+          "depends_on": [
+            "acquire-full-text"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "State which claims come from metadata, abstract or full text, and disclose unavailable or truncated evidence.",
+          "depends_on": [
+            "interpret-abstract",
+            "inspect-full-text"
+          ]
+        }
       ]
     },
     {
@@ -876,21 +2446,74 @@
       "purpose": "Resolve a user's statistical measure and coverage into candidate Eurostat table codes without guessing codes.",
       "goal": "Select a table whose returned title, category and coverage plausibly match the requested measure.",
       "success_criteria": "The statistical intent is explicit and every candidate code comes from the fetched Eurostat catalogue resource.",
-      "required_capabilities": ["tool.web", "tool.dataset", "workflow.dataset"],
+      "required_capabilities": [
+        "tool.web",
+        "tool.dataset",
+        "workflow.dataset"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["statistical-intent-and-measure-v1", "eurostat-catalog-discovery-v2", "structured-resource-dataset-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/catalog-discovery", "workflow_revision": "v7"}],
+      "procedure_refs": [
+        "statistical-intent-and-measure-v1",
+        "eurostat-catalog-discovery-v2",
+        "structured-resource-dataset-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/catalog-discovery",
+          "workflow_revision": "v7"
+        }
+      ],
       "next_action": "clarify-statistical-intent",
       "constraints": [
-        {"id": "returned-code-only", "description": "Use only a table code returned by the host-materialized Eurostat catalogue.", "hard": true},
-        {"id": "catalogue-is-not-definition", "description": "A catalogue title is a candidate description, not a substitute for SDMX dimension, unit or availability validation.", "hard": true}
+        {
+          "id": "returned-code-only",
+          "description": "Use only a table code returned by the host-materialized Eurostat catalogue.",
+          "hard": true
+        },
+        {
+          "id": "catalogue-is-not-definition",
+          "description": "A catalogue title is a candidate description, not a substitute for SDMX dimension, unit or availability validation.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "clarify-statistical-intent", "title": "Clarify statistical intent", "objective": "Establish measure, population, geography, period, unit and comparison before searching."},
-        {"id": "fetch-catalogue", "title": "Fetch catalogue", "objective": "Fetch the bounded English Eurostat table-of-contents TSV through web.fetch." , "depends_on": ["clarify-statistical-intent"]},
-        {"id": "materialize-catalogue", "title": "Materialize catalogue", "objective": "Pass the returned resource reference to dataset.inspect or dataset.sample; do not parse or invent rows manually.", "depends_on": ["fetch-catalogue"]},
-        {"id": "select-candidate", "title": "Select candidate", "objective": "Compare returned table codes, titles, category paths and coverage against the request.", "depends_on": ["materialize-catalogue"]},
-        {"id": "validate-metadata", "title": "Validate metadata", "objective": "Continue to the SDMX metadata workflow before constructing a Statistics API query.", "depends_on": ["select-candidate"]}
+        {
+          "id": "clarify-statistical-intent",
+          "title": "Clarify statistical intent",
+          "objective": "Establish measure, population, geography, period, unit and comparison before searching."
+        },
+        {
+          "id": "fetch-catalogue",
+          "title": "Fetch catalogue",
+          "objective": "Fetch the bounded English Eurostat table-of-contents TSV through web.fetch.",
+          "depends_on": [
+            "clarify-statistical-intent"
+          ]
+        },
+        {
+          "id": "materialize-catalogue",
+          "title": "Materialize catalogue",
+          "objective": "Pass the returned resource reference to dataset.inspect or dataset.sample; do not parse or invent rows manually.",
+          "depends_on": [
+            "fetch-catalogue"
+          ]
+        },
+        {
+          "id": "select-candidate",
+          "title": "Select candidate",
+          "objective": "Compare returned table codes, titles, category paths and coverage against the request.",
+          "depends_on": [
+            "materialize-catalogue"
+          ]
+        },
+        {
+          "id": "validate-metadata",
+          "title": "Validate metadata",
+          "objective": "Continue to the SDMX metadata workflow before constructing a Statistics API query.",
+          "depends_on": [
+            "select-candidate"
+          ]
+        }
       ]
     },
     {
@@ -900,21 +2523,73 @@
       "purpose": "Validate candidate identifiers and dimension codes before requesting observations.",
       "goal": "Establish a metadata-backed Eurostat query with compatible measure, geography, time and unit.",
       "success_criteria": "Dataflow/DSD references and every selected code come from returned SDMX metadata; unresolved dimensions remain explicit.",
-      "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "tool.dataset",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["eurostat-sdmx-metadata-resolution-v2", "statistical-intent-and-measure-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/metadata-resolution", "workflow_revision": "v9"}],
+      "procedure_refs": [
+        "eurostat-sdmx-metadata-resolution-v2",
+        "statistical-intent-and-measure-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/metadata-resolution",
+          "workflow_revision": "v9"
+        }
+      ],
       "next_action": "resolve-dataflow-structure",
       "constraints": [
-        {"id": "metadata-grounded-parameters", "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.", "hard": true},
-        {"id": "availability-before-query", "description": "Check content constraints and returned availability before requesting observations.", "hard": true}
+        {
+          "id": "metadata-grounded-parameters",
+          "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.",
+          "hard": true
+        },
+        {
+          "id": "availability-before-query",
+          "description": "Check content constraints and returned availability before requesting observations.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "resolve-dataflow-structure", "title": "Resolve dataflow and structure", "objective": "Use eurostat_sdmx.getStructure and the returned Dataflow structure reference to inspect the corresponding DSD."},
-        {"id": "inspect-dimensions", "title": "Inspect dimensions", "objective": "Materialize SDMX-ML as a host dataset and identify ordered dimensions, time dimension and measure." , "depends_on": ["resolve-dataflow-structure"]},
-        {"id": "resolve-code-lists", "title": "Resolve code lists", "objective": "Retrieve and inspect the code lists referenced by requested dimensions; retain only returned codes and labels.", "depends_on": ["inspect-dimensions"]},
-        {"id": "check-availability", "title": "Check availability", "objective": "Inspect content constraints and verify requested dimension combinations and periods.", "depends_on": ["resolve-code-lists"]},
-        {"id": "prepare-query", "title": "Prepare query", "objective": "Build the Statistics API arguments from the validated dataset and dimension codes.", "depends_on": ["check-availability"]}
+        {
+          "id": "resolve-dataflow-structure",
+          "title": "Resolve dataflow and structure",
+          "objective": "Use eurostat_sdmx.getStructure and the returned Dataflow structure reference to inspect the corresponding DSD."
+        },
+        {
+          "id": "inspect-dimensions",
+          "title": "Inspect dimensions",
+          "objective": "Materialize SDMX-ML as a host dataset and identify ordered dimensions, time dimension and measure.",
+          "depends_on": [
+            "resolve-dataflow-structure"
+          ]
+        },
+        {
+          "id": "resolve-code-lists",
+          "title": "Resolve code lists",
+          "objective": "Retrieve and inspect the code lists referenced by requested dimensions; retain only returned codes and labels.",
+          "depends_on": [
+            "inspect-dimensions"
+          ]
+        },
+        {
+          "id": "check-availability",
+          "title": "Check availability",
+          "objective": "Inspect content constraints and verify requested dimension combinations and periods.",
+          "depends_on": [
+            "resolve-code-lists"
+          ]
+        },
+        {
+          "id": "prepare-query",
+          "title": "Prepare query",
+          "objective": "Build the Statistics API arguments from the validated dataset and dimension codes.",
+          "depends_on": [
+            "check-availability"
+          ]
+        }
       ]
     },
     {
@@ -924,34 +2599,98 @@
       "purpose": "Retrieve bounded observations while preserving Eurostat query provenance and status metadata.",
       "goal": "Create a host dataset from JSON-stat and answer the statistical question using the ordinary dataset workflows.",
       "success_criteria": "The API request uses metadata-returned codes; the JSON-stat response is converted to long-form rows and retains source, dimensions, labels, values and status.",
-      "required_capabilities": ["tool.openapi", "tool.dataset", "workflow.openapi"],
+      "required_capabilities": [
+        "tool.openapi",
+        "tool.dataset",
+        "workflow.openapi"
+      ],
       "workflow_policy": "required",
-      "procedure_refs": ["json-stat-dataset-interpretation-v1", "structured-resource-dataset-v1", "analysis-evidence-v1"],
-      "workflow_bindings": [{"workflow_ref": "workflow://eurostat/data-retrieval", "workflow_revision": "v8"}],
+      "procedure_refs": [
+        "json-stat-dataset-interpretation-v1",
+        "structured-resource-dataset-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/data-retrieval",
+          "workflow_revision": "v8"
+        }
+      ],
       "next_action": "request-observations",
       "constraints": [
-        {"id": "validated-query-only", "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.", "hard": true},
-        {"id": "preserve-status", "description": "Do not discard JSON-stat status or confuse codes with labels.", "hard": true}
+        {
+          "id": "validated-query-only",
+          "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.",
+          "hard": true
+        },
+        {
+          "id": "preserve-status",
+          "description": "Do not discard JSON-stat status or confuse codes with labels.",
+          "hard": true
+        }
       ],
       "steps": [
-        {"id": "request-observations", "title": "Request observations", "objective": "Call eurostat.getData with the validated dataset code and repeated geo and time code fields."},
-        {"id": "materialize-json-stat", "title": "Materialize JSON-stat", "objective": "Use the host dataset importer to convert JSON-stat cells to bounded long-form rows with code, label, value and status columns.", "depends_on": ["request-observations"]},
-        {"id": "inspect-dataset", "title": "Inspect dataset", "objective": "Inspect the created dataset and preserve the source resource and exact query provenance.", "depends_on": ["materialize-json-stat"]},
-        {"id": "continue-analysis", "title": "Continue analysis", "objective": "Continue through workflow://dataset/analysis or workflow://dataset/quality for follow-up questions.", "depends_on": ["inspect-dataset"]},
-        {"id": "report", "title": "Report", "objective": "Explain values with units, labels, time coverage, status and selection limits.", "depends_on": ["continue-analysis"]}
+        {
+          "id": "request-observations",
+          "title": "Request observations",
+          "objective": "Call eurostat.getData with the validated dataset code and repeated geo and time code fields."
+        },
+        {
+          "id": "materialize-json-stat",
+          "title": "Materialize JSON-stat",
+          "objective": "Use the host dataset importer to convert JSON-stat cells to bounded long-form rows with code, label, value and status columns.",
+          "depends_on": [
+            "request-observations"
+          ]
+        },
+        {
+          "id": "inspect-dataset",
+          "title": "Inspect dataset",
+          "objective": "Inspect the created dataset and preserve the source resource and exact query provenance.",
+          "depends_on": [
+            "materialize-json-stat"
+          ]
+        },
+        {
+          "id": "continue-analysis",
+          "title": "Continue analysis",
+          "objective": "Continue through workflow://dataset/analysis or workflow://dataset/quality for follow-up questions.",
+          "depends_on": [
+            "inspect-dataset"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report",
+          "objective": "Explain values with units, labels, time coverage, status and selection limits.",
+          "depends_on": [
+            "continue-analysis"
+          ]
+        }
       ]
     },
     {
-      "id":"research-report-composition-v1",
-      "source_revision":"agent-workflows-starter@v26",
-      "selection_description":"Compose a report from already collected research, workflow and tool observations, preserving evidence links and gaps.",
-      "purpose":"Turn structured host observations into a revisioned, source-grounded report.",
-      "goal":"Compose and publish a grounded research report",
-      "success_criteria":"Each section is independently generated, references resolve against the plan snapshot, gaps remain visible, and the report resource retains provenance.",
-      "workflow_policy":"required",
-      "workflow_bindings":[{"workflow_ref":"workflow://artifact/research-report","workflow_revision":"v2"}],
-      "next_action":"compose",
-      "steps":[{"id":"compose","title":"Compose report","objective":"Compose report sections from the host-frozen evidence snapshot."}]
+      "id": "research-report-composition-v1",
+      "source_revision": "agent-workflows-starter@v26",
+      "selection_description": "Compose a report from already collected research, workflow and tool observations, preserving evidence links and gaps.",
+      "purpose": "Turn structured host observations into a revisioned, source-grounded report.",
+      "goal": "Compose and publish a grounded research report",
+      "success_criteria": "Each section is independently generated, references resolve against the plan snapshot, gaps remain visible, and the report resource retains provenance.",
+      "workflow_policy": "required",
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://artifact/research-report",
+          "workflow_revision": "v2"
+        }
+      ],
+      "next_action": "compose",
+      "steps": [
+        {
+          "id": "compose",
+          "title": "Compose report",
+          "objective": "Compose report sections from the host-frozen evidence snapshot."
+        }
+      ]
     }
   ]
 }

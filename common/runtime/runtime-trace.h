@@ -102,4 +102,7 @@ struct common_runtime_trace_entry {
     std::string app_server_tool_name;
     std::string app_tool_input_json;
     std::string app_tool_result_json;
+    // A validated, bounded visualization projection may be forwarded to the
+    // host UI without exposing the full native tool result in runtime events.
+    std::string visualization_json;
 };

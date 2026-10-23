@@ -43,6 +43,11 @@ struct common_native_tool_bindings {
     std::function<common_tool_execution_result(const std::string &)> document_tables;
     std::function<common_tool_execution_result(const std::string &)> document_table;
     std::function<common_tool_execution_result(const std::string &, const std::string &)> dataset_from_resource;
+    // Canonical source-code analysis bindings. The diagnostics callbacks below
+    // remain available to explicitly configured legacy tool definitions.
+    std::function<common_tool_execution_result(const std::string &)> code_symbols;
+    std::function<common_tool_execution_result(const std::string &)> code_references;
+    std::function<common_tool_execution_result(const std::string &)> code_calls;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_symbol;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_references;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_call_hierarchy;
