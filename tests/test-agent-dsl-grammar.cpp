@@ -157,6 +157,26 @@ void typed_contracts() {
         "grammar is not deterministic");
 }
 
+void array_ambiguity_contracts() {
+    const common_chat_tool checks{"checks", "Checks", R"({"type":"object","required":["rules"],"properties":{
+        "rules":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","required":["type","column"],
+        "properties":{"type":{"const":"numeric_range"},"column":{"type":"string"},
+        "min":{"type":"number"},"max":{"type":"number"}},"anyOf":[{"required":["min"]},{"required":["max"]}]}}}})", "{}"};
+    std::string error;
+    const auto grammar = common_build_tool_dsl_grammar({checks}, common_tool_dsl_grammar_form::action, error);
+    require(!grammar.empty(), error);
+    std::string text = "open! checks";
+    for (size_t i = 0; i < 12; ++i) {
+        const auto path = "\nrules[" + std::to_string(i) + "]";
+        text += path + ".type: numeric_range" + path + ".column: amount" + path + ".min: 0" + path + ".max: 10";
+    }
+    require(!matches(grammar, "open! checks\nrules[1].type: numeric_range\nrules[1].column: amount\nrules[1].min: 0"),
+        "bounded object list accepted an initial index other than zero");
+    require(!matches(grammar, "open! checks\nrules[0].type: numeric_range\nrules[0].column: amount\nrules[0].min: 0\nrules[0].type: numeric_range\nrules[0].column: amount\nrules[0].min: 0"),
+        "bounded object list repeated a completed item index");
+    require(matches(grammar, text), "overlapping array alternatives rejected a valid bounded list");
+}
+
 void projection_contracts() {
     const std::string schema = R"({"type":"object","required":["dataset","column"],"properties":{
         "dataset":{"type":"string"},"column":{"type":"string"}},"allOf":[{"required":["dataset"]}]})";
@@ -219,6 +239,7 @@ int main() {
     plan_contracts();
     nested_contracts();
     typed_contracts();
+    array_ambiguity_contracts();
     projection_contracts();
     catalog_contracts();
     return 0;

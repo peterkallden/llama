@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -146,6 +147,41 @@ public:
         return rule(nonempty ? selected : suffix.front(), initial);
     }
 
+    std::string dictionary_key(const json & properties) {
+        std::vector<std::string> excluded;
+        for (const auto & property : properties.items()) excluded.push_back(property.key());
+        const auto cache_key = json(excluded).dump();
+        const auto cached = dictionary_keys.find(cache_key);
+        if (cached != dictionary_keys.end()) return cached->second;
+        const std::string alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+        const auto visit = [&](const auto & self, const std::string & prefix) -> std::string {
+            if (prefix.size() > 256) { error = "DSL dictionary key exceeds its projection limit"; return "invalid"; }
+            std::set<char> next;
+            bool terminal = false;
+            for (const auto & name : excluded) {
+                if (name == prefix) terminal = true;
+                if (name.size() > prefix.size() && name.compare(0, prefix.size(), prefix) == 0 &&
+                        alphabet.find(name[prefix.size()]) != std::string::npos) next.insert(name[prefix.size()]);
+            }
+            std::string safe;
+            for (char ch : alphabet) if (!next.count(ch)) safe += ch == '-' ? "\\-" : std::string(1, ch);
+            std::string choices = safe.empty() ? "" : "[" + safe + "] dictionary-char*";
+            if (!prefix.empty() && !terminal) {
+                if (!choices.empty()) choices += " | ";
+                choices += "\"\"";
+            }
+            for (char ch : next) {
+                const auto tail = self(self, prefix + ch);
+                if (!choices.empty()) choices += " | ";
+                choices += literal(std::string(1, ch)) + " " + tail;
+            }
+            return rule(choices);
+        };
+        const auto result = visit(visit, {});
+        dictionary_keys.emplace(cache_key, result);
+        return result;
+    }
+
     std::string object(const json & schema, const std::string & path, size_t depth = 0, bool nonempty = false) {
         if (!schema.is_object() || depth > 12) { error = "invalid or excessively nested DSL object schema"; return "invalid"; }
         // Branch-specific field sets and requiredness are not flattened into a
@@ -196,7 +232,8 @@ public:
         if (!path.empty() && schema.value("additionalProperties", json(true)) != false) {
             const auto additional = schema.value("additionalProperties", json::object());
             const auto value = additional.is_object() ? scalar(additional) : "scalar-value";
-            fields.push_back({repeat(line(path + " dynamic-path \": \" " + value)), false});
+            const auto key = dictionary_key(properties);
+            fields.push_back({repeat(line(path + " \".\" " + key + " dynamic-tail \": \" " + value)), false});
         }
         return sequence(fields, nonempty);
     }
@@ -239,10 +276,44 @@ public:
                 directive = repeat(line(literal(annotation["directive"].get<std::string>()) + " \": \" directive-value"));
             }
             if (item.value("type", json()) == "object" || item.contains("properties") || item.contains("oneOf") || item.contains("anyOf")) {
-                const auto indexed = object(item, path + " \"[\" index \"]\"", depth + 1, true);
-                const auto repeated = repeat(indexed);
-                return rule(repeated + (directive.empty() ? "" : " | " + directive),
-                    first(repeated) + (directive.empty() ? "" : " | " + first(directive)));
+                std::string indexed;
+                // Decimal index continuity is not context-free in general.
+                // For modest declared bounds, generate a linear chain with
+                // literal indices instead of a repeatable generic index.
+                // Nested, larger and unbounded lists retain codec-checked
+                // indexing to avoid multiplying schema expansion costs.
+                const auto maximum = schema.value("maxItems", json());
+                const auto minimum = schema.value("minItems", json(0));
+                if (array_expansion_depth == 0 && maximum.is_number_integer() && maximum >= 0 && maximum.get<size_t>() <= 64) {
+                    const size_t count = maximum.get<size_t>();
+                    if (!minimum.is_number_integer() || minimum < 0 || minimum.get<size_t>() > count) {
+                        error = "invalid DSL object-array bounds"; return "invalid";
+                    }
+                    const size_t required = std::max<size_t>(minimum.get<size_t>(), 1);
+                    std::vector<std::string> entries;
+                    ++array_expansion_depth;
+                    for (size_t i = 0; i < count; ++i) {
+                        entries.push_back(object(item, path + " " + literal("[" + std::to_string(i) + "]"), depth + 1, true));
+                    }
+                    --array_expansion_depth;
+                    std::string tail, initial;
+                    for (size_t i = count; i-- > 0;) {
+                        const std::string rest = tail.empty() ? "" :
+                            (i + 1 < required ? " " + tail : " (" + tail + ")?");
+                        initial = first(entries[i]) + rest;
+                        tail = rule(entries[i] + rest, initial);
+                    }
+                    if (minimum == 0) {
+                        const auto empty = line(path + " \": []\"");
+                        if (tail.empty()) tail = empty;
+                        else tail = rule(tail + " | " + empty, first(tail) + " | " + first(empty));
+                    }
+                    indexed = tail;
+                } else {
+                    indexed = repeat(object(item, path + " \"[\" index \"]\"", depth + 1, true));
+                }
+                return directive.empty() ? indexed :
+                    rule(indexed + " | " + directive, first(indexed) + " | " + first(directive));
             }
             if (!directive.empty()) { error = "DSL flat directive requires object array items"; return "invalid"; }
             const auto value = scalar(item);
@@ -271,7 +342,9 @@ public:
 
 private:
     size_t count = 0;
+    size_t array_expansion_depth = 0;
     std::string prefix;
+    std::map<std::string, std::string> dictionary_keys;
     bool merge(json & base, const json & other) {
         if (!other.is_object()) { error = "DSL alternative must be an object"; return false; }
         for (const auto & entry : other.items()) {
@@ -352,7 +425,8 @@ static std::string build_tool_dsl_grammar(
     rules << plain_string_rules();
     rules << R"gbnf(alias ::= [a-zA-Z0-9_.-]{1,64}
 index ::= "0" | [1-9] [0-9]*
-dynamic-path ::= "." [a-zA-Z0-9_-]+ ("." [a-zA-Z0-9_-]+ | "[" index "]")*
+dictionary-char ::= [a-zA-Z0-9_\-]
+dynamic-tail ::= ("." dictionary-char+ | "[" index "]")*
 binding ::= "$" [a-zA-Z_] [a-zA-Z0-9_.-]*
 quoted-string ::= "\"" char* "\""
 string-value ::= quoted-string | plain-string

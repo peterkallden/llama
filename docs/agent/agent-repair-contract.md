@@ -138,6 +138,12 @@ entries inside alternatives. Contract rendering errors stop selection rather
 than silently replacing a contract with its tool name. The execution schema is
 not weakened: the host still resolves bindings and validates the final call.
 
+Object arrays with a declared `maxItems` of at most 64 use a finite, contiguous
+index chain starting at zero, at one expansion level per path. A completed item index cannot repeat or be skipped;
+its declared minimum is enforced as well. Nested, larger or unbounded array schemas
+retain codec-checked indexing rather than silently truncating valid lists.
+This is a grammar representation limit, not a data collection limit.
+
 Sampling is not a replacement for validation. Numeric/string bounds, exclusive
 alternative overlap, array index continuity and cardinality, dynamic dictionary
 key collisions, directive contents, reference freshness, and authorization

@@ -96,10 +96,12 @@ with (root / "interrupted-stdout.jsonl").open("w") as out, (root / "interrupted-
         deadline=time.monotonic()+args.timeout
         while time.monotonic()<deadline:
             evidence=(root / "interrupted-stderr.log").read_text()
-            if "purpose=draft" in evidence and "agent generation trace prompt: end" in evidence:
-                if "agent generation trace output:" in evidence:
+            draft_marker = "agent generation trace prompt: purpose=draft"
+            draft = evidence.rsplit(draft_marker, 1)[1] if draft_marker in evidence else ""
+            if draft and "agent generation trace prompt: end" in draft:
+                if "agent generation trace output:" in draft:
                     raise SystemExit("interruption missed the active-draft window")
-                match=re.search(r'time: "([^"]+)"', evidence)
+                match=re.search(r'time: "([^"]+)"', draft)
                 if not match:
                     raise SystemExit("interruption reached no verified clock observation")
                 preserved_time=match.group(1)
