@@ -1674,6 +1674,10 @@ public:
                 common_chat_msg repair_user{
                     "user",
                     "[Original user request]\n" + request.prompt +
+                    common_agent_render_input_resource_context(
+                        request.input_resources,
+                        generation_config.context_budgets.input_resources_chars,
+                        request.available_resources) +
                     common_agent_render_dataset_inventory(request.available_datasets,
                         generation_config.context_budgets.input_resources_chars) +
                     "\n[Existing selected step]\ntool: " + target.tool_name +

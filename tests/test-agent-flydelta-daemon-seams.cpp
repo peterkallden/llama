@@ -177,6 +177,7 @@ int main() {
             if (!binding.finalize_arm(actual_arm, observation, actual, callback_error)) return false;
             trial = {};
             trial.executed = actual.executed;
+            trial.overlay_applied = actual.overlay_applied;
             trial.host_evaluated = actual.host_evaluated;
             trial.verifier_known = actual.verifier_known;
             trial.passed = actual.verifier_passed;

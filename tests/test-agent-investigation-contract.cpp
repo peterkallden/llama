@@ -314,21 +314,21 @@ int main() {
     document.id = "document-a"; document.resource_uri = "resource://original/a";
     document.representation_uri = "resource://text/a";
     actor_case.sources.push_back(document);
-    common_investigation_statement statement;
-    statement.id = "statement-a"; statement.kind = common_investigation_statement_kind::reported_event;
-    statement.text = "Alex met Alex.";
-    statement.anchor = {document.id,document.representation_uri,0,14,0,"Alex met Alex.",true};
-    actor_case.statements.push_back(statement);
-    auto mention_anchor = statement.anchor;
+    common_investigation_statement actor_statement;
+    actor_statement.id = "statement-a"; actor_statement.kind = common_investigation_statement_kind::reported_event;
+    actor_statement.text = "Alex met Alex.";
+    actor_statement.anchor = {document.id,document.representation_uri,0,14,0,"Alex met Alex.",true};
+    actor_case.statements.push_back(actor_statement);
+    auto mention_anchor = actor_statement.anchor;
     mention_anchor.byte_length = 4; mention_anchor.quote = "Alex";
-    actor_case.actor_mentions.push_back({"mention-a",statement.id,"Alex","person",mention_anchor});
+    actor_case.actor_mentions.push_back({"mention-a",actor_statement.id,"Alex","person",mention_anchor});
     mention_anchor.byte_offset = 9;
-    actor_case.actor_mentions.push_back({"mention-b",statement.id,"Alex","person",mention_anchor});
+    actor_case.actor_mentions.push_back({"mention-b",actor_statement.id,"Alex","person",mention_anchor});
     actor_case.actors = {{"actor-a","Alex",{"mention-a"}},{"actor-b","Alex",{"mention-b"}}};
     check(common_investigation_case_validate(actor_case,error) && actor_case.actors.size() == 2,
         "equal names at distinct source positions must remain separate actor candidates");
-    actor_case.evidence_links.push_back({"identity-proposal","possible_same_actor","actor-a","actor-b",{statement.id},"Explicit comparison remains provisional.","model_proposal"});
-    actor_case.evidence_links.push_back({"event-proposal","possible_same_event",statement.id,actor_case.events.front().id,{statement.id},"Reported and recorded event may correspond.","model_proposal"});
+    actor_case.evidence_links.push_back({"identity-proposal","possible_same_actor","actor-a","actor-b",{actor_statement.id},"Explicit comparison remains provisional.","model_proposal"});
+    actor_case.evidence_links.push_back({"event-proposal","possible_same_event",actor_statement.id,actor_case.events.front().id,{actor_statement.id},"Reported and recorded event may correspond.","model_proposal"});
     check(common_investigation_case_validate(actor_case,error) && actor_case.actors.size() == 2 && actor_case.events.size() == 2,
         "proposed identity/event links must preserve distinct candidates and original log observations");
     common_investigation_case_revision actor_reloaded;
@@ -398,7 +398,7 @@ int main() {
     actor_case = actor_reloaded;
     common_investigation_claim document_hypothesis;
     document_hypothesis.id = "hypothesis-document"; document_hypothesis.text = "A testable explanation";
-    document_hypothesis.supporting_statement_ids = {statement.id}; actor_case.claims.push_back(document_hypothesis);
+    document_hypothesis.supporting_statement_ids = {actor_statement.id}; actor_case.claims.push_back(document_hypothesis);
     check(common_investigation_case_from_json(common_investigation_case_to_json(actor_case),actor_reloaded,error) &&
         actor_reloaded.claims.back().supporting_statement_ids == document_hypothesis.supporting_statement_ids,
         "hypothesis statement evidence must remain separate from log event evidence across reload");

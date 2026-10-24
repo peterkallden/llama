@@ -448,13 +448,15 @@ int main() {
     const auto installed_plans = bootstrap_runtime.plan_store->list(error);
     std::filesystem::remove(bootstrap_path);
     std::filesystem::remove(investigation_bootstrap_path);
-    if (!error.empty() || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
-            return plan.id == "bootstrap:llama-agent-host:global:workflow:startup-smoke" &&
-                plan.workflow_definition.has_value();
-        }) || std::none_of(installed_plans.begin(), installed_plans.end(), [](const auto & plan) {
-            return plan.id == "bootstrap:llama-agent-host:global:workflow:investigation-startup-smoke" &&
-                plan.workflow_definition.has_value();
-        })) {
+    const auto has_workflow = [&](const std::string & workflow_ref) {
+        return std::any_of(installed_plans.begin(), installed_plans.end(), [&](const auto & plan) {
+            return plan.kind == common_plan_kind::workflow && plan.workflow_definition.has_value() &&
+                plan.workflow_definition->workflow_ref == workflow_ref &&
+                plan.workflow_definition->workflow_revision == "v1";
+        });
+    };
+    if (!error.empty() || !has_workflow("workflow://startup-smoke") ||
+            !has_workflow("workflow://investigation/startup-smoke")) {
         bootstrap_runtime.data_store.reset();
         std::filesystem::remove_all(investigation_store_path);
         std::fprintf(stderr, "daemon bootstrap package workflow was not persisted: %s\n", error.c_str());

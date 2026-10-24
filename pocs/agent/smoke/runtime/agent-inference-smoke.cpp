@@ -520,7 +520,7 @@ static void test_runtime_generation_metadata() {
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].messages.size() == 3);
-    assert(inference.seen[1].messages[2].content.find("[Regeneration]") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("[Repair]") != std::string::npos);
     assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
     assert(inference.seen[3].purpose == common_agent_generation_purpose::reasoning);
     assert(inference.seen[4].purpose == common_agent_generation_purpose::reflection);
@@ -565,7 +565,7 @@ static void test_planner_regenerates_truncated_json() {
     assert(proposal.operations[1].step && proposal.operations[1].step->id == "answer");
     assert(inference.seen.size() == 2);
     assert(inference.seen[1].messages.size() == 3);
-    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("[Repair]") != std::string::npos);
 }
 
 static void test_planner_repairs_final_only_plan_without_binding_noise() {
@@ -591,8 +591,8 @@ static void test_planner_repairs_final_only_plan_without_binding_noise() {
     assert(proposal.operations[0].step->tool_call->name == "openalex.listWorks");
     assert(inference.seen.size() == 2);
     const auto & repair = inference.seen[1].messages[2].content;
+    assert(repair.find("[Repair] Return the complete corrected plan in the same format.") != std::string::npos);
     assert(repair.find("model plan steps require a tool or explicit mode: reasoning") != std::string::npos);
-    assert(repair.find("Do not emit a final or answer step") != std::string::npos);
     assert(repair.find("There are no current attached resources") == std::string::npos);
 }
 
@@ -654,7 +654,7 @@ static void test_planner_repairs_missing_arguments_after_structural_regeneration
     assert(proposal.operations[0].step && proposal.operations[0].step->tool_call);
     assert(proposal.operations[0].step->tool_call->arguments_json == R"({"search":"machine learning"})");
     assert(inference.seen.size() == 3);
-    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("[Repair]") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"required\":[\"args\"]") != std::string::npos);
     assert(inference.seen[2].json_schema.find("\"search\"") != std::string::npos);
     assert(inference.seen[2].messages[1].content.find("Selected tool: openalex.listWorks") != std::string::npos);
@@ -731,7 +731,8 @@ static void test_planner_rejects_and_replaces_invalid_model_tool_arguments() {
     assert(inference.seen[1].json_schema.find("\"dataset\"") != std::string::npos);
     const auto & repair_system = inference.seen[1].messages[1].content;
     const auto & repair = inference.seen[1].messages[2].content;
-    assert(repair_system.find("Use only fields from that tool's registered model-facing schema") != std::string::npos);
+    assert(repair_system.find("Use only declared fields and values from the request, existing args or scoped inventory.") != std::string::npos);
+    assert(repair_system.find("Tool contract:") != std::string::npos);
     assert(repair_system.find("dataset.inspect") != std::string::npos);
     assert(repair.find("unexpected contract field") != std::string::npos);
     assert(repair.find("dataset://local/sales") != std::string::npos);
@@ -862,8 +863,9 @@ static void test_planner_repairs_invalid_resource_binding() {
     assert(inference.seen.size() == 2);
     const auto & repair_prompt = inference.seen[1].messages[2].content;
     assert(repair_prompt.find("plan.binding.") != std::string::npos);
-    assert(repair_prompt.find("current attachment choices are: r1") != std::string::npos);
-    assert(repair_prompt.find("resource:'r1'") != std::string::npos);
+    assert(repair_prompt.find("<runtime_input_resources>") != std::string::npos);
+    assert(repair_prompt.find("Resource: id=r1 name=\"data.csv\"") != std::string::npos);
+    assert(repair_prompt.find("When the user refers to an unspecified attached file, use this single resource as the default") != std::string::npos);
 }
 
 static void test_planner_resolves_host_dataset_inventory() {
@@ -1046,9 +1048,11 @@ static void test_required_planner_failure_preserves_diagnostics() {
     assert(error.find("attempt 1") != std::string::npos);
     assert(error.find("missing.tool") != std::string::npos);
     assert(inference.seen.size() == 2);
+    const auto & planner_instructions = inference.seen[1].messages[1].content;
     const auto & repair_prompt = inference.seen[1].messages[2].content;
+    assert(planner_instructions.find("Tool execution is required: include at least one tool step, and no reasoning steps.") != std::string::npos);
     assert(repair_prompt.find("missing.tool") != std::string::npos);
-    assert(repair_prompt.find("executable tool step") != std::string::npos);
+    assert(repair_prompt.find("[Repair] Return the complete corrected plan in the same format.") != std::string::npos);
     assert(repair_prompt.find("attachment choices") == std::string::npos);
 }
 
@@ -1072,7 +1076,7 @@ static void test_reflection_regenerates_invalid_json() {
     assert(reflection.decision == common_reflection_decision::accept);
     assert(reflection.ready_to_answer);
     assert(inference.seen.size() == 2);
-    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
+    assert(inference.seen[1].messages[2].content.find("[Regeneration]") != std::string::npos);
 }
 
 static void test_memory_learning_regenerates_invalid_json() {
@@ -1345,12 +1349,7 @@ static void test_selection_generation_failure_metadata() {
 
 static void test_agent_runtime_smoke() {
     fake_agent_inference inference;
-    inference.queued = {
-        make_success(R"(not-json)"),
-        make_success(R"(still-not-json)"),
-        make_success("draft-content", 7),
-        make_success("reflect accept", 3),
-    };
+    inference.queued = {make_success("draft-content", 7)};
 
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -1378,10 +1377,6 @@ static void test_agent_runtime_smoke() {
     const std::vector<common_chat_tool> tools;
     std::string current_plan_id;
     auto tooling = make_runtime_tooling(tools);
-    common_agent_dataset_descriptor scoped_dataset;
-    scoped_dataset.ref.name = "orders";
-    scoped_dataset.ref.uri = "dataset://seed/orders";
-    tooling.available_datasets.push_back(scoped_dataset);
     common_agent_runtime_driver_execution execution{
         memories,
         plans,
@@ -1407,34 +1402,13 @@ static void test_agent_runtime_smoke() {
     assert(error.empty());
     assert(result.error.empty());
     assert(result.response == "draft-content");
-    assert(result.plan_id);
-    assert(!result.plan_id->empty());
-    bool saw_runtime_dataset_inventory = false;
-    bool saw_dataset_reference = false;
-    bool saw_dataset_uri = false;
-    if (!inference.seen.empty()) {
-        for (const auto & message : inference.seen[0].messages) {
-            saw_runtime_dataset_inventory = saw_runtime_dataset_inventory ||
-                message.content.find("<runtime_dataset_inventory>") != std::string::npos;
-            saw_dataset_reference = saw_dataset_reference ||
-                message.content.find("ref=$datasets.datasets[0].dataset") != std::string::npos;
-            saw_dataset_uri = saw_dataset_uri ||
-                message.content.find("uri=dataset://seed/orders") != std::string::npos;
-        }
-    }
-    if (!saw_runtime_dataset_inventory || !saw_dataset_reference || !saw_dataset_uri) {
-        std::fprintf(stderr, "runtime planner request did not contain the host dataset inventory\n");
-        std::abort();
-    }
-    assert(inference.seen.size() == 4);
-    assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[0].messages.size() == 3);
-    assert(inference.seen[0].messages[2].content.find("<runtime_dataset_inventory>") != std::string::npos);
-    assert(inference.seen[0].messages[2].content.find("name=orders") != std::string::npos);
-    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].messages[2].content.find("Regeneration") != std::string::npos);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
-    assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
+    assert(!result.plan_id);
+    assert(inference.seen.size() == 1);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::conversation);
+    assert(execution.family_chat_routed);
+    assert(!execution.require_tool_execution);
+    assert(!execution.pre_turn_trace.empty());
+    assert(execution.pre_turn_trace.back().detail.find("empty_authorized_catalog") != std::string::npos);
 }
 
 static void test_runtime_request_builder() {
@@ -1846,8 +1820,8 @@ static void test_tool_family_singleton_fast_path() {
 static void test_tool_family_preserves_explicit_tool_requirement() {
     fake_agent_inference inference;
     // Required mode has its own family-selection contract.  A legacy
-    // NO_TOOLS response must not route to ordinary chat; the bounded repair
-    // is also rejected here so the test proves the fail-closed seam.
+    // NO_TOOLS response must not route to ordinary chat. After the bounded
+    // repair also fails, runtime falls back to the authorized planner.
     inference.queued = {make_success("NO_TOOLS"), make_success("NO_TOOLS")};
     const std::vector<common_chat_tool> tools = {
         {"time.now", "Return the current UTC time.", R"({"type":"object","additionalProperties":false})"},
@@ -1892,11 +1866,16 @@ static void test_tool_family_preserves_explicit_tool_requirement() {
 
     common_agent_result result;
     assert(!run_agent_runtime_driver(execution, result, error));
-    assert(error == "tool family selection failed: required tool family selection must be a JSON object");
-    assert(inference.seen.size() == 2);
+    assert(!error.empty());
+    assert(inference.seen.size() == 3);
     assert(inference.seen.front().purpose == common_agent_generation_purpose::tool_family_selection);
     assert(inference.seen.front().json_schema.find("\"minItems\":1") != std::string::npos);
-    assert(inference.seen.back().json_schema.find("\"needs_tools\"") == std::string::npos);
+    assert(inference.seen[1].purpose == common_agent_generation_purpose::tool_family_selection);
+    assert(inference.seen[1].json_schema.find("\"minItems\":1") != std::string::npos);
+    assert(inference.seen.back().purpose == common_agent_generation_purpose::planner);
+    assert(inference.seen.back().messages[1].content.find("time.now") != std::string::npos);
+    assert(inference.seen.back().messages[1].content.find("Tool execution is required") != std::string::npos);
+    assert(execution.require_tool_execution);
 }
 
 static void test_chat_runtime_rejects_truncated_output() {
@@ -2117,12 +2096,7 @@ static void test_runtime_host_chat_smoke() {
 
 static void test_runtime_host_agent_smoke() {
     fake_agent_inference inference;
-    inference.queued = {
-        make_success(R"(not-json)"),
-        make_success(R"(still-not-json)"),
-        make_success("draft-content", 7),
-        make_success(R"({"decision":"accept"})", 3),
-    };
+    inference.queued = {make_success("draft-content", 7)};
 
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -2177,12 +2151,9 @@ static void test_runtime_host_agent_smoke() {
     assert(run_agent_runtime_host(execution, result, error));
     assert(error.empty());
     assert(result.response == "draft-content");
-    assert(result.plan_id);
-    assert(inference.seen.size() == 4);
-    assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
-    assert(inference.seen[3].purpose == common_agent_generation_purpose::reflection);
+    assert(!result.plan_id);
+    assert(inference.seen.size() == 1);
+    assert(inference.seen[0].purpose == common_agent_generation_purpose::conversation);
 }
 
 static void test_runtime_host_input_builders() {
@@ -2545,10 +2516,7 @@ static void test_runtime_resident_runtime_builder() {
     fake_agent_inference inference;
     inference.queued = {
         make_success("chat-response", 3),
-        make_success(R"(not-json)"),
-        make_success(R"(still-not-json)"),
         make_success("draft-content", 7),
-        make_success(R"({"decision":"accept"})", 3),
     };
     auto & runtime_session = runtime.runtime_host().session();
     auto * fake_model = reinterpret_cast<llama_model *>(0x11);
@@ -2579,28 +2547,18 @@ static void test_runtime_resident_runtime_builder() {
     assert(runtime.run_agent_prompt("Check status", "turn-11", 24, agent_result, error));
     assert(error.empty());
     assert(agent_result.response == "draft-content");
-    assert(agent_result.plan_id);
-    const auto completed = plans.get(*agent_result.plan_id, error);
-    assert(completed && completed->status == common_plan_status::completed);
+    assert(!agent_result.plan_id);
     assert(runtime.current_plan_id().empty());
-    assert(inference_ptr->seen.size() == 5);
+    assert(inference_ptr->seen.size() == 2);
     assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-9:conversation");
-    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[3].trace_id && *inference_ptr->seen[3].trace_id == "turn-11:draft");
-    assert(inference_ptr->seen[4].trace_id && *inference_ptr->seen[4].trace_id == "turn-11:reflection");
+    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:conversation");
     runtime_session.loaded_model.model = nullptr;
     runtime_session.loaded_model.loaded = false;
 }
 
 static void test_runtime_resident_agent_host_builder() {
     fake_agent_inference inference;
-    inference.queued = {
-        make_success(R"(not-json)"),
-        make_success(R"(still-not-json)"),
-        make_success("draft-content", 7),
-        make_success(R"({"decision":"accept"})", 3),
-    };
+    inference.queued = {make_success("draft-content", 7)};
 
     common_memory_in_memory_store memories;
     common_plan_in_memory_store plans;
@@ -2662,15 +2620,10 @@ static void test_runtime_resident_agent_host_builder() {
     assert(host.run_agent_prompt("Check status", "turn-11", 24, result, error));
     assert(error.empty());
     assert(result.response == "draft-content");
-    assert(result.plan_id);
-    const auto completed = plans.get(*result.plan_id, error);
-    assert(completed && completed->status == common_plan_status::completed);
+    assert(!result.plan_id);
     assert(host.current_plan_id().empty());
-    assert(inference_ptr->seen.size() == 4);
-    assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[1].trace_id && *inference_ptr->seen[1].trace_id == "turn-11:planner");
-    assert(inference_ptr->seen[2].trace_id && *inference_ptr->seen[2].trace_id == "turn-11:draft");
-    assert(inference_ptr->seen[3].trace_id && *inference_ptr->seen[3].trace_id == "turn-11:reflection");
+    assert(inference_ptr->seen.size() == 1);
+    assert(inference_ptr->seen[0].trace_id && *inference_ptr->seen[0].trace_id == "turn-11:conversation");
     runtime_session.loaded_model.model = nullptr;
     runtime_session.loaded_model.loaded = false;
 }

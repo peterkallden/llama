@@ -316,8 +316,7 @@ bool select_model_tool_families(
         execution.family_chat_routed = true;
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
     };
-    if (!generation_config.enable_tool_family_routing ||
-            (!execution.current_plan_id.empty() && !request.resource_read_binding)) {
+    if (!execution.current_plan_id.empty() && !request.resource_read_binding) {
         return true;
     }
     if (execution.tooling.tools.empty()) {
@@ -330,6 +329,9 @@ bool select_model_tool_families(
             common_runtime_trace_kind::decided,
             "tool routing outcome=empty_authorized_catalog; using existing conversation driver", {}});
         return run_tool_free_conversation();
+    }
+    if (!generation_config.enable_tool_family_routing) {
+        return true;
     }
 
     const auto families = common_generate_tool_family_index(
