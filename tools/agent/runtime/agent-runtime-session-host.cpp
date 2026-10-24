@@ -744,26 +744,12 @@ bool common_agent_runtime_session_host::ensure_runtime(
     }
 
     reused = false;
-    std::string initial_plan_id;
-    const auto & configured_plan = config.orchestration_config.agent_plan;
-    if (request.mode == common_agent_runtime_host_mode::agent &&
-            !configured_plan.empty() && configured_plan != "auto" && configured_plan != "off") {
-        const auto plan = config.plan_store.get(configured_plan, error);
-        if (!error.empty()) return false;
-        if (!plan || plan->kind != common_plan_kind::task ||
-                !common_plan_scope_matches(*plan, request.plan_scope, request.namespace_id,
-                    request.session_id, request.project_id, request.turn_id)) {
-            error = "configured plan is unavailable or outside the caller scope";
-            return false;
-        }
-        initial_plan_id = configured_plan;
-    }
     runtime = std::make_unique<common_agent_runtime_resident_runtime>(
         make_agent_runtime_resident_runtime_config(
             config.memory_store,
             &config.plan_store,
             make_base_turn_request(request),
-            std::move(initial_plan_id),
+            {},
             config.installed_blueprint_candidates,
             config.tooling,
             config.model_residency,

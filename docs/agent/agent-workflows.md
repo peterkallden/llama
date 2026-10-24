@@ -476,9 +476,7 @@ copied into each caller's namespace. A task instantiated from a shared method
 still has its caller's namespace, project, session and requested execution scope;
 its tools and data retain ordinary authorization. New automatic task IDs include
 the complete namespace/project/session/turn identity through a stable digest;
-existing task IDs are preserved. `runtime.agent_plan` can reopen a caller-owned
-persisted task and is checked against the exact requested scope before the
-session runtime is constructed. Generic plan scope matching is
+existing task IDs are preserved. Generic plan scope matching is
 unchanged. Library eligibility grants access to methods, not to other users' data.
 
 The deterministic `test-agent-template-library` and
@@ -491,8 +489,15 @@ same Cozo and resource stores. It preserves requests, responses and logs in the
 specified work directory. `--declared-step` uses an explicit workflow tool
 transition to verify the library path separately from model action selection;
 the default mode also exercises model-selected arguments. The restart phase
-reopens the exact saved task through `runtime.agent_plan`. It does not replace
+resumes an interrupted active task through the existing automatic plan selector. It does not replace
 domain workflow or browser smokes.
+
+Validation on 2026-10-24 passed the ten selected deterministic contracts and a
+Vulkan/Qwen2.5-1.5B declared-step smoke across two namespaces. An interrupted v1
+task resumed through automatic plan selection after a v2 import, consumed its
+preserved observation and did not repeat the completed clock call. The separate
+model-selected-arguments variant failed on duplicate scalar `timezone` fields;
+that DSL-generation/cardinality issue is not repaired by library registration.
 
 The older CLI import path remains namespace-global without a project identity
 and project-scoped with one; it does not create a cross-namespace host library.
