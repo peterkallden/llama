@@ -394,6 +394,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-context-management.cpp
         test-agent-resource-chunker.cpp
         test-agent-resource-retention.cpp
+        test-agent-resource-catalog-cozo.cpp
         test-agent-loop.cpp
         test-agent-tool-failure.cpp
         test-agent-tool-rounds.cpp
@@ -506,6 +507,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-factorized-cvec-config.cpp
         test-agent-investigation-config.cpp
         test-agent-investigation-http.cpp
+        test-agent-daemon-tool-events.cpp
         test-agent-flydelta-daemon-seams.cpp
         test-agent-bootstrap.cpp
         test-agent-artifact.cpp
@@ -578,12 +580,20 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME MATCHES "^test-memory-(store|retrieval|tool-service|cozo)$")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-memory)
         endif()
-        if (TEST_NAME STREQUAL "test-agent-flydelta-daemon-seams")
+        if (TEST_NAME MATCHES "^test-agent-(flydelta-daemon-seams|daemon-tool-events)$")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-daemon-library)
         endif()
         if (TEST_NAME STREQUAL "test-agent-resource-chunker")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-resource-catalog-cozo")
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
+            if (LLAMA_MEMORY_COZO)
+                target_include_directories(${TEST_NAME} PRIVATE ${COZO_INCLUDE_DIR})
+                llama_link_cozo(${TEST_NAME})
+            endif()
+            set_tests_properties(${TEST_NAME} PROPERTIES SKIP_RETURN_CODE 77)
         endif()
         if (TEST_NAME STREQUAL "test-agent-resource-retention")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-resource)
@@ -714,6 +724,12 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
         endif()
         set_property(TEST ${TEST_NAME} PROPERTY LABELS agent)
+        if (TEST_NAME STREQUAL "test-agent-resource-catalog-cozo")
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "resources;model-free")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-daemon-tool-events")
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "model-free")
+        endif()
         if (TEST_NAME STREQUAL "test-agent-dsl-grammar")
             target_compile_definitions(${TEST_NAME} PRIVATE NDEBUG)
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")

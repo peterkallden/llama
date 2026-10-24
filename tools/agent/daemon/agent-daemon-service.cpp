@@ -333,6 +333,12 @@ common_agent_event_context make_command_event_context(
         context.turn_id = command.turn->request.turn.turn_id;
         return context;
     }
+    if (command.tool.has_value()) {
+        context.namespace_id = command.tool->session.namespace_id;
+        context.project_id = command.tool->project_id;
+        context.session_id = command.tool->session.session_id;
+        return context;
+    }
     if (command.session.has_value()) {
         context.namespace_id = command.session->key.namespace_id;
         context.session_id = command.session->key.session_id;
@@ -587,11 +593,8 @@ common_agent_daemon_readiness make_daemon_readiness(
                     tool.output_schema = definition.result_schema_json;
                     tool.read_only = definition.risk_class == common_tool_risk_class::local_read;
                     tool.policy_gated = definition.requires_confirmation;
-                    const auto resolved = std::find_if(
-                        runtime.provider_probe_tooling.tools.begin(),
-                        runtime.provider_probe_tooling.tools.end(),
-                        [&](const common_chat_tool & candidate) { return candidate.name == definition.name; });
-                    if (resolved != runtime.provider_probe_tooling.tools.end()) {
+                    const auto * resolved = runtime.provider_probe_tooling.find_presented_tool(definition.name);
+                    if (resolved != nullptr) {
                         if (!resolved->host_input_schema.empty()) tool.input_schema = resolved->host_input_schema;
                         if (!resolved->output_schema.empty()) tool.output_schema = resolved->output_schema;
                         tool.ui_metadata = resolved->mcp_ui_metadata;

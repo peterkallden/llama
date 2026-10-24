@@ -290,7 +290,7 @@ bool common_investigation_project_context(
             output.push_back(*found);
         }
     }
-    static const std::set<std::string> allowed_profiles = {"actor_relationship", "narrative_comparison",
+    static const std::set<std::string> allowed_profiles = {"identity_analysis", "communication_analysis", "actor_relationship", "narrative_comparison",
         "document_provenance", "hypothesis_testing", "event_chain", "integration_trace", "report_composition", "source_followup"};
     if (!binding.analysis_profile.empty() && !allowed_profiles.count(binding.analysis_profile)) {
         error = "investigation context analysis profile is not registered";

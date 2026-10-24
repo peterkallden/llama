@@ -1,5 +1,16 @@
 import type { AgentEvent, DaemonToolStatus } from "../types/agent";
 
+export function mcpAppLabel(tool: DaemonToolStatus): string {
+  const uri = tool._meta?.ui?.resourceUri;
+  const names: Record<string, string> = {
+    "ui://llama-agent/apps/document-editor": "Document editor",
+    "ui://llama-agent/apps/investigation-workspace": "Investigation Workspace",
+    "ui://llama-agent/apps/data-explorer": "Data Explorer",
+    "ui://llama-agent/apps/workflow-inspector": "Workflow Inspector",
+  };
+  return uri && names[uri] ? names[uri] : tool.name;
+}
+
 export function mcpAppKey(tool: DaemonToolStatus): string {
   return `${tool.provider_id ?? ""}\u0000${tool._meta?.ui?.resourceUri ?? ""}`;
 }

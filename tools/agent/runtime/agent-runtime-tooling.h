@@ -17,6 +17,15 @@ struct common_agent_template_library_snapshot;
 struct common_agent_runtime_tooling {
     std::vector<common_chat_tool> tools;
     std::vector<common_chat_tool> app_tools;
+
+    // Host presentation includes app-only tools without exposing them to the model.
+    const common_chat_tool * find_presented_tool(const std::string & name) const {
+        for (const auto * list : {&tools, &app_tools}) {
+            for (const auto & tool : *list) if (tool.name == name) return &tool;
+        }
+        return nullptr;
+    }
+
     // Host-owned descriptions for model-facing family preflight. This is
     // presentation metadata only and does not grant tools or change names.
     std::map<std::string, std::string> family_descriptions;

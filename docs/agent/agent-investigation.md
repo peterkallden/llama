@@ -105,6 +105,15 @@ profiles, a small built-in exact event-type profile set is used. Unknown or
 near-matching event types remain unlinked observations and add a case
 limitation.
 
+**Authentication outcome limitation:** profiles currently match event category and
+endpoint roles, not outcome predicates. An `authentication` category may include
+failed attempts. Mapping that entire category to `authenticated_to` must not be
+interpreted as proof of successful access. The 2026-10-24 Elasticsearch UI smoke
+reproduced a failed logon appearing as an observed authentication relation, with
+`event.outcome` absent from the configured retained field projection. Preserving
+outcome/action evidence and distinguishing attempts from successful access remain
+required correctness work; a model instruction cannot reconstruct omitted data.
+
 Declared endpoint roles must be present. Older authentication events without any
 role metadata can resolve `user` and `host` only when each kind has one endpoint;
 missing or ambiguous endpoints remain unlinked and add a coverage limitation.
@@ -480,3 +489,49 @@ also cover explicit selection and decision submission without a model turn.
 These changes have only received static review and `git diff --check`;
 compilation, CTest, frontend tests and functional/browser/model smokes have not
 been run, as requested.
+
+
+### Browser verification follow-up — 2026-10-24
+
+A real Elasticsearch fixture was collected through the authenticated production
+app route: five events, eight entities and four relations at case revision 2.
+The case and frozen Markdown report survived daemon restart unchanged. The
+model-backed workflow did not reach tool execution: action selection exceeded
+its configured context budget (3084 prompt tokens plus 128 reserved output,
+3072 context). Deterministic collection is not proof of model workflow success.
+
+The browser pass corrected app-only metadata lookup and composite delegation,
+first-party application labels, and missing identity/communication selectors.
+Snapshot testing additionally exposed lost resource lineage in the Cozo catalog.
+Lineage now uses an additive relation and is published transactionally with the
+descriptor and provenance; existing resources retain their original metadata.
+Historical reports with missing lineage are not rewritten. Direct app tool
+artifact events also need the tool payload's session, namespace and project
+context so the report reader can discover them without weakening its session
+filter.
+
+Frontend tests passed 104 cases in 16 files and the production bundles built.
+Seven targeted resource retention/catalog, daemon event context/scope, web
+presentation, MCP App bridge and investigation contracts passed. The catalog contract covers legacy migration, reopen,
+all lineage fields, invalid input and rollback of a failed final metadata write.
+This scoped verification does not establish every previously unrun workflow or
+analyst-review scenario.
+
+Remaining findings include outcome-insensitive authentication relations, internal
+host grounding shown in reopened user-message history, reference-only evidence
+inspection, and graph metrics returned without a persisted analysis artifact.
+These remain limitations rather than verified analysis results.
+
+
+The final browser report reader displayed a loaded 1220 x 1600 PNG from the
+published attachment manifest, with links to both snapshot and visualization.
+Repeating report composition after restart returned the same frozen report.
+The two added technical workflow options now also pass host analysis-profile
+validation; unknown profiles remain rejected by the context contract.
+
+The corrected Identity analysis start was retested through the real app/chat
+path. It reached workflow action selection but failed before analysis tools:
+3085 prompt tokens plus 128 reserved output exceeded the configured 3072-token
+context. The UI returned to ready after the lane drained. The model-backed
+workflow remains blocked; neither production budgets nor output requirements
+were changed to obtain a passing test.

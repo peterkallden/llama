@@ -5,7 +5,7 @@ import type { AgentEvent } from "./types/agent";
 import DataExplorer from "./components/DataExplorer.vue";
 import WorkflowInspector from "./components/WorkflowInspector.vue";
 import McpAppHost from "./components/McpAppHost.vue";
-import { findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey } from "./components/app-invocation";
+import { findLatestAppInvocation, mcpAppInvocationKey, mcpAppKey, mcpAppLabel } from "./components/app-invocation";
 import { structuredToolResult } from "./components/structured-tool-result";
 import StatusFloater from "./components/StatusFloater.vue";
 import ReportCard from "./components/ReportCard.vue";
@@ -468,7 +468,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <ChatMenu :locked="navigationLocked" />
         <button type="button" :class="{ selected: activeView === 'resources' }" :disabled="navigationLocked" @click="navigateWorkspace('resources')">Resources</button>
         <div v-if="workspaceActive" class="workspace-tab" :aria-busy="workspaceNavigating">
-          <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeView === 'resources' ? 'Resources' : activeMcpApp()?.name || 'Application' }}</span>
+          <span class="workspace-title">{{ documentMode ? documentStatus.title : activeView === 'data' ? 'Data Explorer' : activeView === 'workflow' ? 'Workflow Inspector' : activeView === 'resources' ? 'Resources' : activeMcpApp() ? mcpAppLabel(activeMcpApp()!) : 'Application' }}</span>
           <div v-if="documentMode" class="document-toolbar">
             <button type="button" :disabled="workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.create' && tool.app_write_authorized)" @click="createDocument">New</button>
             <label class="document-upload-button" :class="{ disabled: workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized) }">Upload<input type="file" accept=".txt,.md,.markdown,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" :disabled="workspaceNavigating || !session.tools.some((tool) => tool.name === 'document.import' && tool.app_write_authorized)" @change="uploadDocumentFile"></label>

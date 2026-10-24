@@ -721,6 +721,8 @@ if (!window.__investigationWorkspace) {
       const context = selectedContext();
       if (!context.source_ids.length) throw new Error("Select at least one source for this analysis.");
       const profiles: Record<string, string> = {
+        identity_analysis: "identity analysis",
+        communication_analysis: "communication analysis",
         actor_relationship: "actor and relationship analysis",
         narrative_comparison: "narrative and contradiction analysis",
         document_provenance: "document provenance analysis",

@@ -1259,7 +1259,7 @@ public:
     }
 
     bool is_mcp_app_write_authorized(const std::string & name) const override {
-        const auto * view = find_owner(name);
+        const auto * view = find_app_owner(name);
         return view != nullptr && view->is_mcp_app_write_authorized(name);
     }
 
@@ -1272,7 +1272,7 @@ public:
             const std::string & name,
             std::string & provider_id,
             std::string & server_tool_name) const override {
-        const auto * view = find_owner(name);
+        const auto * view = find_app_owner(name);
         return view != nullptr && view->app_tool_provenance(name, provider_id, server_tool_name);
     }
 

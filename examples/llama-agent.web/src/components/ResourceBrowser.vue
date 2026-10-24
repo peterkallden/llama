@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
+import { mcpAppLabel } from "./app-invocation";
 import { structuredToolResult } from "./structured-tool-result";
 const ResearchEvidenceGraph = defineAsyncComponent(() => import("./ResearchEvidenceGraph.vue"));
 import { parseRelationshipVisualization, type RelationshipVisualization } from "../visualization/contract";
@@ -220,7 +221,7 @@ function toggleAttach(item: ResourceRow) { emit("attach", item.uri); }
     </template>
     <template v-else-if="tab === 'workspaces'">
       <p class="muted">Workspace types open the existing tools with this chat's authorized scope.</p>
-      <button v-for="tool in apps" :key="tool.name" type="button" class="workspace-row" @click="emit('openApp', tool)"><span>{{ tool.name.replaceAll('.', ' ') }}</span><small>{{ tool.description }}</small></button>
+      <button v-for="tool in apps" :key="tool.name" type="button" class="workspace-row" @click="emit('openApp', tool)"><span>{{ mcpAppLabel(tool) }}</span><small>{{ tool.description }}</small></button>
       <p v-if="!apps.length" class="muted">No workspace apps are available in this runtime.</p>
     </template>
     <template v-else>

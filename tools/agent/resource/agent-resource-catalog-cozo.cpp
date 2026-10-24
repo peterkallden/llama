@@ -135,6 +135,19 @@ std::string agent_resource_cozo_provenance_schema_script() {
     )COZO";
 }
 
+std::string agent_resource_cozo_lineage_schema_script() {
+    return R"COZO(
+        {
+            ?[uri, lineage_json] <- [['agent-resource://schema/lineage', '{}']]
+            :create agent_resource_lineage { uri: String => lineage_json: String }
+        }
+        {
+            ?[uri] <- [['agent-resource://schema/lineage']]
+            :delete agent_resource_lineage { uri }
+        }
+    )COZO";
+}
+
 agent_resource_descriptor descriptor_from_row(const json & row) {
     agent_resource_descriptor descriptor;
     descriptor.uri = row.at(0).get<std::string>();
@@ -243,11 +256,13 @@ bool agent_cozo_resource_catalog::open(const std::string & path, std::string & e
 
     bool has_resource = false;
     bool has_provenance = false;
+    bool has_lineage = false;
     for (const auto & row : relations["rows"]) {
         if (row.is_array() && !row.empty() && row[0].is_string() && row[0].get<std::string>() == "agent_resource") {
             has_resource = true;
         }
         if (row.is_array() && !row.empty() && row[0].is_string() && row[0].get<std::string>() == "agent_resource_provenance") has_provenance = true;
+        if (row.is_array() && !row.empty() && row[0].is_string() && row[0].get<std::string>() == "agent_resource_lineage") has_lineage = true;
     }
 
     if (!has_resource && !run(agent_resource_cozo_schema_script(), "{}", result, error)) {
@@ -255,6 +270,11 @@ bool agent_cozo_resource_catalog::open(const std::string & path, std::string & e
         return false;
     }
     if (!has_provenance && !run(agent_resource_cozo_provenance_schema_script(), "{}", result, error)) {
+        close();
+        return false;
+    }
+
+    if (!has_lineage && !run(agent_resource_cozo_lineage_schema_script(), "{}", result, error)) {
         close();
         return false;
     }
@@ -308,7 +328,8 @@ bool agent_cozo_resource_catalog::next_resource_id(
 bool agent_cozo_resource_catalog::put_descriptor(
     const agent_resource_descriptor & descriptor,
     std::string & error) {
-    const json params = {
+    if (!common_runtime_resource_lineage_is_valid(descriptor.lineage, error)) return false;
+    json params = {
         {"rows", json::array({json::array({
             descriptor.uri,
             descriptor.resource_id,
@@ -340,24 +361,22 @@ bool agent_cozo_resource_catalog::put_descriptor(
             descriptor.metadata.language_source,
         })})},
     };
+    params["provenance_rows"] = json::array({json::array({descriptor.uri,
+        descriptor.metadata.source_operation, descriptor.metadata.source_request_json,
+        descriptor.metadata.retrieved_at, descriptor.metadata.content_hash})});
+    const auto & lineage = descriptor.lineage;
+    const json lineage_json = {{"parent_uri", lineage.parent_uri}, {"chunk_index", lineage.chunk_index},
+        {"chunk_count", lineage.chunk_count}, {"byte_offset", lineage.byte_offset},
+        {"byte_length", lineage.byte_length}, {"overlap_bytes", lineage.overlap_bytes},
+        {"derivation", lineage.derivation}};
+    params["lineage_rows"] = json::array({json::array({descriptor.uri, lineage_json.dump()})});
+    // Publish descriptor, provenance and lineage in the same Cozo transaction.
+    const std::string script = "{ " + std::string("?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source }") + " } " +
+        "{ ?[uri, source_operation, source_request_json, retrieved_at, content_hash] <- $provenance_rows "
+        ":put agent_resource_provenance { uri => source_operation, source_request_json, retrieved_at, content_hash } } "
+        "{ ?[uri, lineage_json] <- $lineage_rows :put agent_resource_lineage { uri => lineage_json } }";
     std::string result;
-    if (!run(
-        "?[uri, resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source] <- $rows :put agent_resource { uri => resource_id, name, description, mime_type, size_bytes, scope, sha256, namespace_id, session_id, project_id, turn_id, tool_call_id, source_provider, source_tool, created_at, expires_at, purpose, content_summary, usage_hint, limitations, keywords_json, entities_json, processing_cache_key, declared_language, resolved_language, language_confidence, language_source }",
-        params.dump(),
-        result,
-            error)) return false;
-    const json provenance = {{"rows", json::array({json::array({
-        descriptor.uri,
-        descriptor.metadata.source_operation,
-        descriptor.metadata.source_request_json,
-        descriptor.metadata.retrieved_at,
-        descriptor.metadata.content_hash,
-    })})}};
-    return run(
-        "?[uri, source_operation, source_request_json, retrieved_at, content_hash] <- $rows :put agent_resource_provenance { uri => source_operation, source_request_json, retrieved_at, content_hash }",
-        provenance.dump(),
-        result,
-        error);
+    return run(script, params.dump(), result, error);
 }
 
 bool agent_cozo_resource_catalog::load_provenance(
@@ -375,6 +394,31 @@ bool agent_cozo_resource_catalog::load_provenance(
         descriptor.metadata.source_request_json = row.at(1).get<std::string>();
         descriptor.metadata.retrieved_at = row.at(2).get<int64_t>();
         descriptor.metadata.content_hash = row.at(3).get<std::string>();
+    }
+    if (!run("?[lineage_json] := *agent_resource_lineage[uri, lineage_json], uri == $uri",
+            json({{"uri", uri}}).dump(), result, error)) return false;
+    const auto lineage_rows = json::parse(result, nullptr, false);
+    if (!lineage_rows.is_object() || !lineage_rows.contains("rows") || !lineage_rows["rows"].is_array()) {
+        error = "unexpected Cozo resource lineage result";
+        return false;
+    }
+    descriptor.lineage = {};
+    if (!lineage_rows["rows"].empty()) {
+        try {
+            const auto saved = json::parse(lineage_rows["rows"][0].at(0).get<std::string>());
+            auto & lineage = descriptor.lineage;
+            lineage.parent_uri = saved.at("parent_uri").get<std::string>();
+            lineage.chunk_index = saved.at("chunk_index").get<size_t>();
+            lineage.chunk_count = saved.at("chunk_count").get<size_t>();
+            lineage.byte_offset = saved.at("byte_offset").get<size_t>();
+            lineage.byte_length = saved.at("byte_length").get<size_t>();
+            lineage.overlap_bytes = saved.at("overlap_bytes").get<size_t>();
+            lineage.derivation = saved.at("derivation").get<std::string>();
+        } catch (const json::exception &) {
+            error = "stored resource lineage is malformed";
+            return false;
+        }
+        if (!common_runtime_resource_lineage_is_valid(descriptor.lineage, error)) return false;
     }
     error.clear();
     return true;

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
 import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
+import { mcpAppLabel } from "./app-invocation";
 import { InvestigationAppAccess } from "./investigation-app-access";
 import { DocumentEditorAccess } from "./document-editor-access";
 
@@ -413,7 +414,7 @@ onBeforeUnmount(() => { ++loadGeneration; window.removeEventListener("message", 
 
 <template>
   <section class="card mcp-app-card">
-    <div class="card-title"><h2>{{ tool.name }} · MCP App</h2><button class="quiet" :disabled="busy" @click="load">reload</button></div>
+    <div class="card-title"><h2>{{ mcpAppLabel(tool) }} · MCP App</h2><button class="quiet" :disabled="busy" @click="load">reload</button></div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-if="appMessage" class="muted">App: {{ appMessage }}</p>
     <p v-if="busy" class="muted">Loading UI resource through the provider…</p>

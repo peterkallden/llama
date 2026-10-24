@@ -1,4 +1,5 @@
 #include "tools/agent/tooling/agent-tool-provider.h"
+#include "tools/agent/runtime/agent-runtime-tooling.h"
 #include "tools/agent/mcp/agent-mcp-protocol.h"
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
 
@@ -209,6 +210,29 @@ int main() {
         if (std::any_of(model_tools.begin(),model_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 23;
         const auto & app_tools=native_view->app_tools();
         if (std::none_of(app_tools.begin(),app_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 24;
+        common_agent_runtime_tooling presented;
+        presented.tools = model_tools;
+        presented.app_tools = app_tools;
+        for (const char * name : {"visualization.snapshot", "investigation.association.review"}) {
+            const auto * exposed = presented.find_presented_tool(name);
+            if (!exposed || exposed->mcp_ui_metadata.empty() || !exposed->mcp_app_write_authorized ||
+                    !native_view->is_mcp_app_write_authorized(name)) return 26;
+            if (std::any_of(presented.tools.begin(), presented.tools.end(),
+                    [&](const auto & tool) { return tool.name == name; })) return 27;
+        }
+        if (presented.find_presented_tool("not.registered") != nullptr) return 28;
+        composite_agent_tool_provider native_composite;
+        native_composite.add_provider(native);
+        auto composed_native_view = native_composite.resolve_tools(user_context, error);
+        if (!composed_native_view) return 29;
+        for (const char * name : {"visualization.snapshot", "investigation.association.review"}) {
+            if (composed_native_view->exposes_tool(name) ||
+                    !composed_native_view->is_mcp_app_write_authorized(name)) return 30;
+            std::string provider_id, server_name;
+            if (!composed_native_view->app_tool_provenance(name, provider_id, server_name) ||
+                    !provider_id.empty() || server_name != name) return 31;
+            if (composed_native_view->call({"model-denied", name, "{}"}, error).ok) return 32;
+        }
         agent_tool_result reviewed;
         if (native_view->call_mcp_app_tool("investigation.case.open",review_call,reviewed,error) ||
             reviewed.failure_code != "tool.investigation.store_unavailable") return 25;

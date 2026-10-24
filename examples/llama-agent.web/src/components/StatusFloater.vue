@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAgentSession } from "../session";
-import { mcpAppKey } from "./app-invocation";
+import { mcpAppKey, mcpAppLabel } from "./app-invocation";
 import type { DaemonToolStatus } from "../types/agent";
 const props = defineProps<{ activeView: string; activeApp: string; navigationLocked?: boolean }>();
 const emit = defineEmits<{ navigate: [view: "chat" | "data" | "workflow" | "app", app?: string]; newSession: [] }>();
@@ -27,7 +27,7 @@ const apps = computed(() => {
   return [...grouped.values()];
 });
 function label(tool: DaemonToolStatus) {
-  return tool._meta?.ui?.resourceUri === "ui://llama-agent/apps/document-editor" ? "Document editor" : tool.name;
+  return mcpAppLabel(tool);
 }
 function navigate(view: "data" | "workflow" | "app", app = "") {
   if (props.navigationLocked) return;

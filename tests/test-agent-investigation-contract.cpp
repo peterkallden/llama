@@ -130,6 +130,17 @@ int main() {
           context_projection["selected_relations"][0]["id"] == "rel:1" &&
           context_projection["selected_events"][0]["id"] == "event:1",
           "case context projection must resolve only explicitly selected stable references");
+    for (const auto * profile : {"identity_analysis", "communication_analysis"}) {
+        auto analysis_binding = binding;
+        analysis_binding.analysis_profile = profile;
+        check(common_investigation_project_context(value, analysis_binding, context_projection, error) &&
+              context_projection["analysis_profile"] == profile,
+              "technical workflow profiles exposed by the app must survive host context validation");
+    }
+    auto unknown_profile = binding;
+    unknown_profile.analysis_profile = "not_registered";
+    check(!common_investigation_project_context(value, unknown_profile, context_projection, error),
+          "unknown analysis profiles must still be rejected");
     auto stale_binding = binding; ++stale_binding.revision;
     check(!common_investigation_project_context(value, stale_binding, context_projection, error),
           "case context projection must reject a stale revision");
