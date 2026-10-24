@@ -1,6 +1,9 @@
 #include "agent/tooling/schema/tool-dsl-grammar.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
+#include <nlohmann/json.hpp>
 #include "../src/llama-grammar.h"
 #include "../src/unicode.h"
 
@@ -43,7 +46,7 @@ void action_contracts() {
         require(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl, good, {inspect, symbols}, call, error), error);
     }
     for (const auto & bad : {"open! code.inspect\nsymbol: renderer", "open! code.inspect\nfield: result",
-            "open! code.symbols\nbackend: true", "open! code.inspect.", "open! private.inspect"}) {
+            "open! code.symbols", "open! code.symbols\nsymbol: a\nsymbol: b", "open! code.symbols\nbackend: true", "open! code.inspect.", "open! private.inspect"}) {
         require(!matches(grammar, bad), std::string("cross-tool or invented field accepted: ") + bad);
     }
     const auto no_args = common_build_tool_dsl_grammar({inspect}, common_tool_dsl_grammar_form::action, error);
@@ -84,7 +87,7 @@ void nested_contracts() {
     std::string error;
     const auto grammar = common_build_tool_dsl_grammar({structured}, common_tool_dsl_grammar_form::action, error);
     for (const auto & good : {"open! data.transform\noperations[0].column: amount", "open! data.transform\nmeasure: sum amount",
-            "open! data.transform\nmetadata.origin: fixture"}) {
+            "open! data.transform\nmetadata.origin: fixture", "open! data.transform\nmeasures[0].function: sum\nmeasures[0].column: amount"}) {
         require(matches(grammar, good), std::string("declared nested path/directive rejected: ") + good);
         common_agent_tool_call call;
         require(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl, good, {structured}, call, error), error);
@@ -96,6 +99,94 @@ void nested_contracts() {
     const auto union_grammar = common_build_tool_dsl_grammar({alternatives}, common_tool_dsl_grammar_form::action, error);
     require(matches(union_grammar, "open! choose\ndataset: d1") && matches(union_grammar, "open! choose\nresource: r1"),
         "schema alternatives lost declared fields");
+}
+
+void typed_contracts() {
+    const common_chat_tool tool{"typed", "Typed", R"({"type":"object","additionalProperties":false,
+        "required":["timezone","enabled","count","mode"],"properties":{
+        "timezone":{"type":"string"},"enabled":{"type":"boolean"},"count":{"type":"integer"},
+        "mode":{"type":"string","enum":["fast","safe"]},"ratio":{"type":"number"},
+        "tags":{"type":"array","items":{"type":"string"}}}})", "{}"};
+    std::string error;
+    const auto grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
+    require(!grammar.empty(), error);
+    const std::string good = "open! typed\ntimezone: UTC\nenabled: true\ncount: 2\nmode: fast";
+    for (const auto & text : {good, good + "\nratio: -0.25e+2", good + "\ntags: one\ntags: two",
+            good + "\ntags: [one, two]", good + "\ntags: one, two"}) {
+        require(matches(grammar, text), "typed valid call rejected: " + text);
+        common_agent_tool_call call;
+        require(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl, text, {tool}, call, error), error);
+        std::string normalized;
+        require(common_schema_normalize_and_validate_object(call.arguments_json, tool.parameters, normalized, error), error);
+    }
+    for (const auto & text : {good + "\ntimezone: UTC", std::string("open! typed"),
+            std::string("open! typed\ntimezone: UTC\nenabled: yes\ncount: 2\nmode: fast"),
+            std::string("open! typed\ntimezone: UTC\nenabled: true\ncount: 2.5\nmode: fast"),
+            std::string("open! typed\ntimezone: UTC\nenabled: true\ncount: 2\nmode: invented")}) {
+        require(!matches(grammar, text), "invalid typed call accepted: " + text);
+    }
+    // The generation order is canonical, but existing stored DSL stays readable.
+    common_agent_tool_call call;
+    require(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! typed\nmode: fast\ncount: 2\nenabled: true\ntimezone: UTC", {tool}, call, error), error);
+    const auto arguments = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::arguments, error);
+    require(matches(arguments, good.substr(12)) && !matches(arguments, "timezone: UTC"), "repair lost required inputs");
+    const common_chat_tool optional{"optional", "Optional", R"({"type":"object","properties":{"note":{"type":"string"}}})", "{}"};
+    const auto empty = common_build_tool_dsl_grammar({optional}, common_tool_dsl_grammar_form::arguments, error);
+    require(matches(empty, "") && matches(empty, "note: \"åäö with spaces\""), "optional/Unicode arguments rejected");
+    for (const auto & text : {"true", "false", "null", "42", "-2"}) {
+        require(!matches(empty, std::string("note: ") + text), "string grammar admitted a non-string literal");
+        require(matches(empty, std::string("note: \"") + text + "\""), "quoted string literal rejected");
+    }
+    const common_chat_tool annotated{"annotated", "Annotated", R"({"type":"object","properties":{
+        "conditions":{"type":"string","items":{"type":"object"}}}})", "{}"};
+    const auto annotated_grammar = common_build_tool_dsl_grammar({annotated}, common_tool_dsl_grammar_form::action, error);
+    require(!annotated_grammar.empty() && matches(annotated_grammar, "open! annotated\nconditions: \"amount > 2\""),
+        "non-applicable items annotation changed a string field into an array: " + error);
+    const common_chat_tool alternatives{"choose", "Choose", R"({"type":"object","properties":{
+        "kind":{"type":"string"}},"oneOf":[
+        {"required":["kind"],"properties":{"kind":{"const":"left"}}},
+        {"required":["kind"],"properties":{"kind":{"const":"right"}}}]})", "{}"};
+    const auto choice = common_build_tool_dsl_grammar({alternatives}, common_tool_dsl_grammar_form::action, error);
+    require(!choice.empty() && matches(choice, "open! choose\nkind: left") && !matches(choice, "open! choose\nkind: other"),
+        "branch constraints were lost: " + error);
+    const common_chat_tool malformed{"bad", "Bad", R"({"type":"object","properties":[]})", "{}"};
+    require(common_build_tool_dsl_grammar({malformed}, common_tool_dsl_grammar_form::action, error).empty() && !error.empty(),
+        "malformed schema did not fail explicitly");
+    require(common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error) == grammar,
+        "grammar is not deterministic");
+}
+
+void projection_contracts() {
+    const std::string schema = R"({"type":"object","required":["dataset","column"],"properties":{
+        "dataset":{"type":"string"},"column":{"type":"string"}},"allOf":[{"required":["dataset"]}]})";
+    std::string error;
+    const auto projected = common_project_model_input_schema_without_bound_fields(schema, {"dataset"}, error);
+    require(!projected.empty() && error.empty(), error);
+    const auto value = nlohmann::ordered_json::parse(projected);
+    require(!value["properties"].contains("dataset") && value["required"] == nlohmann::ordered_json::array({"column"}) &&
+        value["allOf"][0]["required"].empty(), "host-owned input still required in a branch");
+    const common_chat_tool tool{"lookup", "Lookup", projected, "{}"};
+    const auto grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
+    require(!grammar.empty() && matches(grammar, "open! lookup\ncolumn: amount") &&
+        !matches(grammar, "open! lookup\ndataset: secret\ncolumn: amount"), "host-bound grammar mismatch: " + error);
+    const common_chat_tool branch_array{"checks", "Checks", R"({"type":"object","properties":{
+        "rules":{"type":"array","items":{"oneOf":[
+        {"type":"object","required":["type","column"],"properties":{"type":{"const":"unique"},"column":{"type":"string"}}},
+        {"type":"object","required":["type","column"],"properties":{"type":{"const":"not_null"},"column":{"type":"string"}}}]} }},
+        "x-agent-examples":[{"rules":[{"type":"unique","column":"id"}]}]})", "{}"};
+    const auto branch_rendered = common_render_compact_tool_description("checks", "Checks", branch_array.parameters, "{}", error);
+    require(error.empty() && branch_rendered.find("rules[0].column") != std::string::npos &&
+        branch_rendered.find("rules[0].type: unique") != std::string::npos,
+        "alternative object-array contract lost field paths or example arguments: " + error);
+    const auto branch_grammar = common_build_tool_dsl_grammar({branch_array}, common_tool_dsl_grammar_form::action, error);
+    require(!branch_grammar.empty() && !matches(branch_grammar, "open! checks\nrules: $value") &&
+        matches(branch_grammar, "open! checks\nrules[0].type: unique\nrules[0].column: id"),
+        "grammar advertised unsupported whole-array bindings: " + error);
+    const auto rendered = common_render_compact_tool_description("lookup", "Lookup", projected, "{}", error);
+    require(error.empty() && rendered.find("dataset") == std::string::npos, "compact contract retained host-owned input");
+    require(common_project_model_input_schema_without_bound_fields("not json", {}, error).empty() && !error.empty(),
+        "invalid projection silently succeeded");
 }
 
 void catalog_contracts() {
@@ -111,7 +202,9 @@ void catalog_contracts() {
             common_tool_model_input_schema(definition), common_tool_model_result_schema(definition)});
         const auto grammar = common_build_tool_dsl_grammar(tools, common_tool_dsl_grammar_form::plan, error);
         require(!grammar.empty(), std::string(profile) + ": " + error);
-        require(matches(grammar, "plan goal=\"Inspect\"\nstep | open! " + tools.front().name), "catalog grammar could not select a declared tool");
+        require(grammar.size() < 4 * 1024 * 1024, "catalog grammar exceeds its size budget");
+        // Compile the real sampler even when the first tool requires inputs.
+        require(!matches(grammar, "not a plan"), "catalog grammar accepted arbitrary text");
     }
     require(common_build_tool_dsl_grammar({}, common_tool_dsl_grammar_form::action, error).empty() && !error.empty(),
         "empty catalog silently enabled unconstrained generation");
@@ -125,6 +218,8 @@ int main() {
     action_contracts();
     plan_contracts();
     nested_contracts();
+    typed_contracts();
+    projection_contracts();
     catalog_contracts();
     return 0;
 }

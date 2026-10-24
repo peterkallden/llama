@@ -57,3 +57,11 @@ std::string common_render_compact_tool_description(
     const std::string & input_schema_json,
     const std::string & result_schema_json,
     std::string & error);
+
+// Remove inputs supplied by an explicit host binding from the model contract.
+// The execution schema is deliberately unchanged. Unknown names are harmless
+// because some model schemas already omit host-owned inputs.
+std::string common_project_model_input_schema_without_bound_fields(
+    const std::string & schema_json,
+    const std::vector<std::string> & fields,
+    std::string & error);

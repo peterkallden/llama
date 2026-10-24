@@ -83,6 +83,22 @@ nlohmann::ordered_json planner_tool_schema_for_request(
         if (request_has_tool_argument_binding(request, tool.name, field)) continue;
         if (required_fields.insert(field).second) required.push_back(field);
     }
+    if (model_contract) {
+        std::vector<std::string> bound_fields;
+        for (const auto & binding : request.tool_argument_bindings) {
+            if (binding.tool_name != tool.name) continue;
+            const auto arguments = json::parse(binding.arguments_json, nullptr, false);
+            if (!arguments.is_object()) return json();
+            for (const auto & field : arguments.items()) bound_fields.push_back(field.key());
+        }
+        if (!bound_fields.empty()) {
+            std::string projection_error;
+            const auto projected = common_project_model_input_schema_without_bound_fields(
+                schema.dump(), bound_fields, projection_error);
+            if (!projection_error.empty()) return json();
+            return json::parse(projected, nullptr, false);
+        }
+    }
     return schema;
 }
 

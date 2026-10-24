@@ -1,8 +1,10 @@
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "plan/plan-contract.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <sstream>
@@ -67,6 +69,11 @@ void append_flat_schema_paths(
         std::vector<std::string> & paths,
         size_t depth = 0) {
     if (depth >= 8 || !schema.is_object()) return;
+    for (const char * key : {"oneOf", "anyOf", "allOf"}) {
+        const auto branches = schema.find(key);
+        if (branches == schema.end() || !branches->is_array()) continue;
+        for (const auto & branch : *branches) append_flat_schema_paths(branch, prefix, paths, depth + 1);
+    }
     const auto properties = schema.value("properties", json::object());
     if (!properties.is_object()) return;
     for (const auto & property : properties.items()) {
@@ -76,7 +83,8 @@ void append_flat_schema_paths(
         if (field.is_object() && field.value("type", std::string{}) == "array") {
             if (field.contains("x-agent-flat")) continue;
             const auto item = field.value("items", json::object());
-            if (item.value("type", std::string{}) == "object") {
+            if (item.value("type", std::string{}) == "object" || item.contains("properties") ||
+                    item.contains("oneOf") || item.contains("anyOf") || item.contains("allOf")) {
                 append_flat_schema_paths(item, path + "[0]", paths, depth + 1);
             } else {
                 paths.push_back(path + "[0]: " + scalar_type(item));
@@ -99,6 +107,19 @@ void flatten_example_fields(
         const std::string & prefix,
         std::vector<std::string> & lines) {
     if (!schema.is_object() || !value.is_object()) return;
+    // Pick example branches with the existing validator, rather than dropping
+    // object-array fields whose properties live inside oneOf/anyOf.
+    for (const char * key : {"oneOf", "anyOf", "allOf"}) {
+        const auto branches = schema.find(key);
+        if (branches == schema.end() || !branches->is_array()) continue;
+        for (const auto & branch : *branches) {
+            std::string normalized, validation_error;
+            if (std::string(key) == "allOf" || common_schema_normalize_and_validate_object(
+                    value.dump(), branch.dump(), normalized, validation_error)) {
+                flatten_example_fields(branch, value, prefix, lines);
+            }
+        }
+    }
     const auto properties = schema.value("properties", json::object());
     if (!properties.is_object()) return;
     for (const auto & entry : value.items()) {
@@ -159,13 +180,19 @@ std::string flat_example(const std::string & tool, const json & schema, const js
     flatten_example_fields(schema, value, {}, lines);
     if (lines.empty()) return {};
     std::string result = "\nexample:\nopen! " + tool;
-    for (const auto & line : lines) result += "\n" + line;
+    std::set<std::string> emitted;
+    for (const auto & line : lines) if (emitted.insert(line).second) result += "\n" + line;
     return result;
 }
 
 std::string scalar_type(const json & schema, size_t depth) {
+    if (!schema.is_object() || depth > 12) return "value";
+    if (schema.contains("const")) return schema["const"].dump();
+    if (schema.contains("required") && !schema.contains("properties") && !schema.contains("type")) {
+        return "requires" + schema["required"].dump();
+    }
     for (const auto * key : {"oneOf", "anyOf"}) {
-        if (!schema.contains(key) || !schema[key].is_array()) continue;
+        if (schema.contains("properties") || !schema.contains(key) || !schema[key].is_array()) continue;
         std::ostringstream alternatives;
         alternatives << key << '(';
         bool first = true;
@@ -410,7 +437,8 @@ std::string common_render_flat_tool_call(
     std::vector<std::string> lines;
     flatten_example_fields(schema, arguments, {}, lines);
     std::string rendered = "open! " + name;
-    for (const auto & line : lines) rendered += "\n" + line;
+    std::set<std::string> emitted;
+    for (const auto & line : lines) if (emitted.insert(line).second) rendered += "\n" + line;
     return rendered;
 }
 
@@ -563,4 +591,50 @@ std::string common_render_compact_tool_description(
         rendered += flat_example(name, schema, json{{"dataset", "$joined.dataset"}, {"columns", json::array({"amount"})}});
     }
     return rendered;
+}
+
+std::string common_project_model_input_schema_without_bound_fields(
+        const std::string & schema_json, const std::vector<std::string> & fields, std::string & error) {
+    error.clear();
+    auto schema = json::parse(schema_json, nullptr, false);
+    if (!schema.is_object() || schema.value("type", json()) != "object") {
+        error = "host-bound input projection requires an object schema";
+        return {};
+    }
+    // Visit alternatives as well: a removed host input cannot remain required
+    // in a branch of the projected model contract.
+    const auto remove = [&](const auto & self, json & node, size_t depth) -> bool {
+        if (!node.is_object() || depth > 32) {
+            error = "invalid or excessively nested host-bound input schema";
+            return false;
+        }
+        auto properties = node.find("properties");
+        if (properties != node.end() && !properties->is_object()) {
+            error = "model input properties must be an object";
+            return false;
+        }
+        auto required = node.find("required");
+        if (required != node.end() && !required->is_array()) {
+            error = "model input required must be an array";
+            return false;
+        }
+        for (const auto & field : fields) {
+            if (properties != node.end()) properties->erase(field);
+            if (required != node.end()) {
+                required->erase(std::remove(required->begin(), required->end(), json(field)), required->end());
+            }
+        }
+        for (const char * key : {"allOf", "anyOf", "oneOf"}) {
+            auto branches = node.find(key);
+            if (branches == node.end()) continue;
+            if (!branches->is_array() || branches->empty()) {
+                error = "model input alternatives must be nonempty arrays";
+                return false;
+            }
+            for (auto & branch : *branches) if (!self(self, branch, depth + 1)) return false;
+        }
+        return true;
+    };
+    if (!remove(remove, schema, 0)) return {};
+    return schema.dump();
 }

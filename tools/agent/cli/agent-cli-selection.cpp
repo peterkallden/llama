@@ -70,49 +70,21 @@ std::string blueprint_selector_view(const common_blueprint_candidate & candidate
 
 namespace {
 
-std::string workflow_action_grammar(
-        const std::vector<common_chat_tool> & tools,
-        const std::vector<std::string> & host_resolved_dataset_tools,
-        std::string & error) {
-    auto projected = tools;
-    for (auto & tool : projected) {
-        if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) ==
-                host_resolved_dataset_tools.end()) continue;
-        auto schema = json::parse(tool.parameters, nullptr, false);
-        if (schema.is_object() && schema.contains("properties") && schema["properties"].is_object()) {
-            schema["properties"].erase("dataset");
-            tool.parameters = schema.dump();
-        }
-    }
-    return common_build_tool_dsl_grammar(projected, common_tool_dsl_grammar_form::action, error);
-}
-
 std::string workflow_action_contracts(
     const std::vector<common_chat_tool> & tools,
-    const std::vector<std::string> & host_resolved_dataset_tools) {
+    std::string & error) {
     std::string out;
     for (const auto & tool : tools) {
-        auto parameters = json::parse(tool.parameters, nullptr, false);
-        if (parameters.is_object() &&
-                std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
-                    host_resolved_dataset_tools.end()) {
-            parameters["properties"].erase("dataset");
-            auto required = parameters.value("required", json::array());
-            if (required.is_array()) {
-                required.erase(std::remove(required.begin(), required.end(), json("dataset")), required.end());
-                parameters["required"] = std::move(required);
-            }
-        }
         std::string render_error;
         const std::string compact = common_render_compact_tool_description(
             tool.name,
             tool.description,
-            parameters.is_object() ? parameters.dump() : tool.parameters,
+            tool.parameters,
             tool.result_schema.empty() ? "{}" : tool.result_schema,
             render_error);
         if (!render_error.empty()) {
-            out += "\n- " + tool.name;
-            continue;
+            error = "workflow action contract rendering failed: " + render_error;
+            return {};
         }
         out += "\n- " + compact;
     }
@@ -275,29 +247,26 @@ json workflow_action_schema(
 
 std::vector<common_chat_tool> workflow_action_model_tools(
         const std::vector<common_chat_tool> & tools,
-        const std::vector<common_agent_tool_argument_binding> & fixed_bindings) {
+        const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
+        const std::vector<std::string> & host_resolved_dataset_tools,
+        std::string & error) {
     auto projected = tools;
     for (auto & tool : projected) {
         auto schema = json::parse(tool.parameters, nullptr, false);
         if (!schema.is_object() || schema.value("type", std::string()) != "object") continue;
         std::set<std::string> hidden;
         for (const auto & binding : fixed_bindings) {
-            if (binding.tool_name != tool.name || binding.model_visible) continue;
+            if (binding.tool_name != tool.name) continue;
             const auto arguments = json::parse(binding.arguments_json, nullptr, false);
             if (!arguments.is_object()) continue;
             for (const auto & item : arguments.items()) hidden.insert(item.key());
         }
+        if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
+                host_resolved_dataset_tools.end()) hidden.insert("dataset");
         if (hidden.empty()) continue;
-        auto & properties = schema["properties"];
-        if (properties.is_object()) {
-            for (const auto & field : hidden) properties.erase(field);
-        }
-        json required = json::array();
-        for (const auto & field : schema.value("required", json::array())) {
-            if (!field.is_string() || hidden.count(field.get<std::string>()) == 0) required.push_back(field);
-        }
-        schema["required"] = std::move(required);
-        tool.parameters = schema.dump();
+        tool.parameters = common_project_model_input_schema_without_bound_fields(
+            tool.parameters, std::vector<std::string>(hidden.begin(), hidden.end()), error);
+        if (!error.empty()) return {};
     }
     return projected;
 }
@@ -380,7 +349,8 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         }
     }
 
-    const auto model_tools = workflow_action_model_tools(tools, fixed_bindings);
+    const auto model_tools = workflow_action_model_tools(tools, fixed_bindings, host_resolved_dataset_tools, error);
+    if (!error.empty()) return result;
     std::string last_error;
     const auto schema = workflow_action_schema(model_tools, fixed_bindings, host_resolved_dataset_tools);
     const bool has_web_search = std::any_of(tools.begin(), tools.end(), [](const auto & tool) {
@@ -406,6 +376,8 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         error = "workflow action schema has no supported registered tools";
         return result;
     }
+    const auto contracts = workflow_action_contracts(model_tools, error);
+    if (!error.empty()) return result;
     for (size_t attempt = 0; attempt < 2; ++attempt) {
         common_chat_msg system{
             "system",
@@ -422,7 +394,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                       "For object lists, repeat the declared directive; use indexed fields when shown.\n"
                       "Omit unset or host-resolved fields, including optional grouping when the task does not ask for groups.\n"
                       "Quote values containing spaces or commas.\n\n"
-                      "Tool contract:" + workflow_action_contracts(model_tools, host_resolved_dataset_tools) +
+                      "Tool contract:" + contracts +
                       workflow_action_known_columns(request))
                     : (next_action_guidance + "Choose the best tool for the request.\n\n"
                   "Return exactly one action:\n\n"
@@ -434,10 +406,10 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                   "For object lists, repeat the declared directive; use indexed fields when shown.\n"
                   "Omit unset or host-resolved fields.\n"
                   "Quote values containing spaces or commas.\n\n"
-                  "Tools:" + workflow_action_contracts(model_tools, host_resolved_dataset_tools)))
+                  "Tools:" + contracts))
                 : (next_action_guidance + "Choose the listed tool that fits the request. Return one JSON object with `tool` and `args` matching its contract. "
                   "Include needed arguments only; omit unset or host-resolved fields. Return no explanation.\nTools:" +
-                    workflow_action_contracts(model_tools, host_resolved_dataset_tools)),
+                    contracts),
         };
         common_chat_msg user{
             "user",
@@ -455,7 +427,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             output_format == common_agent_tool_output_format::compact_dsl
                 ? std::string{} : schema.dump());
         if (output_format == common_agent_tool_output_format::compact_dsl) {
-            generation_request.grammar = workflow_action_grammar(model_tools, host_resolved_dataset_tools, error);
+            generation_request.grammar = common_build_tool_dsl_grammar(model_tools, common_tool_dsl_grammar_form::action, error);
             if (generation_request.grammar.empty()) {
                 error = "workflow action DSL grammar failed: " + error;
                 return result;

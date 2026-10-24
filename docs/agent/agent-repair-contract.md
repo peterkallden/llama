@@ -124,6 +124,38 @@ arguments are excluded from the grammar and removed if a model nevertheless
 emits one. A `null` value for an optional flat field is normalized to omission;
 empty strings are not treated as missing values.
 
+The sampler grammar is compiled from the projected input schema, not from a
+list of field names. Ordinary scalar fields occur at most once, required model
+inputs must be present, and primitive types plus scalar `enum`/`const` values
+constrain generated values. Generation follows schema property order to avoid
+enumerating field permutations. The parser continues accepting valid older
+field orders. Action selection, planning, and selected-tool argument repair
+use the same grammar builder. Optional-only argument contracts allow an empty
+response.
+
+Host-owned inputs are removed together with their `required` entries, including
+entries inside alternatives. Contract rendering errors stop selection rather
+than silently replacing a contract with its tool name. The execution schema is
+not weakened: the host still resolves bindings and validates the final call.
+
+Sampling is not a replacement for validation. Numeric/string bounds, exclusive
+alternative overlap, array index continuity and cardinality, dynamic dictionary
+key collisions, directive contents, reference freshness, and authorization
+remain host/codec checks. Arrays retain repeated scalar lines, comma lists and
+bracketed lists; object arrays retain indexed paths and declared directives.
+Malformed or oversized grammar projections fail explicitly; they never enable
+unconstrained generation or switch the request to JSON.
+
+Regression verification uses `test-agent-dsl-grammar`, the existing codec and
+planner CTests, and two production-daemon smoke drivers:
+`../../scripts/test-agent-template-library-smoke.py` (model-selected clock
+arguments plus interrupted-task restart/resume) and
+`../../scripts/test-agent-dsl-dataset-smoke.py` (structured CSV rules, two actual
+tool operations, and persisted plan metadata after restart). Both drivers
+require explicit daemon/model/work-directory arguments and leave trace artifacts;
+neither performs a build or enables FlyDelta workers. Select GPU visibility
+through the normal local backend environment.
+
 The planner also accepts Compact DSL for a complete multi-step plan:
 
 ```text
