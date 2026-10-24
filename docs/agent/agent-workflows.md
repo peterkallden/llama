@@ -437,12 +437,67 @@ host-derived from `Retry-After` (delta seconds or HTTP date), standard
 headers. The runtime reports the observed delay and headers; it does not
 automatically replay a request or let the model choose a retry time.
 
-An imported package without a `project_id` is host-wide within its namespace:
-its procedures use global memory scope, and its blueprints/workflows use global
-template scope. Supplying a `project_id` installs the package in that project
-instead. Global template visibility does not make task plans global; instantiated
-plans still use the caller's requested turn/session/project scope. The plan
-scope matcher for active task plans remains exact.
+## Host-configured template libraries
+
+`bootstrap.libraries` installs reusable methods independently of execution scope:
+
+```json
+{
+  "bootstrap": {
+    "libraries": [
+      {"id": "shared-methods", "package": "methods.json", "level": "host"},
+      {"id": "team-methods", "package": "team.json", "level": "namespace", "namespace_id": "team-a"},
+      {"id": "project-methods", "package": "project.json", "level": "project", "namespace_id": "team-a", "project_id": "study"}
+    ]
+  }
+}
+```
+
+Host libraries are eligible in every authenticated namespace; namespace and
+project libraries require the corresponding caller identity. Package paths are
+relative to the host configuration file. Changes require a daemon restart.
+`bootstrap.package` and enabled `investigation.workflow_package` remain supported
+as reserved host libraries `bootstrap.default` and `investigation.default`.
+Do not repeat these reserved IDs in the explicit list.
+
+Each import has an immutable content fingerprint and origin-qualified definition
+IDs. Its manifest and canonical package are retained in the existing resource
+store under the internal `llama-agent-host` / `bootstrap` authority. Ordinary
+sessions cannot read that receipt. Startup verifies preserved definitions before
+publishing a candidate snapshot. New tasks use the current package; existing
+tasks remain bound to their preserved package revision while its library remains
+enabled. Removing a library prevents execution and resume; it does not erase
+historical tasks, evidence or reports. Ordinary read permissions still apply.
+
+Logical candidate names are qualified as `library-id:blueprint-id`. There is no
+implicit project-over-host override. Blueprint/workflow/procedure resolution and
+workflow handoffs stay within the selected package revision. Templates are not
+copied into each caller's namespace. A task instantiated from a shared method
+still has its caller's namespace, project, session and requested execution scope;
+its tools and data retain ordinary authorization. New automatic task IDs include
+the complete namespace/project/session/turn identity through a stable digest;
+existing task IDs are preserved. `runtime.agent_plan` can reopen a caller-owned
+persisted task and is checked against the exact requested scope before the
+session runtime is constructed. Generic plan scope matching is
+unchanged. Library eligibility grants access to methods, not to other users' data.
+
+The deterministic `test-agent-template-library` and
+`test-agent-template-library-store` CTests cover configuration, namespace/project
+eligibility, receipt isolation, registration, route compilation, caller-owned task
+instantiation, exact revisions, retries and deactivation. The separate
+`scripts/test-agent-template-library-smoke.py` uses a real model and production
+daemon with a minimal clock workflow in two namespaces, then restarts against the
+same Cozo and resource stores. It preserves requests, responses and logs in the
+specified work directory. `--declared-step` uses an explicit workflow tool
+transition to verify the library path separately from model action selection;
+the default mode also exercises model-selected arguments. The restart phase
+reopens the exact saved task through `runtime.agent_plan`. It does not replace
+domain workflow or browser smokes.
+
+The older CLI import path remains namespace-global without a project identity
+and project-scoped with one; it does not create a cross-namespace host library.
+Session/turn-level package libraries are not supported. Use host configuration
+for the explicit shared library levels above.
 
 ## OpenAlex starter library
 

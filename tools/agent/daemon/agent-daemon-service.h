@@ -1,4 +1,5 @@
 #pragma once
+#include "agent/template-library.h"
 
 #include "agent-daemon-event-collector.h"
 #include "agent-daemon-lifecycle.h"
@@ -92,6 +93,8 @@ struct common_agent_daemon_provider_readiness {
 };
 
 struct common_agent_daemon_runtime {
+    std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
+    std::vector<common_blueprint_candidate> template_library_candidates;
     std::shared_ptr<common_agent_daemon_config_store> config_store;
     std::unique_ptr<common_memory_store> memory_store;
     std::unique_ptr<common_plan_store> plan_store;

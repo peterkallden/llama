@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/template-library.h"
+
 #include "tools/agent/cli/agent-cli-options.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/data-store.h"
@@ -41,6 +43,7 @@ struct daemon_options {
     std::string mmproj;
     std::string embedding_model;
     std::string bootstrap_package;
+    std::vector<common_agent_template_library_config> bootstrap_libraries;
     std::string model_profile;
     common_agent_model_catalog model_catalog;
     std::string backend = "auto";

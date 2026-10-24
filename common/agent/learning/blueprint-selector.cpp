@@ -1,4 +1,5 @@
 #include "agent/learning/blueprint-selector.h"
+#include "agent/template-library.h"
 
 #include <algorithm>
 #include <cctype>
@@ -162,13 +163,15 @@ bool common_agent_select_and_instantiate_blueprint(
             result.reason = "existing plan is not a compatible task plan";
             return true;
         }
+        if (!common_agent_template_task_allowed(*existing, request.namespace_id, request.project_id,
+                config.template_libraries.get(), error)) return false;
         result.outcome = common_blueprint_selection_outcome::resumed;
         result.reason = "existing task plan takes precedence";
         return true;
     }
 
     if (!validate_candidate_catalog(candidates, config, error)) return false;
-    if (candidates.empty() || candidates.size() > config.maximum_candidates) {
+    if (candidates.empty()) {
         result.outcome = common_blueprint_selection_outcome::failed_safely;
         result.reason = candidates.empty() ? "no installed blueprint candidates" : "too many blueprint candidates";
         return true;
@@ -180,7 +183,7 @@ bool common_agent_select_and_instantiate_blueprint(
     std::vector<common_blueprint_candidate> eligible;
     eligible.reserve(candidates.size());
     for (const auto & candidate : candidates) {
-        const auto blueprint = plan_store.get(candidate.persisted_id, error);
+        const auto blueprint = common_agent_template_definition(plan_store,candidate.persisted_id,config.template_libraries.get(),error);
         if (!error.empty()) return false;
         const bool has_known_false_assumption = blueprint && std::any_of(
             blueprint->assumptions.begin(), blueprint->assumptions.end(), [](const auto & assumption) {
@@ -208,8 +211,8 @@ bool common_agent_select_and_instantiate_blueprint(
             }
         }
         if (rejection.empty() &&
-                !common_plan_template_scope_matches(*blueprint, config.scope, request.namespace_id,
-                    request.session_id, request.project_id, request.turn_id)) rejection = "blueprint is outside the current scope";
+                !common_agent_template_definition_allowed(*blueprint, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id, config.template_libraries.get())) rejection = "blueprint is outside the current scope";
         if (!rejection.empty()) {
             result.rejections.push_back({candidate.logical_id, std::move(rejection)});
             continue;
@@ -217,6 +220,11 @@ bool common_agent_select_and_instantiate_blueprint(
         eligible.push_back(candidate);
     }
     result.eligible_count = eligible.size();
+    if (eligible.size() > config.maximum_candidates) {
+        result.outcome = common_blueprint_selection_outcome::failed_safely;
+        result.reason = "too many eligible blueprint candidates";
+        return true;
+    }
     if (eligible.empty()) {
         result.outcome = common_blueprint_selection_outcome::declined;
         result.reason = "no eligible blueprint candidates in the current scope";
@@ -265,7 +273,7 @@ bool common_agent_select_and_instantiate_blueprint(
         result.outcome = common_blueprint_selection_outcome::failed_safely;
         return true;
     }
-    const auto blueprint = plan_store.get(candidate->persisted_id, error);
+    const auto blueprint = common_agent_template_definition(plan_store,candidate->persisted_id,config.template_libraries.get(),error);
     if (!error.empty()) return false;
     if (!blueprint || blueprint->kind != common_plan_kind::blueprint) {
         result.outcome = common_blueprint_selection_outcome::failed_safely;
@@ -320,12 +328,20 @@ bool common_agent_select_and_instantiate_blueprint(
             return true;
         }
         instance.selected_workflow = *config.selected_workflow;
-        const auto workflows = plan_store.list(error);
+        auto workflows = plan_store.list(error);
+        if(config.template_libraries)for(const auto & item:config.template_libraries->definitions){
+            if(item.second.kind==common_plan_kind::workflow){
+                workflows.erase(std::remove_if(workflows.begin(),workflows.end(),[&](const auto & p){return p.id==item.first;}),workflows.end());
+                workflows.push_back(item.second);
+            }
+        }
         if (!error.empty()) return false;
         const auto workflow = std::find_if(workflows.begin(), workflows.end(), [&](const auto & plan) {
             return plan.kind == common_plan_kind::workflow && plan.workflow_definition &&
-                common_plan_template_scope_matches(plan, config.scope, request.namespace_id,
-                    request.session_id, request.project_id, request.turn_id) &&
+                common_agent_template_definition_allowed(plan, config.scope, request.namespace_id,
+                    request.session_id, request.project_id, request.turn_id, config.template_libraries.get()) &&
+                (blueprint->id.rfind("library:",0)!=0 ? plan.id.rfind("library:",0)!=0 :
+                    config.template_libraries && config.template_libraries->same_revision(blueprint->id,plan.id)) &&
                 plan.workflow_definition->workflow_ref == config.selected_workflow->workflow_ref &&
                 plan.workflow_definition->workflow_revision == config.selected_workflow->workflow_revision;
         });

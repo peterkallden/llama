@@ -1,6 +1,7 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-runtime-config.h"
+#include "agent-template-library.h"
 #include "../adaptation/semi-oracle-store-factory.h"
 #include "agent/adaptation/semi-oracle-tool.h"
 #include "agent/adaptation/semi-oracle-target.h"
@@ -1793,17 +1794,18 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
         make_daemon_orchestration_config(options),
         common_memory_scope::session,
         true,
-        {},
+        runtime.template_library_candidates,
         {},
         [config_store, &memory_store, &plan_store, &resource_store, data_store,
             semi_oracle_store = runtime.semi_oracle_store.get(),
-            lifecycle_store = runtime.flydelta_review_lifecycle_store](
+            lifecycle_store = runtime.flydelta_review_lifecycle_store,
+            libraries = runtime.template_libraries](
                 const common_agent_runtime_resident_runtime * runtime,
                 const common_agent_runtime_session_host_turn_request & request,
                 common_agent_runtime_tooling & tooling,
                 std::string & error) {
             const auto current_options = config_store->snapshot();
-            return resolve_agent_daemon_tooling(
+            const bool resolved = resolve_agent_daemon_tooling(
                 *current_options,
                 runtime,
                 request,
@@ -1816,6 +1818,8 @@ common_agent_runtime_session_host_build_config make_session_host_build_config(
                 std::nullopt,
                 semi_oracle_store,
                 lifecycle_store.get());
+            tooling.template_libraries = libraries;
+            return resolved;
         },
         runtime.model_residency,
         make_daemon_flydelta_deployment_resolver(options, config_store, runtime),
@@ -1919,59 +1923,25 @@ bool open_daemon_data_store(
     return error.empty();
 }
 
-bool import_daemon_bootstrap_package(
-        const daemon_options & options,
-        common_memory_store & memory_store,
-        common_plan_store & plan_store,
-        std::string & error) {
-    if (options.bootstrap_package.empty()) {
-        error.clear();
-        return true;
-    }
-
-    common_agent_bootstrap_package package;
-    if (!load_bootstrap_file(options.bootstrap_package, package, error)) {
-        error = "daemon bootstrap package load failed: " + error;
-        return false;
-    }
-
-    common_agent_bootstrap_config config;
-    config.namespace_id = "llama-agent-host";
-    config.session_id = "bootstrap";
-    config.now = std::time(nullptr);
-    config.install_procedures = !package.procedures.empty();
-
-    common_agent_bootstrap_embedder embed;
+bool import_daemon_template_libraries(const daemon_options & options,
+        common_agent_daemon_runtime & runtime,std::string & error){
+    auto libraries=options.bootstrap_libraries;
+    if(!options.bootstrap_package.empty())libraries.push_back({"bootstrap.default",options.bootstrap_package,"host",{}, {}});
+    if(options.investigation.enabled&&!options.investigation.workflow_package.empty())
+        libraries.push_back({"investigation.default",options.investigation.workflow_package,"host",{}, {}});
     std::unique_ptr<daemon_agent_embedding_provider> embedding;
-    if (!package.procedures.empty()) {
-        if (options.embedding_model.empty()) {
-            error = "daemon bootstrap package contains procedures; configure model.embedding_model";
-            return false;
-        }
-        embedding = std::make_unique<daemon_agent_embedding_provider>(
-            options.embedding_model, options.n_gpu_layers);
-        embed = [&embedding](
-                const std::string & text,
-                std::vector<float> & vector,
-                std::string & embed_error) {
-            return embedding->embed("daemon bootstrap procedure", text, vector, embed_error);
-        };
-    }
-
-    common_agent_bootstrap_result result;
-    if (!common_agent_install_bootstrap_package(
-            memory_store, plan_store, config, package, std::move(embed), result, error)) {
-        error = "daemon bootstrap package import failed: " + error;
-        return false;
-    }
-    std::fprintf(stderr,
-        "agent bootstrap: package=%s procedures installed=%zu existing=%zu; "
-        "blueprints installed=%zu existing=%zu; workflows installed=%zu existing=%zu\n",
-        package.name.c_str(),
-        result.installed_memory_ids.size(), result.existing_memory_ids.size(),
-        result.installed_blueprint_ids.size(), result.existing_blueprint_ids.size(),
-        result.installed_workflow_ids.size(), result.existing_workflow_ids.size());
-    error.clear();
+    common_agent_bootstrap_embedder embed=[&](const std::string & text,std::vector<float> & vector,std::string & e){
+        if(options.embedding_model.empty()){e="template procedures require model.embedding_model";return false;}
+        if(!embedding)embedding=std::make_unique<daemon_agent_embedding_provider>(options.embedding_model,options.n_gpu_layers);
+        return embedding->embed("template library procedure",text,vector,e);
+    };
+    auto snapshot=std::make_shared<common_agent_template_library_snapshot>();
+    std::vector<common_blueprint_candidate> candidates;
+    if(!load_agent_template_libraries(libraries,*runtime.memory_store,*runtime.plan_store,*runtime.resource_store,
+            std::move(embed),*snapshot,candidates,error))return false;
+    runtime.template_libraries=std::move(snapshot);runtime.template_library_candidates=std::move(candidates);
+    std::fprintf(stderr,"agent template libraries: revisions=%zu candidates=%zu\n",
+        runtime.template_libraries->revisions.size(),runtime.template_library_candidates.size());
     return true;
 }
 
@@ -1991,19 +1961,8 @@ bool initialize_agent_daemon_environment(
     if (!open_daemon_plan_store(options, runtime.plan_store, error)) {
         return false;
     }
-    if (!import_daemon_bootstrap_package(
-            options, *runtime.memory_store, *runtime.plan_store, error)) {
-        return false;
-    }
-    if (options.investigation.enabled && !options.investigation.workflow_package.empty()) {
-        daemon_options workflow_options = options;
-        workflow_options.bootstrap_package = options.investigation.workflow_package;
-        if (!import_daemon_bootstrap_package(
-                workflow_options, *runtime.memory_store, *runtime.plan_store, error)) {
-            error = "investigation workflow package import failed: " + error;
-            return false;
-        }
-    }
+    if (!open_daemon_resource_store(options, runtime.resource_store, error) ||
+            !import_daemon_template_libraries(options,runtime,error)) return false;
     if (!open_daemon_data_store(options, runtime.data_store, error)) {
         return false;
     }
@@ -2018,9 +1977,6 @@ bool initialize_agent_daemon_environment(
             return false;
         }
         runtime.investigation_dataset_source = std::move(source);
-    }
-    if (!open_daemon_resource_store(options, runtime.resource_store, error)) {
-        return false;
     }
     runtime.semi_oracle_store = make_agent_semi_oracle_store(
         options.adaptation_transaction_backend,

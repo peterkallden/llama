@@ -333,6 +333,10 @@ int main(int argc, char ** argv) {
                 result.restart_required.emplace_back(field);
             }
         };
+        require_restart(candidate.bootstrap_package != options.bootstrap_package ||
+            candidate.investigation.workflow_package != options.investigation.workflow_package ||
+            common_agent_template_library_config_json(candidate.bootstrap_libraries) !=
+                common_agent_template_library_config_json(options.bootstrap_libraries), "bootstrap.libraries");
         require_restart(candidate.model != options.model, "model.path");
         require_restart(candidate.model_profile != options.model_profile, "model.profile");
         require_restart(

@@ -512,6 +512,9 @@ bool parse_agent_host_config_json(
             return false;
         }
         read_optional(parsed["bootstrap"], "package", config.bootstrap_package);
+        if (parsed["bootstrap"].contains("libraries") &&
+                !common_agent_template_library_config_parse(parsed["bootstrap"]["libraries"],
+                    config.bootstrap_libraries, error)) return false;
     }
     if (parsed.contains("models")) {
         if (!parsed["models"].is_object()) {
@@ -1408,6 +1411,17 @@ bool load_agent_host_config(
         }
         config.investigation.workflow_package = package_path.string();
     }
+    for (auto & library : config.bootstrap_libraries) {
+        auto package_path = std::filesystem::path(library.package);
+        if (!package_path.is_absolute()) package_path = config_directory / package_path;
+        package_path = package_path.lexically_normal();
+        std::error_code package_error;
+        if (!std::filesystem::is_regular_file(package_path, package_error)) {
+            error = "bootstrap library is not a readable regular file: " + library.id;
+            return false;
+        }
+        library.package = package_path.string();
+    }
     for (auto & provider : config.openapi_providers) {
         provider.source_directory = config_directory.string();
     }
@@ -1677,6 +1691,7 @@ nlohmann::ordered_json agent_host_config_to_json(
         }},
         {"bootstrap", {
             {"package", config.bootstrap_package},
+            {"libraries", common_agent_template_library_config_json(config.bootstrap_libraries)},
         }},
         {"runtime", {
             {"context_size", config.runtime_context_size},
@@ -2685,6 +2700,7 @@ void apply_agent_host_config_to_daemon_options(
     options.mmproj = config.mmproj_path;
     options.embedding_model = config.embedding_model;
     options.bootstrap_package = config.bootstrap_package;
+    options.bootstrap_libraries = config.bootstrap_libraries;
     options.model_profile = config.model_profile;
     options.model_catalog = config.model_catalog;
     options.default_mode = config.default_mode;

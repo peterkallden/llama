@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/template-library.h"
+
 #include "tools/agent/cli/agent-cli-options.h"
 #include "../host/agent-host-mcp-provider-config.h"
 #include "agent/tooling/catalog/tool-catalog.h"
@@ -41,6 +43,7 @@ struct agent_host_config {
     std::string embedding_model;
     // Optional package imported idempotently into the host stores during daemon startup.
     std::string bootstrap_package;
+    std::vector<common_agent_template_library_config> bootstrap_libraries;
     // Optional catalog profile override. Empty means models.routing.default_profile.
     std::string model_profile;
     // Optional catalog-based model configuration. The legacy model fields

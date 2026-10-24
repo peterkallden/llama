@@ -1,4 +1,5 @@
 #include "agent-route-compiler.h"
+#include "agent/template-library.h"
 
 #include <algorithm>
 #include <functional>
@@ -391,14 +392,14 @@ bool compile_agent_route_catalog(
     for (const auto & candidate : blueprints) {
         if (!explicit_blueprint.empty() && candidate.logical_id != explicit_blueprint) continue;
         std::string store_error;
-        const auto blueprint = plan_store.get(candidate.persisted_id, store_error);
+        const auto blueprint = common_agent_template_definition(plan_store,candidate.persisted_id,tooling.template_libraries.get(),store_error);
         if (!store_error.empty()) { error = store_error; return false; }
         if (!blueprint || blueprint->kind != common_plan_kind::blueprint) {
             append_rejection(catalog, candidate, {}, "persisted blueprint is unavailable");
             continue;
         }
-        if (!common_plan_template_scope_matches(*blueprint, scope.plan_scope, scope.namespace_id,
-                scope.session_id, scope.project_id, scope.turn_id)) {
+        if (!common_agent_template_definition_allowed(*blueprint, scope.plan_scope, scope.namespace_id,
+                scope.session_id, scope.project_id, scope.turn_id, tooling.template_libraries.get())) {
             append_rejection(catalog, candidate, {}, "blueprint is outside the current scope");
             continue;
         }
@@ -418,14 +419,23 @@ bool compile_agent_route_catalog(
 
         std::vector<common_agent_route_candidate> workflow_routes;
         std::string list_error;
-        const auto plans = plan_store.list(list_error);
+        auto plans = plan_store.list(list_error);
+        if(tooling.template_libraries)for(const auto & item:tooling.template_libraries->definitions){
+            if(item.second.kind==common_plan_kind::workflow){
+                plans.erase(std::remove_if(plans.begin(),plans.end(),[&](const auto & p){return p.id==item.first;}),plans.end());
+                plans.push_back(item.second);
+            }
+        }
         if (!list_error.empty()) { error = list_error; return false; }
         for (const auto & binding : blueprint->workflow_bindings) {
             const common_plan_state * workflow_plan = nullptr;
             for (const auto & plan : plans) {
                 if (plan.kind != common_plan_kind::workflow || !plan.workflow_definition ||
-                        !common_plan_template_scope_matches(plan, scope.plan_scope, scope.namespace_id,
-                            scope.session_id, scope.project_id, scope.turn_id)) continue;
+                        !common_agent_template_definition_allowed(plan, scope.plan_scope, scope.namespace_id,
+                            scope.session_id, scope.project_id, scope.turn_id, tooling.template_libraries.get())) continue;
+                if(blueprint->id.rfind("library:",0)==0){
+                    if(!tooling.template_libraries || !tooling.template_libraries->same_revision(blueprint->id,plan.id))continue;
+                } else if(plan.id.rfind("library:",0)==0)continue;
                 const auto & definition = *plan.workflow_definition;
                 if (definition.workflow_ref == binding.workflow_ref &&
                         definition.workflow_revision == binding.workflow_revision) {

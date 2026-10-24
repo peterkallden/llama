@@ -129,6 +129,7 @@ if (BUILD_SHARED_LIBS)
 endif()
 
 add_library(${TARGET}
+    template-library.cpp template-library.h
     agent-bootstrap.cpp agent-bootstrap.h
     agent-package-json.cpp agent-package-json.h
     agent-prepared-generation.cpp agent-prepared-generation.h

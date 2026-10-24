@@ -11,6 +11,7 @@
 namespace {
 
 std::string bootstrap_prefix(const common_agent_bootstrap_config & config) {
+    if (!config.definition_prefix.empty()) return config.definition_prefix;
     return "bootstrap:" + config.namespace_id + ":" +
         (config.project_id.empty() ? "global" : "project:" + config.project_id) + ":";
 }

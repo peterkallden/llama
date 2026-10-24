@@ -1,4 +1,6 @@
 #include "agent-plan-orchestration.h"
+#include "agent/template-library.h"
+#include "hash/hash.h"
 
 #include "../cli/agent-cli-selection.h"
 #include "../tooling/agent-tool-provider.h"
@@ -15,6 +17,12 @@
 #include <sstream>
 #include <nlohmann/json.hpp>
 
+std::string make_agent_automatic_blueprint_plan_id(const common_agent_scope & scope) {
+    const auto identity = nlohmann::ordered_json::array({scope.namespace_id, scope.project_id,
+        scope.session_id, scope.turn_id.empty() ? std::string("turn") : scope.turn_id}).dump();
+    return "agent-blueprint:" + hash_sha256_hex(identity.data(), identity.size());
+}
+
 namespace {
 
 std::string make_bootstrap_prefix(const common_agent_scope & scope) {
@@ -22,10 +30,6 @@ std::string make_bootstrap_prefix(const common_agent_scope & scope) {
         (scope.project_id.empty() ? "global" : "project:" + scope.project_id) + ":";
 }
 
-std::string make_automatic_blueprint_plan_id(const common_agent_scope & scope) {
-    return "agent-blueprint:" + scope.session_id + ":" +
-        (scope.turn_id.empty() ? std::string("turn") : scope.turn_id);
-}
 
 common_agent_request make_orchestration_selection_request(
         const common_agent_orchestration_config & config,
@@ -280,11 +284,12 @@ bool maybe_auto_select_blueprint(
     // active plan and preserves family routing, required-tool propagation and
     // subsequent resource chunk planning on the first automatic turn.
     if (context.current_plan_id.empty()) {
-        context.current_plan_id = make_automatic_blueprint_plan_id(context.scope);
+        context.current_plan_id = make_agent_automatic_blueprint_plan_id(context.scope);
     }
 
     auto selector = make_llama_cli_blueprint_selector(context.inference, context.generation_config);
     common_blueprint_selection_config selection_config;
+    if(context.tooling)selection_config.template_libraries=context.tooling->template_libraries;
     selection_config.task_plan_id = context.current_plan_id;
     selection_config.session_id = context.scope.session_id;
     selection_config.scope = context.scope.plan_scope;
@@ -416,12 +421,17 @@ bool maybe_select_agent_route(
         chosen = *found;
         reason = "explicit blueprint route";
     } else if (host_orientation) {
-        const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
-            [&](const auto & candidate) {
-                return candidate.kind == common_agent_route_kind::blueprint_workflow &&
-                    candidate.workflow &&
-                    candidate.workflow->workflow_ref == "workflow://resource/document-analysis";
-            });
+        const auto orientation_candidate = [&](const auto & candidate) {
+            return candidate.kind == common_agent_route_kind::blueprint_workflow && candidate.workflow &&
+                candidate.workflow->workflow_ref == "workflow://resource/document-analysis" &&
+                (context.config.agent_blueprint == "auto" || context.config.agent_blueprint == "off" ||
+                    candidate.blueprint_logical_id == context.config.agent_blueprint);
+        };
+        if (std::count_if(catalog.candidates.begin(), catalog.candidates.end(), orientation_candidate) > 1) {
+            error = "attachment orientation has multiple authorized template origins; select an explicit blueprint";
+            return false;
+        }
+        const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(), orientation_candidate);
         if (found == catalog.candidates.end()) {
             error = "host attachment orientation route is unavailable or not eligible";
             for (const auto & rejection : catalog.rejections) {
@@ -487,7 +497,20 @@ bool maybe_select_agent_route(
         {}, {}, {}, selected_route.id});
 
     context.route_procedure_memories.clear();
-    if (!selected_route.procedure_refs.empty()) {
+    if (!selected_route.procedure_refs.empty() && context.tooling && context.tooling->template_libraries &&
+            context.tooling->template_libraries->find(selected_route.blueprint_persisted_id)) {
+        const auto & libraries=*context.tooling->template_libraries;
+        const auto * origin=libraries.find(selected_route.blueprint_persisted_id);
+        for(const auto & ref:selected_route.procedure_refs){
+            const auto id=ref.rfind(origin->definition_prefix,0)==0?ref:origin->definition_prefix+"procedure:"+ref;
+            auto found=libraries.procedures.find(id);
+            if(found==libraries.procedures.end() || !libraries.same_revision(selected_route.blueprint_persisted_id,id)){
+                error="selected library procedure revision is unavailable";return false;
+            }
+            common_memory_hit hit;hit.memory=found->second;hit.provenance="verified template library procedure";hit.final_score=1.0f;
+            context.route_procedure_memories.push_back(std::move(hit));
+        }
+    } else if (!selected_route.procedure_refs.empty()) {
         common_memory_query query;
         query.kind = common_memory_kind::procedure;
         query.scope = context.scope.project_id.empty()
@@ -522,7 +545,7 @@ bool maybe_select_agent_route(
     }
 
     if (selected_route.kind == common_agent_route_kind::normal_plan) return true;
-    if (context.current_plan_id.empty()) context.current_plan_id = make_automatic_blueprint_plan_id(context.scope);
+    if (context.current_plan_id.empty()) context.current_plan_id = make_agent_automatic_blueprint_plan_id(context.scope);
 
     const auto blueprint_candidate = std::find_if(
         context.installed_blueprint_candidates.begin(), context.installed_blueprint_candidates.end(),
@@ -533,6 +556,7 @@ bool maybe_select_agent_route(
     }
     common_explicit_blueprint_selector selector(selected_route.blueprint_logical_id);
     common_blueprint_selection_config selection_config;
+    if(context.tooling)selection_config.template_libraries=context.tooling->template_libraries;
     selection_config.task_plan_id = context.current_plan_id;
     selection_config.session_id = context.scope.session_id;
     selection_config.scope = context.scope.plan_scope;

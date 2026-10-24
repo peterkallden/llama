@@ -57,6 +57,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics/agent-native-crash.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-protocol.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-template-library.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-capture.cpp
@@ -200,6 +201,7 @@ set(AGENT_DAEMON_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-event-collector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-protocol.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-template-library.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-capture.cpp

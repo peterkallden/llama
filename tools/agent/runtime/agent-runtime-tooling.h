@@ -12,6 +12,7 @@
 #include <vector>
 
 class agent_tool_view;
+struct common_agent_template_library_snapshot;
 
 struct common_agent_runtime_tooling {
     std::vector<common_chat_tool> tools;
@@ -43,4 +44,5 @@ struct common_agent_runtime_tooling {
     // Sanitized host projection of a typed investigation binding. This is
     // request-scoped and contains only case metadata and selected evidence.
     std::optional<std::string> investigation_context_text;
+    std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
 };

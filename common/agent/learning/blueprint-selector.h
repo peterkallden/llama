@@ -6,6 +6,9 @@
 #include "plan/plan-store.h"
 
 #include <optional>
+#include <memory>
+
+struct common_agent_template_library_snapshot;
 #include <functional>
 #include <string>
 #include <vector>
@@ -112,6 +115,7 @@ struct common_blueprint_selection_config {
     // store sees it. A declined callback leaves the blueprint instance
     // unchanged; it must never invent a fallback plan itself.
     common_blueprint_instance_materializer materialize_instance;
+    std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
 };
 
 enum class common_blueprint_selection_outcome {

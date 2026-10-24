@@ -1,3 +1,4 @@
+#include "agent/template-library.h"
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent-runtime-execution.h"
 #include "common/agent/resource-chunk-extraction.h"
@@ -30,12 +31,28 @@ namespace {
 
 using json = nlohmann::ordered_json;
 
-void load_route_procedure_memories(
+bool load_route_procedure_memories(
         common_agent_runtime_driver_execution & execution,
         const std::vector<std::string> & procedure_refs,
-        const std::string & provenance) {
+        const std::string & provenance,
+        std::string & error) {
     execution.route_procedure_memories.clear();
-    if (procedure_refs.empty()) return;
+    if (procedure_refs.empty()) return true;
+    const auto * libraries = execution.tooling.template_libraries.get();
+    if (libraries && libraries->find(execution.selected_route.blueprint_persisted_id)) {
+        const auto * origin = libraries->find(execution.selected_route.blueprint_persisted_id);
+        for (const auto & ref : procedure_refs) {
+            const auto id = ref.rfind(origin->definition_prefix, 0) == 0 ? ref : origin->definition_prefix + "procedure:" + ref;
+            const auto found = libraries->procedures.find(id);
+            if (found == libraries->procedures.end()) {
+                error = "preserved library procedure is unavailable";
+                return false;
+            }
+            common_memory_hit hit; hit.memory = found->second; hit.provenance = provenance; hit.final_score = 1.0f;
+            execution.route_procedure_memories.push_back(std::move(hit));
+        }
+        return true;
+    }
     common_memory_query query;
     query.kind = common_memory_kind::procedure;
     query.scope = execution.scope.project_id.empty()
@@ -48,7 +65,7 @@ void load_route_procedure_memories(
     query.limit = 64;
     std::string procedure_error;
     const auto procedures = execution.memory_store.list(query, procedure_error);
-    if (!procedure_error.empty()) return;
+    if (!procedure_error.empty()) return true;
     for (const auto & procedure_ref : procedure_refs) {
         const auto found = std::find_if(procedures.begin(), procedures.end(),
             [&](const auto & procedure) {
@@ -65,6 +82,7 @@ void load_route_procedure_memories(
         hit.final_score = 1.0f;
         execution.route_procedure_memories.push_back(std::move(hit));
     }
+    return true;
 }
 
 bool transition_driver_cognitive_mode(
@@ -107,7 +125,10 @@ bool restore_and_validate_bound_route(
     std::string plan_error;
     const auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
     if (!plan_error.empty()) { error = "resume route validation failed: " + plan_error; return false; }
-    if (!plan || !plan->route_binding) return true; // legacy plans remain unbound.
+    if (!plan) return true;
+    if (!common_agent_template_task_allowed(*plan, execution.scope.namespace_id,
+            execution.scope.project_id, execution.tooling.template_libraries.get(), error)) return false;
+    if (!plan->route_binding) return true; // legacy plans remain unbound.
 
     // Dataset references are durable plan observations; reconstruct the
     // transient route context when a host resumes after a workflow handoff.
@@ -128,6 +149,13 @@ bool restore_and_validate_bound_route(
     route.id = plan->route_binding->route_id;
     route.blueprint_logical_id = plan->route_binding->blueprint_ref;
     route.blueprint_revision = plan->route_binding->blueprint_revision;
+    if (execution.tooling.template_libraries) {
+        const auto * origin = execution.tooling.template_libraries->find(plan->derived_from_plan_id.value_or(std::string{}));
+        if (origin) for (const auto & member : origin->blueprints) {
+            if (origin->library_id + ":" + member.first == route.blueprint_logical_id)
+                route.blueprint_persisted_id = member.second;
+        }
+    }
     route.graph_revision = plan->route_binding->graph_revision;
     route.required_capabilities = plan->required_capabilities;
     route.procedure_refs = plan->procedure_refs;
@@ -214,8 +242,8 @@ bool restore_and_validate_bound_route(
     }
     execution.selected_route = std::move(route);
     execution.route_selected = true;
-    load_route_procedure_memories(execution, execution.selected_route.procedure_refs,
-        "resumed workflow procedure ref");
+    if (!load_route_procedure_memories(execution, execution.selected_route.procedure_refs,
+        "resumed workflow procedure ref", error)) return false;
     execution.execution_envelope = std::move(envelope);
     execution.execution_envelope_ready = true;
     execution.pre_turn_events.push_back({
@@ -1191,8 +1219,24 @@ static bool transition_to_workflow(
     auto request = make_agent_runtime_driver_request(execution);
     request.prompt = original_prompt;
     common_agent_route_catalog catalog;
+    auto continuation_candidates = execution.installed_blueprint_candidates;
+    if (tooling.template_libraries) {
+        const auto & libraries = *tooling.template_libraries;
+        if (const auto * origin = libraries.find(plan.derived_from_plan_id.value_or(std::string{}))) {
+            continuation_candidates.clear();
+            for (const auto & member : origin->blueprints) {
+                const auto definition = libraries.definitions.find(member.second);
+                if (definition != libraries.definitions.end()) continuation_candidates.push_back(
+                    common_agent_template_candidate(origin->library_id + ":" + member.first, definition->second));
+            }
+        } else {
+            continuation_candidates.erase(std::remove_if(continuation_candidates.begin(), continuation_candidates.end(),
+                [](const auto & candidate) { return candidate.persisted_id.rfind("library:", 0) == 0; }),
+                continuation_candidates.end());
+        }
+    }
     if (!compile_agent_route_catalog(request, execution.plan_store, execution.scope,
-            execution.installed_blueprint_candidates, tooling, {}, catalog, error)) {
+            continuation_candidates, tooling, {}, catalog, error)) {
         error = "workflow continuation route compilation failed: " + error;
         return false;
     }
@@ -1636,8 +1680,8 @@ static bool transition_to_workflow(
     execution.execution_envelope = std::move(envelope);
     execution.execution_envelope_ready = true;
     execution.tool_argument_bindings = std::move(route_bindings);
-    load_route_procedure_memories(execution, execution.selected_route.procedure_refs,
-        "workflow continuation procedure ref");
+    if (!load_route_procedure_memories(execution, execution.selected_route.procedure_refs,
+        "workflow continuation procedure ref", error)) return false;
     execution.model_tools.clear();
     for (const auto & tool : execution.tooling.tools) {
         if (std::find(execution.selected_route.resolved_tools.begin(),

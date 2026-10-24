@@ -726,6 +726,22 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
     endforeach()
 
+    add_executable(test-agent-template-library-store test-agent-template-library-store.cpp)
+    target_include_directories(test-agent-template-library-store PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(test-agent-template-library-store PRIVATE llama-agent-daemon-library llama-agent-core)
+    target_compile_features(test-agent-template-library-store PRIVATE cxx_std_17)
+    target_compile_definitions(test-agent-template-library-store PRIVATE NDEBUG)
+    add_test(NAME test-agent-template-library-store COMMAND test-agent-template-library-store)
+    set_tests_properties(test-agent-template-library-store PROPERTIES LABELS "agent;model-free;template-library")
+
+    add_executable(test-agent-template-library test-agent-template-library.cpp)
+    target_link_libraries(test-agent-template-library PRIVATE llama-agent-core llama-agent-runtime-support)
+    target_include_directories(test-agent-template-library PRIVATE ${PROJECT_SOURCE_DIR})
+    target_compile_features(test-agent-template-library PRIVATE cxx_std_17)
+    target_compile_definitions(test-agent-template-library PRIVATE NDEBUG)
+    add_test(NAME test-agent-template-library COMMAND test-agent-template-library)
+    set_tests_properties(test-agent-template-library PROPERTIES LABELS "agent;model-free;template-library")
+
     add_executable(test-agent-planner-orchestration test-agent-planner-orchestration.cpp)
     target_include_directories(test-agent-planner-orchestration PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(test-agent-planner-orchestration PRIVATE

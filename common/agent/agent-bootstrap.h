@@ -18,6 +18,8 @@ struct common_agent_bootstrap_config {
 
     bool install_procedures = true;
     bool install_blueprints = true;
+    // Host-assigned immutable library revision prefix; not package-controlled.
+    std::string definition_prefix;
 };
 
 struct common_agent_bootstrap_result {

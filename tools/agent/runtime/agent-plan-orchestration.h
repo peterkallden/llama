@@ -102,3 +102,6 @@ bool maybe_select_agent_route(
 std::vector<common_chat_tool> common_agent_workflow_action_candidates(
     const std::vector<common_chat_tool> & route_tools,
     const common_agent_route_candidate & route);
+
+// New automatic tasks have a stable identity bound to the complete caller scope.
+std::string make_agent_automatic_blueprint_plan_id(const common_agent_scope & scope);
