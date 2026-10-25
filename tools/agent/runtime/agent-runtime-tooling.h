@@ -2,6 +2,7 @@
 
 #include "chat.h"
 #include "agent/dataset-contracts.h"
+#include "agent/investigation-contracts.h"
 #include "resource/resource-contract.h"
 
 #include <memory>
@@ -53,5 +54,7 @@ struct common_agent_runtime_tooling {
     // Sanitized host projection of a typed investigation binding. This is
     // request-scoped and contains only case metadata and selected evidence.
     std::optional<std::string> investigation_context_text;
+    std::optional<common_investigation_context_binding> investigation_context;
+    std::optional<std::vector<common_investigation_source_kind>> investigation_source_kinds;
     std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
 };

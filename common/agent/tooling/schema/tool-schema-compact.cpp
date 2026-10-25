@@ -63,42 +63,108 @@ std::string flat_directive_contract(const json & schema) {
     return out.str();
 }
 
-void append_flat_schema_paths(
+std::string flat_field_type(const json & schema) {
+    // Nested structures are described once in the indexed-field definitions.
+    if (schema.is_object() && !schema.contains("x-agent-flat")) {
+        const auto type = schema.value("type", std::string{});
+        if (type == "object" || schema.contains("properties")) return "object";
+        if (type == "array" && schema.contains("items")) {
+            const auto & item = schema["items"];
+            if (item.is_object() && (item.value("type", std::string{}) == "object" ||
+                    item.contains("properties") || item.contains("oneOf") || item.contains("anyOf") || item.contains("allOf"))) {
+                return "object[]";
+            }
+        }
+    }
+    return scalar_type(schema);
+}
+
+bool append_flat_schema_paths(
         const json & schema,
         const std::string & prefix,
         std::vector<std::string> & paths,
+        std::string & error,
         size_t depth = 0) {
-    if (depth >= 8 || !schema.is_object()) return;
+    if (!schema.is_object() || depth >= 32) {
+        error = "invalid or excessively nested flat model contract";
+        return false;
+    }
     for (const char * key : {"oneOf", "anyOf", "allOf"}) {
         const auto branches = schema.find(key);
-        if (branches == schema.end() || !branches->is_array()) continue;
-        for (const auto & branch : *branches) append_flat_schema_paths(branch, prefix, paths, depth + 1);
+        if (branches == schema.end()) continue;
+        if (!branches->is_array()) {
+            error = "flat model contract alternatives must be arrays";
+            return false;
+        }
+        size_t index = 0;
+        for (const auto & branch : *branches) {
+            paths.push_back(std::string(key) + " branch " + std::to_string(++index) +
+                (prefix.empty() ? std::string{} : " at " + prefix) + ":");
+            if (branch.is_object()) {
+                const auto branch_properties = branch.value("properties", json::object());
+                if (branch_properties.is_object()) for (const auto & field : branch_properties.items()) {
+                    if (field.value().is_object() && (field.value().contains("const") || field.value().contains("enum"))) {
+                        paths.push_back("condition " + (prefix.empty() ? field.key() : prefix + "." + field.key()) + ": " + flat_field_type(field.value()));
+                    }
+                }
+                const auto branch_required = branch.value("required", json::array());
+                if (!branch_required.is_array()) { error = "flat model contract required fields must be an array"; return false; }
+                for (const auto & field : branch_required) {
+                    if (!field.is_string()) { error = "flat model contract required field must be a string"; return false; }
+                    paths.push_back("requires " + (prefix.empty() ? std::string{} : prefix + ".") + field.get<std::string>());
+                }
+            }
+            if (!append_flat_schema_paths(branch, prefix, paths, error, depth + 1)) return false;
+        }
     }
     const auto properties = schema.value("properties", json::object());
-    if (!properties.is_object()) return;
+    if (!properties.is_object()) {
+        error = "flat model contract properties must be an object";
+        return false;
+    }
+    const auto required = schema.value("required", json::array());
+    if (!required.is_array()) {
+        error = "flat model contract required fields must be an array";
+        return false;
+    }
+    // Declare a shared prefix once. Calls still use the existing indexed flat
+    // paths; these are descriptions of their fields, not a new DSL syntax.
+    std::string fields;
     for (const auto & property : properties.items()) {
-        if (paths.size() >= 32) return;
-        const std::string path = prefix.empty() ? property.key() : prefix + "." + property.key();
         const auto & field = property.value();
-        if (field.is_object() && field.value("type", std::string{}) == "array") {
-            if (field.contains("x-agent-flat")) continue;
+        if (!field.is_object()) {
+            error = "flat model contract field must be an object";
+            return false;
+        }
+        if (field.contains("x-agent-flat")) continue;
+        const bool mandatory = std::find(required.begin(), required.end(), json(property.key())) != required.end();
+        const auto label = property.key() + (mandatory ? "!" : "?");
+        if (!prefix.empty()) {
+            if (!fields.empty()) fields += "; ";
+            fields += label + ": " + flat_field_type(field);
+            if (field.contains("description") && field["description"].is_string()) {
+                fields += " (" + field["description"].get<std::string>() + ")";
+            }
+        }
+    }
+    if (!fields.empty()) paths.push_back(prefix + ".{ " + fields + " }");
+    for (const auto & property : properties.items()) {
+        const auto & field = property.value();
+        if (field.contains("x-agent-flat")) continue;
+        const std::string path = prefix.empty() ? property.key() : prefix + "." + property.key();
+        const auto type = field.value("type", std::string{});
+        if (type == "array") {
             const auto item = field.value("items", json::object());
             if (item.value("type", std::string{}) == "object" || item.contains("properties") ||
                     item.contains("oneOf") || item.contains("anyOf") || item.contains("allOf")) {
-                append_flat_schema_paths(item, path + "[0]", paths, depth + 1);
-            } else {
-                paths.push_back(path + "[0]: " + scalar_type(item));
+                if (!append_flat_schema_paths(item, path + "[0]", paths, error, depth + 1)) return false;
             }
-        } else if (field.is_object() && field.value("type", std::string{}) == "object") {
-            append_flat_schema_paths(field, path, paths, depth + 1);
-        } else if (!prefix.empty()) {
-            std::string description = path + ": " + scalar_type(field);
-            if (field.is_object() && field.contains("description") && field["description"].is_string()) {
-                description += " (" + field["description"].get<std::string>() + ")";
-            }
-            paths.push_back(std::move(description));
+        } else if (type == "object" || field.contains("properties") ||
+                field.contains("oneOf") || field.contains("anyOf") || field.contains("allOf")) {
+            if (!append_flat_schema_paths(field, path, paths, error, depth + 1)) return false;
         }
     }
+    return true;
 }
 
 void flatten_example_fields(
@@ -204,9 +270,6 @@ std::string scalar_type(const json & schema, size_t depth) {
         alternatives << ')';
         return alternatives.str();
     }
-    if (schema.contains("x-agent-type") && schema["x-agent-type"].is_string()) {
-        return schema["x-agent-type"].get<std::string>();
-    }
     if (schema.contains("enum") && schema["enum"].is_array()) {
         std::ostringstream out;
         bool first = true;
@@ -216,6 +279,9 @@ std::string scalar_type(const json & schema, size_t depth) {
             out << (value.is_string() ? value.get<std::string>() : value.dump());
         }
         return out.str();
+    }
+    if (schema.contains("x-agent-type") && schema["x-agent-type"].is_string()) {
+        return schema["x-agent-type"].get<std::string>();
     }
     const auto type = schema.value("type", std::string("value"));
     if (type == "array") {
@@ -526,6 +592,33 @@ common_model_tool_contract common_project_model_tool_contract(
     return contract;
 }
 
+std::string common_render_tool_choice_description(
+        const std::string & name,
+        const std::string & description,
+        const std::string & input_schema_json,
+        const std::string & result_schema_json,
+        std::string & error) {
+    const auto contract = common_project_model_tool_contract(
+        name, description, input_schema_json, result_schema_json, error);
+    if (!error.empty()) return {};
+    std::string summary = name + ": " + compact_tool_purpose(name, description, contract.outputs);
+    std::string required;
+    for (const auto & field : contract.inputs) {
+        if (!field.required || field.may_be_inferred) continue;
+        if (!required.empty()) required += ", ";
+        required += field.name;
+    }
+    if (!required.empty()) summary += " Required inputs: " + required + ".";
+    const auto schema = json::parse(input_schema_json);
+    const auto kinds = schema.value("x-agent-investigation-source-kinds", json::array());
+    if (!kinds.is_array()) {
+        error = "tool source requirements must be an array";
+        return {};
+    }
+    if (!kinds.empty()) summary += " Requires selected source kind: " + kinds.dump() + ".";
+    return summary;
+}
+
 std::string common_render_compact_tool_description(
         const common_model_tool_contract & contract,
         std::string & error) {
@@ -544,18 +637,22 @@ std::string common_render_compact_tool_description(
         const std::string & input_schema_json,
         const std::string & result_schema_json,
         std::string & error) {
-    const auto contract = common_project_model_tool_contract(
+    auto contract = common_project_model_tool_contract(
         name, description, input_schema_json, result_schema_json, error);
     if (!error.empty()) return {};
+    const auto schema = json::parse(input_schema_json, nullptr, false);
+    const auto properties = schema.value("properties", json::object());
+    for (auto & field : contract.inputs) {
+        if (properties.contains(field.name)) field.display_type = flat_field_type(properties[field.name]);
+    }
     std::string rendered = common_render_compact_tool_description(contract, error);
     if (!error.empty()) return {};
-    const auto schema = json::parse(input_schema_json, nullptr, false);
     const auto directives = flat_directive_contract(schema);
     if (!directives.empty()) rendered += "\nflat DSL directives:" + directives;
     std::vector<std::string> paths;
-    append_flat_schema_paths(schema, {}, paths);
+    if (!append_flat_schema_paths(schema, {}, paths, error)) return {};
     if (!paths.empty()) {
-        rendered += "\nflat field paths:";
+        rendered += "\nFlat indexed fields (! required per object, ? optional; prefix.field: value; [0] is the first item):";
         for (const auto & path : paths) rendered += "\n  " + path;
     }
     const auto rules = schema.is_object()
@@ -591,6 +688,51 @@ std::string common_render_compact_tool_description(
         rendered += flat_example(name, schema, json{{"dataset", "$joined.dataset"}, {"columns", json::array({"amount"})}});
     }
     return rendered;
+}
+
+std::string common_project_model_input_schema_enums(
+        const std::string & schema_json,
+        const std::map<std::string, std::vector<std::string>> & field_values,
+        std::string & error) {
+    error.clear();
+    auto schema = json::parse(schema_json, nullptr, false);
+    if (!schema.is_object() || schema.value("type", json()) != "object" ||
+            !schema.contains("properties") || !schema["properties"].is_object()) {
+        error = "host enum projection requires an object schema with properties";
+        return {};
+    }
+    for (const auto & field : field_values) {
+        if (!schema["properties"].contains(field.first) || field.second.empty() || field.second.size() > 512) {
+            error = "host enum projection has an unknown field or invalid choice count";
+            return {};
+        }
+        auto & field_schema = schema["properties"][field.first];
+        if (!field_schema.is_object()) {
+            error = "host enum projection requires an object field schema";
+            return {};
+        }
+        auto & property = field_schema.value("type", json()) == "array" && field_schema.contains("items")
+            ? field_schema["items"] : field_schema;
+        if (!property.is_object() || property.value("type", json()) != "string" ||
+                (property.contains("enum") && !property["enum"].is_array())) {
+            error = "host enum projection requires a string field with a valid enum";
+            return {};
+        }
+        json allowed = json::array();
+        std::set<std::string> seen;
+        for (const auto & value : field.second) {
+            if (!seen.insert(value).second) continue;
+            if (property.contains("const") && property["const"] != value) continue;
+            if (property.contains("enum") && std::find(property["enum"].begin(), property["enum"].end(), json(value)) == property["enum"].end()) continue;
+            allowed.push_back(value);
+        }
+        if (allowed.empty()) {
+            error = "host enum projection has no value allowed by the registered contract";
+            return {};
+        }
+        property["enum"] = std::move(allowed);
+    }
+    return schema.dump();
 }
 
 std::string common_project_model_input_schema_without_bound_fields(

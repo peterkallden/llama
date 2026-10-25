@@ -351,14 +351,8 @@ std::string render_reflection_failed_tool_observations(
     size_t remaining = char_budget;
     for (const auto & observation : plan.observations) {
         if (observation.source.empty() || observation.id.rfind("tool:", 0) != 0) continue;
-        const auto begin = observation.id.size() > 5 ? 5 : observation.id.size();
-        const auto end = observation.id.find(':', begin);
-        if (end == std::string::npos) continue;
-        const auto step_id = observation.id.substr(begin, end - begin);
-        const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & candidate) {
-            return candidate.id == step_id;
-        });
-        if (step == plan.steps.end() || step->status != common_plan_step_status::failed) continue;
+        const auto * step = common_plan_find_tool_observation_step(plan, observation);
+        if (step == nullptr || step->status != common_plan_step_status::failed) continue;
         std::string line = "- " + observation.source + " [failed] result=" +
             reflection_bounded_text(common_plan_escape_context_text(observation.summary), 900) + "\n";
         if (line.size() >= remaining) {
@@ -2305,8 +2299,19 @@ public:
                             ? std::max(generation_config.n_predict, 128)
                             : std::max(generation_config.n_predict, 384))),
                 compact_dsl_output ? std::string() : reflection_schema);
-            if (compact_dsl_output && !failed_mandatory_tool_step && !retryable_validation_repair_required) {
-                generation_request.grammar = compact_reflection_decision_grammar();
+            if (compact_dsl_output && !retryable_validation_repair_required) {
+                if (!failed_mandatory_tool_step) {
+                    generation_request.grammar = compact_reflection_decision_grammar();
+                } else {
+                    // These are the exact host-declared output decisions above,
+                    // not a classification of the user's request.
+                    generation_request.grammar = "root ::= " + json("reflect abort").dump();
+                    if (failed_retry_choices.size() == 1) {
+                        generation_request.grammar += " | " + json("reflect retry").dump();
+                    } else for (const auto & choice : failed_retry_choices) {
+                        generation_request.grammar += " | " + json("reflect retry " + choice.first).dump();
+                    }
+                }
             }
             const auto generated = inference.generate_result(std::move(generation_request));
             if (generation_config.generation_trace) {

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v3",
+  "version": "v4",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -81,21 +81,21 @@
       "confidence": 1.0
     },
     {
-      "id": "investigation-phase-handoff-v3",
+      "id": "investigation-phase-handoff-v4",
       "summary": "Bounded source preparation and analysis handoff.",
-      "content": "Carry forward the selected case revision, source IDs and versions, question, evidence references, coverage and unresolved limits. Inspect saved items first and reuse sufficient prepared evidence from those source versions; do not repeat collection merely because a new turn started. For documents, use the retained text representation and verified anchors; for uploaded logs, use an explicit parser mapping and bounded import; for configured search sources, use scoped collection and host cursors. Choose only the paths needed by the selected sources. Each phase records its result or an explicit limitation. Preserve proposed links and analyst review status. Report Findings, Evidence, Coverage and Limitations, with Next step only when needed.",
+      "content": "Carry forward the selected case revision, source IDs and versions, question, evidence references, coverage and unresolved limits. Inspect saved items first and reuse sufficient prepared evidence from those source versions; do not repeat collection merely because a new turn started. For documents, use the retained text representation and verified anchors; for uploaded logs, use an explicit parser mapping and bounded import; for configured search sources, use scoped collection and host cursors. Choose only the paths needed by the selected sources. Each phase records its result or an explicit limitation. Preserve proposed links and analyst review status. Report Findings, Evidence, Coverage and Limitations, with Next step only when needed. Source preparation is constrained by host-resolved selected source kinds: search collection requires a search connector, log import requires an uploaded log source, and document preparation or statement extraction requires retained document or log text. Unknown readiness is a limitation, not permission to assume a source type. Source attachment remains an explicit separate action.",
       "importance": 1.0,
       "confidence": 1.0
     }
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-identity-analysis-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v3",
+      "graph_revision": "investigation-identity-analysis@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -108,12 +108,12 @@
       ]
     },
     {
-      "id": "investigation-communication-analysis-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-communication-analysis-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/communication-analysis",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-communication-analysis@v3",
+      "graph_revision": "investigation-communication-analysis@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -126,12 +126,12 @@
       ]
     },
     {
-      "id": "investigation-event-chain-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-event-chain-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/event-chain",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-event-chain@v3",
+      "graph_revision": "investigation-event-chain@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.graph",
@@ -145,12 +145,12 @@
       ]
     },
     {
-      "id": "investigation-integration-trace-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-integration-trace-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/integration-trace",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-integration-trace@v3",
+      "graph_revision": "investigation-integration-trace@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -163,12 +163,12 @@
       ]
     },
     {
-      "id": "investigation-hypothesis-testing-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-hypothesis-testing-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/hypothesis-testing",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-hypothesis-testing@v3",
+      "graph_revision": "investigation-hypothesis-testing@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.hypothesis"
@@ -182,12 +182,12 @@
       ]
     },
     {
-      "id": "investigation-report-composition-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-report-composition-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/report-composition",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-report-composition@v3",
+      "graph_revision": "investigation-report-composition@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.report",
@@ -205,12 +205,12 @@
       "required_context": []
     },
     {
-      "id": "investigation-actor-relationship-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-actor-relationship-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/actor-relationship",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-actor-relationship@v3",
+      "graph_revision": "investigation-actor-relationship@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -219,12 +219,12 @@
       "required_context": []
     },
     {
-      "id": "investigation-narrative-comparison-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-narrative-comparison-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/narrative-comparison",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-narrative-comparison@v3",
+      "graph_revision": "investigation-narrative-comparison@v4",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -236,12 +236,12 @@
       ]
     },
     {
-      "id": "investigation-document-provenance-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-document-provenance-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "workflow_ref": "workflow://investigation/document-provenance",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "investigation",
-      "graph_revision": "investigation-document-provenance@v3",
+      "graph_revision": "investigation-document-provenance@v4",
       "required_capabilities": [
         "investigation.case",
         "resource.inspect"
@@ -254,8 +254,8 @@
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-identity-analysis-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
@@ -270,12 +270,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-identity-analysis-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -320,8 +320,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-communication-analysis-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-communication-analysis-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Trace observed network communication from a host or address.",
       "purpose": "Describe source-linked communication paths and their time coverage.",
       "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
@@ -336,12 +336,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-communication-analysis-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/communication-analysis",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -386,8 +386,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-event-chain-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-event-chain-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Find a bounded time-compatible chain between two entities.",
       "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
       "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
@@ -402,12 +402,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-event-chain-v2",
         "investigation-source-boundaries-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/event-chain",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -452,8 +452,8 @@
       "next_action": "define-endpoints"
     },
     {
-      "id": "investigation-integration-trace-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-integration-trace-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Follow an exact trace, correlation or message identifier across services.",
       "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
       "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
@@ -468,12 +468,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-integration-trace-v2",
         "investigation-source-boundaries-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/integration-trace",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -518,8 +518,8 @@
       "next_action": "select-trace"
     },
     {
-      "id": "investigation-hypothesis-testing-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-hypothesis-testing-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
       "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
       "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
@@ -532,12 +532,12 @@
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-hypothesis-testing-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/hypothesis-testing",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -574,8 +574,8 @@
       "next_action": "state-claim"
     },
     {
-      "id": "investigation-report-composition-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-report-composition-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Freeze a report from a selected investigation case revision.",
       "purpose": "Create an auditable report resource tied to one immutable case revision.",
       "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
@@ -594,12 +594,12 @@
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-report-composition-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/report-composition",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -628,8 +628,8 @@
       "next_action": "confirm-revision"
     },
     {
-      "id": "investigation-actor-relationship-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-actor-relationship-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Compare named actors across explicitly selected source documents.",
       "purpose": "Record source-anchored actor mentions and proposed relationships without merging identities by name alone.",
       "goal": "Produce a paginated actor and relationship view with every mention linked to its retained source anchor.",
@@ -644,12 +644,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-actor-relationship-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/actor-relationship",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -686,8 +686,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-narrative-comparison-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-narrative-comparison-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Compare event descriptions and statements across selected documents and logs.",
       "purpose": "Find supported agreement, contradiction, qualification, source dependency, and unresolved differences.",
       "goal": "Record comparable source-anchored statements and explicitly qualified pairwise comparisons.",
@@ -702,12 +702,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-narrative-comparison-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/narrative-comparison",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [
@@ -760,8 +760,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-document-provenance-v3",
-      "source_revision": "agent-investigation-workflows@v3",
+      "id": "investigation-document-provenance-v4",
+      "source_revision": "agent-investigation-workflows@v4",
       "selection_description": "Inspect origin, versions, and processing history of selected investigation documents.",
       "purpose": "Summarize verifiable metadata and representation lineage for the case sources.",
       "goal": "Produce a source-by-source provenance account with explicit metadata gaps and processor history.",
@@ -775,12 +775,12 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-document-provenance-v2",
-        "investigation-phase-handoff-v3"
+        "investigation-phase-handoff-v4"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/document-provenance",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "steps": [

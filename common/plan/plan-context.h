@@ -7,6 +7,9 @@ struct common_plan_context_config {
     // separately, so they can disable this section and avoid duplication.
     bool include_observations = true;
 };
+// Match the complete host-generated identity; step IDs may contain colons.
+const common_plan_step * common_plan_find_tool_observation_step(
+    const common_plan_state & plan, const common_plan_observation & observation);
 std::string common_plan_escape_context_text(const std::string & text);
 std::string common_plan_render_context(const common_plan_state & plan, const common_plan_context_config & config = {});
 std::string common_plan_render_tool_observations(

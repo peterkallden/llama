@@ -138,6 +138,9 @@ struct common_agent_request {
     std::optional<common_agent_resource_read_binding> resource_read_binding;
     // Reference-only case context; the host resolves it under current scope.
     std::optional<common_investigation_context_binding> investigation_context;
+    // Host-resolved kinds for explicitly selected and authorized case sources.
+    // Absent means unknown; inventory alone must not imply a source selection.
+    std::optional<std::vector<common_investigation_source_kind>> investigation_source_kinds;
     // Host-owned candidates discovered from the scoped resource store. These
     // are available for selection but are not current-turn inputs.
     std::vector<common_agent_input_resource> available_resources;

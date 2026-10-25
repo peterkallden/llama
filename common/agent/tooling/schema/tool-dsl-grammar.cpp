@@ -363,6 +363,14 @@ private:
                         if (!merge(base["properties"][member.key()], member.value())) return false;
                     } else base["properties"][member.key()] = member.value();
                 }
+            } else if (entry.key() == "enum" && base.contains("enum")) {
+                if (!base["enum"].is_array() || !entry.value().is_array()) { error = "invalid DSL enum intersection"; return false; }
+                json values = json::array();
+                for (const auto & value : base["enum"]) {
+                    if (std::find(entry.value().begin(), entry.value().end(), value) != entry.value().end()) values.push_back(value);
+                }
+                if (values.empty()) { error = "DSL enum intersection is empty"; return false; }
+                base["enum"] = std::move(values);
             } else if (!base.contains(entry.key())) base[entry.key()] = entry.value();
             else if (base[entry.key()] != entry.value() && entry.key().rfind("x-", 0) != 0 && entry.key() != "description" && entry.key() != "title") {
                 error = "DSL intersection contains conflicting constraints: " + entry.key(); return false;

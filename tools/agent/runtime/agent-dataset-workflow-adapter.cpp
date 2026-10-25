@@ -5,17 +5,9 @@
 #include "agent/adaptation/flydelta/oracles/workflow-proposal.h"
 
 #include <algorithm>
-#include <cctype>
 #include <nlohmann/json.hpp>
 
 namespace {
-
-std::string lowercase(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return value;
-}
 
 bool is_dataset_operation(const std::string & name) {
     return name == "data.query" || name == "data.filter" ||
@@ -27,10 +19,14 @@ bool is_dataset_operation(const std::string & name) {
 const common_agent_dataset_descriptor * find_dataset(
         const std::vector<common_agent_dataset_descriptor> & datasets,
         const std::string & reference) {
-    const auto found = std::find_if(datasets.begin(), datasets.end(), [&](const auto & dataset) {
-        return dataset.ref.uri == reference || dataset.ref.name == reference;
-    });
-    return found == datasets.end() ? nullptr : &*found;
+    const common_agent_dataset_descriptor * named = nullptr;
+    for (const auto & dataset : datasets) {
+        if (dataset.ref.uri == reference) return &dataset;
+        if (dataset.ref.name != reference) continue;
+        if (named != nullptr) return nullptr;
+        named = &dataset;
+    }
+    return named;
 }
 
 } // namespace
@@ -98,15 +94,7 @@ common_blueprint_instance_materializer make_agent_dataset_workflow_materializer(
                 return false;
             }
 
-            const common_agent_dataset_descriptor * dataset = &tooling->available_datasets.front();
-            const auto prompt = lowercase(request.prompt);
-            for (const auto & candidate : tooling->available_datasets) {
-                const auto name = lowercase(candidate.ref.name);
-                if (!name.empty() && prompt.find(name) != std::string::npos) {
-                    dataset = &candidate;
-                    break;
-                }
-            }
+            const common_agent_dataset_descriptor * dataset = nullptr;
             if (terminal == "data.join") {
                 if (!arguments.contains("left") || !arguments["left"].is_string() ||
                         !arguments.contains("right") || !arguments["right"].is_string() ||
@@ -141,6 +129,11 @@ common_blueprint_instance_materializer make_agent_dataset_workflow_materializer(
                     return false;
                 }
                 dataset = bound_dataset;
+            } else {
+                // A scoped inventory is not a source selection. Leave an
+                // unbound operation to normal model planning, never the first
+                // catalogue item or a substring in the user's request.
+                return false;
             }
             if (dataset->ref.uri.empty() || dataset->ref.name.empty()) {
                 provider_error = "selected dataset is missing a host-resolved identity";

@@ -199,12 +199,46 @@ void projection_contracts() {
     require(error.empty() && branch_rendered.find("rules[0].column") != std::string::npos &&
         branch_rendered.find("rules[0].type: unique") != std::string::npos,
         "alternative object-array contract lost field paths or example arguments: " + error);
+    require(branch_rendered.find("column!: string") != std::string::npos,
+        "nested required field was not identified in compact contract");
+    nlohmann::ordered_json wide = {{"type", "object"}, {"properties", nlohmann::ordered_json::object()}};
+    auto & nested = wide["properties"]["items"];
+    nested = {{"type", "array"}, {"items", {{"type", "object"}, {"properties", nlohmann::ordered_json::object()}}}};
+    for (size_t index = 0; index < 40; ++index) {
+        nested["items"]["properties"]["field_" + std::to_string(index)] = {{"type", "string"}};
+    }
+    const auto wide_rendered = common_render_compact_tool_description("wide", "Wide", wide.dump(), "{}", error);
+    require(error.empty() && wide_rendered.find("field_39?") != std::string::npos,
+        "compact contract silently truncated fields after the old 32-path cap");
+    const std::string search_schema = R"({"type":"object","required":["dataset","identifier_field"],"properties":{
+        "dataset":{"type":"string","x-agent-type":"dataset_ref"},"identifier_field":{"type":"string"}}})";
+    const auto scoped = common_project_model_input_schema_enums(search_schema,
+        {{"dataset", {"dataset://allowed/events"}}, {"identifier_field", {"user_id", "host_id"}}}, error);
+    require(error.empty(), "scoped source projection failed: " + error);
+    const common_chat_tool scoped_tool{"collect", "Collect", scoped, "{}"};
+    const auto scoped_grammar = common_build_tool_dsl_grammar({scoped_tool}, common_tool_dsl_grammar_form::action, error);
+    require(error.empty() && matches(scoped_grammar, "open! collect\ndataset: dataset://allowed/events\nidentifier_field: user_id") &&
+        !matches(scoped_grammar, "open! collect\ndataset: $datasets.datasets\nidentifier_field: user_id") &&
+        !matches(scoped_grammar, "open! collect\ndataset: dataset://allowed/events\nidentifier_field: id"),
+        "scoped grammar accepted an invented dataset or unmapped source field");
+    const auto scoped_description = common_render_compact_tool_description("collect", "Collect", scoped, "{}", error);
+    require(error.empty() && scoped_description.find("dataset://allowed/events") != std::string::npos &&
+        scoped_description.find("user_id|host_id") != std::string::npos,
+        "semantic type hid the enum enforced by the argument grammar");
+    require(common_project_model_input_schema_enums(scoped, {{"identifier_field", {"unknown"}}}, error).empty() && !error.empty(),
+        "host choices broadened an existing registered enum");
+    require(common_project_model_input_schema_enums(scoped, {{"missing", {"value"}}}, error).empty() && !error.empty(),
+        "unknown host-projected field was silently ignored");
     const auto branch_grammar = common_build_tool_dsl_grammar({branch_array}, common_tool_dsl_grammar_form::action, error);
     require(!branch_grammar.empty() && !matches(branch_grammar, "open! checks\nrules: $value") &&
         matches(branch_grammar, "open! checks\nrules[0].type: unique\nrules[0].column: id"),
         "grammar advertised unsupported whole-array bindings: " + error);
     const auto rendered = common_render_compact_tool_description("lookup", "Lookup", projected, "{}", error);
     require(error.empty() && rendered.find("dataset") == std::string::npos, "compact contract retained host-owned input");
+    const auto choice = common_render_tool_choice_description("lookup", rendered, projected, "{}", error);
+    require(error.empty() && choice.find("Required inputs: column.") != std::string::npos &&
+        choice.find("column (required") == std::string::npos && choice.find("dataset") == std::string::npos,
+        "operation choice lost prerequisites or retained the provider's argument rendering");
     require(common_project_model_input_schema_without_bound_fields("not json", {}, error).empty() && !error.empty(),
         "invalid projection silently succeeded");
 }
@@ -220,6 +254,20 @@ void catalog_contracts() {
         std::vector<common_chat_tool> tools;
         for (const auto & definition : definitions) tools.push_back({definition.name, definition.description,
             common_tool_model_input_schema(definition), common_tool_model_result_schema(definition)});
+        for (const auto & tool : tools) if (tool.name == "investigation.analyze") {
+            const auto action_grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
+            require(error.empty() && matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: graph_metrics"), "metrics acquired spurious prerequisites: " + error);
+            require(!matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup"), "followup omitted mandatory sources");
+            require(!matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: shortest_path"), "path omitted mandatory endpoints");
+            const auto description = common_render_compact_tool_description(tool.name, tool.description, tool.parameters, "{}", error);
+            require(error.empty() && description.find("requires source_ids") != std::string::npos && description.find("requires goal_entity_id") != std::string::npos,
+                "conditional prerequisites missing from compact contract");
+            const auto scoped = common_project_model_input_schema_enums(tool.parameters, {{"source_ids", {"source-1"}}}, error);
+            require(error.empty() && nlohmann::ordered_json::parse(scoped)["properties"]["source_ids"]["items"]["enum"] == nlohmann::ordered_json::array({"source-1"}), "source array enum projection failed");
+            const auto scoped_grammar = common_build_tool_dsl_grammar({{tool.name, tool.description, scoped, "{}"}}, common_tool_dsl_grammar_form::action, error);
+            require(error.empty() && matches(scoped_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: source-1") &&
+                !matches(scoped_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: invented"), "scoped source grammar did not enforce host choices");
+        }
         const auto grammar = common_build_tool_dsl_grammar(tools, common_tool_dsl_grammar_form::plan, error);
         require(!grammar.empty(), std::string(profile) + ": " + error);
         require(grammar.size() < 4 * 1024 * 1024, "catalog grammar exceeds its size budget");

@@ -56,6 +56,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_chat_inputs(
     turn_request.request.enable_memory = turn_request.memory_enabled;
     turn_request.request.memories = context.memories;
     turn_request.request.available_datasets = context.tooling.available_datasets;
+    turn_request.request.investigation_source_kinds = context.tooling.investigation_source_kinds;
     if (turn_request.request.prompt.empty()) {
         turn_request.request.prompt = turn_request.orchestration_config.prompt;
     }
@@ -85,6 +86,7 @@ common_agent_runtime_host_inputs make_agent_runtime_host_agent_inputs(
     turn_request.request.enable_memory = turn_request.memory_enabled;
     turn_request.request.memories = context.memories;
     turn_request.request.available_datasets = context.tooling.available_datasets;
+    turn_request.request.investigation_source_kinds = context.tooling.investigation_source_kinds;
     if (turn_request.request.prompt.empty()) {
         turn_request.request.prompt = turn_request.orchestration_config.prompt;
     }

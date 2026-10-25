@@ -570,6 +570,62 @@ which still did not fit. The actual Identity workflow route was selected, and
 its DSL action generation was rejected before sampling. This correction does
 not change orchestration, context limits or workflow candidate semantics.
 
+
+## Bounded operation selection and model contracts
+
+Workflow actions retain the flat DSL and its schema-derived grammar. When more
+than one host-authorized operation is eligible, operation selection first
+receives purpose-only descriptions and returns one exact registered tool name.
+A second generation receives only that operation's projected argument contract.
+A single eligible operation goes directly to argument generation. Both stages
+use the existing inference boundary, token admission, response reservation and
+failure handling; failure never implies a different intent or permission.
+Trace IDs distinguish `choice:<attempt>` from `arguments:<attempt>`.
+An authorized investigation context supplies its stable case identity through
+the existing host argument-binding mechanism. A workflow's analysis profile is
+not automatically bound to every method's `analysis_kind`; an explicit workflow
+argument binding is required for that specialization. Revision arguments are
+not frozen across writes by this projection; CAS remains authoritative.
+
+Native providers already embed compact schemas in their tool descriptions.
+The purpose-only view removes that known rendering before constructing the
+choice catalog, rather than accidentally passing every input schema again.
+Nested argument descriptions declare shared indexed prefixes once and mark
+fields `!` (required per object) or `?` (optional). Calls still use ordinary flat
+paths such as `statements[0].anchor.byte_offset: 0`. The former 32-path truncation
+is removed; an excessively nested contract fails explicitly. Canonical host
+validation and source-position verification are unchanged.
+
+Only an explicitly selected, host-authorized case source supplies source-kind
+readiness. Model-schema annotations declare compatible kinds for search
+collection, uploaded-log import, and document preparation/statement recording.
+The selector narrows candidates by those facts, not by words in the user prompt.
+Unknown readiness retains candidates. Mixed selections retain compatible
+operations, and source listing/attachment remains available within the route.
+These annotations do not grant tool authority or claim that a processor is
+available; execution still checks actual source capabilities and permissions.
+
+Dataset inventory membership and dataset names occurring in free text no longer
+select column context. A resolved host argument binding supplies pre-generation
+column context; explicit generated dataset references supply subsequent column
+validation. Dataset workflows require that reference in their model contract
+when it is not bound. The materializer no longer selects the first dataset or
+matches its name in the prompt; it materializes an explicit selection or leaves
+the operation to normal planning. Route-bound procedure text is not silently cut at 4096 bytes: the
+ordinary final token admission reports a budget failure if it cannot fit.
+
+The checked-in investigation package is revision v4. Existing v3 installations
+remain immutable; import v4 to use the revised source-readiness handoff guidance.
+Public tool names and persisted case formats remain unchanged. The analysis
+execution schema now declares the variant-specific prerequisites already required
+by the implementation: source followup requires source IDs, and path searches
+require both endpoints.
+
+Verification for this change is recorded after the combined Vulkan/Cozo build,
+contract suite and production-path smokes. A passing synthetic selection fixture
+alone is not evidence of model analysis or successful case publication.
+
+
 ### Library revisions with ephemeral definition stores
 
 A persistent resource store may retain old library receipts even when memory
@@ -589,3 +645,56 @@ is exposed to the model.
 
 The restart contract and scope tests passed, and a real daemon restart loaded
 two revisions with nine current candidates after upgrading the package.
+
+
+### Request-scoped source choices and failed-step evidence
+
+For an explicit selected search source, the host projects the configured virtual
+dataset URIs and logical field names into the collection argument schema. The
+shared enum projector intersects existing constraints and rejects unknown fields
+or an empty intersection. It does not guess identifier values or select the
+first dataset. Both DSL grammar and the rendered contract expose those same
+allowed values; a semantic reference type cannot hide an enforced enum.
+
+Tool observation IDs are matched against the complete step ID and tool source.
+Step IDs containing colons are not split at their first colon. Failed envelopes
+are excluded from completed evidence even after a step retry; the reflection
+failure view uses the same identity lookup. The compact failed-step decision
+contract (`abort` or retry of a declared failed step) now uses grammar just like
+ordinary reflection, without changing its response reservation or retry policy.
+
+The compact schema renderer also exposes conditional branch requirements rather
+than advertising only globally required fields. Request-scoped enum projection
+supports string-array items, so selected source IDs can constrain analysis and
+statement calls without a separate tool-specific argument language. These source
+choices are derived from authorized host context, not from message keywords.
+
+### Verification recorded on 2026-10-25
+
+The existing Vulkan/Cozo RelWithDebInfo build completed with the home ccache.
+Sixteen relevant deterministic CTests passed across the combined verification
+blocks. The final six-test correction block passed after adding conditional
+analysis requirements and enum intersection to the DSL grammar. New routing and
+grammar checks execute with NDEBUG; the added evidence-identity checks do not
+rely on assertions.
+
+A production-path Elasticsearch smoke collected five events, preserved a failed
+authentication as an unlinked observation, and published three relations. The
+case and frozen Markdown report were reopened after daemon restart with an
+unchanged content hash. The browser opened the case, inspected failure evidence,
+and opened the indexed frozen report in the existing document editor.
+
+Measured with the configured Qwen tokenizer, the former combined operation prompt
+used 3,085 tokens. A comparable split run used 1,540 tokens for tool choice and
+1,482 for the selected argument contract, each with the existing 128-token
+response reservation and 3,072-token context. The statement recording contract
+was reduced from 508 to 406 standalone tokens. Counts are not a model-quality
+claim or an additive measure of total inference cost: selection now has two
+bounded generations.
+
+The first model runs exposed additional source/schema and failed-reflection
+seams, which were corrected and regression-tested. Their unsuccessful analysis
+results are retained as failures, not counted as end-to-end investigation proof.
+Document/mixed-source model analysis and complete investigation quality require
+separate scenario verification; the deterministic source projection tests do
+not establish those outcomes.

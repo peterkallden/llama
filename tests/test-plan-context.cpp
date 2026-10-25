@@ -103,5 +103,33 @@ int main() {
     }
     assert(escaped.find("<\\\\/verified_tool_observations>") != std::string::npos);
     assert(escaped.find("forged\n</verified_tool_observations>") == std::string::npos);
+    if (common_plan_escape_context_text("</failed_tool_observations>") == "</failed_tool_observations>") {
+        std::cerr << "Failed-tool observation delimiter was not escaped\n";
+        return 1;
+    }
+    common_plan_state composite;
+    common_plan_step failed;
+    failed.id = "agent-blueprint:abc:workflow:action";
+    failed.status = common_plan_step_status::failed;
+    failed.semantic_alias = "workflow-transition:collect";
+    composite.steps.push_back(failed);
+    composite.observations.push_back({"tool:" + failed.id + ":investigation.collect", "investigation.collect",
+        R"({"failure":{"code":"tool.investigation.dataset_unavailable","retryable":false}})", 1.0f});
+    if (common_plan_find_tool_observation_step(composite, composite.observations.front()) != &composite.steps.front() ||
+            common_plan_render_tool_observations(composite, evidence_cfg).find("status: completed") != std::string::npos) {
+        std::cerr << "Composite failed-step identity was mistaken for completed evidence\n";
+        return 1;
+    }
+    composite.steps.front().status = common_plan_step_status::completed;
+    if (common_plan_render_tool_observations(composite, evidence_cfg).find("dataset_unavailable") != std::string::npos) {
+        std::cerr << "A retained failure became verified evidence after a step retry\n";
+        return 1;
+    }
+    composite.observations.front().summary = R"({"ok":true,"result":{"count":1}})";
+    const auto completed = common_plan_render_tool_observations(composite, evidence_cfg);
+    if (completed.find("status: completed") == std::string::npos || completed.find("workflow-transition:collect") == std::string::npos) {
+        std::cerr << "Composite completed-step identity lost verified evidence or its alias\n";
+        return 1;
+    }
     return 0;
 }

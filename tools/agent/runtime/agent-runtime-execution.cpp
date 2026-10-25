@@ -1036,6 +1036,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.resource_read_binding = execution.resource_read_binding;
     request.available_resources = execution.available_resources;
     request.available_datasets = execution.tooling.available_datasets;
+    request.investigation_source_kinds = execution.tooling.investigation_source_kinds;
     request.grounding_dataset_reader = execution.tooling.grounding_dataset_reader;
     for (const auto & dataset : execution.continuation_datasets) {
         if (std::none_of(request.available_datasets.begin(), request.available_datasets.end(),
@@ -1427,14 +1428,6 @@ static bool transition_to_workflow(
     const auto relevant_tools = common_agent_workflow_action_candidates(
         route_tools, selected);
     std::vector<std::string> host_resolved_dataset_tools;
-    if (selected.workflow_definition->family == "dataset") for (const auto & tool : relevant_tools) {
-        if (tool.name == "data.query" || tool.name == "data.filter" ||
-                tool.name == "data.aggregate" || tool.name == "data.transform" ||
-                tool.name == "statistics.describe" || tool.name == "statistics.outliers" ||
-                tool.name == "statistics.value_counts") {
-            host_resolved_dataset_tools.push_back(tool.name);
-        }
-    }
     std::vector<common_agent_tool_argument_binding> route_bindings;
     for (const auto & binding : execution.tool_argument_bindings) {
         if (std::find(selected.resolved_tools.begin(), selected.resolved_tools.end(),
@@ -1521,6 +1514,8 @@ static bool transition_to_workflow(
     workflow_request.selected_workflow = selected.workflow;
     workflow_request.workflow_definition = selected.workflow_definition;
     workflow_request.available_datasets = tooling.available_datasets;
+    workflow_request.investigation_source_kinds = tooling.investigation_source_kinds;
+    workflow_request.investigation_context = tooling.investigation_context;
     std::string action_error;
     const auto action = select_llama_cli_workflow_action(
         execution.inference, execution.runtime_config.generation_config,

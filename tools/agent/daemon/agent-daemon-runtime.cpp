@@ -1,4 +1,5 @@
 #include "agent/tooling/contracts/tool-budget.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent-daemon-adapter.h"
 #include "agent-daemon-runtime-config.h"
 #include "agent-template-library.h"
@@ -1573,6 +1574,52 @@ bool resolve_agent_daemon_tooling(
             error = "selected investigation context exceeds the host limit; select fewer evidence references";
             return false;
         }
+        if (!binding.source_ids.empty()) {
+            std::vector<common_investigation_source_kind> kinds;
+            for (const auto & selected : projection["selected_sources"]) {
+                const auto source = std::find_if(case_value.sources.begin(), case_value.sources.end(),
+                    [&](const auto & value) { return value.id == selected.value("id", std::string{}); });
+                const auto kind = source == case_value.sources.end()
+                    ? common_investigation_source_kind::search_connector : source->kind;
+                if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) kinds.push_back(kind);
+            }
+            tooling.investigation_source_kinds = std::move(kinds);
+        }
+        if (!binding.source_ids.empty()) {
+            std::set<std::string> providers;
+            for (const auto & selected : projection["selected_sources"]) {
+                if (selected.value("kind", std::string{}) == "search_connector") {
+                    providers.insert(selected.value("provider_id", std::string{}));
+                }
+            }
+            std::vector<std::string> source_ids;
+            for (const auto & selected : projection["selected_sources"]) source_ids.push_back(selected.at("id").get<std::string>());
+            for (auto & tool : tooling.tools) {
+                if (tool.name != "investigation.analyze" && tool.name != "investigation.statement.record") continue;
+                auto schema = common_project_model_input_schema_enums(tool.parameters, {{"source_ids", source_ids}}, error);
+                if (!error.empty()) return false;
+                tool.parameters = std::move(schema);
+            }
+            std::vector<std::string> datasets, fields;
+            for (const auto & dataset : tooling.available_datasets) {
+                if (dataset.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
+                        providers.count(dataset.ref.source_provider)) datasets.push_back(dataset.ref.uri);
+            }
+            for (const auto & source : options.investigation.sources) if (providers.count(source.id)) {
+                for (const auto & field : source.fields) {
+                    if (std::find(fields.begin(), fields.end(), field.first) == fields.end()) fields.push_back(field.first);
+                }
+            }
+            if (!datasets.empty()) for (auto & tool : tooling.tools) {
+                if (tool.name != "investigation.collect") continue;
+                std::map<std::string,std::vector<std::string>> choices{{"dataset", datasets}};
+                if (!fields.empty()) choices["identifier_field"] = fields;
+                auto schema = common_project_model_input_schema_enums(tool.parameters, choices, error);
+                if (!error.empty()) return false;
+                tool.parameters = std::move(schema);
+            }
+        }
+        tooling.investigation_context = binding;
         tooling.investigation_context_text = std::move(rendered);
     }
     error.clear();

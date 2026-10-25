@@ -586,6 +586,8 @@ bool maybe_select_agent_route(
     request.workflow_definition = selected_route.workflow_definition;
     request.memories = context.route_procedure_memories;
     request.available_datasets = context.tooling->available_datasets;
+    request.investigation_source_kinds = context.tooling->investigation_source_kinds;
+    request.investigation_context = context.tooling->investigation_context;
     if (context.policy_pack != nullptr) request.policy_pack = *context.policy_pack;
     if (context.tool_argument_bindings != nullptr) {
         request.tool_argument_bindings = *context.tool_argument_bindings;
@@ -629,17 +631,6 @@ bool maybe_select_agent_route(
             }
         }
         std::vector<std::string> host_resolved_dataset_tools;
-        if (selected_route.workflow_definition &&
-                selected_route.workflow_definition->family == "dataset") {
-            for (const auto & tool : route_tools) {
-                if (tool.name == "data.query" || tool.name == "data.filter" ||
-                        tool.name == "data.aggregate" || tool.name == "data.transform" ||
-                        tool.name == "statistics.describe" || tool.name == "statistics.outliers" ||
-                        tool.name == "statistics.value_counts") {
-                    host_resolved_dataset_tools.push_back(tool.name);
-                }
-            }
-        }
         const auto selected_tools = graph_entry_tools.empty() ? route_tools : graph_entry_tools;
         std::string deterministic_entry_arguments;
         bool deterministic_graph_entry = false;

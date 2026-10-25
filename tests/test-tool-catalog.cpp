@@ -397,7 +397,8 @@ int main() {
         common_tool_model_result_schema(*data_transform),
         compact_error);
     assert(compact_error.empty());
-    assert(transform_compact.find("operations[0].type: rename|drop") != std::string::npos);
+    assert(transform_compact.find("operations[0].{") != std::string::npos);
+    assert(transform_compact.find("type!: rename|drop") != std::string::npos);
     assert(transform_compact.find("rename requires from and to; drop requires column.") != std::string::npos);
     assert(transform_compact.find("example:\nopen! data.transform\ndataset: $orders.dataset\noperations[0].type: rename") != std::string::npos);
     const auto value_counts_compact = common_render_compact_tool_description(

@@ -1,6 +1,8 @@
+#include "agent/tooling/schema/tool-schema-compact.h"
 #include "tools/agent/runtime/agent-runtime-chat-driver.h"
 #include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-plan-orchestration.h"
+#include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
 #include "tools/agent/cli/agent-cli-selection.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
 #include "agent/tooling/catalog/tool-catalog.h"
@@ -14,7 +16,7 @@
 #include <cstdlib>
 #include <iostream>
 
-static void require(bool ok, const char * message) {
+static void require(bool ok, const std::string & message) {
     if (!ok) { std::cerr << message << '\n'; std::exit(1); }
 }
 struct routing_inference final : common_agent_inference {
@@ -163,6 +165,268 @@ int main() {
             "no-argument workflow action failed selection");
         require(action_inference.requests.size() == 1 && !action_inference.requests.front().grammar.empty(),
             "no-argument workflow action escaped grammar-constrained generation");
+    }
+    {
+        common_agent_generation_config config;
+        common_agent_request request;
+        request.prompt = "Continue the selected investigation.";
+        request.investigation_context = common_investigation_context_binding{};
+        request.investigation_context->case_id = "case-bound";
+        common_chat_tool read{"investigation.case.open", "Open a published case summary",
+            R"({"type":"object","additionalProperties":false,"required":["case_id"],"properties":{"case_id":{"type":"string"}}})", "{}"};
+        common_chat_tool record{"investigation.statement.record", "Record anchored source statements",
+            R"({"type":"object","properties":{"statements":{"type":"array","items":{"type":"object","properties":{"private_argument_marker":{"type":"string"}}}}}})", "{}"};
+        std::string projection_error;
+        record.description = common_render_compact_tool_description(record.name, record.description,
+            record.parameters, record.result_schema, projection_error);
+        require(projection_error.empty(), "provider description fixture failed");
+        planner_prompt_inference inference;
+        inference.replies = {read.name, "open! investigation.case.open"};
+        const std::vector<common_agent_tool_argument_binding> bindings{
+            {read.name, R"({"case_id":"case-bound"})", "host", false}};
+        std::string error;
+        const auto selected = select_llama_cli_workflow_action(inference, config, request,
+            {record, read}, bindings, {}, common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && selected.action && selected.action->tool_name == read.name,
+            "two-stage workflow choice failed: " + error);
+        require(inference.requests.size() == 2, "multi-candidate choice did not use two generations");
+        const auto & choice = inference.requests[0];
+        const auto & arguments = inference.requests[1];
+        require(!choice.grammar.empty() && choice.json_schema.empty() && !arguments.grammar.empty() && arguments.json_schema.empty(),
+            "workflow choice or arguments escaped grammar-constrained DSL");
+        for (const auto & message : choice.messages) {
+            require(message.content.find("private_argument_marker") == std::string::npos,
+                "choice prompt exposed candidate argument schemas");
+        }
+        for (const auto & message : arguments.messages) {
+            require(message.content.find(record.name) == std::string::npos &&
+                message.content.find("private_argument_marker") == std::string::npos,
+                "argument generation exposed an unselected contract");
+        }
+        require(selected.action->arguments_json.find("case-bound") != std::string::npos,
+            "two-stage selection lost the host-bound case");
+        require(choice.options.n_predict == arguments.options.n_predict,
+            "two-stage selection silently changed the response reservation");
+        planner_prompt_inference context_only;
+        context_only.replies = {read.name, "open! investigation.case.open"};
+        const auto context_selected = select_llama_cli_workflow_action(context_only, config, request,
+            {record, read}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && context_selected.action &&
+            context_selected.action->arguments_json.find("case-bound") != std::string::npos,
+            "authorized investigation context did not supply its stable case identity: " + error);
+        planner_prompt_inference json_inference;
+        json_inference.replies = {R"("investigation.case.open")", R"({"tool":"investigation.case.open","args":{}})"};
+        select_llama_cli_workflow_action(json_inference, config, request, {read, record}, {}, {},
+            common_agent_tool_output_format::native, error);
+        require(error.empty() && json_inference.requests.size() == 2 &&
+            json_inference.requests.front().grammar.empty() && !json_inference.requests.front().json_schema.empty() &&
+            json_inference.requests.back().grammar.empty() && !json_inference.requests.back().json_schema.empty(),
+            "explicit JSON selection lost its schema or silently switched formats: " + error);
+        planner_prompt_inference conflicting;
+        select_llama_cli_workflow_action(conflicting, config, request, {read},
+            {{read.name, R"({"case_id":"different-case"})", "host", false}}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(!error.empty() && conflicting.requests.empty(),
+            "conflicting host case bindings reached inference");
+        planner_prompt_inference invalid;
+        invalid.replies = {"unlisted.tool", "unlisted.tool"};
+        select_llama_cli_workflow_action(invalid, config, request, {read, record}, bindings, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(!error.empty() && invalid.requests.size() == 2,
+            "invalid operation choice escaped bounded repair or guessed a candidate");
+        planner_prompt_inference failed;
+        select_llama_cli_workflow_action(failed, config, request, {read, record}, bindings, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(!error.empty() && failed.requests.size() == 1,
+            "generation failure was retried as a semantic choice error");
+    }
+    {
+        common_agent_generation_config config;
+        common_agent_request request;
+        request.prompt = "Continue with the selected sources.";
+        common_chat_tool search{"search.collect", "Collect search events",
+            R"({"type":"object","x-agent-investigation-source-kinds":["search_connector"]})", "{}"};
+        common_chat_tool document{"document.extract", "Extract selected text",
+            R"({"type":"object","x-agent-investigation-source-kinds":["document","log_file"]})", "{}"};
+        std::string error;
+        request.investigation_source_kinds = std::vector<common_investigation_source_kind>{
+            common_investigation_source_kind::search_connector};
+        planner_prompt_inference known;
+        known.replies = {"open! search.collect"};
+        const auto selected = select_llama_cli_workflow_action(known, config, request, {document, search}, {}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && selected.action && known.requests.size() == 1,
+            "declared source readiness did not narrow candidates");
+        request.investigation_source_kinds.reset();
+        planner_prompt_inference unknown;
+        unknown.replies = {"document.extract", "open! document.extract"};
+        select_llama_cli_workflow_action(unknown, config, request, {search, document}, {}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && unknown.requests.size() == 2,
+            "unknown source readiness silently removed candidates");
+        request.investigation_source_kinds = std::vector<common_investigation_source_kind>{
+            common_investigation_source_kind::search_connector, common_investigation_source_kind::document};
+        planner_prompt_inference mixed;
+        mixed.replies = {"document.extract", "open! document.extract"};
+        select_llama_cli_workflow_action(mixed, config, request, {search, document}, {}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && mixed.requests.size() == 2,
+            "mixed sources lost a valid document operation");
+    }
+    {
+        common_agent_generation_config config;
+        common_agent_request request;
+        request.prompt = "Inspect orders and continue the discussion.";
+        common_agent_dataset_descriptor dataset;
+        dataset.ref.uri = "dataset://selected/orders";
+        dataset.ref.name = "orders";
+        common_agent_dataset_column column;
+        column.name = "amount";
+        dataset.columns = {column};
+        request.available_datasets = {dataset};
+        common_chat_tool inspect{"analysis.inspect", "Inspect evidence",
+            R"({"type":"object","properties":{"dataset":{"type":"string"}}})", "{}"};
+        std::string error;
+        planner_prompt_inference unbound;
+        unbound.replies = {"open! analysis.inspect"};
+        select_llama_cli_workflow_action(unbound, config, request, {inspect}, {}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty(), "unbound dataset fixture failed: " + error);
+        for (const auto & message : unbound.requests.front().messages) {
+            require(message.content.find("Known source columns") == std::string::npos,
+                "dataset name in user text or sole inventory item became a binding");
+        }
+        planner_prompt_inference bound;
+        bound.replies = {"open! analysis.inspect"};
+        select_llama_cli_workflow_action(bound, config, request, {inspect},
+            {{inspect.name, R"({"dataset":"dataset://selected/orders"})", "host", false}}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty(), "explicit dataset binding fixture failed: " + error);
+        bool known_columns = false;
+        for (const auto & message : bound.requests.front().messages) {
+            known_columns = known_columns || message.content.find("Known source columns for orders: amount") != std::string::npos;
+        }
+        require(known_columns, "explicit dataset binding lost its column context");
+    }
+    {
+        common_agent_generation_config config;
+        common_agent_request request;
+        request.prompt = "Summarize the explicitly chosen dataset.";
+        request.workflow_definition = common_plan_workflow_definition{};
+        request.workflow_definition->family = "dataset";
+        common_chat_tool inspect{"statistics.describe", "Describe selected columns",
+            R"({"type":"object","x-agent-autowire-fields":["dataset"],"properties":{"dataset":{"type":"string","x-agent-inferable":true}}})", "{}"};
+        planner_prompt_inference inference;
+        inference.replies = {"open! statistics.describe\ndataset: dataset://selected/orders"};
+        std::string error;
+        const auto selected = select_llama_cli_workflow_action(inference, config, request, {inspect}, {}, {},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && selected.action &&
+            selected.action->arguments_json.find("dataset://selected/orders") != std::string::npos,
+            "unbound dataset workflow did not retain the explicit model selection: " + error);
+        require(inference.requests.front().messages[1].content.find("dataset (required") != std::string::npos,
+            "dataset workflow advertised a source as inferable without a binding");
+        planner_prompt_inference unresolved;
+        select_llama_cli_workflow_action(unresolved, config, request, {inspect}, {}, {inspect.name},
+            common_agent_tool_output_format::compact_dsl, error);
+        require(!error.empty() && unresolved.requests.empty(),
+            "unresolved dataset was hidden from the contract before actual host selection");
+    }
+    {
+        common_plan_in_memory_store store;
+        std::string error;
+        require(store.open("", error), "dataset materializer fixture store failed");
+        common_agent_runtime_tooling tooling;
+        common_agent_dataset_descriptor orders, customers;
+        orders.ref.uri = "dataset://materializer/orders";
+        orders.ref.name = "orders";
+        customers.ref.uri = "dataset://materializer/customers";
+        customers.ref.name = "customers";
+        common_agent_dataset_column column;
+        column.name = "amount";
+        orders.columns = customers.columns = {column};
+        tooling.available_datasets = {orders, customers};
+        common_plan_state workflow;
+        workflow.id = "dataset-source-contract";
+        workflow.kind = common_plan_kind::workflow;
+        workflow.workflow_definition = common_plan_workflow_definition{};
+        auto & definition = *workflow.workflow_definition;
+        definition.family = "dataset";
+        definition.workflow_ref = "workflow://test/dataset-source";
+        definition.workflow_revision = "v1";
+        definition.graph_revision = "dataset-source@v1";
+        definition.allowed_tools = {"dataset.select", "dataset.inspect", "statistics.describe"};
+        for (const auto & name : definition.allowed_tools) tooling.tools.push_back({name, name, R"({"type":"object"})", "{}"});
+        require(store.create(workflow, error), "dataset materializer fixture workflow failed");
+        common_plan_state instance, materialized;
+        instance.id = "instance:dataset-source";
+        instance.session_id = "source-contract";
+        instance.kind = common_plan_kind::task;
+        instance.source_revision = "v1";
+        instance.selected_workflow = common_plan_workflow_binding{};
+        instance.selected_workflow->workflow_ref = definition.workflow_ref;
+        instance.selected_workflow->workflow_revision = definition.workflow_revision;
+        common_agent_request request;
+        request.prompt = "Describe customers, not orders.";
+        request.tool_argument_bindings = {{"statistics.describe", "{}", "selected-operation", false}};
+        auto materializer = make_agent_dataset_workflow_materializer(store, &tooling);
+        require(materializer(request, instance, materialized, error) == common_blueprint_materialization_outcome::not_applicable && error.empty(),
+            "dataset materializer inferred a source from user words or catalogue order");
+        request.tool_argument_bindings.front().arguments_json = R"({"dataset":"dataset://materializer/customers"})";
+        require(materializer(request, instance, materialized, error) == common_blueprint_materialization_outcome::applied,
+            "explicit dataset selection was not materialized: " + error);
+        const auto operation = std::find_if(materialized.steps.begin(), materialized.steps.end(), [](const auto & step) {
+            return step.tool_call && step.tool_call->name == "statistics.describe";
+        });
+        require(operation != materialized.steps.end() &&
+            nlohmann::ordered_json::parse(operation->tool_call->arguments_json).value("dataset", "") == customers.ref.uri &&
+            materialized.steps.front().tool_call &&
+            nlohmann::ordered_json::parse(materialized.steps.front().tool_call->arguments_json).value("name", "") == customers.ref.name,
+            "dataset materialization replaced the explicit source or its selection prefix");
+    }
+    {
+        common_agent_generation_config config;
+        common_agent_request request;
+        request.prompt = "Continue the investigation.";
+        request.tool_output_format = common_agent_tool_output_format::compact_dsl;
+        common_plan_state plan;
+        common_plan_step failed;
+        failed.id = "agent-blueprint:contract:workflow:action";
+        failed.status = common_plan_step_status::failed;
+        failed.mode = common_plan_step_mode::tool;
+        failed.tool_call = common_plan_tool_call{"investigation.collect", "{}"};
+        plan.steps.push_back(failed);
+        plan.observations.push_back({"tool:" + failed.id + ":investigation.collect", "investigation.collect",
+            R"({"failure":{"code":"tool.investigation.dataset_unavailable","class":"not_found","retryable":false,"safe_summary":"Choose a configured virtual search dataset."}})", 1.0f});
+        planner_prompt_inference inference;
+        inference.replies = {"reflect abort"};
+        auto reflection = make_llama_cli_reflection_engine(inference, config, {});
+        std::string error;
+        reflection->evaluate_result(request, plan, "", error);
+        require(error.empty() && inference.requests.size() == 1, "bounded failed-step reflection did not parse: " + error);
+        const auto & generated = inference.requests.front();
+        require(generated.grammar.find("reflect abort") != std::string::npos &&
+            generated.grammar.find("reflect retry") != std::string::npos &&
+            generated.grammar.find("reflect accept") == std::string::npos,
+            "failed mandatory reflection escaped its declared decision grammar");
+        require(generated.messages.back().content.find("investigation.collect [failed]") != std::string::npos &&
+            generated.messages.back().content.find("status: completed") == std::string::npos,
+            "reflection lost a composite-ID failure or presented it as completed evidence");
+        auto second = failed;
+        second.id += ":second";
+        plan.steps.push_back(second);
+        plan.observations.push_back({"tool:" + second.id + ":investigation.collect", "investigation.collect",
+            plan.observations.front().summary, 1.0f});
+        planner_prompt_inference multiple;
+        multiple.replies = {"reflect retry B"};
+        auto multiple_reflection = make_llama_cli_reflection_engine(multiple, config, {});
+        const auto revised = multiple_reflection->evaluate_result(request, plan, "", error);
+        require(error.empty() && multiple.requests.size() == 1 &&
+            multiple.requests.front().grammar.find("reflect retry A") != std::string::npos &&
+            multiple.requests.front().grammar.find("reflect retry B") != std::string::npos &&
+            multiple.requests.front().grammar.find("reflect retry C") == std::string::npos &&
+            revised.decision == common_reflection_decision::revise,
+            "failed-step grammar did not retain the exact host-bound retry choices: " + error);
     }
     require(common_agent_resolve_tool_round_limit(0) == 16, "zero must resolve to the shared default");
     require(common_agent_resolve_tool_round_limit(1) == 1, "explicit one-call limit changed");

@@ -9,6 +9,8 @@ std::string common_plan_escape_context_text(const std::string & text) {
     replace_all(out, "<runtime_plan>", "<runtime_plan data-escaped=\"true\">");
     replace_all(out, "</verified_tool_observations>", "<\\/verified_tool_observations>");
     replace_all(out, "<verified_tool_observations>", "<verified_tool_observations data-escaped=\"true\">");
+    replace_all(out, "</failed_tool_observations>", "<\\/failed_tool_observations>");
+    replace_all(out, "<failed_tool_observations>", "<failed_tool_observations data-escaped=\"true\">");
     return out;
 }
 static const char * step_mode_name(common_plan_step_mode mode) { return mode == common_plan_step_mode::tool ? "tool" : mode == common_plan_step_mode::reasoning ? "reasoning" : mode == common_plan_step_mode::artifact_compose ? "artifact_compose" : "final_response"; }
@@ -26,15 +28,13 @@ static void append_observation(std::ostringstream & out, const common_plan_obser
 
 using plan_context_json = nlohmann::ordered_json;
 
-static const common_plan_step * observation_step(
+const common_plan_step * common_plan_find_tool_observation_step(
         const common_plan_state & plan,
         const common_plan_observation & observation) {
-    if (observation.id.rfind("tool:", 0) != 0) return nullptr;
-    const auto begin = observation.id.size() > 5 ? 5 : observation.id.size();
-    const auto end = observation.id.find(':', begin);
-    if (end == std::string::npos) return nullptr;
-    const std::string step_id = observation.id.substr(begin, end - begin);
-    for (const auto & step : plan.steps) if (step.id == step_id) return &step;
+    if (observation.id.rfind("tool:", 0) != 0 || observation.source.empty()) return nullptr;
+    for (const auto & step : plan.steps) {
+        if (observation.id == "tool:" + step.id + ":" + observation.source) return &step;
+    }
     return nullptr;
 }
 
@@ -208,10 +208,14 @@ std::string common_plan_render_tool_observations(
     size_t remaining = config.char_budget;
     for (const auto & observation : plan.observations) {
         if (observation.source.empty() || observation.id.rfind("tool:", 0) != 0) continue;
-        const auto * step = observation_step(plan, observation);
+        const auto * step = common_plan_find_tool_observation_step(plan, observation);
         if (step && step->status != common_plan_step_status::completed) continue;
         const auto payload = plan_context_json::parse(observation.summary, nullptr, false);
         if (payload.is_discarded()) continue;
+        // Failed envelopes are never completed evidence, including orphaned
+        // observations or a retained failure after a successful step retry.
+        if (payload.is_object() && (payload.contains("failure") ||
+                (payload.contains("ok") && payload["ok"].is_boolean() && !payload["ok"].get<bool>()))) continue;
         std::string line = render_flat_observation(observation.source, payload, observation, 900);
         const size_t tool_line_end = line.find('\n');
         if (step && step->semantic_alias) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,15 @@ std::string common_render_compact_tool_schema(
     const std::string & schema_json,
     std::string & error);
 
+// Candidate-selection view: purpose only, including when a provider has
+// already embedded a compact argument contract in its description.
+std::string common_render_tool_choice_description(
+    const std::string & name,
+    const std::string & description,
+    const std::string & input_schema_json,
+    const std::string & result_schema_json,
+    std::string & error);
+
 std::string common_render_compact_tool_description(
     const common_model_tool_contract & contract,
     std::string & error);
@@ -56,6 +66,14 @@ std::string common_render_compact_tool_description(
     const std::string & description,
     const std::string & input_schema_json,
     const std::string & result_schema_json,
+    std::string & error);
+
+// Narrow existing string fields or string-array items to host-authorized values.
+// Existing enums/consts are intersected, never broadened. This projection does
+// not replace the execution schema or authorize a reference.
+std::string common_project_model_input_schema_enums(
+    const std::string & schema_json,
+    const std::map<std::string, std::vector<std::string>> & field_values,
     std::string & error);
 
 // Remove inputs supplied by an explicit host binding from the model contract.
