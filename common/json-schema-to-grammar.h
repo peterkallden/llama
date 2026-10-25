@@ -3,6 +3,7 @@
 #include "json-schema.h"
 #include "json.h"
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -21,3 +22,6 @@ struct common_grammar_options {
 std::string gbnf_format_literal(const std::string & literal);
 
 std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options = {});
+
+// Shared integer constraint projection for JSON and flat DSL grammars.
+std::string gbnf_integer_range(int64_t minimum, int64_t maximum);

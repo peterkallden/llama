@@ -226,6 +226,15 @@ static void build_min_max_int(int64_t min_value, int64_t max_value, std::strings
     throw std::runtime_error("At least one of min_value or max_value must be set");
 }
 
+std::string gbnf_integer_range(int64_t minimum, int64_t maximum) {
+    if (minimum > maximum) throw std::invalid_argument("integer grammar range is empty");
+    std::stringstream out;
+    out << "(";
+    build_min_max_int(minimum, maximum, out);
+    out << ")";
+    return out.str();
+}
+
 const std::string SPACE_RULE = "| \" \" | \"\\n\"{1,2} [ \\t]{0,20}";
 
 struct BuiltinRule {
@@ -954,11 +963,7 @@ public:
                 if (i.minimum == std::numeric_limits<int64_t>::min() && i.maximum == std::numeric_limits<int64_t>::max()) {
                     return _visit_primitive(rule_name, "integer");
                 }
-                std::stringstream out;
-                out << "(";
-                build_min_max_int(i.minimum, i.maximum, out);
-                out << ")";
-                return _add_rule(rule_name, out.str());
+                return _add_rule(rule_name, gbnf_integer_range(i.minimum, i.maximum));
             }
             case common_chat_schema::KIND_NUMBER:
                 return _visit_primitive(rule_name, "number");

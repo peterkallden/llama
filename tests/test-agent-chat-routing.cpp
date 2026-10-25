@@ -214,6 +214,19 @@ int main() {
         require(error.empty() && context_selected.action &&
             context_selected.action->arguments_json.find("case-bound") != std::string::npos,
             "authorized investigation context did not supply its stable case identity: " + error);
+        request.investigation_context->revision = 7;
+        common_chat_tool write{"investigation.test.write", "Write against the selected revision",
+            R"({"type":"object","required":["case_id","expected_revision"],"properties":{"case_id":{"type":"string"},"expected_revision":{"type":"integer","minimum":1}}})", "{}"};
+        planner_prompt_inference revision_inference;
+        revision_inference.replies = {"open! investigation.test.write"};
+        const auto revision_selected = select_llama_cli_workflow_action(revision_inference, config, request,
+            {write}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
+        require(error.empty() && revision_selected.action && nlohmann::ordered_json::parse(revision_selected.action->arguments_json)["expected_revision"] == 7,
+            "selected CAS baseline was left for the model to invent: " + error);
+        planner_prompt_inference revision_conflict;
+        select_llama_cli_workflow_action(revision_conflict, config, request, {write},
+            {{write.name, R"({"expected_revision":6})", "host", false}}, {}, common_agent_tool_output_format::compact_dsl, error);
+        require(!error.empty() && revision_conflict.requests.empty(), "conflicting selected revisions reached inference");
         planner_prompt_inference json_inference;
         json_inference.replies = {R"("investigation.case.open")", R"({"tool":"investigation.case.open","args":{}})"};
         select_llama_cli_workflow_action(json_inference, config, request, {read, record}, {}, {},

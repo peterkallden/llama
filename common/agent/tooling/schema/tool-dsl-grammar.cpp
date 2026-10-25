@@ -1,4 +1,6 @@
 #include "agent/tooling/schema/tool-dsl-grammar.h"
+#include "json-schema-to-grammar.h"
+#include <limits>
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -106,7 +108,24 @@ public:
                 std::string next;
                 if (type == "string") next = "string-value";
                 else if (type == "boolean") next = "boolean-value";
-                else if (type == "integer") next = "integer-value";
+                else if (type == "integer") {
+                    if (schema.contains("minimum") || schema.contains("maximum") ||
+                            schema.contains("exclusiveMinimum") || schema.contains("exclusiveMaximum")) {
+                        try {
+                            common_json bounds = {{"type", "integer"}};
+                            for (const char * key : {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}) {
+                                if (schema.contains(key)) bounds[key] = common_json::parse(schema[key].dump());
+                            }
+                            const auto document = common_chat_schema_from_json(bounds);
+                            const auto & integer = static_cast<const common_chat_schema_integer &>(*document.root);
+                            next = integer.minimum == std::numeric_limits<int64_t>::min() && integer.maximum == std::numeric_limits<int64_t>::max()
+                                ? "integer-value" : gbnf_integer_range(integer.minimum, integer.maximum);
+                        } catch (const std::exception & failure) {
+                            error = std::string("invalid DSL integer constraints: ") + failure.what();
+                            return "invalid";
+                        }
+                    } else next = "integer-value";
+                }
                 else if (type == "number") next = "number-value";
                 else if (type == "null") next = "\"null\"";
                 else { error = "unsupported DSL scalar type: " + type.dump(); return "invalid"; }

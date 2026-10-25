@@ -229,6 +229,11 @@ void projection_contracts() {
         "host choices broadened an existing registered enum");
     require(common_project_model_input_schema_enums(scoped, {{"missing", {"value"}}}, error).empty() && !error.empty(),
         "unknown host-projected field was silently ignored");
+    const common_chat_tool bounded_integer{"bounded", "Bounded", R"({"type":"object","required":["limit"],"properties":{"limit":{"type":"integer","minimum":1,"maximum":500}}})", "{}"};
+    const auto integer_grammar = common_build_tool_dsl_grammar({bounded_integer}, common_tool_dsl_grammar_form::action, error);
+    require(error.empty() && matches(integer_grammar, "open! bounded\nlimit: 1") && matches(integer_grammar, "open! bounded\nlimit: 500") &&
+        !matches(integer_grammar, "open! bounded\nlimit: 0") && !matches(integer_grammar, "open! bounded\nlimit: 501") &&
+        !matches(integer_grammar, "open! bounded\nlimit: 1000000"), "DSL ignored declared integer bounds: " + error);
     const auto branch_grammar = common_build_tool_dsl_grammar({branch_array}, common_tool_dsl_grammar_form::action, error);
     require(!branch_grammar.empty() && !matches(branch_grammar, "open! checks\nrules: $value") &&
         matches(branch_grammar, "open! checks\nrules[0].type: unique\nrules[0].column: id"),

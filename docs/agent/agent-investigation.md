@@ -672,8 +672,8 @@ choices are derived from authorized host context, not from message keywords.
 ### Verification recorded on 2026-10-25
 
 The existing Vulkan/Cozo RelWithDebInfo build completed with the home ccache.
-Sixteen relevant deterministic CTests passed across the combined verification
-blocks. The final six-test correction block passed after adding conditional
+Seventeen relevant deterministic CTests passed across the combined verification
+blocks. The six-test correction block passed after adding conditional
 analysis requirements and enum intersection to the DSL grammar. New routing and
 grammar checks execute with NDEBUG; the added evidence-identity checks do not
 rely on assertions.
@@ -698,3 +698,16 @@ results are retained as failures, not counted as end-to-end investigation proof.
 Document/mixed-source model analysis and complete investigation quality require
 separate scenario verification; the deterministic source projection tests do
 not establish those outcomes.
+
+A further GPU pass correctly used the registered dataset but exceeded the
+visible collection limit. Its repair exhausted the response budget inside an
+unbounded integer before emitting the remaining required fields. Integer
+minimum/maximum and exclusive bounds now reuse the common JSON-schema parsing
+and integer-range GBNF generator in the DSL projection. The case revision used
+for CAS is also bound from explicit authorized investigation context, alongside
+the case ID; it is never replaced with the latest revision. Conflicting bindings
+fail before generation. This does not choose an identifier or an analysis method
+for the model.
+
+The final seven-test block, including the shared JSON-schema grammar regression,
+passed after the numeric and CAS corrections.

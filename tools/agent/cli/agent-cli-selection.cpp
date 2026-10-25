@@ -403,8 +403,9 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             const auto properties = schema.value("properties", json::object());
             json arguments = json::object();
             if (properties.contains("case_id")) arguments["case_id"] = context.case_id;
-            // A workflow profile is not an argument binding for every analysis
-            // method inside it. Only the stable case target is implicit here.
+            // Preserve the explicitly selected CAS baseline, never substitute
+            // the latest case revision or derive a method from the profile.
+            if (properties.contains("expected_revision") && context.revision > 0) arguments["expected_revision"] = context.revision;
             std::set<std::string> already_bound;
             for (const auto & binding : supplied_bindings) {
                 if (binding.tool_name != tool.name) continue;
