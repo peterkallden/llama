@@ -291,3 +291,7 @@ Agent verification is split by dependency and execution cost:
 See [Agent Assurance](agent-assurance.md) for recorded results and known
 limitations, and [Agent Build](agent-build.md) for reproducible local and
 CI-compatible commands.
+
+- [Host verification and bounded repair](agent-host-verification-and-repair.md):
+  declared operation results, typed evidence anchors and bounded reflection
+  repair; source implementation currently awaits compilation and verification.

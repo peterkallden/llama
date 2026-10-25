@@ -783,7 +783,7 @@ test-agent-flydelta-alpha-response-search.cpp
     target_compile_features(test-agent-planner-orchestration PRIVATE cxx_std_17)
     # Exercise the contracts with release assertions disabled as in production.
     target_compile_definitions(test-agent-planner-orchestration PRIVATE NDEBUG)
-    foreach(CONTRACT rejection recovery dispatch interruptions blueprint)
+    foreach(CONTRACT rejection recovery dispatch interruptions blueprint review)
         add_test(NAME test-agent-planner-${CONTRACT}
             COMMAND test-agent-planner-orchestration ${CONTRACT})
         set_tests_properties(test-agent-planner-${CONTRACT} PROPERTIES

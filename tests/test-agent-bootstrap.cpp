@@ -518,7 +518,7 @@ int main() {
         std::vector<std::string>({"dataset.resolve", "dataset.inspect", "data.query",
             "data.filter", "data.aggregate", "data.transform", "statistics.describe",
             "statistics.outliers", "statistics.value_counts"}));
-    assert(dataset_analysis_workflow->definition.workflow_revision == "v2");
+    assert(dataset_analysis_workflow->definition.workflow_revision == "v3");
     assert(dataset_analysis_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::single_range);
     assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
@@ -807,15 +807,15 @@ int main() {
     const auto checked_in_dataset = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2", error);
     assert(checked_in_dataset &&
-        checked_in_dataset->source_revision == "agent-workflows-starter@v3");
+        checked_in_dataset->source_revision == "agent-workflows-starter@v32");
     assert(checked_in_dataset->selection_description ==
         "Analyse a dataset through a host-resolved workflow and verified result.");
     assert(checked_in_dataset->workflow_bindings.size() == 3);
     const auto checked_in_workflow = checked_in_plans.get(
-        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v2", error);
+        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v3", error);
     assert(checked_in_workflow && checked_in_workflow->kind == common_plan_kind::workflow &&
         checked_in_workflow->workflow_definition &&
-        checked_in_workflow->workflow_definition->workflow_revision == "v2" &&
+        checked_in_workflow->workflow_definition->workflow_revision == "v3" &&
         checked_in_workflow->workflow_definition->required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
         checked_in_workflow->workflow_definition->optional_capabilities ==

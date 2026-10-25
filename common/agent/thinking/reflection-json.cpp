@@ -417,6 +417,26 @@ bool common_reflection_parse_json(
             }
         }
         if (result.proposed_plan_operations.size() > max_operations) { error = "too many reflection operations"; return false; }
+        if (!j.contains("assurance_action")) {
+            if (result.decision == common_reflection_decision::revise ||
+                    result.decision == common_reflection_decision::replan ||
+                    result.decision == common_reflection_decision::request_action) {
+                result.next_action = result.proposed_plan_operations.empty() &&
+                    result.decision == common_reflection_decision::revise
+                    ? common_agent_reflection_next_action::revise_response
+                    : common_agent_reflection_next_action::revise_plan;
+            } else if (result.decision == common_reflection_decision::abort) {
+                result.next_action = common_agent_reflection_next_action::fail_bounded;
+            }
+        }
+        if ((result.decision == common_reflection_decision::accept &&
+                result.next_action != common_agent_reflection_next_action::accept) ||
+                (result.ready_to_answer && result.decision != common_reflection_decision::accept) ||
+                (j.contains("assurance_action") && result.decision != common_reflection_decision::accept &&
+                 result.next_action == common_agent_reflection_next_action::accept)) {
+            error = "reflection decision contradicts its assurance action or readiness";
+            return false;
+        }
         error.clear();
         return true;
     } catch (const std::exception &) {
@@ -707,4 +727,13 @@ bool common_reflection_parse_compact_dsl(
         operation.step_id = bound.second;
     }
     return true;
+}
+
+std::string common_reflection_review_grammar() {
+    return R"gbnf(root ::= "reflect accept" | "reflect abort" | revision
+revision ::= "reflect revise" "\nassurance_action " action "\nguidance " text
+action ::= "revise_response" | "revise_plan" | "fail_bounded" | "escalate_deliberate" | "escalate_research"
+text ::= "\"" character{1,512} "\""
+character ::= [^"\\\n\r] | "\\" ["\\/bfnrt]
+)gbnf";
 }

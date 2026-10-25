@@ -154,19 +154,24 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         // it: the completing operation must carry the observation emitted by
         // that exact tool step.
         if (target == common_plan_step_status::completed && step->tool_call) {
-            if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty() && step->semantic_alias &&
-                    step->semantic_alias->rfind("workflow-transition:", 0) == 0) {
-                if (!op.host_authorized) return deny("guarded workflow completion is host-authorized only");
-                const auto comma = step->semantic_alias->rfind(',');
-                const auto id = step->semantic_alias->substr(comma == std::string::npos ? std::string("workflow-transition:").size() : comma + 1);
+            if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty()) {
+                std::string transition;
+                if (step->semantic_alias && step->semantic_alias->rfind("workflow-transition:", 0) == 0) {
+                    const auto comma = step->semantic_alias->rfind(',');
+                    transition = step->semantic_alias->substr(comma == std::string::npos ? std::string("workflow-transition:").size() : comma + 1);
+                }
                 for (const auto & check : plan.workflow_definition->verification_checks) {
-                    if (!check.required || check.transition_id != id || check.phase == common_plan_verification_phase::before_answer) continue;
+                    if (!check.required || check.phase == common_plan_verification_phase::before_answer ||
+                            (!check.tool_name.empty() && check.tool_name != step->tool_call->name) ||
+                            (!check.transition_id.empty() && check.transition_id != transition)) continue;
+                    if (!op.host_authorized) return deny("guarded workflow completion is host-authorized only");
                     bool passed = false;
+                    const auto phase = check.phase == common_plan_verification_phase::before_tool ? "before_tool" : "after_tool";
                     for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
                         if (item->source != "workflow_verification") continue;
                         const auto proof = nlohmann::ordered_json::parse(item->summary, nullptr, false);
                         if (!proof.is_object() || proof.value("step_id", std::string{}) != step->id ||
-                                proof.value("check", std::string{}) != check.id) continue;
+                                proof.value("check", std::string{}) != check.id || proof.value("phase", std::string{}) != phase) continue;
                         passed = proof.value("status", std::string{}) == "passed" &&
                             proof.value("workflow_revision", std::string{}) == plan.workflow_definition->workflow_revision;
                         break;
@@ -185,13 +190,25 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             }
         }
     }
+    if (op.kind == common_plan_operation_kind::complete_plan ||
+            (op.kind == common_plan_operation_kind::complete_step && op.step_id &&
+             find_step(plan, *op.step_id) &&
+             common_plan_step_effective_mode(*find_step(plan, *op.step_id)) == common_plan_step_mode::final_response)) {
+        for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+            if (item->source != "response_review") continue;
+            const auto review = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+            if (!review.is_object() || review.value("accepted", nlohmann::ordered_json(false)) != true)
+                return deny("response review remains unresolved");
+            break;
+        }
+    }
     if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) return deny("mandatory steps remain incomplete"); }
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");
     if (op.kind == common_plan_operation_kind::record_observation && (!op.observation || plan.observations.size() >= config.max_observations)) return deny("invalid or excessive observation");
     if (op.kind == common_plan_operation_kind::record_observation && op.observation && !op.host_authorized &&
             (op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
              op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
-             op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
+             op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
              op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||
              op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation"))
         return deny("workflow grounding and artifact publication observations are host-authorized only");

@@ -171,7 +171,10 @@ struct common_agent_request {
     std::optional<common_agent_tool_call> tool_call;
     common_agent_event_sink event_sink;
     size_t max_iterations = 2;
+    // Actual review evaluations per turn, including review after a rewrite.
+    // Exhaustion never grants acceptance to a rejected/unreviewed draft.
     size_t max_reflection_rounds = 1;
+    // Shared by initial execution and all repair slices in this turn.
     size_t max_tool_batches = 1;
     bool allow_policy_gated_tool_proposals = false;
     std::function<bool()> research_should_stop;

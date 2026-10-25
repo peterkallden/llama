@@ -51,10 +51,12 @@ struct evidence_executor final : common_action_executor {
     explicit evidence_executor(const std::vector<common_agent_tool_call> & calls) : calls(calls) {}
     const std::vector<common_agent_tool_call> & calls;
     size_t drafts = 0;
+    std::vector<std::vector<std::string>> revision_inputs;
 
     std::string generate_draft(const common_agent_request &, const common_plan_state & plan,
-            const std::vector<std::string> &, std::string & error) override {
+            const std::vector<std::string> & guidance, std::string & error) override {
         ++drafts;
+        revision_inputs.push_back(guidance);
         require(!calls.empty(), "final synthesis ran before required tool execution");
         require(std::any_of(plan.observations.begin(), plan.observations.end(),
                 [](const common_plan_observation & observation) {
@@ -66,9 +68,17 @@ struct evidence_executor final : common_action_executor {
 };
 
 struct accepting_reflector final : common_reflection_engine {
+    std::vector<common_reflection_result> scripted;
+    size_t reviews = 0;
+    std::string failure;
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
             const std::string &, std::string & error) override {
-        error.clear();
+        error = failure;
+        const auto index = reviews++;
+        if (!scripted.empty()) {
+            require(index < scripted.size(), "runtime exceeded the scripted review bound");
+            return scripted[index];
+        }
         common_reflection_result result;
         result.ready_to_answer = true;
         return result;
@@ -338,6 +348,82 @@ void blueprint_planning_contracts() {
         return item.source == "blueprint_outline" && item.confidence == 0.0f;
     }), "blueprint outline was lost or counted as execution evidence");
 }
+void review_contracts() {
+    const auto rejected = [] {
+        common_reflection_result review;
+        review.decision = common_reflection_decision::revise;
+        review.next_action = common_agent_reflection_next_action::revise_response;
+        review.revision_guidance = {"State the evidence limitation; do not invent missing values."};
+        return review;
+    };
+    const auto accepted = [] {
+        common_reflection_result review;
+        review.ready_to_answer = true;
+        return review;
+    };
+    fixture exhausted;
+    exhausted.request.max_reflection_rounds = 1;
+    exhausted.inference.replies = {reply(inspect_plan)};
+    exhausted.reflector.scripted = {rejected()};
+    auto result = exhausted.run();
+    require(!result.error.empty() && result.limit_reached && result.response.empty(),
+        "a rejected draft became an answer when the review budget expired");
+    require(exhausted.executor.drafts == 1 && exhausted.reflector.reviews == 1,
+        "an unreviewable rewrite was generated after exhaustion");
+    std::string error;
+    auto saved = exhausted.plans.get(*result.plan_id, error);
+    require(saved && saved->status != common_plan_status::completed,
+        "unaccepted synthesis completed the durable plan");
+    require(std::any_of(saved->observations.begin(), saved->observations.end(), [](const auto & item) {
+        if (item.source != "response_review") return false;
+        const auto value = json::parse(item.summary);
+        return value["accepted"] == false && value.contains("draft_fingerprint") && value.contains("evidence_fingerprint");
+    }), "negative review lost its bound provenance");
+
+    fixture rewritten;
+    rewritten.request.max_reflection_rounds = 2;
+    rewritten.inference.replies = {reply(inspect_plan)};
+    rewritten.reflector.scripted = {rejected(), accepted()};
+    result = rewritten.run();
+    require(result.error.empty() && result.response == "verified-tool-result" &&
+        rewritten.reflector.reviews == 2 && rewritten.executor.drafts == 2,
+        "revised draft was not independently accepted");
+    require(rewritten.executor.revision_inputs[1] == rejected().revision_guidance,
+        "response revision lost the correction supplied by reflection");
+
+    fixture invalid;
+    invalid.inference.replies = {reply(inspect_plan)};
+    invalid.reflector.failure = "model context size exceeded";
+    result = invalid.run();
+    require(!result.error.empty() && result.response.empty(),
+        "invalid or over-budget review fell back to acceptance");
+
+    fixture repaired;
+    repaired.request.max_reflection_rounds = 2;
+    repaired.request.max_iterations = 3;
+    repaired.inference.replies = {reply(inspect_plan),
+        reply("plan goal=\"Complete evidence\"\nstep | open! code.symbols\nsymbol: missing_evidence")};
+    auto repair = rejected();
+    repair.next_action = common_agent_reflection_next_action::revise_plan;
+    repair.revision_guidance = {"Inspect the missing symbol before answering."};
+    repaired.reflector.scripted = {repair, accepted()};
+    result = repaired.run();
+    require(result.error.empty() && repaired.calls.size() == 2 &&
+        repaired.calls[1].name == "code.symbols" && repaired.reflector.reviews == 2,
+        "successful but insufficient evidence could not receive bounded read-only repair: " + result.error);
+    require(repaired.inference.requests.size() == 2 && !repaired.inference.requests.back().grammar.empty(),
+        "repair escaped the existing DSL planner");
+    require(repaired.inference.requests.back().scope &&
+        repaired.inference.requests.back().scope->project_id == repaired.request.project_id,
+        "additional evidence planning lost project authority");
+
+    fixture disabled;
+    disabled.request.enable_reflection = false;
+    disabled.inference.replies = {reply(inspect_plan)};
+    result = disabled.run();
+    require(result.error.empty() && disabled.reflector.reviews == 0 && !result.response.empty(),
+        "the review guard imposed reflection on a route that deliberately disables it");
+}
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -348,6 +434,7 @@ int main(int argc, char ** argv) {
     else if (group == "dispatch") dispatch_contracts();
     else if (group == "interruptions") interruption_contracts();
     else if (group == "blueprint") blueprint_planning_contracts();
+    else if (group == "review") review_contracts();
     else require(false, "unknown orchestration contract group");
     return 0;
 }

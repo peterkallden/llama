@@ -10,6 +10,7 @@ struct common_agent_grounding_result {
 };
 bool common_agent_workflow_requires_claims(const common_plan_state &);
 std::string common_agent_grounded_draft_schema();
+std::string common_agent_grounded_draft_grammar(const nlohmann::ordered_json & handles);
 common_agent_grounding_result common_agent_verify_workflow(
     const common_agent_request &, const common_plan_state &, common_plan_verification_phase,
     const std::string & step_id, const std::string & arguments, const std::string & result,

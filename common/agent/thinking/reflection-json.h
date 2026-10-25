@@ -16,3 +16,6 @@ bool common_reflection_parse_compact_dsl(
         const std::string & inferred_retry_step_id = {},
         const std::vector<common_chat_tool> & tools = {},
         const std::vector<std::pair<std::string, std::string>> & retry_step_choices = {});
+
+// Compact model review uses the same assurance actions as the JSON contract.
+std::string common_reflection_review_grammar();

@@ -74,6 +74,34 @@ grep -Eq 'workflow-action trace: attempt=[0-9]+ parse=ok tool=statistics[.]descr
     echo "workflow action smoke did not normalize the selected arguments to columns=[amount]" >&2
     exit 1
 }
+# Schema compliance is separate from whether the requested measures were proven.
+python3 - "$agent_log" <<'PY_VERIFY'
+import json
+import math
+import re
+import sys
+proofs = []
+with open(sys.argv[1], encoding="utf-8") as trace:
+    for line in trace:
+        match = re.search(r"workflow_verification (\{.*\})", line)
+        if not match:
+            continue
+        try:
+            record = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if record.get("kind") == "declared_numeric_claims" and record.get("status") == "passed":
+            proofs.extend(record.get("claims", []))
+def proved(field, expected):
+    return any(item.get("status") == "passed" and
+        item.get("source_location") == "/result/columns/0/" + field and
+        isinstance(item.get("value"), (int, float)) and
+        math.isclose(item["value"], expected, rel_tol=1e-9, abs_tol=1e-9)
+        for item in proofs)
+if not proved("count", 3) or not proved("mean", 40 / 3):
+    raise SystemExit("workflow action smoke lacks host-verified count/mean claims from orders.amount")
+print("qwen_nomic_workflow_action_numeric_evidence=passed")
+PY_VERIFY
 echo "qwen_nomic_workflow_action_execution=passed"
 if (( run_status != 0 )); then
     echo "full_turn=failed (exit=${run_status}; see log)" >&2

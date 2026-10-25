@@ -171,8 +171,9 @@ public:
             std::string & error) override {
         error.clear();
         common_reflection_result result;
-        result.decision = common_reflection_decision::accept;
-        result.ready_to_answer = true;
+        result.decision = common_reflection_decision::revise;
+        result.ready_to_answer = false;
+        result.next_action = common_agent_reflection_next_action::revise_plan;
         result.confidence = 1.0f;
 
         common_plan_step step;
@@ -189,6 +190,25 @@ public:
         op.reason_summary = "Reflection wants to inspect a specific memory.";
         op.step = std::move(step);
         result.proposed_plan_operations.push_back(std::move(op));
+        return result;
+    }
+};
+
+class bounded_review_reflector final : public common_reflection_engine {
+public:
+    size_t calls = 0;
+    bool accept_rewrite = false;
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
+            const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        if (calls++ > 0 && accept_rewrite) {
+            result.ready_to_answer = true;
+            return result;
+        }
+        result.decision = common_reflection_decision::revise;
+        result.next_action = common_agent_reflection_next_action::revise_response;
+        result.revision_guidance = {"State only what the retained search resource establishes."};
         return result;
     }
 };
@@ -544,6 +564,7 @@ int main() {
     reflection_request.enable_planning = true;
     reflection_request.enable_reflection = true;
     reflection_request.max_iterations = 2;
+    reflection_request.max_reflection_rounds = 2;
     reflection_request.max_tool_batches = 1;
 
     const auto reflection_result = reflection_runtime.run(reflection_request);
@@ -564,6 +585,31 @@ int main() {
         return 1;
     }
 
+    // Exercise the real tool-provider/resource/runtime boundary with controlled
+    // review decisions. These are model-free execution smokes, not model proof.
+    for (bool accept_rewrite : {false, true}) {
+        common_plan_in_memory_store review_store;
+        if (!review_store.open("", error)) return 1;
+        bounded_review_reflector review;
+        review.accept_rewrite = accept_rewrite;
+        common_agent_runtime reviewed_runtime(review_store, planner, executor, review, tool_runtime.get(), nullptr);
+        auto reviewed_request = request;
+        reviewed_request.max_iterations = 2;
+        reviewed_request.max_reflection_rounds = accept_rewrite ? 2 : 1;
+        const auto reviewed = reviewed_runtime.run(reviewed_request);
+        for (const auto & trace : reviewed.trace) {
+            std::printf("review_smoke rewrite=%d stage=%d kind=%d detail=%s\n", accept_rewrite,
+                static_cast<int>(trace.stage), static_cast<int>(trace.kind), trace.detail.c_str());
+        }
+        const auto retained = review_store.get("runtime-smoke-plan", error);
+        const bool accepted = reviewed.error.empty() && !reviewed.response.empty();
+        if (!retained || accepted != accept_rewrite ||
+                (retained->status == common_plan_status::completed) != accept_rewrite ||
+                review.calls != (accept_rewrite ? 2u : 1u)) {
+            std::fprintf(stderr, "bounded review smoke lost acceptance or resumable state: %s\n", reviewed.error.c_str());
+            return 1;
+        }
+    }
     std::printf("runtime_response=%s\n", result.response.c_str());
     std::printf("tool_events=%zu\n", result.events.size());
     std::printf("trace_entries=%zu\n", result.trace.size());

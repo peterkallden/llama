@@ -164,6 +164,14 @@ struct common_agent_dataset_descriptor {
     common_agent_dataset_origin origin;
 };
 
+// Resolve the documented numeric default from authoritative descriptor types.
+// Explicit fields keep their original order; row samples never establish types here.
+bool common_agent_resolve_numeric_columns(
+    const common_agent_dataset_descriptor & descriptor,
+    const nlohmann::ordered_json & requested,
+    nlohmann::ordered_json & selected,
+    std::string & error);
+
 // Classifies a bounded rectangular table sample. The host may materialize a
 // dataset automatically only for explicit or high-confidence simple headers;
 // ambiguous candidates remain available for a later normalization step.

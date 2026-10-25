@@ -866,13 +866,14 @@ proposed.
 
 ## Flexible investigation methods and model formats (2026-10-25)
 
-Verification status: the earlier implementation was built in the Vulkan/Cozo
-tree and its focused 19-test CTest group passed. The physical-GPU Qwen workflow
-smoke failed before tool execution: it supplied `null_count` as a grouping column
-and repeated the invalid action during repair. The subsequent source review
-described below has deliberately not been compiled or tested. Earlier passing
-results do not verify these follow-up changes; daemon and browser verification
-also remain outstanding for them.
+Verification status: the earlier 19-test run was followed by a Vulkan/Cozo
+build of baseline `4d5e3114a` and eleven passing focused CTests. Its physical-GPU
+Qwen/Nomic workflow smoke failed: it selected customers instead of orders,
+omitted the requested amount column and returned unsupported measures after a
+negative review. The host verification/repair changes now described in
+[Host verification and bounded repair](agent-host-verification-and-repair.md)
+have deliberately not been compiled or tested. Earlier passing results do not
+verify this change; model, daemon and browser verification remain outstanding.
 
 Compact DSL remains the default request/model profile. Route, blueprint, plan,
 workflow and workflow-candidate selectors now use local `selection.*` flat DSL
@@ -956,3 +957,18 @@ projected schema. An explicitly empty example list suppresses the compact
 renderer's illustrative fallback, preventing stale aliases from reappearing.
 Repair receives the rejected action as quoted data and the actual validation
 error; it does not assert that any unvalidated selection has been approved.
+
+### Declared result assurance and bounded repair
+
+The starter dataset analysis/quality workflows now use revision v3. Optional
+`verification_checks[].tool` selects a registered operation without forcing a
+one-action workflow into a fixed transition graph. `declared_claim_tools`
+enables bounded numeric evidence handles only for the relevant operation.
+Existing v2 definitions remain readable. Reimport the starter package to select
+the new declarations; the running library is not changed by editing this file.
+
+Ordinary DSL reflection can request a response revision or additional evidence
+through existing assurance actions. A rejected draft cannot become accepted
+because the review counter expired. No review or execution budget defaults are
+increased. See the linked implementation note for exact lifecycle semantics,
+source locations and the authored, currently unrun verification cases.

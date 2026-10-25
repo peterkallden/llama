@@ -96,13 +96,25 @@ bool seed_file(
     }
 
     const std::string dataset_uri = "dataset://seed/" + dataset;
+    std::vector<common_agent_dataset_column_type> types(columns.size(), common_agent_dataset_column_type::null_);
     count = 0;
     while (std::getline(input, line)) {
         if (line.empty()) continue;
         const auto fields = split_csv(line);
         json row = json::object();
         for (size_t i = 0; i < columns.size(); ++i) {
-            row[columns[i]] = typed_value(i < fields.size() ? fields[i] : std::string());
+            const auto value = typed_value(i < fields.size() ? fields[i] : std::string());
+            row[columns[i]] = value;
+            const auto type = value.is_null() ? common_agent_dataset_column_type::null_
+                : value.is_number_integer() ? common_agent_dataset_column_type::integer
+                : value.is_number() ? common_agent_dataset_column_type::decimal
+                : common_agent_dataset_column_type::string;
+            if (type == common_agent_dataset_column_type::null_) continue;
+            if (types[i] == common_agent_dataset_column_type::null_) types[i] = type;
+            else if ((types[i] == common_agent_dataset_column_type::integer || types[i] == common_agent_dataset_column_type::decimal) &&
+                     (type == common_agent_dataset_column_type::integer || type == common_agent_dataset_column_type::decimal)) {
+                if (type == common_agent_dataset_column_type::decimal) types[i] = type;
+            } else if (types[i] != type) types[i] = common_agent_dataset_column_type::unknown;
         }
         const std::string row_id = id_index < fields.size() ? fields[id_index] : std::to_string(count + 1);
         if (row_id.empty() || !store.put_row(dataset_uri, row_id, row.dump(), error)) return false;
@@ -116,12 +128,9 @@ bool seed_file(
     descriptor.ref.source_resource_uri = "resource://seed/" + dataset;
     descriptor.ref.source_representation = path;
     descriptor.import_processor_id = "smoke.csv-seed";
-    descriptor.import_processor_version = "1";
-    for (const auto & column : columns) {
-        descriptor.columns.push_back({
-            column,
-            common_agent_dataset_column_type::unknown,
-            true});
+    descriptor.import_processor_version = "2";
+    for (size_t index = 0; index < columns.size(); ++index) {
+        descriptor.columns.push_back({columns[index], types[index], true});
     }
     if (!store.put_dataset_descriptor(descriptor, error)) return false;
     return true;

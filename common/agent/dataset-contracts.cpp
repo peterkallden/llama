@@ -648,3 +648,35 @@ bool normalize_common_agent_dataset_tool_arguments(
     error.clear();
     return true;
 }
+
+bool common_agent_resolve_numeric_columns(
+        const common_agent_dataset_descriptor & descriptor,
+        const nlohmann::ordered_json & requested,
+        nlohmann::ordered_json & selected,
+        std::string & error) {
+    selected = nlohmann::ordered_json::array();
+    error.clear();
+    if (!requested.is_array() || requested.size() > 32) {
+        error = "numeric columns must be an array with at most 32 fields";
+        return false;
+    }
+    for (const auto & name : requested) {
+        if (!name.is_string() || name.get<std::string>().empty()) {
+            error = "numeric columns must be non-empty strings";
+            return false;
+        }
+        selected.push_back(name);
+    }
+    if (!selected.empty()) return true;
+    for (const auto & column : descriptor.columns) {
+        if (column.type != common_agent_dataset_column_type::integer &&
+                column.type != common_agent_dataset_column_type::decimal) continue;
+        selected.push_back(column.name);
+        if (selected.size() == 32) break;
+    }
+    if (selected.empty()) {
+        error = "no schema-declared numeric columns; select explicit columns or inspect the schema";
+        return false;
+    }
+    return true;
+}

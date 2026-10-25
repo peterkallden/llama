@@ -493,7 +493,8 @@ bool validate_dataset_reference_scope(
 
 common_tool_execution_result execute_data_backend(
         const common_native_tool_bindings & bindings,
-        const std::string & operation, const std::string & input) {
+        const std::string & operation, const std::string & input,
+        const std::string & result_schema = {}) {
     if (bindings.data_store == nullptr) {
         return common_adapter_execution_failure(
             "tool.data.backend_unavailable", "structured data backend is unavailable",
@@ -513,6 +514,25 @@ common_tool_execution_result execute_data_backend(
             }
         }
     }
+    json resolved_numeric_columns = arguments.is_object() ? arguments.value("columns", json::array()) : json::array();
+    // Defaults may use declared schema types, never a guess from sampled rows.
+    if (operation == "statistics.describe" && arguments.is_object() &&
+            (!arguments.contains("columns") || arguments["columns"].empty())) {
+        common_agent_dataset_descriptor descriptor;
+        std::string schema_error;
+        if (!bindings.data_store->get_dataset_descriptor(arguments.value("dataset", std::string{}),
+                descriptor, schema_error)) {
+            return common_adapter_not_found_failure("tool.statistics.schema_unavailable",
+                schema_error, "The dataset schema is unavailable.");
+        }
+        if (!common_agent_resolve_numeric_columns(descriptor,
+                arguments.value("columns", json::array()), resolved_numeric_columns, schema_error)) {
+            return common_adapter_failure("tool.statistics.columns_unresolved",
+                common_tool_failure_class::validation, true,
+                "No schema-declared numeric columns are available; select explicit columns or inspect the schema.",
+                schema_error);
+        }
+    }
     std::string result;
     std::string error;
     if (!bindings.data_store->execute_scoped(operation, input,
@@ -528,6 +548,20 @@ common_tool_execution_result execute_data_backend(
             "tool.data.invalid_backend_result",
             "structured data backend returned invalid JSON",
             "The structured data backend returned an invalid result.");
+    }
+    if (operation == "statistics.describe" &&
+            (!parsed.is_object() || parsed.value("dataset", json()) != arguments["dataset"] ||
+             parsed.value("selected_columns", json()) != resolved_numeric_columns)) {
+        return common_adapter_execution_failure("tool.data.result_binding_mismatch",
+            "statistics result does not retain the executed dataset and selected columns",
+            "The result does not match the executed analysis selection.");
+    }
+    if (!result_schema.empty()) {
+        std::string normalized;
+        if (!common_schema_normalize_and_validate_object(result, result_schema, normalized, error)) {
+            return common_adapter_execution_failure("tool.data.invalid_backend_result",
+                error, "The structured data result does not satisfy its registered contract.");
+        }
     }
     return common_adapter_success_json(parsed);
 }
@@ -749,13 +783,15 @@ bool common_try_register_data_tool_adapter(
             definition.executor_id == "builtin.statistics.outliers" ||
             definition.executor_id == "builtin.statistics.value_counts") {
         const auto operation = definition.name;
-        installed = common_adapter_register_definition(definition, registry, [bindings, operation](const std::string & input) {
+        const auto result_schema = definition.executor_id == "builtin.statistics.describe"
+            ? definition.result_schema_json : std::string{};
+        installed = common_adapter_register_definition(definition, registry, [bindings, operation, result_schema](const std::string & input) {
             std::string error;
             json arguments;
             if (!common_adapter_parse_object(input, arguments, error)) {
                 return common_adapter_validation_failure("tool.data.invalid_arguments", std::move(error));
             }
-            return execute_data_backend(bindings, operation, arguments.dump());
+            return execute_data_backend(bindings, operation, arguments.dump(), result_schema);
         }, error);
     } else if (definition.executor_id == "builtin.dataset.list" && bindings.data_store != nullptr) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {

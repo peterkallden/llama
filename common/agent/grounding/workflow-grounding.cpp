@@ -27,7 +27,7 @@ bool resolve(const common_plan_verification_operand & operand, const common_agen
     else if (operand.source == "arguments") root = arguments;
     else if (operand.source == "result") root = result;
     else if (operand.source == "observation" || operand.source == "transition_arguments") {
-        const auto * observed = common_plan_workflow_observation(plan, operand.transition_id);
+        const auto * observed = common_plan_workflow_observation(plan, operand.transition_id, false, operand.tool_name);
         if (!observed) { error = "completed source observation unavailable"; return false; }
         root = json::parse(observed->summary, nullptr, false);
         evidence.push_back(observed->id);
@@ -190,8 +190,26 @@ std::string evaluate(const common_plan_verification_check & check, const json & 
     return "unknown";
 }
 }
+static const common_plan_observation * declared_operation_observation(const common_plan_state & plan) {
+    if (!plan.workflow_definition) return nullptr;
+    const size_t start = plan.route_binding
+        ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+    for (size_t index = plan.steps.size(); index > start; --index) {
+        const auto & step = plan.steps[index - 1];
+        if (!step.tool_call || step.status != common_plan_step_status::completed) continue;
+        if (std::find(plan.workflow_definition->declared_claim_tools.begin(),
+                plan.workflow_definition->declared_claim_tools.end(), step.tool_call->name) ==
+                plan.workflow_definition->declared_claim_tools.end()) continue;
+        if (const auto * observation = common_plan_workflow_observation(plan, {}, false, step.tool_call->name)) return observation;
+    }
+    return nullptr;
+}
+
 bool common_agent_workflow_requires_claims(const common_plan_state & plan) {
-    if (plan.workflow_definition && plan.workflow_definition->require_declared_claims) return true;
+    if (plan.workflow_definition) {
+        if (plan.workflow_definition->require_declared_claims) return true;
+        if (declared_operation_observation(plan)) return true;
+    }
     return std::any_of(plan.observations.begin(), plan.observations.end(), [](const auto & observation) {
         if (observation.source != "workflow_grounding_policy" || observation.confidence <= 0) return false;
         const auto value = json::parse(observation.summary, nullptr, false);
@@ -232,7 +250,9 @@ common_agent_grounding_result common_agent_verify_workflow(const common_agent_re
     const auto arguments = json::parse(arguments_text, nullptr, false);
     const auto result = json::parse(result_text, nullptr, false);
     for (const auto & check : plan.workflow_definition->verification_checks) {
-        if (check.phase != phase || (phase != common_plan_verification_phase::before_answer && check.transition_id != transition)) continue;
+        if (check.phase != phase || (phase != common_plan_verification_phase::before_answer &&
+                ((!check.tool_name.empty() && check.tool_name != current_tool) ||
+                 (!check.transition_id.empty() && check.transition_id != transition)))) continue;
         json left, right, evidence = json::array();
         std::string error, status = "unknown";
         try {
@@ -242,7 +262,7 @@ common_agent_grounding_result common_agent_verify_workflow(const common_agent_re
         } catch (const std::exception &) { error = "unsupported or malformed verification data"; }
         const auto identity = plan.workflow_definition->workflow_ref + "@" + plan.workflow_definition->workflow_revision +
             check.id + std::to_string(static_cast<int>(check.phase)) + std::to_string(static_cast<int>(check.operation)) +
-            check.dimension_mapping_json + arguments_text + left.dump() + right.dump();
+            check.dimension_mapping_json + check.tool_name + arguments_text + result_text + left.dump() + right.dump();
         outcome.records.push_back({{"check", check.id}, {"status", status}, {"required", check.required},
             {"phase", phase == common_plan_verification_phase::before_tool ? "before_tool" :
                 phase == common_plan_verification_phase::after_tool ? "after_tool" : "before_answer"},
@@ -270,9 +290,13 @@ json common_agent_workflow_claim_handles(const common_agent_request & request, c
     json handles = json::array();
     // Only active-route successful results produce claim handles. Older
     // source data remains reachable through the declared handoff snapshot.
-    const auto * observed = common_plan_workflow_observation(plan, {}, true);
-    if (!observed || !request.grounding_dataset_reader) return handles;
+    const auto * declared = declared_operation_observation(plan);
+    const bool inline_claims = declared != nullptr;
+    const auto * observed = declared ? declared : common_plan_workflow_observation(plan, {}, true);
+    if (!observed) observed = common_plan_workflow_observation(plan, {});
+    if (!observed) return handles;
     for (const auto & dataset : observed->dataset_refs) {
+        if (inline_claims || !request.grounding_dataset_reader) break;
         json rows;
         std::string error;
         if (!request.grounding_dataset_reader(dataset.uri, rows, error) || !rows.is_array()) continue;
@@ -310,11 +334,66 @@ json common_agent_workflow_claim_handles(const common_agent_request & request, c
             handles.push_back(std::move(handle));
         }
     }
+    if (!handles.empty()) return handles;
+    // Inline typed results are evidence too. Reference the original observation
+    // and JSON position instead of inventing a dataset, unit or source URI.
+    const auto payload = json::parse(observed->summary, nullptr, false);
+    if (!payload.is_object()) return handles;
+    const bool wrapped = payload.contains("result");
+    const auto & result = wrapped ? payload["result"] : payload;
+    const auto append = [&](auto && self, const json & value, const std::string & pointer, size_t depth) -> void {
+        if (depth > 8 || handles.size() >= 16) return;
+        if (value.is_number()) {
+            json handle = {{"handle", "E" + std::to_string(handles.size() + 1)},
+                {"kind", "result_field"}, {"value", value}, {"status", nullptr},
+                {"evidence_id", observed->id}, {"operation", observed->source},
+                {"source_location", pointer},
+                {"evidence_fingerprint", fingerprint(observed->id + observed->summary + pointer)},
+                {"coverage", payload.value("result_truncated", json(false)) == true ||
+                    (result.is_object() && (result.value("scan_truncated", json(false)) == true ||
+                        result.value("result_truncated", json(false)) == true)) ? "partial" : "unspecified"},
+                {"dataset", result.is_object() && result.contains("dataset") && result["dataset"].is_string() ? result["dataset"] : json("")},
+                {"source_resource", ""}, {"content_hash", ""}};
+            if (handles.dump().size() + handle.dump().size() <= 8192) handles.push_back(std::move(handle));
+        } else if (value.is_object()) {
+            for (const auto & field : value.items()) {
+                std::string token;
+                for (char ch : field.key()) token += ch == '~' ? "~0" : ch == '/' ? "~1" : std::string(1, ch);
+                self(self, field.value(), pointer + "/" + token, depth + 1);
+            }
+        } else if (value.is_array()) {
+            for (size_t index = 0; index < value.size() && handles.size() < 16; ++index)
+                self(self, value[index], pointer + "/" + std::to_string(index), depth + 1);
+        }
+    };
+    append(append, result, wrapped ? "/result" : "", 0);
     return handles;
 }
 
 std::string common_agent_grounded_draft_schema() {
-    return R"({"type":"object","additionalProperties":false,"required":["answer","claims"],"properties":{"answer":{"type":"string","minLength":1,"maxLength":16384},"claims":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["handle","value","unit","dimensions"],"properties":{"handle":{"type":"string","maxLength":32},"value":{"type":"number"},"unit":{"type":"string","maxLength":256},"dimensions":{"type":"object","additionalProperties":{"type":"string"}}}}}}})";
+    return R"({"type":"object","additionalProperties":false,"required":["answer","claims"],"properties":{"answer":{"type":"string","minLength":1,"maxLength":16384},"claims":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["handle","value"],"properties":{"handle":{"type":"string","maxLength":32},"value":{"type":"number"},"unit":{"type":"string","maxLength":256},"dimensions":{"type":"object","additionalProperties":{"type":"string"}}}}}}})";
+}
+
+std::string common_agent_grounded_draft_grammar(const json & handles) {
+    if (!handles.is_array() || handles.empty()) return {};
+    std::string grammar = "root ::= answer (\"\\n\" answer){0,7} claim{1,16}\n"
+        "answer ::= \"answer: \" [^\\n\\r]{1,16384}\nclaim ::= ";
+    bool first = true;
+    for (const auto & handle : handles) {
+        std::string literal = "\nclaim: " + handle.at("handle").get<std::string>() +
+            "\nvalue: " + handle.at("value").dump();
+        if (handle.value("kind", std::string{}) != "result_field") {
+            literal += "\nunit: " + handle.at("unit").dump();
+            for (const auto & field : handle.at("dimensions").items()) {
+                const auto code = field.value().is_string() ? field.value().get<std::string>() : field.value().dump();
+                literal += "\ndimension: " + json(field.key()).dump() + " " + json(code).dump();
+            }
+        }
+        if (!first) grammar += " | ";
+        first = false;
+        grammar += json(literal).dump();
+    }
+    return grammar + "\n";
 }
 
 bool common_agent_parse_grounded_draft(const std::string & text, bool json_format,
@@ -389,17 +468,25 @@ common_agent_grounding_result common_agent_verify_declared_claims(const json & c
         const auto found = std::find_if(handles.begin(), handles.end(), [&](const auto & handle) {
             return claim.is_object() && claim.contains("handle") && claim["handle"] == handle["handle"];
         });
-        bool matching_dimensions = found != handles.end() && claim.contains("dimensions") && claim["dimensions"].is_object() &&
-            claim["dimensions"].size() == (*found)["dimensions"].size();
-        if (matching_dimensions) for (const auto & field : (*found)["dimensions"].items()) {
-            if (!claim["dimensions"].contains(field.key())) { matching_dimensions = false; break; }
-            const auto & proposed = claim["dimensions"][field.key()];
-            if (proposed != field.value() && !(proposed.is_string() &&
-                    (field.value().is_number() || field.value().is_boolean()) && proposed.get<std::string>() == field.value().dump()))
-                matching_dimensions = false;
+        const bool result_field = found != handles.end() && found->value("kind", std::string{}) == "result_field";
+        bool matching_dimensions = found != handles.end();
+        if (!result_field && matching_dimensions) {
+            matching_dimensions = claim.contains("dimensions") && claim["dimensions"].is_object() &&
+                claim["dimensions"].size() == (*found)["dimensions"].size();
+            if (matching_dimensions) for (const auto & field : (*found)["dimensions"].items()) {
+                if (!claim["dimensions"].contains(field.key())) { matching_dimensions = false; break; }
+                const auto & proposed = claim["dimensions"][field.key()];
+                if (proposed != field.value() && !(proposed.is_string() &&
+                        (field.value().is_number() || field.value().is_boolean()) && proposed.get<std::string>() == field.value().dump()))
+                    matching_dimensions = false;
+            }
+        } else if (result_field) {
+            matching_dimensions = (!claim.contains("dimensions") || claim["dimensions"] == json::object()) &&
+                (!claim.contains("unit") || claim["unit"] == "");
         }
         const bool matched = found != handles.end() && claim.contains("value") && claim["value"].is_number() &&
-            claim["value"] == (*found)["value"] && claim.contains("unit") && claim["unit"] == (*found)["unit"] &&
+            claim["value"] == (*found)["value"] &&
+            (result_field || (claim.contains("unit") && claim["unit"] == (*found)["unit"])) &&
             matching_dimensions &&
             (!present((*found)["status"])) && seen.insert((*found)["handle"].get<std::string>()).second;
         outcome.records.push_back({{"status", matched ? "passed" : "unknown"},
@@ -408,6 +495,7 @@ common_agent_grounding_result common_agent_verify_declared_claims(const json & c
         if (matched) {
             outcome.records.back()["evidence_ids"] = json::array({(*found)["evidence_id"]});
             outcome.records.back()["source_location"] = (*found)["source_location"];
+            outcome.records.back()["value"] = claim["value"];
             outcome.records.back()["content_hash"] = (*found)["content_hash"];
             outcome.records.back()["input_fingerprint"] = (*found)["evidence_fingerprint"];
         }
@@ -420,8 +508,8 @@ common_agent_grounding_result common_agent_verify_declared_claims(const json & c
         if (!source.empty()) accepted.resource_uris = {source};
         accepted.confidence = 1.0;
         accepted.numeric_value_json = claim["value"].dump();
-        accepted.unit = claim["unit"].get<std::string>();
-        accepted.dimensions_json = (*found)["dimensions"].dump();
+        accepted.unit = result_field ? std::string{} : claim["unit"].get<std::string>();
+        accepted.dimensions_json = result_field ? "{}" : (*found)["dimensions"].dump();
         accepted.dataset_uri = (*found)["dataset"].get<std::string>();
         accepted.source_location = (*found)["source_location"].get<std::string>();
         verified.push_back(std::move(accepted));

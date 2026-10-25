@@ -5,6 +5,16 @@ record below separates direct model-free tests and MCP tool checks from the
 still-pending live workflow and model-smoke evidence. The earlier Eurostat
 run22 trace predates this implementation and is not counted as validation.
 
+## Source update (2026-10-25, not yet compiled or tested)
+
+Operation selectors, conditional numeric claims and bounded review repair are
+specified in [Host verification and bounded repair](agent-host-verification-and-repair.md).
+The shared workflow codec persists `verification_checks[].tool`, operand `tool`
+selectors and `declared_claim_tools`. Existing transition-based definitions
+remain supported. Inline result-field claims retain actual observation and JSON
+positions; units/dimensions stay mandatory for existing dataset-cell claims.
+These additions have no new build, model, daemon or UI validation yet.
+
 ## Validation record (2026-10-16)
 
 - A CPU/Cozo build completed with `BUILD_TESTING=OFF`. The directly invoked

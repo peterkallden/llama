@@ -18,6 +18,7 @@
 #include "plan/plan-scheduler.h"
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
+#include "hash/hash.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -28,11 +29,6 @@
 #include <utility>
 
 using json = nlohmann::ordered_json;
-
-static bool common_agent_reflection_context_overflow(const std::string & error) {
-    return error.find("exceeds the available context size") != std::string::npos ||
-        error.find("context size") != std::string::npos;
-}
 
 static void add_tool_learning_metadata(
         common_learning_signal & signal,
@@ -1059,6 +1055,25 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
         }
     }
+    // Keep synthesis pending until host checks and any requested review have
+    // accepted the answer. Tool completion alone cannot complete the task.
+    if (plan.status != common_plan_status::completed && !plan.steps.empty() &&
+            std::none_of(plan.steps.begin(), plan.steps.end(), [](const auto & step) {
+                return common_plan_step_effective_mode(step) == common_plan_step_mode::final_response;
+            })) {
+        common_plan_step synthesis;
+        synthesis.id = plan.id + ":host-synthesis";
+        synthesis.title = "Synthesize the verified result";
+        synthesis.objective = plan.goal;
+        synthesis.mode = common_plan_step_mode::final_response;
+        for (const auto & step : plan.steps) if (!step.optional) synthesis.depends_on.push_back(step.id);
+        common_plan_operation add;
+        add.kind = common_plan_operation_kind::add_step;
+        add.plan_id = plan.id; add.expected_version = plan.version;
+        add.step = synthesis;
+        add.reason_summary = "retain an explicit host-owned answer completion boundary";
+        if (!store.apply(add, plan, error)) { result.error = error; return result; }
+    }
     // A workflow graph may only advance from host-verified observations.  In
     // particular, do not trust a persisted `completed` tool step unless its
     // own execution observation survived persistence.  This both fails safe
@@ -1600,6 +1615,57 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     bool executed_request_tool = false;
     size_t plan_revision_count = 0;
     size_t grounding_revision_count = 0;
+    size_t reflection_review_count = 0;
+    bool unresolved_review = false;
+    for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+        if (item->source != "response_review") continue;
+        const auto review = json::parse(item->summary, nullptr, false);
+        unresolved_review = !review.is_object() || review.value("accepted", json(false)) != true;
+        break;
+    }
+    const auto stop_unverified_response = [&](const std::string & reason,
+            common_agent_failure_class classification = common_agent_failure_class::limit) {
+        result.response.clear();
+        result.error = reason;
+        result.plan_version = plan.version;
+        result.limit_reached = classification == common_agent_failure_class::limit;
+        result.response_generation_status = common_agent_generation_status::errored;
+        result.response_stop_reason = result.limit_reached
+            ? common_agent_generation_stop_reason::limit : common_agent_generation_stop_reason::error;
+        result.failures.push_back({"response.verification_incomplete", classification,
+            "response_verification", "", "", "", false, reason, ""});
+        append_trace(result, common_runtime_trace_stage::response,
+            common_runtime_trace_kind::failed, reason, plan.id);
+    };
+    const auto record_response_review = [&](const std::string & draft, bool accepted,
+            const std::string & action) {
+        json evidence = json::array();
+        for (const auto & observation : plan.observations) {
+            if (observation.source == "response_review") continue;
+            evidence.push_back({{"id", observation.id}, {"summary", observation.summary}});
+        }
+        const auto evidence_text = evidence.dump();
+        common_plan_operation operation;
+        operation.kind = common_plan_operation_kind::record_observation;
+        operation.plan_id = plan.id;
+        operation.expected_version = plan.version;
+        operation.host_authorized = true;
+        operation.reason_summary = "bind review outcome to the exact draft and evidence snapshot";
+        operation.observation = common_plan_observation{
+            "response_review:" + std::to_string(plan.version), "response_review",
+            json{{"accepted", accepted}, {"action", action}, {"turn_id", request.turn_id},
+                {"draft_fingerprint", hash_sha256_hex(draft.data(), draft.size())},
+                {"evidence_fingerprint", hash_sha256_hex(evidence_text.data(), evidence_text.size())},
+                {"evidence_version", plan.version}}.dump(), 1.0f};
+        append_trace(result, common_runtime_trace_stage::reflection,
+            common_runtime_trace_kind::recorded, operation.observation->summary, plan.id);
+        // A completed plan already retains ordinary successful acceptance.
+        // Persist a verdict when needed to retain/resolve an unfinished review.
+        if ((!accepted || unresolved_review) && !store.apply(operation, plan, error)) return false;
+        unresolved_review = !accepted;
+        return true;
+    };
+    size_t tool_batches = 0;
     size_t runtime_iteration_limit = request.max_iterations;
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
         if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
@@ -1609,7 +1675,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             result.error = "invalid cognitive-mode transition before plan work";
             return result;
         }
-        size_t tool_batches = 0;
         bool defer_draft_for_required_tools = false;
         // Execute the contiguous, dependency-ready tool chain before drafting.
         // This makes normal plan progression deterministic; reflection remains
@@ -2085,7 +2150,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
             if (plan.workflow_definition && (!plan.workflow_definition->verification_checks.empty() ||
-                    common_agent_workflow_requires_claims(plan))) {
+                    common_agent_workflow_requires_claims(plan) ||
+                    !plan.workflow_definition->declared_claim_tools.empty())) {
                 common_plan_operation arguments;
                 arguments.kind = common_plan_operation_kind::record_observation;
                 arguments.plan_id = plan.id; arguments.expected_version = plan.version;
@@ -2526,12 +2592,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     if (value.is_object() && value.contains("arguments")) saved_arguments = value["arguments"].dump();
                     break;
                 }
-                const auto aliases = step.semantic_alias.value_or("");
-                const auto comma = aliases.rfind(',');
-                const auto transition = aliases.rfind("workflow-transition:", 0) == 0
-                    ? aliases.substr(comma == std::string::npos ? std::string("workflow-transition:").size() : comma + 1)
-                    : std::string{};
-                const auto * source = common_plan_workflow_observation(plan, transition);
+                const common_plan_observation * source = nullptr;
+                for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                    const auto * owner = common_plan_find_tool_observation_step(plan, *item);
+                    if (owner && owner->id == step.id && item->source == step.tool_call->name &&
+                            common_plan_workflow_observation_is_usable(*item)) { source = &*item; break; }
+                }
                 const auto source_text = source ? source->summary : std::string("{}");
                 for (auto phase : {common_plan_verification_phase::before_tool, common_plan_verification_phase::after_tool}) {
                     const auto checked = common_agent_verify_workflow(request, plan, phase, step.id,
@@ -2580,9 +2646,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
 
-        std::string draft;
         std::string host_artifact_summary;
         const bool artifact_report_ready = common_agent_artifact_completion_summary(plan, host_artifact_summary);
+        if (!draft_deferred_for_tool_repair && !artifact_report_ready &&
+                ((request.enable_reflection && reflection_review_count >= request.max_reflection_rounds) ||
+                 (!request.enable_reflection && unresolved_review))) {
+            stop_unverified_response("response review is unresolved or its budget is exhausted; saved plan remains resumable");
+            break;
+        }
+        result.response.clear();
+        std::string draft;
         std::vector<common_agent_research_verification_claim> declared_claims;
         if (draft_deferred_for_tool_repair) {
             append_trace(result, common_runtime_trace_stage::response,
@@ -2652,7 +2725,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     continue;
                 }
                 result.error = "workflow answer grounding incomplete: " + grounded.summary;
-                result.response = "The numerical result could not be verified from the available evidence.";
+                result.response = "The result could not be verified from the available evidence.";
                 result.limit_reached = true;
                 result.response_stop_reason = common_agent_generation_stop_reason::limit;
                 return result;
@@ -2676,7 +2749,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 if (!store.apply(observed, plan, error)) { result.error = error; return result; }
             }
             for (const auto & claim : declared_claims) {
-                if (turn.research_workspace && result.research_result) {
+                if (turn.research_workspace && result.research_result && !claim.dataset_uri.empty()) {
                     const auto source_id = "dataset:" + claim.dataset_uri;
                     const auto evidence_id = "workflow-claim:" + claim.claim_id;
                     if (std::none_of(turn.research_workspace->sources.begin(), turn.research_workspace->sources.end(),
@@ -2806,48 +2879,69 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 result.limit_reached = true;
             }
         }
-        if (artifact_report_ready || !request.enable_reflection || iteration >= request.max_reflection_rounds) {
+        if (artifact_report_ready || !request.enable_reflection) {
+            if (artifact_report_ready && !record_response_review(draft, true, "verified_report_export")) {
+                result.error = error; return result;
+            }
             if (block_unrepaired_tool_failure()) break;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
-            result.limit_reached = !artifact_report_ready && request.enable_reflection;
+            result.limit_reached = false;
             append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
                 artifact_report_ready ? "report completion returned from verified export metadata" :
                     "response accepted without reflection revision", plan.id);
             break;
         }
+        if (reflection_review_count >= request.max_reflection_rounds) {
+            stop_unverified_response("response review budget exhausted; saved plan remains resumable");
+            break;
+        }
+        ++reflection_review_count;
         common_reflection_result reflection;
         if (!evaluate_common_agent_reflection_phase(
                 turn, plan, draft, executed_step_ids, reflection)) {
-            if (common_agent_reflection_context_overflow(error) &&
-                    !has_unresolved_required_tool_step()) {
-                if (!complete_active_synthesis_step()) {
-                    result.error = error;
-                    return result;
-                }
-                result.response = draft;
-                error.clear();
-                result.error.clear();
-                append_trace(result, common_runtime_trace_stage::reflection,
-                    common_runtime_trace_kind::failed,
-                    "reflection skipped because its context exceeded the model budget",
-                    plan.id);
-                append_trace(result, common_runtime_trace_stage::response,
-                    common_runtime_trace_kind::completed,
-                    "response accepted without reflection after context-budget guard",
-                    plan.id);
-                break;
+            const auto reason = "reflection failed safely: " + error;
+            if (!record_response_review(draft, false, "invalid_review")) { result.error = error; return result; }
+            stop_unverified_response(reason, reflection.generation &&
+                reflection.generation->status != common_agent_generation_status::completed
+                    ? common_agent_failure_class::execution : common_agent_failure_class::model_format);
+            if (reflection.generation && reflection.generation->status == common_agent_generation_status::cancelled) {
+                result.response_generation_status = common_agent_generation_status::cancelled;
+                result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
             }
-            result.response = draft;
-            if (common_agent_reflection_context_overflow(error)) {
-                // Do not leak an unverified draft when a mandatory tool step
-                // is still unresolved. The caller gets the bounded reason
-                // and can retry with a larger context or repair the step.
-                result.response.clear();
-                result.error = "reflection skipped safely: model context budget exceeded while required tool work remains unresolved";
-            } else {
-                result.error = "reflection failed safely: " + error;
+            break;
+        }
+        const bool review_accepted = reflection.decision == common_reflection_decision::accept &&
+            reflection.next_action == common_agent_reflection_next_action::accept &&
+            reflection.proposed_plan_operations.empty();
+        if (!record_response_review(draft, review_accepted,
+                common_agent_reflection_next_action_name(reflection.next_action))) {
+            result.error = error; return result;
+        }
+        if (reflection.decision == common_reflection_decision::abort ||
+                reflection.next_action == common_agent_reflection_next_action::fail_bounded) {
+            stop_unverified_response("reflection could not establish a supported answer");
+            break;
+        }
+        // Reject tool-policy violations as such, independently of the remaining
+        // review budget. A negative verdict must never launder new authority.
+        for (const auto & operation : reflection.proposed_plan_operations) {
+            const common_plan_step * target = operation.step ? &*operation.step : nullptr;
+            if (!target && operation.step_id) for (const auto & step : plan.steps)
+                if (step.id == *operation.step_id) { target = &step; break; }
+            if (!target || !target->tool_call || operation.kind == common_plan_operation_kind::complete_step) continue;
+            const auto & name = target->tool_call->name;
+            if (!tools || !tools->is_available(name) || (!tools->is_read_only(name) &&
+                    !(request.allow_policy_gated_tool_proposals && tools->is_policy_gated(name)))) {
+                const auto reason = "reflection repair proposed a tool that is not allowed: " + name;
+                append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::failed,
+                    reason, plan.id, target->id, name);
+                stop_unverified_response(reason, common_agent_failure_class::policy);
+                return result;
             }
+        }
+        if (!review_accepted && reflection_review_count >= request.max_reflection_rounds) {
+            stop_unverified_response("response rejected; no review budget remains for a repaired answer");
             break;
         }
         const bool tool_execution_closed = common_plan_tool_execution_closed(plan);
@@ -2880,14 +2974,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     common_runtime_trace_kind::failed,
                     "tool execution closed; reflection cannot add or restart tool steps",
                     plan.id);
-                if (block_unrepaired_tool_failure()) break;
-                if (!complete_active_synthesis_step()) { result.error = error; return result; }
-                result.response = draft;
-                result.revised = false;
-                append_trace(result, common_runtime_trace_stage::response,
-                    common_runtime_trace_kind::completed,
-                    "response accepted from verified tool observations after closed-plan guard",
-                    plan.id);
+                stop_unverified_response("completed plan cannot be reopened by reflection; explicit continuation is required");
                 break;
             }
         }
@@ -2904,7 +2991,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             runtime_iteration_limit);
         const bool reflection_requested_escalation = reflection_escalation.requested;
         const bool reflection_escalation_denied = reflection_escalation.denied;
-        if (reflection_escalation.stop_turn) break;
+        if (reflection_escalation.stop_turn) {
+            stop_unverified_response(result.error.empty() ? "reflection escalation did not produce verified evidence" : result.error,
+                common_agent_failure_class::execution);
+            break;
+        }
+        if (reflection_escalation.denied) {
+            stop_unverified_response("required reflection escalation was denied by the execution envelope",
+                common_agent_failure_class::policy);
+            break;
+        }
         if (reflection_escalation.continue_turn) continue;
         if (reflection.learning_hint) {
             const auto & hint = *reflection.learning_hint;
@@ -2940,6 +3036,19 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 error.clear();
             }
         }
+        if (reflection.next_action == common_agent_reflection_next_action::revise_plan &&
+                reflection.proposed_plan_operations.empty()) {
+            if (!prepare_common_agent_reflection_plan_repair(turn, plan, planner, reflection)) {
+                const auto reason = "reflection evidence repair could not be prepared: " + error;
+                const bool cancelled = result.response_generation_status == common_agent_generation_status::cancelled;
+                stop_unverified_response(reason, common_agent_failure_class::execution);
+                if (cancelled) {
+                    result.response_generation_status = common_agent_generation_status::cancelled;
+                    result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
+                }
+                break;
+            }
+        }
         const bool requests_plan_revision =
             !reflection.proposed_plan_operations.empty() ||
             reflection.decision == common_reflection_decision::replan;
@@ -2947,8 +3056,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             const size_t revision_limit = static_cast<size_t>(std::max(
                 0, request.deliberation_policy.max_plan_revisions));
             if (plan_revision_count >= revision_limit) {
-                result.response = draft;
-                result.limit_reached = true;
+                stop_unverified_response("deliberation plan revision limit reached before acceptance");
                 append_event(result, request, {
                     common_agent_event_type::plan_revision_limit_reached,
                     "deliberation plan revision limit reached", {}, plan.id});
@@ -2956,8 +3064,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     common_runtime_trace_kind::failed,
                     "deliberation plan revision limit reached", plan.id);
                 append_trace(result, common_runtime_trace_stage::response,
-                    common_runtime_trace_kind::completed,
-                    "response returned at deliberation limit", plan.id);
+                    common_runtime_trace_kind::failed,
+                    "response remains unverified at deliberation limit", plan.id);
                 break;
             }
             append_event(result, request, {
@@ -2984,13 +3092,38 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                             return false;
                     }
                 });
-    if (requests_reframe && request.cognitive_state.mode == common_agent_cognitive_mode::reflect &&
+        if (requests_reframe && request.cognitive_state.mode == common_agent_cognitive_mode::reflect &&
             !common_agent_runtime_transition_cognitive_mode(
                     turn, common_agent_cognitive_mode::frame,
                     "reflection requested same-route plan restructuring", "reflection",
                     common_runtime_trace_stage::reflection)) {
             result.error = "invalid cognitive-mode transition for reflection replan";
             return result;
+        }
+        for (auto & operation : reflection.proposed_plan_operations) {
+            if ((operation.kind != common_plan_operation_kind::add_step &&
+                    operation.kind != common_plan_operation_kind::replace_step) ||
+                    !operation.step || !operation.step->tool_call) continue;
+            std::string merge_error;
+            if (merge_reflection_tool_repair_arguments(plan, operation, merge_error)) {
+                append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
+                    "reflection tool repair arguments merged with failed call", plan.id,
+                    operation.step->id, operation.step->tool_call->name);
+            }
+        }
+        if (tools && !reflection.proposed_plan_operations.empty()) {
+            auto candidate = plan;
+            for (const auto & operation : reflection.proposed_plan_operations) {
+                if (operation.kind == common_plan_operation_kind::add_step && operation.step) candidate.steps.push_back(*operation.step);
+                else if (operation.kind == common_plan_operation_kind::replace_step && operation.step && operation.step_id) {
+                    for (auto & step : candidate.steps) if (step.id == *operation.step_id) step = *operation.step;
+                }
+            }
+            if (!tools->validate_plan(candidate, error)) {
+                stop_unverified_response("reflection repair violates the existing route contract: " + error,
+                    common_agent_failure_class::validation);
+                break;
+            }
         }
         std::vector<std::string> reflection_work_step_ids;
         for (const auto & op : reflection.proposed_plan_operations) {
@@ -3045,35 +3178,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         std::vector<std::string> applied_reflection_work_step_ids;
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);
-            if (op.kind == common_plan_operation_kind::add_step && op.step && op.step->tool_call) {
-                const auto & proposed_call = *op.step->tool_call;
-                const bool reflection_policy_allowed = tools != nullptr &&
-                    (tools->is_read_only(proposed_call.name) ||
-                     (request.allow_policy_gated_tool_proposals && tools->is_policy_gated(proposed_call.name)));
-                if (!reflection_policy_allowed) {
-                    const std::string detail = "reflection repair proposed a tool that is not allowed: " + proposed_call.name;
-                    append_event(result, request, {common_agent_event_type::tool_rejected, detail, {}, plan.id});
-                    append_trace(result, common_runtime_trace_stage::reflection,
-                        common_runtime_trace_kind::failed, detail, plan.id,
-                        op.step->id, proposed_call.name);
-                    result.error = detail;
-                    return result;
-                }
-                std::string repair_merge_error;
-                if (merge_reflection_tool_repair_arguments(plan, op, repair_merge_error)) {
-                    append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
-                        "reflection tool repair arguments merged with failed call", plan.id,
-                        op.step->id, op.step->tool_call->name);
-                }
-                std::string validation_error;
-                if (normalize_planned_tool_step(*op.step, true, validation_error)) {
-                    append_event(result, request, {common_agent_event_type::tool_rejected,
-                        "reflection-added tool step degraded to reasoning: " + validation_error, {}, plan.id});
-                }
-            }
             op.plan_id = plan.id;
             op.expected_version = plan.version;
-            if (!store.apply(op, plan, error)) { error.clear(); continue; }
+            if (!store.apply(op, plan, error)) {
+                stop_unverified_response("reflection plan operation rejected: " + error);
+                return result;
+            }
             append_event(result, request, {common_agent_event_type::plan_updated, "reflection plan operation applied", {}, plan.id});
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "reflection plan operation applied", plan.id,
@@ -3138,7 +3248,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
         if (!reflection_escalation_denied &&
                 !reflection_requested_escalation &&
-                (reflection.ready_to_answer || reflection.decision == common_reflection_decision::accept)) {
+                review_accepted) {
             if (block_unrepaired_tool_failure()) break;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }
             result.response = draft;
@@ -3148,23 +3258,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "response accepted after reflection", plan.id);
             break;
         }
-        if (reflection.decision == common_reflection_decision::abort) {
-            result.error = "reflection aborted answer";
-            append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::failed,
-                "reflection aborted answer", plan.id);
-            break;
-        }
-        if (reflection_escalation_denied && iteration + 1 >= runtime_iteration_limit) {
-            if (!complete_active_synthesis_step()) { result.error = error; return result; }
-            result.response = draft;
-            result.limit_reached = true;
-            append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
-                "response returned after denied reflection escalation", plan.id);
-            break;
-        }
         guidance = reflection.revision_guidance;
         for (const auto & issue : reflection.issues) {
             if (!issue.description.empty()) guidance.push_back(issue.description);
+        }
+        if (guidance.empty()) {
+            stop_unverified_response("reflection rejected the response without a supported correction");
+            break;
         }
         result.revised = true;
         append_event(result, request, {common_agent_event_type::response_revised, "reflection requested revision", {}, plan.id});

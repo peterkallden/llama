@@ -1145,12 +1145,6 @@ std::string render_draft_task_frame(const common_plan_state & plan) {
     return out.str();
 }
 
-const std::string & compact_reflection_decision_grammar() {
-    static const std::string grammar =
-        "root ::= \"reflect accept\" | \"reflect revise\"";
-    return grammar;
-}
-
 common_memory_context_config make_memory_context_config(
         const common_agent_context_budget_config & budgets,
         bool deliberate = false) {
@@ -1896,10 +1890,14 @@ public:
         const bool grounded_json = grounded && request.tool_output_format != common_agent_tool_output_format::compact_dsl;
         const auto grounding_handles = grounded ? common_agent_workflow_claim_handles(request, plan) : json::array();
         std::string grounded_schema;
+        if (grounded && grounding_handles.empty()) {
+            error = "declared numeric evidence is unavailable in the current workflow result";
+            return {};
+        }
         if (grounded) {
             system.content += grounded_json
-                ? " Return a JSON object with answer:string and claims:[{handle:string,value:number,unit:string,dimensions:object}]. Declare numeric claims using the supplied host evidence handles."
-                : " Return only compact DSL. Use answer: text (repeat for more lines), then claim: HANDLE, value: NUMBER, unit: UNIT and repeated dimension: NAME CODE fields for each declared numeric claim. Use the supplied host evidence handles; declare their dimension codes and unit. No tool calls.";
+                ? " Return a JSON object with answer:string and claims:[{handle:string,value:number,unit:string,dimensions:object}]. Declare numeric claims using the supplied host evidence handles. For result_field handles use handle and value only; never invent a unit or dimensions."
+                : " Return only compact DSL. Use answer: text (repeat for more lines), then claim: HANDLE, value: NUMBER, unit: UNIT and repeated dimension: NAME CODE fields for each declared numeric claim. Use the supplied host evidence handles; declare their dimension codes and unit. For result_field handles use only claim and value; their source position and operation identify the fact. Do not invent units or dimensions. No tool calls.";
             grounded_schema = grounded_json ? common_agent_grounded_draft_schema() : std::string{};
         }
         common_chat_msg user;
@@ -1915,19 +1913,25 @@ public:
         }
         if (grounded) {
             auto visible = json::array();
-            for (const auto & handle : grounding_handles) visible.push_back({{"handle", handle["handle"]},
-                {"value", handle["value"]}, {"unit", handle["unit"]},
-                {"dimensions", handle["dimensions"]}, {"status", handle["status"]}});
+            for (const auto & handle : grounding_handles) {
+                json item = {{"handle", handle["handle"]}, {"value", handle["value"]}, {"status", handle["status"]}};
+                for (const auto * field : {"kind", "unit", "dimensions", "operation", "source_location", "dataset", "coverage"}) {
+                    if (handle.contains(field)) item[field] = handle[field];
+                }
+                visible.push_back(std::move(item));
+            }
             user.content += "\n[Host numeric evidence handles]\n" + visible.dump();
         }
-        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
+        auto generation_request = make_agent_cli_generation_request(
             request,
             common_agent_generation_purpose::draft,
             {system, user},
             // Drafts must be able to state the completed tool-backed result;
             // a short cap can end mid-sentence and trigger an unnecessary
             // reflection/re-draft cycle on small CPU models.
-            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256)), grounded_schema));
+            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256)), grounded_schema);
+        if (grounded && !grounded_json) generation_request.grammar = common_agent_grounded_draft_grammar(grounding_handles);
+        const auto generation_result = inference.generate_result(std::move(generation_request));
         if (!common_agent_generation_succeeded(generation_result)) {
             error = describe_agent_cli_generation_failure("model draft generation", generation_result);
             return common_agent_generated_text_result_from_generation_result(generation_result);
@@ -2136,8 +2140,8 @@ public:
         const bool compact_dsl_output =
             request.tool_output_format == common_agent_tool_output_format::compact_dsl;
         // Ordinary reflection is a review of a completed result, not another
-        // planning turn. Do not make a model carry plan IDs and tool contracts
-        // unless it must repair a failed mandatory step.
+        // planning turn. Keep it small; an evidence-repair decision delegates
+        // contract-heavy planning to the existing planner on demand.
         if (failed_mandatory_tool_step || retryable_validation_repair_required) {
             user.content = render_reflection_plan_context(plan, 1400, 1200) +
                 render_reflection_failed_tool_observations(plan, 1200);
@@ -2183,7 +2187,11 @@ public:
                 system.content =
                     "Compare the draft with the request and verified evidence. "
                     "Return `reflect accept` when the draft directly satisfies the request using that evidence; "
-                    "otherwise return `reflect revise`. Return exactly one line.\n";
+                    "Otherwise return three lines: `reflect revise`, `assurance_action revise_response` "
+                    "or `assurance_action revise_plan`, and `guidance \"specific correction\"`. "
+                    "Use revise_response for wording or synthesis with sufficient evidence; use revise_plan "
+                    "when sources, operations or evidence need further work. Use assurance_action fail_bounded "
+                    "when no supported correction is available. Return `reflect abort` to stop.\n";
             }
         } else {
             system.content = "Return only JSON matching the supplied schema. Compare the draft with the user request "
@@ -2240,14 +2248,14 @@ public:
                 make_agent_cli_generation_options(
                     generation_config,
                     compact_dsl_output && !failed_mandatory_tool_step && !retryable_validation_repair_required
-                        ? 32
+                        ? generation_config.n_predict
                         : (is_singleton_host_bound_tool(request, tools)
                             ? std::max(generation_config.n_predict, 128)
                             : std::max(generation_config.n_predict, 384))),
                 compact_dsl_output ? std::string() : reflection_schema);
             if (compact_dsl_output && !retryable_validation_repair_required) {
                 if (!failed_mandatory_tool_step) {
-                    generation_request.grammar = compact_reflection_decision_grammar();
+                    generation_request.grammar = common_reflection_review_grammar();
                 } else {
                     // These are the exact host-declared output decisions above,
                     // not a classification of the user's request.
@@ -2348,20 +2356,9 @@ public:
         }
         if (!parsed) {
             log_reflection_failure_io(error);
-            fprintf(stderr, "warning: reflection %s rejected; using safe fallback (%s)\n",
-                compact_dsl_output ? "compact DSL" : "JSON", error.c_str());
-            error.clear();
-            if (failed_mandatory_tool_step) {
-                result.decision = common_reflection_decision::abort;
-                result.ready_to_answer = false;
-            } else {
-                result.decision = common_reflection_decision::accept;
-                result.ready_to_answer = true;
-            }
-        }
-        if (result.decision == common_reflection_decision::request_action || result.decision == common_reflection_decision::replan) {
-            result.decision = common_reflection_decision::revise;
-            result.revision_guidance.push_back("Keep the response within the current bounded plan.");
+            // Preserve malformed review as an error, never an acceptance.
+            if (error.empty()) error = "reflection did not produce a valid review result";
+            return result;
         }
         return result;
     }

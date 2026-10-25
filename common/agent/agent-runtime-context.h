@@ -79,3 +79,10 @@ common_agent_reflection_escalation_result handle_common_agent_reflection_escalat
         std::vector<std::string> & guidance,
         size_t iteration,
         size_t & runtime_iteration_limit);
+
+// Prepare bounded additions with the existing planner; does not publish them.
+bool prepare_common_agent_reflection_plan_repair(
+    common_agent_runtime_turn_context & context,
+    const common_plan_state & plan,
+    common_planner & planner,
+    common_reflection_result & reflection);

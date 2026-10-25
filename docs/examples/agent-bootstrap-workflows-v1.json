@@ -188,12 +188,12 @@
   ],
   "workflows": [
     {
-      "id": "dataset-analysis-path-v2",
-      "source_revision": "agent-workflows-starter@v3",
+      "id": "dataset-analysis-path-v3",
+      "source_revision": "agent-workflows-starter@v32",
       "workflow_ref": "workflow://dataset/analysis",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "dataset",
-      "graph_revision": "dataset-analysis-graph@v2",
+      "graph_revision": "dataset-analysis-graph@v3",
       "required_capabilities": [
         "dataset.resolve",
         "dataset.inspect",
@@ -210,15 +210,31 @@
       ],
       "required_context": [
         "context.dataset.available"
+      ],
+      "declared_claim_tools": [
+        "statistics.describe"
+      ],
+      "verification_checks": [
+        {
+          "id": "described-columns-established",
+          "tool": "statistics.describe",
+          "phase": "after_tool",
+          "operation": "required",
+          "left": {
+            "source": "result",
+            "pointer": "/result/selected_columns"
+          },
+          "required": true
+        }
       ]
     },
     {
-      "id": "dataset-quality-path-v2",
-      "source_revision": "agent-workflows-starter@v3",
+      "id": "dataset-quality-path-v3",
+      "source_revision": "agent-workflows-starter@v32",
       "workflow_ref": "workflow://dataset/quality",
-      "workflow_revision": "v2",
+      "workflow_revision": "v3",
       "family": "dataset",
-      "graph_revision": "dataset-quality-graph@v2",
+      "graph_revision": "dataset-quality-graph@v3",
       "required_capabilities": [
         "dataset.resolve",
         "dataset.inspect",
@@ -235,6 +251,22 @@
       ],
       "required_context": [
         "context.dataset.available"
+      ],
+      "declared_claim_tools": [
+        "statistics.describe"
+      ],
+      "verification_checks": [
+        {
+          "id": "described-columns-established",
+          "tool": "statistics.describe",
+          "phase": "after_tool",
+          "operation": "required",
+          "left": {
+            "source": "result",
+            "pointer": "/result/selected_columns"
+          },
+          "required": true
+        }
       ]
     },
     {
@@ -1662,7 +1694,7 @@
     },
     {
       "id": "dataset-analysis-v2",
-      "source_revision": "agent-workflows-starter@v3",
+      "source_revision": "agent-workflows-starter@v32",
       "selection_description": "Analyse a dataset through a host-resolved workflow and verified result.",
       "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
       "goal": "Analyse a resolved dataset and explain the verified result.",
@@ -1680,11 +1712,11 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://dataset/analysis",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         },
         {
           "workflow_ref": "workflow://dataset/quality",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         },
         {
           "workflow_ref": "workflow://dataset/join",
@@ -1761,7 +1793,7 @@
     },
     {
       "id": "dataset-quality-v2",
-      "source_revision": "agent-workflows-starter@v3",
+      "source_revision": "agent-workflows-starter@v32",
       "selection_description": "Assess dataset quality through bounded validation, profiling and anomaly evidence.",
       "purpose": "Separate declared data-quality violations from descriptive observations.",
       "goal": "Assess relevant quality properties of a resolved dataset.",
@@ -1778,11 +1810,11 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://dataset/quality",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         },
         {
           "workflow_ref": "workflow://dataset/analysis",
-          "workflow_revision": "v2"
+          "workflow_revision": "v3"
         }
       ],
       "next_action": "resolve-dataset",

@@ -279,6 +279,8 @@ struct common_plan_verification_operand {
     std::string pointer;
     std::string literal_json = "null";
     bool dataset_rows = false;
+    // Optional canonical operation selector for legacy one-action routes.
+    std::string tool_name;
 };
 struct common_plan_verification_check {
     std::string id;
@@ -291,6 +293,7 @@ struct common_plan_verification_check {
     // dataset normalizer retains region grouping for constraint evaluation.
     std::string dimension_mapping_json = "{}";
     std::string clarification_question;
+    std::string tool_name;
 };
 
 // Workflow definitions describe a host-validated family of work. They never
@@ -329,6 +332,10 @@ struct common_plan_workflow_definition {
     std::string preferred_thinking_mode;
     std::vector<common_plan_verification_check> verification_checks;
     bool require_declared_claims = false;
+    // Conditional assurance for declared operations, without imposing numeric
+    // claims on routes that never execute such an operation. Once required,
+    // unrelated reads in the same workflow segment cannot remove assurance.
+    std::vector<std::string> declared_claim_tools;
 };
 
 // Host-owned route provenance for a concrete task plan.  This is deliberately
@@ -433,12 +440,11 @@ struct common_plan_state {
     int64_t created_at = 0, updated_at = 0;
 };
 
-// Tool acquisition is closed only after every non-optional tool step has
-// completed and has a host-recorded observation.  This is deliberately
-// derived from the plan rather than persisted as a mutable flag: reflection
-// must not be able to reopen a completed acquisition phase by adding a new
-// tool step.  Failed or incomplete steps keep the phase open for repair.
+// Successful operations do not close an active investigation. Read/repair
+// additions still pass route, tool-policy, dependency and budget validation.
+// An accepted completed plan needs an explicit continuation before reopening.
 inline bool common_plan_tool_execution_closed(const common_plan_state & plan) {
+    if (plan.status != common_plan_status::completed) return false;
     bool has_tool_step = false;
     for (const auto & step : plan.steps) {
         if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool) continue;

@@ -15,21 +15,23 @@ bool common_plan_workflow_observation_is_usable(const common_plan_observation & 
 
 const common_plan_observation * common_plan_workflow_observation(
         const common_plan_state & plan, const std::string & source_transition_id,
-        bool require_dataset) {
+        bool require_dataset, const std::string & tool_name) {
     const size_t start = plan.route_binding
         ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
     for (size_t index = plan.steps.size(); index > start; --index) {
         const auto & step = plan.steps[index - 1];
-        if (step.status != common_plan_step_status::completed || !step.tool_call) continue;
+        if (step.status != common_plan_step_status::completed || !step.tool_call ||
+                (!tool_name.empty() && step.tool_call->name != tool_name)) continue;
         const bool has_alias = step.semantic_alias &&
             step.semantic_alias->rfind("workflow-transition:", 0) == 0;
-        if (!source_transition_id.empty() && !has_alias) continue;
+        const bool direct_alias = step.semantic_alias && *step.semantic_alias == source_transition_id;
+        if (!source_transition_id.empty() && !has_alias && !direct_alias) continue;
         const auto aliases = has_alias
             ? step.semantic_alias->substr(std::string("workflow-transition:").size()) : std::string{};
         const auto comma = aliases.rfind(',');
         const auto last = aliases.substr(comma == std::string::npos ? 0 : comma + 1);
         std::string choice;
-        if (!source_transition_id.empty() && last != source_transition_id) {
+        if (!source_transition_id.empty() && last != source_transition_id && !direct_alias) {
             size_t begin = 0;
             while (begin < aliases.size()) {
                 const auto end = aliases.find(',', begin);

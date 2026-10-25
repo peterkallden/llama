@@ -34,6 +34,12 @@ inline std::string common_agent_render_dataset_inventory(
                     if (column != 0) out << ", ";
                     out << common_agent_quote_input_resource_value(descriptor.columns[column].name);
                 }
+                out << "] types=[";
+                for (size_t column = 0; column < descriptor.columns.size(); ++column) {
+                    if (column != 0) out << ", ";
+                    out << common_agent_quote_input_resource_value(
+                        common_agent_dataset_column_type_name(descriptor.columns[column].type));
+                }
                 out << "]";
             }
         }

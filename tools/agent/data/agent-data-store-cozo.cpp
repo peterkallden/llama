@@ -1099,18 +1099,12 @@ bool common_agent_cozo_data_store::execute_scoped(const std::string & operation,
                 return false;
             }
         }
-        json requested_columns = request.value("columns", json::array());
-        if (requested_columns.empty()) {
-            common_agent_dataset_descriptor descriptor;
-            if (!get_dataset_descriptor(request["dataset"].get<std::string>(), descriptor, error)) return false;
-            for (const auto & column : descriptor.columns) {
-                if (column.type == common_agent_dataset_column_type::integer ||
-                        column.type == common_agent_dataset_column_type::decimal) {
-                    requested_columns.push_back(column.name);
-                    if (requested_columns.size() >= 32) break;
-                }
-            }
-        }
+        common_agent_dataset_descriptor descriptor;
+        const auto requested = request.value("columns", json::array());
+        if (requested.is_array() && requested.empty() &&
+                !get_dataset_descriptor(request["dataset"].get<std::string>(), descriptor, error)) return false;
+        json requested_columns;
+        if (!common_agent_resolve_numeric_columns(descriptor, requested, requested_columns, error)) return false;
         struct statistic_accumulator {
             size_t count = 0;
             size_t null_count = 0;
@@ -1156,6 +1150,7 @@ bool common_agent_cozo_data_store::execute_scoped(const std::string & operation,
                 ++accumulator.count;
             }
         }
+        if (group_by.empty() && groups.empty()) groups[""] = group_accumulator{};
         json columns = json::array();
         json grouped = json::array();
         for (auto & entry : groups) {
@@ -1181,7 +1176,8 @@ bool common_agent_cozo_data_store::execute_scoped(const std::string & operation,
                 grouped.push_back(std::move(group));
             }
         }
-        result_json = json({{"columns", columns}, {"groups", grouped},
+        result_json = json({{"dataset", request["dataset"]}, {"selected_columns", requested_columns},
+            {"columns", columns}, {"groups", grouped},
             {"group_by", group_by}, {"scanned_rows", scanned_rows},
             {"scan_truncated", scan_truncated}}).dump(); return true;
     } else if (operation == "statistics.outliers") {
