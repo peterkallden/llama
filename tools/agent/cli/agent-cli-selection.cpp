@@ -6,6 +6,7 @@
 #include "agent/runtime-json-contracts.h"
 #include "agent/input-resources.h"
 #include "agent/dataset-contracts.h"
+#include "agent/tooling/catalog/model-projection.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/tooling/schema/tool-dsl-grammar.h"
@@ -112,47 +113,6 @@ std::string workflow_action_contracts(
     return out;
 }
 
-const common_agent_dataset_descriptor * workflow_action_dataset_context(
-        const common_agent_request & request, const json * explicit_arguments = nullptr) {
-    if (request.available_datasets.empty()) return nullptr;
-    if (explicit_arguments && explicit_arguments->is_object() &&
-            explicit_arguments->contains("dataset") && (*explicit_arguments)["dataset"].is_string()) {
-        const auto reference = (*explicit_arguments)["dataset"].get<std::string>();
-        for (const auto & dataset : request.available_datasets) {
-            if (dataset.ref.uri == reference) return &dataset;
-        }
-        return nullptr;
-    }
-    // Inventory membership is not selection. Only an explicit host binding
-    // may supply column context before the model has generated arguments.
-    const common_agent_dataset_descriptor * selected = nullptr;
-    for (const auto & binding : request.tool_argument_bindings) {
-        const auto arguments = json::parse(binding.arguments_json, nullptr, false);
-        if (!arguments.is_object() || !arguments.contains("dataset") ||
-                !arguments["dataset"].is_string()) continue;
-        const auto reference = arguments["dataset"].get<std::string>();
-        for (const auto & dataset : request.available_datasets) {
-            if (dataset.ref.uri != reference) continue;
-            if (selected && selected->ref.uri != reference) return nullptr;
-            selected = &dataset;
-        }
-    }
-    return selected;
-}
-
-std::string workflow_action_known_columns(const common_agent_request & request) {
-    const auto * dataset = workflow_action_dataset_context(request);
-    if (dataset == nullptr || dataset->columns.empty()) return {};
-    std::string out = "\nKnown source columns";
-    if (!dataset->ref.name.empty()) out += " for " + dataset->ref.name;
-    out += ": ";
-    for (size_t index = 0; index < dataset->columns.size() && index < 32; ++index) {
-        if (index != 0) out += ", ";
-        out += dataset->columns[index].name;
-    }
-    return out + ". Use these exact names when a tool field expects a column.\n";
-}
-
 std::string workflow_action_method_context(const common_agent_request & request) {
     std::string context;
     if (request.workflow_definition) {
@@ -173,95 +133,26 @@ std::string workflow_action_method_context(const common_agent_request & request)
     return context;
 }
 
-bool validate_workflow_action_dataset_columns(
-        const common_agent_request & request,
-        const std::string & tool_name,
-        const json & arguments,
-        std::string & error) {
-    if (tool_name != "statistics.describe" && tool_name != "statistics.outliers" &&
-            tool_name != "statistics.value_counts") return true;
-    const auto * dataset = workflow_action_dataset_context(request, &arguments);
-    if (dataset == nullptr || dataset->columns.empty() || !arguments.is_object()) return true;
-    std::set<std::string> allowed;
-    for (const auto & column : dataset->columns) allowed.insert(column.name);
-    const auto list_allowed = [&]() {
-        std::string result;
-        for (const auto & column : dataset->columns) {
-            if (!result.empty()) result += ", ";
-            result += column.name;
-        }
-        return result;
-    };
-    const auto validate_value = [&](const char * field, const json & value) {
-        if (!value.is_string() || allowed.find(value.get<std::string>()) == allowed.end()) {
-            error = "workflow action " + std::string(field) + " must use an exact source column; allowed: " + list_allowed();
-            return false;
-        }
-        return true;
-    };
-    for (const char * field : {"columns", "group_by", "column"}) {
-        const auto value = arguments.find(field);
-        if (value == arguments.end()) continue;
-        if (value->is_array()) {
-            for (const auto & item : *value) if (!validate_value(field, item)) return false;
-        } else if (!validate_value(field, *value)) {
-            return false;
-        }
-    }
-    error.clear();
-    return true;
-}
-
 bool resolve_workflow_dataset_handles(
         const common_agent_request & request,
         const common_chat_tool & tool,
         json & arguments,
         std::string & error) {
-    if (!arguments.is_object() || request.available_datasets.empty()) return true;
+    error.clear();
+    if (!arguments.is_object()) return true;
     const auto schema = json::parse(tool.parameters, nullptr, false);
     const auto properties = schema.is_object() ? schema.value("properties", json::object()) : json::object();
     if (!properties.is_object()) return true;
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         if (!it.value().is_object() || it.value().value("x-agent-type", std::string()) != "dataset_ref" ||
                 !arguments.contains(it.key()) || !arguments[it.key()].is_string()) continue;
-        const auto handle = arguments[it.key()].get<std::string>();
-        if (handle.size() < 2 || handle.front() != 'd' ||
-                !std::all_of(handle.begin() + 1, handle.end(), [](unsigned char character) {
-                    return std::isdigit(character);
-                })) continue;
-        size_t index = 0;
-        try { index = static_cast<size_t>(std::stoull(handle.substr(1))); }
-        catch (...) { index = 0; }
-        if (index == 0 || index > request.available_datasets.size() ||
-                request.available_datasets[index - 1].ref.uri.empty()) {
-            error = "workflow action selected an unavailable host dataset handle";
-            return false;
-        }
-        arguments[it.key()] = request.available_datasets[index - 1].ref.uri;
+        std::string resolved;
+        const auto resolution = common_agent_resolve_dataset_inventory_reference(
+            request.available_datasets, arguments[it.key()].get<std::string>(), resolved, error);
+        if (resolution == common_agent_dataset_inventory_resolution::invalid) return false;
+        if (resolution == common_agent_dataset_inventory_resolution::resolved) arguments[it.key()] = resolved;
     }
-    error.clear();
     return true;
-}
-
-bool normalize_workflow_optional_grouping(json & arguments) {
-    const auto grouping = arguments.find("group_by");
-    if (grouping == arguments.end()) return false;
-    const auto is_absent_marker = [](const json & value) {
-        if (value.is_null()) return true;
-        if (!value.is_string()) return false;
-        std::string text = value.get<std::string>();
-        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char character) {
-            return static_cast<char>(std::tolower(character));
-        });
-        return text == "none" || text == "null";
-    };
-    const bool all_absent_markers = grouping->is_array() && !grouping->empty() &&
-        std::all_of(grouping->begin(), grouping->end(), is_absent_marker);
-    if (is_absent_marker(*grouping) || all_absent_markers) {
-        arguments.erase(grouping);
-        return true;
-    }
-    return false;
 }
 
 json workflow_action_schema(
@@ -315,11 +206,19 @@ std::vector<common_chat_tool> workflow_action_model_tools(
         auto schema = json::parse(tool.parameters, nullptr, false);
         if (!schema.is_object() || schema.value("type", std::string()) != "object") continue;
         std::set<std::string> hidden;
+        json bound_arguments = json::object();
         for (const auto & binding : fixed_bindings) {
             if (binding.tool_name != tool.name) continue;
             const auto arguments = json::parse(binding.arguments_json, nullptr, false);
-            if (!arguments.is_object()) continue;
-            for (const auto & item : arguments.items()) hidden.insert(item.key());
+            if (!arguments.is_object()) { error = "workflow argument binding must be an object"; return {}; }
+            for (const auto & item : arguments.items()) {
+                if (bound_arguments.contains(item.key()) && bound_arguments[item.key()] != item.value()) {
+                    error = "workflow argument bindings conflict for " + item.key();
+                    return {};
+                }
+                hidden.insert(item.key());
+                bound_arguments[item.key()] = item.value();
+            }
         }
         if (std::find(host_resolved_dataset_tools.begin(), host_resolved_dataset_tools.end(), tool.name) !=
                 host_resolved_dataset_tools.end() && !hidden.count("dataset")) {
@@ -336,23 +235,26 @@ std::vector<common_chat_tool> workflow_action_model_tools(
             if (!error.empty()) return {};
             schema = json::parse(tool.parameters);
         }
-        if (!hidden.count("dataset") && !request.available_datasets.empty() &&
-                schema.value("properties", json::object()).contains("dataset")) {
-            auto & dataset_schema = schema["properties"]["dataset"];
-            if (dataset_schema.is_object() && dataset_schema.value("type", std::string()) == "string" &&
-                    dataset_schema.value("x-agent-type", std::string()) == "dataset_ref") {
-                json handles = json::array();
-                for (size_t index = 0; index < request.available_datasets.size(); ++index)
-                    handles.push_back("d" + std::to_string(index + 1));
-                dataset_schema["enum"] = std::move(handles);
-                dataset_schema["description"] = "Select one exact dN host dataset handle from the current scoped inventory; the host resolves it to the authorized dataset.";
-            }
-        }
+        if (!common_agent_project_dataset_model_schema(schema, request.available_datasets, bound_arguments, error)) return {};
         tool.parameters = schema.dump();
-        if (hidden.empty()) continue;
-        tool.parameters = common_project_model_input_schema_without_bound_fields(
-            tool.parameters, std::vector<std::string>(hidden.begin(), hidden.end()), error);
-        if (!error.empty()) return {};
+        if (!hidden.empty()) {
+            tool.parameters = common_project_model_input_schema_without_bound_fields(
+                tool.parameters, std::vector<std::string>(hidden.begin(), hidden.end()), error);
+            if (!error.empty()) return {};
+            schema = json::parse(tool.parameters);
+        }
+        // Explicitly suppress any example that contradicts the final projected
+        // contract, including old aliases and fields now supplied by the host.
+        json examples = json::array();
+        const auto declared_examples = schema.value("x-agent-examples", json::array());
+        if (!declared_examples.is_array()) { error = "workflow tool examples must be an array"; return {}; }
+        for (const auto & example : declared_examples) {
+            std::string normalized, example_error;
+            if (common_schema_normalize_and_validate_object(example.dump(), schema.dump(), normalized, example_error))
+                examples.push_back(example);
+        }
+        schema["x-agent-examples"] = std::move(examples);
+        tool.parameters = schema.dump();
     }
     return projected;
 }
@@ -528,7 +430,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                         ? "Return its exact name only. Candidates:"
                         : "Return its exact name as a JSON string. Candidates:") + catalog},
                  {"user", workflow_action_method_context(request) + "\n[Task]\n" + request.prompt +
-                    common_agent_render_dataset_inventory(request.available_datasets, 2048) + correction}},
+                    common_agent_render_dataset_inventory(request.available_datasets, std::numeric_limits<size_t>::max()) + correction}},
                 make_agent_cli_generation_options(generation_config, 128),
                 flat_choice ? std::string{} : choice_schema.dump());
             selection_request.trace_id = selection_request.trace_id.value_or("") + ":choice:" + std::to_string(attempt);
@@ -571,11 +473,6 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     const auto model_tools = workflow_action_model_tools(tools, fixed_bindings, host_resolved_dataset_tools, request,
         request.workflow_definition && request.workflow_definition->family == "dataset", error);
     if (!error.empty()) return result;
-    common_agent_request argument_request = request;
-    argument_request.tool_argument_bindings.clear();
-    for (const auto & binding : fixed_bindings) {
-        if (binding.tool_name == tools.front().name) argument_request.tool_argument_bindings.push_back(binding);
-    }
     std::string last_error;
     const auto schema = workflow_action_schema(model_tools, fixed_bindings, host_resolved_dataset_tools);
     const bool has_web_search = std::any_of(tools.begin(), tools.end(), [](const auto & tool) {
@@ -620,8 +517,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                       "For object lists, repeat the declared directive; use indexed fields when shown.\n"
                       "Omit unset or host-resolved fields, including optional grouping when the task does not ask for groups.\n"
                       "Quote values containing spaces or commas.\n\n"
-                      "Tool contract:" + contracts +
-                      workflow_action_known_columns(argument_request))
+                      "Tool contract:" + contracts)
                     : (next_action_guidance + "Choose the best tool for the request.\n\n"
                   "Return exactly one action:\n\n"
                   "open! TOOL_NAME\n"
@@ -641,11 +537,11 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             "user",
             workflow_action_method_context(request) +
             "\n[Task]\n" + request.prompt +
-            common_agent_render_dataset_inventory(request.available_datasets, 2048) +
+            common_agent_render_dataset_inventory(request.available_datasets, std::numeric_limits<size_t>::max(), true) +
             (attempt == 0 ? std::string{} : "\n[Previous action rejected by host validation]\n" + previous_action_text +
                 "\n[Correction]\n" + last_error +
-                "\nPreserve fields that were already valid. Correct only the rejected field; omit an optional field when it is not needed. "
-                "Do not change the selected tool or other valid selections. Return the corrected action only."),
+                "\nThe previous action was rejected, not partially approved. Recheck the complete action against the task and tool contract. "
+                "Omit optional fields that the task does not require. Return the corrected action only."),
         };
         auto generation_request = make_agent_cli_generation_request(
             request,
@@ -672,7 +568,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             error = describe_agent_cli_generation_failure("workflow action selection", generated);
             return result;
         }
-        previous_action_text = generated.content.substr(0, 2048);
+        previous_action_text = json(bounded_model_text(generated.content, 2048)).dump();
         std::string tool_name;
         json arguments;
         if (!parse_workflow_action(
@@ -724,9 +620,8 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             error = "workflow action arguments could not be normalized: " + last_error;
             return result;
         }
-        const bool normalized_optional_grouping = normalize_workflow_optional_grouping(normalized_arguments);
-        if (!validate_workflow_action_dataset_columns(
-                argument_request, tool_name, normalized_arguments, last_error)) {
+        if (!common_agent_validate_dataset_column_arguments(
+                json::parse(selected->parameters), normalized_arguments, request.available_datasets, last_error)) {
             if (generation_config.generation_trace) {
                 std::string preview = generated.content.substr(0, 2048);
                 for (char & ch : preview) {
@@ -762,9 +657,9 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                 if ((static_cast<unsigned char>(ch) < 0x20 && ch != '\n' && ch != '\t') || ch == '\r') ch = ' ';
             }
             std::fprintf(stderr,
-                "agent workflow-action trace: attempt=%zu parse=ok tool=%s canonical_args=%s optional_grouping_normalized=%s response=<<<%s>>>\n",
+                "agent workflow-action trace: attempt=%zu parse=ok tool=%s canonical_args=%s response=<<<%s>>>\n",
                 attempt + 1, tool_name.c_str(), normalized.c_str(),
-                normalized_optional_grouping ? "true" : "false", preview.c_str());
+                preview.c_str());
         }
         result.action = common_agent_tool_argument_binding{tool_name, normalized, "workflow-action", false};
         result.reason = "selected one route-scoped schema-valid tool action";

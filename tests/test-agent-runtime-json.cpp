@@ -482,8 +482,8 @@ int main() {
     customers.ref.uri = "dataset://local/customers";
     request.available_datasets = {orders, customers};
     const auto rendered_datasets = common_agent_render_dataset_inventory(request.available_datasets);
-    TEST_ASSERT(rendered_datasets.find("id=d1 name=orders uri=dataset://local/orders") != std::string::npos);
-    TEST_ASSERT(rendered_datasets.find("id=d2 name=customers uri=dataset://local/customers") != std::string::npos);
+    TEST_ASSERT(rendered_datasets.find("id=d1 name=\"orders\" uri=\"dataset://local/orders\"") != std::string::npos);
+    TEST_ASSERT(rendered_datasets.find("id=d2 name=\"customers\" uri=\"dataset://local/customers\"") != std::string::npos);
     TEST_ASSERT(rendered_datasets.find("$datasets.datasets[index].dataset") != std::string::npos);
     TEST_ASSERT(rendered_datasets.find("agent-resource://turn/t/orders.csv") != std::string::npos);
 

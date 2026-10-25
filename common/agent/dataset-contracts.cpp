@@ -507,6 +507,55 @@ bool validate_common_agent_dataset_descriptor(
     return true;
 }
 
+common_agent_dataset_inventory_resolution common_agent_resolve_dataset_inventory_reference(
+        const std::vector<common_agent_dataset_descriptor> & datasets,
+        const std::string & reference,
+        std::string & resolved,
+        std::string & error) {
+    resolved.clear();
+    error.clear();
+    const std::string prefix = "$datasets.datasets[";
+    std::string digits;
+    bool one_based = false;
+    if (reference.rfind(prefix, 0) == 0) {
+        const auto close = reference.find(']', prefix.size());
+        if (close == std::string::npos ||
+                (close + 1 != reference.size() && reference.substr(close + 1) != ".dataset")) {
+            error = "plan.binding.invalid_syntax: expected '$datasets.datasets[index].dataset'";
+            return common_agent_dataset_inventory_resolution::invalid;
+        }
+        digits = reference.substr(prefix.size(), close - prefix.size());
+    } else if (reference.size() >= 2 && reference.front() == 'd' &&
+            std::all_of(reference.begin() + 1, reference.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+        digits = reference.substr(1);
+        one_based = true;
+    } else {
+        return common_agent_dataset_inventory_resolution::not_applicable;
+    }
+    if (digits.empty() || !std::all_of(digits.begin(), digits.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+        error = "plan.binding.invalid_syntax: dataset inventory index must be numeric";
+        return common_agent_dataset_inventory_resolution::invalid;
+    }
+    size_t index = 0;
+    for (const unsigned char ch : digits) {
+        const size_t digit = ch - '0';
+        if (index > std::numeric_limits<size_t>::max() / 10 ||
+                (index == std::numeric_limits<size_t>::max() / 10 && digit > std::numeric_limits<size_t>::max() % 10)) {
+            error = "plan.binding.invalid_syntax: dataset inventory index overflows";
+            return common_agent_dataset_inventory_resolution::invalid;
+        }
+        index = index * 10 + digit;
+    }
+    if (one_based && index > 0) --index;
+    else if (one_based) index = datasets.size();
+    if (index >= datasets.size() || datasets[index].ref.uri.empty()) {
+        error = "plan.binding.unknown_dataset: dataset handle is unavailable in the current host snapshot";
+        return common_agent_dataset_inventory_resolution::invalid;
+    }
+    resolved = datasets[index].ref.uri;
+    return common_agent_dataset_inventory_resolution::resolved;
+}
+
 bool normalize_common_agent_dataset_tool_arguments(
         const std::string & tool_name,
         nlohmann::ordered_json & arguments,

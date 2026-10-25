@@ -666,7 +666,10 @@ std::string common_render_compact_tool_description(
     const auto examples = schema.is_object()
         ? schema.value("x-agent-examples", json::array())
         : json::array();
-    if (examples.is_array() && !examples.empty()) {
+    if (schema.contains("x-agent-examples")) {
+        if (!examples.is_array()) { error = "tool examples must be an array"; return {}; }
+        // An explicitly empty list suppresses illustrative fallback examples:
+        // contextual projections may have removed examples with stale bindings.
         size_t count = 0;
         for (const auto & example : examples) {
             if (!example.is_object() || ++count > 3) continue;

@@ -866,9 +866,13 @@ proposed.
 
 ## Flexible investigation methods and model formats (2026-10-25)
 
-Implementation status: source and contract tests have been authored. Compilation,
-CTest, daemon/model smokes and browser verification have deliberately not been
-run for this change. Existing running services still use their previous binaries.
+Verification status: the earlier implementation was built in the Vulkan/Cozo
+tree and its focused 19-test CTest group passed. The physical-GPU Qwen workflow
+smoke failed before tool execution: it supplied `null_count` as a grouping column
+and repeated the invalid action during repair. The subsequent source review
+described below has deliberately not been compiled or tested. Earlier passing
+results do not verify these follow-up changes; daemon and browser verification
+also remain outstanding for them.
 
 Compact DSL remains the default request/model profile. Route, blueprint, plan,
 workflow and workflow-candidate selectors now use local `selection.*` flat DSL
@@ -916,7 +920,39 @@ instead of silently rebasing it. Truncated observations do not establish a new
 case baseline or complete source-kind inventory.
 
 The new deterministic checks are registered as
-`test-agent-flexible-workflow-{formats,continuation,blueprint,package}` and
+`test-agent-flexible-workflow-{formats,dataset-handles,continuation,blueprint,package}` and
 `test-agent-planner-blueprint`; they use explicit checks with `NDEBUG` enabled.
 Existing adapter, Cozo publication, bootstrap and routing contracts are extended.
-These tests are authored, not reported as passed.
+The follow-up dataset contracts are authored, not reported as passed.
+
+### Scoped dataset and column contracts
+
+Planner and workflow-action reference resolution share
+`common_agent_resolve_dataset_inventory_reference` in the independent dataset
+contract library. Both compact `dN` handles and legacy indexed references resolve
+against the same host snapshot, including consistent overflow and stale-index
+errors. Resolving a handle never authorizes storage access.
+
+Dataset-aware schema projection belongs to the existing tooling model-projection
+module, keeping the dataset contract library independent of the tooling library.
+The statistics model contracts declare `x-agent-column-of: dataset` on column and
+grouping fields. The projection reuses the existing enum-intersection helper to
+constrain both DSL grammar and explicit JSON schemas to known source columns.
+With several unbound datasets it uses their column union only when all schemas
+are known; final validation checks membership in the dataset actually selected.
+A bound dataset narrows the choices to its own schema. Unknown schemas are not
+treated as complete, and existing registered enums are never broadened.
+
+These constraints use schema data, not user-message keywords or a list of banned
+statistics names. A real column named `null_count`, `null` or `none` remains valid;
+quoted column names are not silently removed. Whether grouping is appropriate
+to the task remains a model decision, rather than a host guess from wording.
+
+Action selection presents the complete candidate inventory, with quoted metadata
+and per-dataset columns for argument generation. It relies on the existing final
+token admission to reject oversized mandatory context instead of advertising
+handles whose descriptors were cut off. Examples are filtered against the final
+projected schema. An explicitly empty example list suppresses the compact
+renderer's illustrative fallback, preventing stale aliases from reappearing.
+Repair receives the rejected action as quoted data and the actual validation
+error; it does not assert that any unvalidated selection has been approved.

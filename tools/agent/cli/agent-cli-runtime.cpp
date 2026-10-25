@@ -837,64 +837,10 @@ bool resolve_host_dataset_reference(
         const std::string & current_step_alias,
         std::string & resolved,
         std::string & error) {
-    const std::string prefix = "$datasets.datasets[";
-    if (value.rfind(prefix, 0) == 0) {
-        const auto close = value.find(']', prefix.size());
-        if (close == std::string::npos ||
-                (value.size() != close + 1 && value.substr(close + 1) != ".dataset")) {
-            error = "plan.binding.invalid_syntax: host dataset inventory reference must be '$datasets.datasets[index]'";
-            return false;
-        }
-        const auto index_text = value.substr(prefix.size(), close - prefix.size());
-        if (index_text.empty() || !std::all_of(index_text.begin(), index_text.end(), [](const char character) {
-                return std::isdigit(static_cast<unsigned char>(character));
-            })) {
-            error = "plan.binding.invalid_syntax: host dataset inventory index must be numeric";
-            return false;
-        }
-        size_t index = 0;
-        try { index = static_cast<size_t>(std::stoull(index_text)); }
-        catch (...) {
-            error = "plan.binding.invalid_syntax: host dataset inventory index is out of range";
-            return false;
-        }
-        if (index >= request.available_datasets.size()) {
-            error = "plan.binding.unknown_dataset: host dataset inventory index is out of range; Choose one of:";
-            for (size_t candidate = 0; candidate < request.available_datasets.size(); ++candidate) {
-                error += " d" + std::to_string(candidate + 1);
-                if (!request.available_datasets[candidate].ref.name.empty()) {
-                    error += " (" + request.available_datasets[candidate].ref.name + ")";
-                }
-            }
-            return false;
-        }
-        resolved = request.available_datasets[index].ref.uri;
-        return !resolved.empty();
-    }
-
-    if (value.size() >= 2 && value.front() == 'd' &&
-            std::all_of(value.begin() + 1, value.end(), [](const char character) {
-                return std::isdigit(static_cast<unsigned char>(character));
-            })) {
-        size_t index = 0;
-        try { index = static_cast<size_t>(std::stoull(value.substr(1))); }
-        catch (...) {
-            error = "plan.binding.invalid_syntax: compact host dataset handle is out of range";
-            return false;
-        }
-        if (index == 0 || index > request.available_datasets.size()) {
-            error = "plan.binding.unknown_dataset: compact host dataset handle is unavailable; Choose one of:";
-            for (size_t candidate = 0; candidate < request.available_datasets.size(); ++candidate) {
-                error += " d" + std::to_string(candidate + 1);
-                if (!request.available_datasets[candidate].ref.name.empty()) {
-                    error += " (" + request.available_datasets[candidate].ref.name + ")";
-                }
-            }
-            return false;
-        }
-        resolved = request.available_datasets[index - 1].ref.uri;
-        return !resolved.empty();
-    }
+    const auto resolution = common_agent_resolve_dataset_inventory_reference(
+        request.available_datasets, value, resolved, error);
+    if (resolution != common_agent_dataset_inventory_resolution::not_applicable)
+        return resolution == common_agent_dataset_inventory_resolution::resolved;
 
     const std::string self_prefix = "$" + current_step_alias + ".dataset";
     if (!current_step_alias.empty() && value == self_prefix) {

@@ -190,6 +190,20 @@ bool validate_common_agent_dataset_descriptor(
         const common_agent_dataset_limits & limits,
         std::string & error);
 
+enum class common_agent_dataset_inventory_resolution {
+    not_applicable,
+    resolved,
+    invalid,
+};
+
+// Resolve turn-local dN handles and legacy indexed inventory references against
+// the exact host snapshot. This does not authorize a dataset or query storage.
+common_agent_dataset_inventory_resolution common_agent_resolve_dataset_inventory_reference(
+        const std::vector<common_agent_dataset_descriptor> & datasets,
+        const std::string & reference,
+        std::string & resolved,
+        std::string & error);
+
 // Converts the small model-friendly predicate form used by dataset tools into
 // the canonical field/operator/value condition list consumed by data stores.
 // Only dataset query/filter arguments are changed; unrelated tool arguments
