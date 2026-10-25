@@ -5849,3 +5849,10 @@ The optional bounded RuleSet evaluator and its authority boundary are
 documented in [Semi-oracle RuleSets](agent-semi-oracle.md). It reuses the
 existing `user_taught_concept` teaching-relation path; it is not a second
 FlyDelta capture or training pipeline.
+
+## Experimental residual-normalized dosing
+
+See [Residual-normalized coefficient experiments](agent-flydelta-dose-experiment.md)
+for opt-in calibration, direction/dose search, prepared contracts and traced model
+comparisons. This path is uncompiled and untested as of its introduction; production
+defaults are unchanged.

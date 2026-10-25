@@ -463,6 +463,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-whirlpool-ab.cpp
         test-agent-flydelta-search-pipeline.cpp
         test-agent-flydelta-coefficient-search.cpp
+        test-agent-flydelta-residual-dose.cpp
         test-agent-flydelta-deep-search.cpp
         test-agent-flydelta-outcome-guidance.cpp
         test-agent-flydelta-guidance-qualification.cpp
@@ -533,6 +534,9 @@ test-agent-flydelta-alpha-response-search.cpp
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
         target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_NAME STREQUAL "test-agent-flydelta-residual-dose")
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;flydelta;model-free")
+        endif()
         if (TEST_NAME MATCHES "^test-(agent-workflow-grounding|plan-cozo|plan-sqlite-continuation)$")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;model-free;orchestration")
         endif()

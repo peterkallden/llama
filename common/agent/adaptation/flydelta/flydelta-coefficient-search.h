@@ -7,6 +7,7 @@
 #include "agent/adaptation/flydelta/flydelta-representation-diagnostics.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-dose-controller.h"
+#include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
 
 #include <cstddef>
@@ -102,11 +103,55 @@ enum class common_flydelta_coefficient_search_strategy {
 const char * common_flydelta_coefficient_search_strategy_name(
         common_flydelta_coefficient_search_strategy strategy);
 
+// Experimental calibration is host-owned and never grants activation authority.
+struct common_flydelta_residual_calibration {
+    int schema_version = 1;
+    std::string reference;
+    std::string model_profile_fingerprint;
+    std::string capture_layout_revision;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string token_selection;
+    common_flydelta_capture_position position = common_flydelta_capture_position::generation_boundary;
+    int32_t token_index = -1;
+    int32_t layer_index = -1;
+    size_t sample_count = 0;
+    size_t dimension = 0;
+    std::vector<float> sample_norms;
+    float median_norm = 0.0f;
+};
+
+bool common_flydelta_calibrate_residual_dose(
+    const std::vector<common_flydelta_hidden_state_capture> & captures,
+    int32_t layer_index, const std::string & reference,
+    const std::string & token_selection,
+    common_flydelta_residual_calibration & calibration, std::string & error);
+
+bool common_flydelta_intervention_norm(
+    const common_flydelta_low_rank_basis & basis,
+    const std::vector<float> & coefficients, float & value, std::string & error);
+
+enum class common_flydelta_coefficient_dose_mode {
+    raw_coefficients,
+    residual_fraction,
+    direction_dose,
+};
+
 struct common_flydelta_coefficient_search_config {
     int schema_version = 1;
     common_flydelta_coefficient_search_strategy strategy =
         common_flydelta_coefficient_search_strategy::coordinate;
     float step = 0.05f;
+    // Opt-in experiment only. Legacy fields retain their original semantics.
+    common_flydelta_coefficient_dose_mode experimental_dose_mode =
+        common_flydelta_coefficient_dose_mode::raw_coefficients;
+    common_flydelta_residual_calibration residual_calibration;
+    std::string injection_capture_layout_revision;
+    std::string injection_token_selection;
+    common_flydelta_capture_position injection_capture_position = common_flydelta_capture_position::generation_boundary;
+    int32_t injection_token_index = -1;
+    float residual_fraction = 0.02f;
+    std::vector<float> residual_fraction_candidates = {0.01f, 0.02f, 0.04f};
     size_t max_candidates = 16;
     // Backend batch wave limit for diagnostic/model-facing coefficient arms.
     // Zero lets the registered batch runner own the limit. This is an
@@ -150,7 +195,13 @@ struct common_flydelta_coefficient_trial {
     float requested_strength = 0.0f;
     float executed_strength = 0.0f;
     common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
+    // Legacy behavior-delta-relative displacement, not residual-relative dose.
     float relative_dose = 0.0f;
+    float requested_intervention_norm = 0.0f;
+    float applied_intervention_norm = 0.0f;
+    float requested_residual_fraction = 0.0f;
+    float applied_residual_fraction = 0.0f;
+    std::string residual_calibration_ref;
     bool dose_evaluated = false;
     bool dose_safety_limited = false;
     std::string dose_reason;
@@ -203,6 +254,14 @@ bool common_flydelta_propose_low_rank_coefficients(
         size_t rank,
         std::vector<std::vector<float>> & proposals,
         std::string & error);
+
+// Basis-aware proposals preserve the no-op and the shared candidate budget.
+bool common_flydelta_propose_calibrated_coefficients(
+    const common_flydelta_experiment_fixture & fixture,
+    const common_flydelta_low_rank_basis & basis,
+    const common_flydelta_coefficient_search_config & config,
+    std::vector<std::vector<float>> & proposals, std::string & error,
+    std::vector<float> * requested_fractions = nullptr);
 
 // Deterministic rank-two controls used before a coefficient optimizer. Every
 // non-zero arm has equal L2 budget: [1,0], [0,1], [1,1]/sqrt(2), and optionally

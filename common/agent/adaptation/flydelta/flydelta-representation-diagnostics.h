@@ -13,6 +13,7 @@
 struct common_flydelta_representation_diagnostics {
     int schema_version = 1;
     uint32_t layer_index = 0;
+    // Cosine between observed displacement and reference behavior delta.
     float cosine = 0.0f;
     float progress = 0.0f;
     float leakage = 0.0f;

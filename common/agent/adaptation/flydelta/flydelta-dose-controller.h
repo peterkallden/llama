@@ -50,6 +50,7 @@ struct common_flydelta_dose_observation {
     bool geometry_available = false;
     float requested_strength = 0.0f;
     float absolute_dose = 0.0f;
+    // Components relative to the reference behavior delta, not baseline residual norm.
     float progress = 0.0f;
     float leakage = 0.0f;
 };

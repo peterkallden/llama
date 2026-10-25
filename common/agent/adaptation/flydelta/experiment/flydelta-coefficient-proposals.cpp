@@ -53,6 +53,28 @@ bool common_flydelta_coefficient_search_config_validate(
         error = "FlyDelta coefficient batch wave limit is invalid";
         return false;
     }
+    switch (config.experimental_dose_mode) {
+        case common_flydelta_coefficient_dose_mode::raw_coefficients: break;
+        case common_flydelta_coefficient_dose_mode::residual_fraction:
+        case common_flydelta_coefficient_dose_mode::direction_dose:
+            if (config.strategy != common_flydelta_coefficient_search_strategy::coordinate ||
+                    !finite(config.residual_fraction) || config.residual_fraction <= 0 ||
+                    config.residual_fraction > 1 || config.residual_fraction_candidates.empty() ||
+                    config.residual_fraction_candidates.size() > 16) {
+                error = "FlyDelta calibrated dose configuration is invalid or unsupported";
+                return false;
+            }
+            for (float dose : config.residual_fraction_candidates) {
+                if (!finite(dose) || dose <= 0 || dose > 1) {
+                    error = "FlyDelta residual dose candidate is invalid";
+                    return false;
+                }
+            }
+            break;
+        default:
+            error = "FlyDelta experimental dose mode is invalid";
+            return false;
+    }
     switch (config.strategy) {
         case common_flydelta_coefficient_search_strategy::coordinate:
         case common_flydelta_coefficient_search_strategy::tfo_lite:

@@ -176,6 +176,7 @@ add_library(${TARGET}
     adaptation/flydelta/experiment/flydelta-bootstrap-zoom.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-basis.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-proposals.cpp
+    adaptation/flydelta/experiment/flydelta-coefficient-residual-dose.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-standard.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-staged.cpp
     adaptation/flydelta/experiment/flydelta-coefficient-batched.cpp

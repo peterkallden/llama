@@ -2010,6 +2010,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     test-agent-flydelta-whirlpool-ab
     test-agent-flydelta-search-pipeline
     test-agent-flydelta-coefficient-search
+    test-agent-flydelta-residual-dose
     test-agent-flydelta-deep-search
     test-agent-flydelta-artifact-lifecycle
     test-agent-flydelta-hidden-state-hook
