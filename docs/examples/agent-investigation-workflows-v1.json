@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v4",
+  "version": "v5",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -86,16 +86,23 @@
       "content": "Carry forward the selected case revision, source IDs and versions, question, evidence references, coverage and unresolved limits. Inspect saved items first and reuse sufficient prepared evidence from those source versions; do not repeat collection merely because a new turn started. For documents, use the retained text representation and verified anchors; for uploaded logs, use an explicit parser mapping and bounded import; for configured search sources, use scoped collection and host cursors. Choose only the paths needed by the selected sources. Each phase records its result or an explicit limitation. Preserve proposed links and analyst review status. Report Findings, Evidence, Coverage and Limitations, with Next step only when needed. Source preparation is constrained by host-resolved selected source kinds: search collection requires a search connector, log import requires an uploaded log source, and document preparation or statement extraction requires retained document or log text. Unknown readiness is a limitation, not permission to assume a source type. Source attachment remains an explicit separate action.",
       "importance": 1.0,
       "confidence": 1.0
+    },
+    {
+      "id": "investigation-phase-handoff-v5",
+      "summary": "Evidence-bound, resumable investigation phases with scoped follow-up.",
+      "content": "Use the bound executable method when available. A blueprint without a bound workflow remains a planning template. Inspect retained source versions before acquisition; reuse sufficient evidence. Select only an available declared continuation based on verified observations and the user question. Follow-up collection, document inspection and hypothesis formulation may happen after the primary analysis, within the same scope and budget. A hypothesis is a proposal, not approval or causality. Evidence IDs and source positions must come from actual tool results. Never retry unknown evidence as a revision conflict. Preserve explicit partial coverage, unknown times, contradictions and missing links. If an identity or source is ambiguous, seek clarification rather than inventing a binding. Report Findings, Evidence, Coverage and Limitations. A limited result must state what could not be established; an empty page does not establish absence.",
+      "importance": 1.0,
+      "confidence": 1.0
     }
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-identity-analysis-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v4",
+      "graph_revision": "investigation-identity-analysis@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -104,16 +111,399 @@
       "required_context": [],
       "optional_capabilities": [
         "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.read",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"mixed_event_chain\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "events",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"entities\",\"limit\":50}"
+        },
+        {
+          "id": "inspect-events",
+          "from": "events",
+          "to": "method-choice",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+        },
+        {
+          "id": "choose-primary",
+          "from": "method-choice",
+          "to": "primary",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "analyze",
+              "description": "Run the method using the inspected evidence.",
+              "to": "primary"
+            },
+            {
+              "id": "limited",
+              "description": "The inspected event set is empty: report the lack of observed evidence.",
+              "to": "empty-events"
+            }
+          ],
+          "model_instruction": "Proceed with analysis when evidence exists. A limited result is permitted only when the inspected event count is zero; it does not prove absence."
+        },
+        {
+          "id": "finish-empty-events",
+          "from": "empty-events",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.graph.expand",
+          "arguments": "{\"max_depth\":1,\"max_nodes\":50,\"max_edges\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Expand only the verified investigated identity. Distinguish successful authentication from failed attempts and inspect relevant subsequent events."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        },
+        {
+          "id": "no-event-underlay",
+          "transition": "finish-empty-events",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-events",
+            "pointer": "/result/total_matching"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-communication-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-communication-analysis-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/communication-analysis",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-communication-analysis@v4",
+      "graph_revision": "investigation-communication-analysis@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -122,16 +512,399 @@
       "required_context": [],
       "optional_capabilities": [
         "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.read",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"mixed_event_chain\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "events",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"entities\",\"limit\":50}"
+        },
+        {
+          "id": "inspect-events",
+          "from": "events",
+          "to": "method-choice",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+        },
+        {
+          "id": "choose-primary",
+          "from": "method-choice",
+          "to": "primary",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "analyze",
+              "description": "Run the method using the inspected evidence.",
+              "to": "primary"
+            },
+            {
+              "id": "limited",
+              "description": "The inspected event set is empty: report the lack of observed evidence.",
+              "to": "empty-events"
+            }
+          ],
+          "model_instruction": "Proceed with analysis when evidence exists. A limited result is permitted only when the inspected event count is zero; it does not prove absence."
+        },
+        {
+          "id": "finish-empty-events",
+          "from": "empty-events",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.graph.expand",
+          "arguments": "{\"max_depth\":1,\"max_nodes\":50,\"max_edges\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect directed communication and its retained source events. Shared peers or timing alone do not establish causality."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        },
+        {
+          "id": "no-event-underlay",
+          "transition": "finish-empty-events",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-events",
+            "pointer": "/result/total_matching"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-event-chain-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-event-chain-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/event-chain",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-event-chain@v4",
+      "graph_revision": "investigation-event-chain@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.graph",
@@ -141,16 +914,398 @@
       "optional_capabilities": [
         "investigation.collect",
         "investigation.hypothesis",
-        "resource.read"
+        "resource.read",
+        "investigation.report",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"mixed_event_chain\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "events",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"entities\",\"limit\":50}"
+        },
+        {
+          "id": "inspect-events",
+          "from": "events",
+          "to": "method-choice",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+        },
+        {
+          "id": "choose-primary",
+          "from": "method-choice",
+          "to": "primary",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "analyze",
+              "description": "Run the method using the inspected evidence.",
+              "to": "primary"
+            },
+            {
+              "id": "limited",
+              "description": "The inspected event set is empty: report the lack of observed evidence.",
+              "to": "empty-events"
+            }
+          ],
+          "model_instruction": "Proceed with analysis when evidence exists. A limited result is permitted only when the inspected event count is zero; it does not prove absence."
+        },
+        {
+          "id": "finish-empty-events",
+          "from": "empty-events",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{\"analysis\":\"temporal_path\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use evidence-bound start and goal entity IDs and event times. Preserve no-path, unknown-time and budget stop outcomes."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        },
+        {
+          "id": "no-event-underlay",
+          "transition": "finish-empty-events",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-events",
+            "pointer": "/result/total_matching"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-integration-trace-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-integration-trace-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/integration-trace",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-integration-trace@v4",
+      "graph_revision": "investigation-integration-trace@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.collect",
@@ -159,16 +1314,399 @@
       "required_context": [],
       "optional_capabilities": [
         "investigation.analysis",
-        "investigation.hypothesis"
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.read",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"mixed_event_chain\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "events",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"entities\",\"limit\":50}"
+        },
+        {
+          "id": "inspect-events",
+          "from": "events",
+          "to": "method-choice",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+        },
+        {
+          "id": "choose-primary",
+          "from": "method-choice",
+          "to": "primary",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "analyze",
+              "description": "Run the method using the inspected evidence.",
+              "to": "primary"
+            },
+            {
+              "id": "limited",
+              "description": "The inspected event set is empty: report the lack of observed evidence.",
+              "to": "empty-events"
+            }
+          ],
+          "model_instruction": "Proceed with analysis when evidence exists. A limited result is permitted only when the inspected event count is zero; it does not prove absence."
+        },
+        {
+          "id": "finish-empty-events",
+          "from": "empty-events",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.graph.expand",
+          "arguments": "{\"max_depth\":1,\"max_nodes\":50,\"max_edges\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use entities and event identifiers from the inspected trace/span/message evidence. Expose missing links and uncertain order; do not invent service hops."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        },
+        {
+          "id": "no-event-underlay",
+          "transition": "finish-empty-events",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-events",
+            "pointer": "/result/total_matching"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-hypothesis-testing-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-hypothesis-testing-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/hypothesis-testing",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-hypothesis-testing@v4",
+      "graph_revision": "investigation-hypothesis-testing@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.hypothesis"
@@ -178,53 +1716,419 @@
         "investigation.collect",
         "investigation.graph",
         "investigation.analysis",
-        "resource.read"
+        "resource.read",
+        "investigation.report",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"hypothesis_testing\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "hypothesis-evidence",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"claims\",\"limit\":20}"
+        },
+        {
+          "id": "inspect-events",
+          "from": "hypothesis-evidence",
+          "to": "primary",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect support and counterevidence for the stated hypothesis. If sources are documentary, return to document reading before claiming support."
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Formulate an explicit testable hypothesis with real support and contradiction IDs; identify alternatives and unresolved gaps. Do not manufacture supporting references or approve it."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-report-composition-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-report-composition-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/report-composition",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-report-composition@v4",
+      "graph_revision": "investigation-report-composition@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.report",
         "resource.read"
       ],
-      "optional_capabilities": [
-        "artifact.export",
-        "document.open",
-        "document.save",
-        "investigation.collect",
-        "investigation.graph",
-        "investigation.analysis",
-        "investigation.hypothesis"
+      "optional_capabilities": [],
+      "required_context": [],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
       ],
-      "required_context": []
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "inspect",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected case and preserve its published revision."
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "inspect",
+          "to": "compose",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"analyses\",\"limit\":20}"
+        },
+        {
+          "id": "compose-report",
+          "from": "compose",
+          "to": "review",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Freeze the selected revision with its evidence, contradictions, gaps and explicitly selected persisted figures. Do not silently use a newer revision."
+        },
+        {
+          "id": "read-report",
+          "from": "review",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "investigation-actor-relationship-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-actor-relationship-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "workflow_ref": "workflow://investigation/actor-relationship",
-      "workflow_revision": "v4",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-actor-relationship@v4",
-      "required_capabilities": [
-        "investigation.case",
-        "investigation.analysis",
-        "resource.read"
-      ],
-      "required_context": []
-    },
-    {
-      "id": "investigation-narrative-comparison-v4",
-      "source_revision": "agent-investigation-workflows@v4",
-      "workflow_ref": "workflow://investigation/narrative-comparison",
-      "workflow_revision": "v4",
-      "family": "investigation",
-      "graph_revision": "investigation-narrative-comparison@v4",
+      "graph_revision": "investigation-actor-relationship@v5",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -232,30 +2136,1044 @@
       ],
       "required_context": [],
       "optional_capabilities": [
-        "investigation.collect"
+        "investigation.collect",
+        "investigation.graph",
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"actor_relationship\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "primary",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"statements\",\"limit\":50}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"actor_relationship\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compare the retained source-anchored statements. Read missing source text before extraction. Names are mentions, not verified actor identity; dependent sources are not independent corroboration. Keep support, contradiction, uncertainty and proposed associations separate."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     },
     {
-      "id": "investigation-document-provenance-v4",
-      "source_revision": "agent-investigation-workflows@v4",
-      "workflow_ref": "workflow://investigation/document-provenance",
-      "workflow_revision": "v4",
+      "id": "investigation-narrative-comparison-v5",
+      "source_revision": "agent-investigation-workflows@v5",
+      "workflow_ref": "workflow://investigation/narrative-comparison",
+      "workflow_revision": "v5",
       "family": "investigation",
-      "graph_revision": "investigation-document-provenance@v4",
+      "graph_revision": "investigation-narrative-comparison@v5",
+      "required_capabilities": [
+        "investigation.case",
+        "investigation.analysis",
+        "resource.read"
+      ],
+      "required_context": [],
+      "optional_capabilities": [
+        "investigation.collect",
+        "investigation.graph",
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.inspect"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"narrative_comparison\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "primary",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"statements\",\"limit\":50}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"narrative_comparison\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compare the retained source-anchored statements. Read missing source text before extraction. Names are mentions, not verified actor identity; dependent sources are not independent corroboration. Keep support, contradiction, uncertainty and proposed associations separate."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "investigation-document-provenance-v5",
+      "source_revision": "agent-investigation-workflows@v5",
+      "workflow_ref": "workflow://investigation/document-provenance",
+      "workflow_revision": "v5",
+      "family": "investigation",
+      "graph_revision": "investigation-document-provenance@v5",
       "required_capabilities": [
         "investigation.case",
         "resource.inspect"
       ],
       "required_context": [],
       "optional_capabilities": [
-        "investigation.analysis"
+        "investigation.analysis",
+        "investigation.collect",
+        "investigation.graph",
+        "investigation.hypothesis",
+        "investigation.report",
+        "resource.read"
+      ],
+      "start_state": "start",
+      "terminal_states": [
+        "done"
+      ],
+      "transitions": [
+        {
+          "id": "open-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Open the explicitly selected existing case. Do not replace its identity or revision."
+        },
+        {
+          "id": "create-case",
+          "from": "start",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "optional_availability": true
+        },
+        {
+          "id": "list-cases",
+          "from": "start",
+          "to": "select-case",
+          "kind": "tool",
+          "tool": "investigation.case.list",
+          "arguments": "{\"limit\":20}",
+          "optional_availability": true
+        },
+        {
+          "id": "open-listed-case",
+          "from": "select-case",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose the existing case from the verified list that matches the request. Ask for clarification when ambiguous.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-sources",
+          "from": "sources",
+          "to": "preparation",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "choose-preparation",
+          "from": "preparation",
+          "to": "underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "reuse",
+              "description": "Use retained observations when they cover the selected source versions and question.",
+              "to": "underlay"
+            },
+            {
+              "id": "collect",
+              "description": "Collect missing events from an explicitly selected configured search source.",
+              "to": "collect"
+            },
+            {
+              "id": "import",
+              "description": "Import the next bounded page of an explicitly selected uploaded log with its declared parser.",
+              "to": "import"
+            },
+            {
+              "id": "prepare",
+              "description": "Prepare missing retained document text before inspecting it.",
+              "to": "prepare"
+            },
+            {
+              "id": "read",
+              "description": "Read an already prepared document representation needed for this analysis.",
+              "to": "read-text"
+            },
+            {
+              "id": "attach",
+              "description": "Attach a user-selected source only when it is not already in this case.",
+              "to": "attach"
+            },
+            {
+              "id": "limited",
+              "description": "No sources exist and none are available: report the missing underlay explicitly.",
+              "to": "empty-sources"
+            }
+          ],
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+        },
+        {
+          "id": "collect-events",
+          "from": "collect",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.collect",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "import-events",
+          "from": "import",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.log.import",
+          "arguments": "{\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the retained log source, declared parser and host continuation cursor; do not guess its mapping.",
+          "optional_availability": true
+        },
+        {
+          "id": "prepare-text",
+          "from": "prepare",
+          "to": "read-text",
+          "kind": "tool",
+          "tool": "investigation.document.prepare",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Prepare only a selected source lacking a usable retained text representation.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-text",
+          "from": "read-text",
+          "to": "extract",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Read the actual authorized representation URI returned by source inspection or preparation. Preserve source positions and truncation.",
+          "optional_availability": true
+        },
+        {
+          "id": "attach-source",
+          "from": "attach",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.source.attach",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an explicitly selected provider or resource reference, never an invented source or implicit attachment.",
+          "optional_availability": true
+        },
+        {
+          "id": "refresh-case",
+          "from": "refresh",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "finish-empty",
+          "from": "empty-sources",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "record-extraction",
+          "from": "extract",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigation.statement.record",
+          "arguments": "{\"analysis_kind\":\"document_provenance\"}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Record only observations anchored in the text actually read. Preserve exact verified positions, proposed actor links, source dependence, contradictions and incomplete extraction. Reuse stable identities and supply a retry-safe idempotency key.",
+          "optional_availability": true
+        },
+        {
+          "id": "inspect-underlay",
+          "from": "underlay",
+          "to": "primary",
+          "kind": "tool",
+          "tool": "investigation.case.items",
+          "arguments": "{\"type\":\"sources\",\"limit\":20}"
+        },
+        {
+          "id": "run-method",
+          "from": "primary",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "resource.inspect",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained original resource and lineage. Hash integrity and metadata do not establish semantic authenticity. State missing processors, metadata and OCR limitations."
+        },
+        {
+          "id": "inspect-result",
+          "from": "assess",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-next",
+          "from": "next",
+          "to": "finalize",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "The method has a bounded supported result or explicit limitations; answer the question.",
+              "to": "finalize"
+            },
+            {
+              "id": "followup",
+              "description": "Seek missing observations within the selected sources, scope and budget.",
+              "to": "sources"
+            },
+            {
+              "id": "events",
+              "description": "Inspect further retained events or a continuation page.",
+              "to": "more-events"
+            },
+            {
+              "id": "hypothesis",
+              "description": "Formulate a new or alternative testable hypothesis using actual inspected evidence.",
+              "to": "hypothesis"
+            },
+            {
+              "id": "analyze",
+              "description": "Run a further declared deterministic analysis.",
+              "to": "analysis"
+            },
+            {
+              "id": "report",
+              "description": "The user requested a report from the selected preserved revision.",
+              "to": "report"
+            }
+          ],
+          "model_instruction": "Choose the next useful step from evidence and unresolved gaps. Further search and hypotheses remain possible after the primary analysis. Finish when sufficient or when limitations prevent progress; do not cycle without new underlay."
+        },
+        {
+          "id": "inspect-more-events",
+          "from": "more-events",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use actual entity/relation IDs and any exact page cursor; preserve revision and coverage."
+        },
+        {
+          "id": "form-hypothesis",
+          "from": "hypothesis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.claim.hypothesize",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only actual evidence IDs already inspected. Distinguish a proposed explanation from a verified finding and seek counterevidence.",
+          "optional_availability": true
+        },
+        {
+          "id": "further-analysis",
+          "from": "analysis",
+          "to": "assess",
+          "kind": "tool",
+          "tool": "investigation.analyze",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose a declared analysis justified by actual entities, sources and remaining questions. Retain the analysis stop reason and coverage.",
+          "optional_availability": true
+        },
+        {
+          "id": "compose-report",
+          "from": "report",
+          "to": "report-ready",
+          "kind": "tool",
+          "tool": "investigation.report.compose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Compose only when requested; preserve the selected published evidence revision and uncertainty.",
+          "optional_availability": true
+        },
+        {
+          "id": "read-report",
+          "from": "report-ready",
+          "to": "done",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "source": "/result/markdown_uri"
+            }
+          ]
+        },
+        {
+          "id": "final-summary",
+          "from": "finalize",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigation.case.open",
+          "arguments": "{}"
+        }
+      ],
+      "verification_checks": [
+        {
+          "id": "no-source-underlay",
+          "transition": "finish-empty",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-sources",
+            "pointer": "/result/total"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        }
       ]
     }
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-identity-analysis-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
@@ -270,12 +3188,45 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-identity-analysis-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-scope": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-source-events": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "collect-events": [
+              "collect-events",
+              "import-events",
+              "inspect-underlay",
+              "inspect-events"
+            ],
+            "inspect-relations": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "report-findings": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -320,8 +3271,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-communication-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-communication-analysis-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Trace observed network communication from a host or address.",
       "purpose": "Describe source-linked communication paths and their time coverage.",
       "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
@@ -336,12 +3287,45 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-communication-analysis-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/communication-analysis",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-scope": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-source-events": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "collect-flows": [
+              "collect-events",
+              "import-events",
+              "inspect-underlay",
+              "inspect-events"
+            ],
+            "expand-peers": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "qualify": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -386,8 +3370,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-event-chain-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-event-chain-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Find a bounded time-compatible chain between two entities.",
       "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
       "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
@@ -402,12 +3386,45 @@
         "investigation-evidence-discipline-v2",
         "investigation-event-chain-v2",
         "investigation-source-boundaries-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/event-chain",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "define-endpoints": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-source-events": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "collect-relations": [
+              "collect-events",
+              "import-events",
+              "inspect-underlay",
+              "inspect-events"
+            ],
+            "search-chain": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "inspect-proof": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -452,8 +3469,8 @@
       "next_action": "define-endpoints"
     },
     {
-      "id": "investigation-integration-trace-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-integration-trace-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Follow an exact trace, correlation or message identifier across services.",
       "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
       "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
@@ -468,12 +3485,45 @@
         "investigation-evidence-discipline-v2",
         "investigation-integration-trace-v2",
         "investigation-source-boundaries-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/integration-trace",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-trace": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-source-events": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "collect-spans": [
+              "collect-events",
+              "import-events",
+              "inspect-underlay",
+              "inspect-events"
+            ],
+            "order-events": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "state-gaps": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -518,8 +3568,8 @@
       "next_action": "select-trace"
     },
     {
-      "id": "investigation-hypothesis-testing-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-hypothesis-testing-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
       "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
       "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
@@ -532,12 +3582,38 @@
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-hypothesis-testing-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/hypothesis-testing",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "state-claim": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "seek-support": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "seek-contradiction": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "record-hypothesis": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -574,8 +3650,8 @@
       "next_action": "state-claim"
     },
     {
-      "id": "investigation-report-composition-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-report-composition-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Freeze a report from a selected investigation case revision.",
       "purpose": "Create an auditable report resource tied to one immutable case revision.",
       "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
@@ -594,12 +3670,24 @@
       "procedure_refs": [
         "investigation-evidence-discipline-v2",
         "investigation-report-composition-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/report-composition",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "confirm-revision": [
+              "open-case",
+              "inspect-underlay"
+            ],
+            "compose-report": [
+              "compose-report"
+            ],
+            "review-report": [
+              "read-report"
+            ]
+          }
         }
       ],
       "steps": [
@@ -628,8 +3716,8 @@
       "next_action": "confirm-revision"
     },
     {
-      "id": "investigation-actor-relationship-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-actor-relationship-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Compare named actors across explicitly selected source documents.",
       "purpose": "Record source-anchored actor mentions and proposed relationships without merging identities by name alone.",
       "goal": "Produce a paginated actor and relationship view with every mention linked to its retained source anchor.",
@@ -644,12 +3732,39 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-actor-relationship-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/actor-relationship",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-sources": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-text": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "extract-mentions": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "review-bindings": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -686,8 +3801,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-narrative-comparison-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-narrative-comparison-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Compare event descriptions and statements across selected documents and logs.",
       "purpose": "Find supported agreement, contradiction, qualification, source dependency, and unresolved differences.",
       "goal": "Record comparable source-anchored statements and explicitly qualified pairwise comparisons.",
@@ -702,12 +3817,51 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-narrative-comparison-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/narrative-comparison",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-sources": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "prepare-source-events": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "extract-statements": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "compare": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "state-gaps": [
+              "inspect-underlay",
+              "run-method",
+              "read-text",
+              "record-extraction"
+            ],
+            "identify-followup": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [
@@ -760,8 +3914,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-document-provenance-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-document-provenance-v5",
+      "source_revision": "agent-investigation-workflows@v5",
       "selection_description": "Inspect origin, versions, and processing history of selected investigation documents.",
       "purpose": "Summarize verifiable metadata and representation lineage for the case sources.",
       "goal": "Produce a source-by-source provenance account with explicit metadata gaps and processor history.",
@@ -775,12 +3929,40 @@
         "investigation-evidence-discipline-v2",
         "investigation-source-boundaries-v2",
         "investigation-document-provenance-v2",
-        "investigation-phase-handoff-v4"
+        "investigation-phase-handoff-v5"
       ],
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/document-provenance",
-          "workflow_revision": "v4"
+          "workflow_revision": "v5",
+          "phase_bindings": {
+            "select-sources": [
+              "open-case",
+              "create-case",
+              "list-cases",
+              "open-listed-case"
+            ],
+            "inspect-origin": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "inspect-processing": [
+              "inspect-sources",
+              "choose-preparation",
+              "prepare-text",
+              "read-text",
+              "record-extraction"
+            ],
+            "report-gaps": [
+              "inspect-result",
+              "choose-next",
+              "final-summary",
+              "finish-empty"
+            ]
+          }
         }
       ],
       "steps": [

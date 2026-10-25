@@ -24,3 +24,7 @@ const common_plan_observation * common_plan_workflow_observation(
     const common_plan_state & plan,
     const std::string & source_transition_id,
     bool require_dataset = false);
+
+// Required observation pointers establish availability, not evidential truth.
+bool common_plan_workflow_choice_available(const common_plan_observation & observation,
+    const common_plan_workflow_transition::choice & choice);

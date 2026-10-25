@@ -300,3 +300,17 @@ std::string common_plan_render_step_context(const common_plan_state & plan, cons
     if (rendered.size() > config.char_budget) rendered.resize(config.char_budget);
     return rendered;
 }
+
+common_plan_observation common_plan_make_blueprint_outline(
+        const common_plan_state & blueprint, const std::string & instance_id) {
+    nlohmann::ordered_json outline = nlohmann::ordered_json::array();
+    const bool prefix_ids = blueprint.kind == common_plan_kind::blueprint;
+    const auto identity = [&](const std::string & id) { return prefix_ids ? instance_id + ":" + id : id; };
+    for (const auto & phase : blueprint.steps) {
+        std::vector<std::string> dependencies;
+        for (const auto & id : phase.depends_on) dependencies.push_back(identity(id));
+        outline.push_back({{"id", identity(phase.id)}, {"title", phase.title}, {"objective", phase.objective},
+            {"intended_contribution", phase.intended_contribution}, {"depends_on", dependencies}});
+    }
+    return {"blueprint-outline:" + instance_id, "blueprint_outline", outline.dump(), 0.0f};
+}

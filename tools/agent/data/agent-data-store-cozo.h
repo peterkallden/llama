@@ -37,6 +37,9 @@ public:
     bool publish_investigation_case(const common_investigation_case_revision &,
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) override;
+    common_agent_publication_status publish_investigation_case_checked(
+            const common_investigation_case_revision &, uint64_t, const std::string &,
+            common_investigation_case_revision &, std::string &) override;
     bool publish_investigation_report(const common_agent_scope &,
             const common_investigation_report_index_entry &,
             common_investigation_report_index_entry &, std::string &) override;

@@ -327,7 +327,7 @@ bool common_agent_select_and_instantiate_blueprint(
             result.reason = "route selected a workflow not bound by the blueprint";
             return true;
         }
-        instance.selected_workflow = *config.selected_workflow;
+        instance.selected_workflow = *found;
         auto workflows = plan_store.list(error);
         if(config.template_libraries)for(const auto & item:config.template_libraries->definitions){
             if(item.second.kind==common_plan_kind::workflow){
@@ -392,7 +392,7 @@ bool common_agent_select_and_instantiate_blueprint(
                 ? "blueprint instantiated by host planner backend"
                 : result.reason + "; host planner backend materialized a verified workflow";
         } else if (materialization == common_blueprint_materialization_outcome::not_applicable &&
-                config.selected_workflow) {
+                (config.selected_workflow || config.defer_unmaterialized_blueprint)) {
             // A selected workflow route may require semantic arguments that
             // are not host-bound. Do not persist the generic blueprint
             // template as if it were an executable plan: the ordinary
@@ -400,9 +400,16 @@ bool common_agent_select_and_instantiate_blueprint(
             // envelope instead.
             result.outcome = common_blueprint_selection_outcome::deferred_to_planner;
             result.logical_id = candidate->logical_id;
-            result.reason = "selected workflow needs ordinary planner materialization";
+            result.reason = config.selected_workflow ? "selected workflow needs ordinary planner materialization"
+                : "selected blueprint requires ordinary model planning";
             return true;
         }
+    }
+    if (!config.materialize_instance && config.defer_unmaterialized_blueprint) {
+        result.outcome = common_blueprint_selection_outcome::deferred_to_planner;
+        result.logical_id = candidate->logical_id;
+        result.reason = "selected blueprint requires ordinary model planning";
+        return true;
     }
     if (!plan_store.create(instance, error)) return false;
     result.outcome = common_blueprint_selection_outcome::instantiated;

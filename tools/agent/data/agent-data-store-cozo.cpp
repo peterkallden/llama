@@ -262,29 +262,37 @@ bool common_agent_cozo_data_store::publish_investigation_case(
         const common_investigation_case_revision & input, uint64_t expected_revision,
         const std::string & revision_uri, common_investigation_case_revision & published,
         std::string & error) {
+    return publish_investigation_case_checked(input, expected_revision, revision_uri, published, error) ==
+        common_agent_publication_status::published;
+}
+
+common_agent_publication_status common_agent_cozo_data_store::publish_investigation_case_checked(
+        const common_investigation_case_revision & input, uint64_t expected_revision,
+        const std::string & revision_uri, common_investigation_case_revision & published,
+        std::string & error) {
     std::lock_guard<std::mutex> lock(investigation_mutex_);
     published = {};
-    if (revision_uri.empty() || revision_uri.size() > 1024) { error = "investigation revision resource URI is invalid"; return false; }
+    if (revision_uri.empty() || revision_uri.size() > 1024) { error = "investigation revision resource URI is invalid"; return common_agent_publication_status::invalid; }
     std::string raw;
     const auto key = investigation_case_key(input.case_id, input.scope);
     if (!run("?[revision, payload, revision_uri] := *agent_investigation_current[$case_key, revision, payload, revision_uri]",
-            json{{"case_key", key}}.dump(), raw, error)) return false;
+            json{{"case_key", key}}.dump(), raw, error)) return common_agent_publication_status::storage_error;
     const auto current = json::parse(raw, nullptr, false);
     if (!current.is_object() || !current.contains("rows") || !current["rows"].is_array()) {
-        error = "Cozo investigation revision lookup returned invalid data"; return false;
+        error = "Cozo investigation revision lookup returned invalid data"; return common_agent_publication_status::storage_error;
     }
     const uint64_t actual_revision = current["rows"].empty() ? 0 :
         (current["rows"][0].is_array() && !current["rows"][0].empty() && current["rows"][0][0].is_number_integer()
             ? current["rows"][0][0].get<uint64_t>() : UINT64_MAX);
-    if (actual_revision != expected_revision) { error = "investigation case revision conflict"; return false; }
-    if (expected_revision == 0 && input.revision != 1) { error = "new investigation case must start at revision one"; return false; }
+    if (actual_revision != expected_revision) { error = "investigation case revision conflict"; return common_agent_publication_status::conflict; }
+    if (expected_revision == 0 && input.revision != 1) { error = "new investigation case must start at revision one"; return common_agent_publication_status::invalid; }
     if (expected_revision > 0 && (input.case_id.empty() || input.revision != expected_revision + 1)) {
-        error = "investigation update must increment the current revision exactly once"; return false;
+        error = "investigation update must increment the current revision exactly once"; return common_agent_publication_status::invalid;
     }
     common_investigation_case_revision next = input;
     if (expected_revision > 0) {
         if (!current["rows"][0].is_array() || current["rows"][0].size() < 3 || !current["rows"][0][2].is_string()) {
-            error = "current investigation revision metadata is malformed"; return false;
+            error = "current investigation revision metadata is malformed"; return common_agent_publication_status::storage_error;
         }
         next.previous_revision_uri = current["rows"][0][2].get<std::string>();
     }
@@ -292,8 +300,9 @@ bool common_agent_cozo_data_store::publish_investigation_case(
     auto content = common_investigation_case_to_json(next);
     const std::string canonical = content.dump();
     next.fingerprint = "sha256:" + hash_sha256_hex(canonical.data(), canonical.size());
-    if (!common_investigation_case_validate(next, error) ||
-            !common_investigation_authorize_search_sources(next, next.scope, *this, error)) return false;
+    if (!common_investigation_case_validate(next, error)) return common_agent_publication_status::invalid;
+    if (!common_investigation_authorize_search_sources(next, next.scope, *this, error))
+        return common_agent_publication_status::denied;
     const std::string payload = common_investigation_case_to_json(next).dump();
     const std::string current_payload = expected_revision == 0 ? std::string() :
         current["rows"][0][1].get<std::string>();
@@ -320,12 +329,13 @@ bool common_agent_cozo_data_store::publish_investigation_case(
     if (!run(script, indexed_params.dump(), raw, error)) {
         if (error.find("ensure") != std::string::npos || error.find("concurrent") != std::string::npos) {
             error = "investigation case revision conflict";
+            return common_agent_publication_status::conflict;
         }
-        return false;
+        return common_agent_publication_status::storage_error;
     }
     published = std::move(next);
     error.clear();
-    return true;
+    return common_agent_publication_status::published;
 }
 
 bool common_agent_cozo_data_store::publish_investigation_report(

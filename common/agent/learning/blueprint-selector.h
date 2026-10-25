@@ -91,7 +91,8 @@ struct common_blueprint_selection_config {
     size_t maximum_candidates = 16;
     size_t maximum_candidate_text_bytes = 4096;
     size_t minimum_keyword_fallback_score = 2;
-    bool allow_keyword_fallback = true;
+    // Legacy opt-in only; production routing explicitly disables this path.
+    bool allow_keyword_fallback = false;
     // Optional host snapshot identity. A non-matching blueprint is stale and
     // cannot be selected or resumed.
     std::string expected_source_revision;
@@ -116,6 +117,8 @@ struct common_blueprint_selection_config {
     // unchanged; it must never invent a fallback plan itself.
     common_blueprint_instance_materializer materialize_instance;
     std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
+    // Delegate an unmaterialized method to the existing model planner.
+    bool defer_unmaterialized_blueprint = false;
 };
 
 enum class common_blueprint_selection_outcome {

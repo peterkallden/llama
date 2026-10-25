@@ -104,6 +104,18 @@ int main() {
     TEST_ASSERT(!store.publish_investigation_case(investigation, 0,
         "resource://investigation/case-persist-1/conflict", published, error));
     TEST_ASSERT(error.find("revision conflict") != std::string::npos);
+    TEST_ASSERT(store.publish_investigation_case_checked(investigation, 0,
+        "resource://investigation/case-persist-1/conflict", published, error) == common_agent_publication_status::conflict);
+    auto invalid_revision = reloaded_case;
+    invalid_revision.revision = 2;
+    common_investigation_claim invalid_claim;
+    invalid_claim.id = "unknown-evidence"; invalid_claim.text = "Explicit hypothesis";
+    invalid_claim.state = common_investigation_claim_state::hypothesis;
+    invalid_claim.supporting_event_ids = {"invented-event"};
+    invalid_revision.claims.push_back(invalid_claim);
+    TEST_ASSERT(store.publish_investigation_case_checked(invalid_revision, 1,
+        "resource://investigation/case-persist-1/rejected", published, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(error.find("unknown supporting evidence") != std::string::npos);
     auto next_revision = reloaded_case;
     next_revision.revision = 2;
     next_revision.title = "Persistence contract updated";

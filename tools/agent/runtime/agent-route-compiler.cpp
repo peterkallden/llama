@@ -475,7 +475,7 @@ bool compile_agent_route_catalog(
             const auto graph_tool = std::find_if(
                 definition.transitions.begin(), definition.transitions.end(),
                 [&](const auto & transition) {
-                    return transition.kind == common_plan_workflow_transition_kind::tool &&
+                    return transition.kind == common_plan_workflow_transition_kind::tool && !transition.optional_availability &&
                         std::find(resolved_tools.begin(), resolved_tools.end(), transition.tool_name) ==
                             resolved_tools.end();
                 });
@@ -503,10 +503,24 @@ bool compile_agent_route_catalog(
                     "workflow does not satisfy required blueprint capabilities");
                 continue;
             }
+            bool phases_valid = true;
+            for (const auto & phase : binding.phase_bindings) {
+                if (phase.second.empty() || std::none_of(blueprint->steps.begin(), blueprint->steps.end(),
+                        [&](const auto & step) { return step.id == phase.first; })) phases_valid = false;
+                for (const auto & id : phase.second) if (std::none_of(definition.transitions.begin(), definition.transitions.end(),
+                        [&](const auto & transition) { return transition.id == id; })) phases_valid = false;
+            }
+            if (!binding.phase_bindings.empty()) for (const auto & step : blueprint->steps)
+                if (!binding.phase_bindings.count(step.id)) phases_valid = false;
+            if (!phases_valid) {
+                append_rejection(catalog, candidate, binding.workflow_ref, "blueprint phases do not match the bound workflow graph");
+                continue;
+            }
             common_agent_route_candidate route;
             route.kind = common_agent_route_kind::blueprint_workflow;
             route.blueprint_logical_id = candidate.logical_id;
             route.blueprint_persisted_id = candidate.persisted_id;
+            route.blueprint_definition = *blueprint;
             route.workflow = binding;
             route.workflow_definition = definition;
             route.description = candidate.description.empty() ? blueprint->goal : candidate.description;
@@ -541,6 +555,7 @@ bool compile_agent_route_catalog(
         route.id = "blueprint:" + candidate.logical_id;
         route.blueprint_logical_id = candidate.logical_id;
         route.blueprint_persisted_id = candidate.persisted_id;
+            route.blueprint_definition = *blueprint;
         route.description = candidate.description.empty() ? blueprint->goal : candidate.description;
         route.blueprint_revision = blueprint->source_revision;
         route.required_capabilities = blueprint->required_capabilities;

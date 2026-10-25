@@ -1,4 +1,7 @@
 #include "agent-selection-contracts.h"
+#include "agent/tooling/schema/tool-dsl-grammar.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 using json = nlohmann::ordered_json;
 
@@ -134,5 +137,43 @@ bool parse_agent_blueprint_binding_contract_json(
     }
 
     error.clear();
+    return true;
+}
+
+bool make_agent_selection_presentation(common_agent_tool_output_format format,
+        const std::string & name, const json & schema,
+        agent_selection_presentation & out, std::string & error) {
+    out = {}; error.clear();
+    if (format != common_agent_tool_output_format::compact_dsl) {
+        out.instructions = "Return only JSON matching the selection contract.";
+        out.json_schema = schema.dump();
+        return true;
+    }
+    const common_chat_tool contract{name, "Return the host selection decision.", schema.dump()};
+    out.grammar = common_build_tool_dsl_grammar({contract}, common_tool_dsl_grammar_form::action, error);
+    if (out.grammar.empty()) return false;
+    const auto fields = common_render_compact_tool_description(name, contract.description,
+        contract.parameters, "{}", error);
+    if (!error.empty()) return false;
+    out.instructions = "Return flat DSL only: open! " + name +
+        " followed by one field per line. Quote string values. Contract:\n" + fields;
+    return true;
+}
+
+bool parse_agent_selection_response(common_agent_tool_output_format format,
+        const std::string & name, const json & schema, const std::string & text,
+        json & value, std::string & error) {
+    value = json(); error.clear();
+    std::string canonical = text;
+    if (format == common_agent_tool_output_format::compact_dsl) {
+        common_agent_tool_call call;
+        if (!common_parse_model_tool_call(format, text,
+                {common_chat_tool{name, "Selection decision", schema.dump()}}, call, error)) return false;
+        if (call.name != name) { error = "selection returned an unexpected decision contract"; return false; }
+        canonical = call.arguments_json;
+    }
+    std::string normalized;
+    if (!common_schema_normalize_and_validate_object(canonical, schema.dump(), normalized, error)) return false;
+    value = json::parse(normalized);
     return true;
 }

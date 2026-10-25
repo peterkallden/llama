@@ -8,6 +8,7 @@
 #include "resource/resource-contract.h"
 #include "agent/dataset-contracts.h"
 #include <string>
+#include <map>
 #include <vector>
 
 enum class common_plan_scope { turn, session, project, global };
@@ -171,6 +172,9 @@ struct common_plan_tool_call { std::string name; std::string arguments_json = "{
 struct common_plan_workflow_binding {
     std::string workflow_ref;
     std::string workflow_revision;
+    // Blueprint step -> declared workflow transitions realizing that phase.
+    // Empty preserves legacy and independently authored blueprint behaviour.
+    std::map<std::string, std::vector<std::string>> phase_bindings;
 };
 
 // A workflow graph is host-owned method structure.  It deliberately names
@@ -226,8 +230,7 @@ struct common_plan_workflow_transition {
     // Zero keeps the ordinary single-request semantics.
     uint8_t max_pages = 0;
     // The graph fixes this action's tool and host-owned argument seeds while
-    // the model supplies request-dependent arguments for a graph entry.
-    // Kept last to preserve positional aggregate initialization compatibility.
+    // the model supplies request-dependent arguments at this transition.
     bool model_supplies_arguments = false;
     // Optional bounded guidance for a model-supplied action at this exact
     // transition. It narrows the method, never the tool or host authority.
@@ -240,6 +243,9 @@ struct common_plan_workflow_transition {
     // Canonical profile JSON is host-injected during package installation so
     // a plan remains bound to the exact immutable profile revision.
     std::string artifact_profile_json;
+    // An unavailable optional capability removes this branch from choices.
+    // Once selected, its execution remains mandatory unless optional is set.
+    bool optional_availability = false;
 };
 
 // A declared handoff from a completed workflow observation to another

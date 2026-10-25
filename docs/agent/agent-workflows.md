@@ -212,7 +212,7 @@ closed. Eurostat's catalogue workflow uses this for its English TOC request
 (`accept: text/plain`, bounded `max_bytes`); the next transition binds the
 returned resource reference into `dataset.inspect`.
 
-A graph-entry transition may also set `model_supplies_arguments: true`. The
+A tool transition, at entry or later in the graph, may set `model_supplies_arguments: true`. The
 workflow still fixes the tool and validates its host-owned seed arguments, but
 the bounded action selector may add request-dependent arguments. This is
 intended for safe interpretation such as searching a materialized catalogue;
@@ -863,3 +863,60 @@ common route compiler validates capability/context requirements, resolves the
 tool view, and produces the envelope; it never gains a domain branch. Tool
 execution remains host-validated regardless of how a candidate path was
 proposed.
+
+## Flexible investigation methods and model formats (2026-10-25)
+
+Implementation status: source and contract tests have been authored. Compilation,
+CTest, daemon/model smokes and browser verification have deliberately not been
+run for this change. Existing running services still use their previous binaries.
+
+Compact DSL remains the default request/model profile. Route, blueprint, plan,
+workflow and workflow-candidate selectors now use local `selection.*` flat DSL
+contracts when DSL is selected. These headers are control contracts, not newly
+registered tools. The family selector and its bounded repair also retain DSL.
+Explicit JSON mode retains JSON responses. Tool schemas, canonical arguments,
+workflow packages and persistent plan records remain JSON internally; structured
+source data is not an instruction to change the model's output format.
+
+A blueprint can exist without an executable workflow. With `preferred` policy
+and no materializable workflow, the production route defers to the existing
+model planner inside the same authorized envelope. The host supplies the original
+method outline, goal and criteria, then persists the concrete task with its
+blueprint provenance and hard constraints. This does not publish a reusable
+workflow definition. `required` policy continues to reject a missing workflow.
+Production selection disables lexical blueprint fallback; the legacy C++ opt-in
+remains available only for explicit compatibility callers.
+
+A bound workflow graph is the executable method. Its blueprint binding can
+include `phase_bindings`, mapping each original step ID to declared transition
+IDs. Package import and route compilation validate those references. A
+`blueprint_outline` observation retains original identities, intent and
+`depends_on` links; its confidence is zero because method provenance is not
+execution evidence. Concrete transitions use the linked phase's title and intent.
+The phase mappings survive both SQLite and Cozo plan serialization.
+
+`model_supplies_arguments` now applies to later tool transitions as well as entry
+transitions. An optional host callback fills remaining arguments using the same
+DSL/native action generator. Fixed templates and structured bindings remain
+protected. Deterministic transitions validate and execute without model generation.
+The normal runtime persists the resulting step before execution and retains the
+same cancellation, repair, continuation-budget and evidence gates.
+
+`optional_availability` allows a branch to disappear when its tool capability is
+unavailable. It is distinct from `optional`: a chosen acquisition step can remain
+mandatory even if its capability was optional for the method as a whole. Choices
+are projected against the authorized tool view and declared source prerequisites.
+Numeric zero, false and an empty result array are present data, not missing fields;
+they do not establish evidence sufficiency by themselves.
+
+Later investigation calls derive their CAS baseline only from the initial binding
+and successful completed case observations. A successful publication may advance
+that baseline. A read showing a different external revision stops the workflow
+instead of silently rebasing it. Truncated observations do not establish a new
+case baseline or complete source-kind inventory.
+
+The new deterministic checks are registered as
+`test-agent-flexible-workflow-{formats,continuation,blueprint,package}` and
+`test-agent-planner-blueprint`; they use explicit checks with `NDEBUG` enabled.
+Existing adapter, Cozo publication, bootstrap and routing contracts are extended.
+These tests are authored, not reported as passed.

@@ -16,3 +16,7 @@ std::string common_plan_render_tool_observations(
         const common_plan_state & plan,
         const common_plan_context_config & config = {});
 std::string common_plan_render_step_context(const common_plan_state & plan, const common_plan_step & step, const common_plan_context_config & config = {});
+
+// Retain the complete original method outline as provenance, never evidence.
+common_plan_observation common_plan_make_blueprint_outline(
+    const common_plan_state & blueprint, const std::string & instance_id);

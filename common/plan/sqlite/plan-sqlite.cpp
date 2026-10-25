@@ -1,3 +1,4 @@
+#include "plan/plan-workflow-binding.h"
 #include "plan-sqlite.h"
 #include "plan/plan-workflow-verification.h"
 #include "plan/plan-resource-provenance-json.h"
@@ -117,6 +118,7 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
                 {"candidates", transition.candidate_json_pointer},
                 {"candidate_id", transition.candidate_id_json_pointer}, {"cost", transition.cost},
                 {"model_supplies_arguments", transition.model_supplies_arguments},
+                {"optional_availability", transition.optional_availability},
                 {"model_instruction", transition.model_instruction},
                 {"artifact_profile_ref", transition.artifact_profile_ref},
                 {"artifact_profile_revision", transition.artifact_profile_revision},
@@ -186,6 +188,7 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
         transition.cost = item.value("cost", 1.0f);
         transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
+        transition.optional_availability = item.value("optional_availability", false);
         transition.model_instruction = item.value("model_instruction", std::string{});
         transition.artifact_profile_ref = item.value("artifact_profile_ref", std::string{});
         transition.artifact_profile_revision = item.value("artifact_profile_revision", std::string{});
@@ -259,7 +262,7 @@ json serialize_plan(const common_plan_state & plan) {
         }
     }
     json bindings = json::array();
-    for (const auto & binding : plan.workflow_bindings) bindings.push_back({{"workflow_ref", binding.workflow_ref}, {"workflow_revision", binding.workflow_revision}});
+    for (const auto & binding : plan.workflow_bindings) bindings.push_back(common_plan_workflow_binding_to_json(binding));
     json continuation_history = json::array();
     for (const auto & item : plan.workflow_continuation_history) continuation_history.push_back({
         {"link_id", item.link_id}, {"source_fingerprint", item.source_fingerprint},
@@ -270,10 +273,7 @@ json serialize_plan(const common_plan_state & plan) {
         {"target_workflow_revision", item.target_workflow_revision}});
     json procedures = plan.procedure_refs;
     json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"workflow_continuation_history", continuation_history}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
-    if (plan.selected_workflow) value["selected_workflow"] = {
-        {"workflow_ref", plan.selected_workflow->workflow_ref},
-        {"workflow_revision", plan.selected_workflow->workflow_revision},
-    };
+    if (plan.selected_workflow) value["selected_workflow"] = common_plan_workflow_binding_to_json(*plan.selected_workflow);
     if (plan.workflow_definition) value["workflow_definition"] = serialize_workflow_definition(*plan.workflow_definition);
     if (plan.route_binding) value["route_binding"] = {
         {"route_id", plan.route_binding->route_id},
@@ -311,13 +311,13 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.required_capabilities = value.value("required_capabilities", std::vector<std::string>{});
     plan.workflow_policy = parse_workflow_policy(value.value("workflow_policy", std::string("preferred")));
     plan.procedure_refs = value.value("procedure_refs", std::vector<std::string>{});
-    for (const auto & binding : value.value("workflow_bindings", json::array())) plan.workflow_bindings.push_back({binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{})});
+    for (const auto & binding : value.value("workflow_bindings", json::array())) plan.workflow_bindings.push_back(common_plan_workflow_binding_from_json(binding));
     for (const auto & item : value.value("workflow_continuation_history", json::array())) plan.workflow_continuation_history.push_back({
         item.value("link_id", std::string{}), item.value("source_fingerprint", std::string{}),
         item.value("source_workflow_ref", std::string{}), item.value("source_workflow_revision", std::string{}),
         item.value("source_terminal_state", std::string{}), item.value("target_workflow_ref", std::string{}),
         item.value("target_workflow_revision", std::string{})});
-    if (value.contains("selected_workflow") && value["selected_workflow"].is_object()) plan.selected_workflow = common_plan_workflow_binding{value["selected_workflow"].value("workflow_ref", std::string{}), value["selected_workflow"].value("workflow_revision", std::string{})};
+    if (value.contains("selected_workflow") && value["selected_workflow"].is_object()) plan.selected_workflow = common_plan_workflow_binding_from_json(value["selected_workflow"]);
     if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) plan.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
     if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; plan.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{}), binding.value("continuation_link_id", std::string{}), binding.value("continuation_source_fingerprint", std::string{}), binding.value("workflow_step_start_index", size_t(0))}; }
     plan.version = value.value("version", uint64_t(0));

@@ -129,6 +129,7 @@ private:
 
 class test_investigation_store final : public common_agent_data_store {
 public:
+    bool fail_publication = false;
     common_agent_dataset_descriptor source;
     std::vector<common_agent_dataset_descriptor> additional_sources;
     std::set<std::string> denied_sources;
@@ -194,6 +195,7 @@ public:
     bool publish_investigation_case(const common_investigation_case_revision & input,
             uint64_t expected, const std::string &, common_investigation_case_revision & out,
             std::string & error) override {
+        if (fail_publication) { error = "injected storage outage"; return false; }
         const auto found = cases.find(input.case_id);
         const uint64_t current = found == cases.end() ? 0 : found->second.revision;
         if (current != expected || input.revision != expected + 1) {
@@ -201,6 +203,18 @@ public:
         }
         if (!common_investigation_case_validate(input, error)) return false;
         out = input; cases[input.case_id] = out; error.clear(); return true;
+    }
+    common_agent_publication_status publish_investigation_case_checked(
+            const common_investigation_case_revision & input, uint64_t expected,
+            const std::string & uri, common_investigation_case_revision & published,
+            std::string & error) override {
+        const auto found = cases.find(input.case_id);
+        if ((found == cases.end() ? 0 : found->second.revision) != expected) {
+            error = "investigation case revision conflict"; return common_agent_publication_status::conflict;
+        }
+        if (!common_investigation_case_validate(input, error)) return common_agent_publication_status::invalid;
+        return publish_investigation_case(input, expected, uri, published, error)
+            ? common_agent_publication_status::published : common_agent_publication_status::storage_error;
     }
     bool publish_investigation_report(const common_agent_scope & scope,
             const common_investigation_report_index_entry & input,
@@ -2330,6 +2344,25 @@ int main() {
     result=investigation_registry.execute({"investigation.case.items",nlohmann::json{
         {"case_id",reviewed_case_id},{"case_revision",5},{"type","actor_groups"}}.dump()});
     if (!result.ok || nlohmann::json::parse(result.output).at("items").size() != 1) return 42;
+    // Unknown evidence is invalid input, never a revision conflict. The
+    // rejected proposal must not publish a claim or advance the revision.
+    const auto baseline = investigation_store.cases.at(reviewed_case_id).revision;
+    const auto claims_before = investigation_store.cases.at(reviewed_case_id).claims.size();
+    result = investigation_registry.execute({"investigation.claim.hypothesize", nlohmann::json{
+        {"case_id", reviewed_case_id}, {"expected_revision", baseline}, {"claim_id", "unknown-evidence-regression"},
+        {"text", "An explicitly proposed hypothesis"}, {"supporting_event_ids", nlohmann::json::array({"invented-event"})}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.publication_invalid" ||
+        result.failure_class != common_tool_failure_class::validation ||
+        investigation_store.cases.at(reviewed_case_id).revision != baseline ||
+        investigation_store.cases.at(reviewed_case_id).claims.size() != claims_before) return 43;
+    investigation_store.fail_publication = true;
+    result = investigation_registry.execute({"investigation.claim.hypothesize", nlohmann::json{
+        {"case_id", reviewed_case_id}, {"expected_revision", baseline}, {"claim_id", "storage-failure-regression"},
+        {"text", "An unsupported but explicitly labeled hypothesis"}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.publication_failed" ||
+        result.failure_class != common_tool_failure_class::execution ||
+        investigation_store.cases.at(reviewed_case_id).revision != baseline) return 44;
+    investigation_store.fail_publication = false;
     std::filesystem::remove_all(repository);
     return 0;
 }

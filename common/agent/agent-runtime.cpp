@@ -963,7 +963,20 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
     }
     if (plan.id.empty()) {
-        auto proposal = planner.create_plan_result(request, error);
+        auto planning_request = request;
+        if (request.blueprint_definition) {
+            const auto & method = *request.blueprint_definition;
+            planning_request.prompt += "\n[Host-selected blueprint method]\nGoal: " + method.goal +
+                "\nSuccess criteria: " + method.success_criteria +
+                "\nDevelop a concrete plan using these method steps and dependencies. "
+                "Use step aliases for the method phases when applicable. This is a planning template, not proof that a step ran.\n" +
+                common_plan_make_blueprint_outline(method, method.id).summary;
+            for (const auto & constraint : method.constraints)
+                planning_request.prompt += "\n[Host blueprint constraint " + constraint.id + "] " + constraint.description;
+            for (const auto & assumption : method.assumptions)
+                planning_request.prompt += "\n[Blueprint assumption to examine; not a finding] " + assumption.statement;
+        }
+        auto proposal = planner.create_plan_result(planning_request, error);
         if (!error.empty()) { result.error = error; return result; }
         if (proposal.generation) {
             result.generation_records.push_back(common_agent_generation_record_from_result(
@@ -1003,6 +1016,28 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (request.blueprint_plan_id) proposal.plan.derived_from_plan_id = *request.blueprint_plan_id;
         if (request.selected_workflow) proposal.plan.selected_workflow = *request.selected_workflow;
         if (request.workflow_definition) proposal.plan.workflow_definition = *request.workflow_definition;
+        if (request.blueprint_definition) {
+            const auto & method = *request.blueprint_definition;
+            proposal.plan.source_revision = method.source_revision;
+            proposal.plan.purpose = method.purpose;
+            if (proposal.plan.success_criteria.empty()) proposal.plan.success_criteria = method.success_criteria;
+            else if (!method.success_criteria.empty() && proposal.plan.success_criteria != method.success_criteria)
+                proposal.plan.success_criteria += "\nBlueprint criteria: " + method.success_criteria;
+            proposal.plan.procedure_refs = method.procedure_refs;
+            proposal.plan.workflow_bindings = method.workflow_bindings;
+            for (const auto & capability : method.required_capabilities)
+                if (std::find(proposal.plan.required_capabilities.begin(), proposal.plan.required_capabilities.end(), capability) ==
+                        proposal.plan.required_capabilities.end()) proposal.plan.required_capabilities.push_back(capability);
+            for (const auto & constraint : method.constraints) {
+                const auto existing = std::find_if(proposal.plan.constraints.begin(), proposal.plan.constraints.end(),
+                    [&](const auto & item) { return item.id == constraint.id; });
+                if (existing != proposal.plan.constraints.end() && (existing->description != constraint.description || existing->hard != constraint.hard)) {
+                    result.error = "model plan changed a host blueprint constraint"; return result;
+                }
+                if (existing == proposal.plan.constraints.end()) proposal.plan.constraints.push_back(constraint);
+            }
+            proposal.plan.observations.push_back(common_plan_make_blueprint_outline(method, proposal.plan.id));
+        }
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         append_event(result, request, common_agent_event_type::plan_created, "plan created", {}, plan.id);

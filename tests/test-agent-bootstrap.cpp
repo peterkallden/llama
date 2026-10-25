@@ -344,7 +344,7 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
-    require_code_workflow(investigation_package.version == "v4",
+    require_code_workflow(investigation_package.version == "v5",
         "investigation package revision is stale");
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
@@ -376,8 +376,8 @@ int main() {
         assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
     }
     for (const auto & blueprint : investigation_package.blueprints) {
-        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v4" &&
-            blueprint.workflow_bindings.front().workflow_revision == "v4",
+        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v5" &&
+            blueprint.workflow_bindings.front().workflow_revision == "v5",
             "investigation immutable identity does not match revised authority");
         require_code_workflow(blueprint.next_action == blueprint.steps.front().id,
             "investigation entry phase is not explicit");
@@ -387,7 +387,7 @@ int main() {
                 "investigation phase can precede its evidence producer");
         }
         require_code_workflow(std::find(blueprint.procedure_refs.begin(), blueprint.procedure_refs.end(),
-            "investigation-phase-handoff-v4") != blueprint.procedure_refs.end(),
+            "investigation-phase-handoff-v5") != blueprint.procedure_refs.end(),
             "investigation source preparation handoff is missing");
     }
     common_memory_in_memory_store investigation_memory;
@@ -1067,6 +1067,9 @@ int main() {
         {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
 
+    // Compatibility-only opt-in: production routing and the default never
+    // infer blueprint intent from lexical overlap.
+    selection_config.allow_keyword_fallback = true;
     declining_selector declining;
     low_confidence_selector low_confidence;
     selection_config.task_plan_id = "fallback-instance";

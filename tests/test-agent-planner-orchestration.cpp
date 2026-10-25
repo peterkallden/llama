@@ -305,6 +305,33 @@ void interruption_contracts() {
     truncated.check_completed(truncated.run(), "code.inspect");
     truncated.check_generation_context(2);
 }
+void blueprint_planning_contracts() {
+    fixture test;
+    common_plan_state method;
+    method.id = "unbound-method"; method.kind = common_plan_kind::blueprint;
+    method.goal = "UNDERLAY_METHOD_GOAL"; method.success_criteria = "Retained evidence before conclusions";
+    method.steps = {{"inspect", "Inspect", "Inspect the authorized repository"}, {"assess", "Assess", "Assess observed capabilities"}};
+    method.steps.back().depends_on = {"inspect"};
+    method.constraints.push_back({"scope", "Keep the authorized project scope", true});
+    test.request.blueprint_plan_id = method.id;
+    test.request.blueprint_definition = method;
+    test.inference.replies = {reply(inspect_plan)};
+    const auto result = test.run();
+    test.check_completed(result, "code.inspect");
+    test.check_generation_context(1);
+    const auto & prompt = test.inference.requests.front().messages;
+    require(std::any_of(prompt.begin(), prompt.end(), [](const auto & message) {
+        return message.content.find("UNDERLAY_METHOD_GOAL") != std::string::npos &&
+            message.content.find("depends_on") != std::string::npos;
+    }), "ordinary planner lost the unbound blueprint method");
+    std::string error;
+    const auto plan = test.plans.get(*result.plan_id, error);
+    require(plan && plan->derived_from_plan_id == method.id && !plan->workflow_definition,
+        "unbound method invented a persistent workflow definition");
+    require(std::any_of(plan->observations.begin(), plan->observations.end(), [](const auto & item) {
+        return item.source == "blueprint_outline" && item.confidence == 0.0f;
+    }), "blueprint outline was lost or counted as execution evidence");
+}
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -314,6 +341,7 @@ int main(int argc, char ** argv) {
     else if (group == "recovery") recovery_contracts();
     else if (group == "dispatch") dispatch_contracts();
     else if (group == "interruptions") interruption_contracts();
+    else if (group == "blueprint") blueprint_planning_contracts();
     else require(false, "unknown orchestration contract group");
     return 0;
 }

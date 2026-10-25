@@ -1,3 +1,4 @@
+#include "plan/plan-context.h"
 #include "agent-plan-orchestration.h"
 #include "agent/template-library.h"
 #include "hash/hash.h"
@@ -33,8 +34,10 @@ std::string make_bootstrap_prefix(const common_agent_scope & scope) {
 
 common_agent_request make_orchestration_selection_request(
         const common_agent_orchestration_config & config,
-        const common_agent_scope & scope) {
+        const common_agent_scope & scope,
+        common_agent_tool_output_format format) {
     common_agent_request request;
+    request.tool_output_format = format;
     request.prompt = config.prompt;
     common_agent_scope_apply(scope, request);
     return request;
@@ -230,7 +233,7 @@ bool maybe_auto_select_plan(
     }
 
     if (!candidates.empty()) {
-        const auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+        const auto selection_request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
         std::string selection_error;
         const auto selection_result = select_llama_cli_plan_result(
             context.inference, context.generation_config, selection_request, candidates, selection_error);
@@ -289,6 +292,7 @@ bool maybe_auto_select_blueprint(
 
     auto selector = make_llama_cli_blueprint_selector(context.inference, context.generation_config);
     common_blueprint_selection_config selection_config;
+    selection_config.allow_keyword_fallback = false;
     if(context.tooling)selection_config.template_libraries=context.tooling->template_libraries;
     selection_config.task_plan_id = context.current_plan_id;
     selection_config.session_id = context.scope.session_id;
@@ -305,7 +309,7 @@ bool maybe_auto_select_blueprint(
         selection_config.blocked_constraint_ids = context.tooling->blocked_constraint_ids;
     }
     common_blueprint_selection_result selection;
-    auto selection_request = make_orchestration_selection_request(context.config, context.scope);
+    auto selection_request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
     if (context.policy_pack != nullptr) {
         selection_request.policy_pack = *context.policy_pack;
     }
@@ -346,7 +350,7 @@ bool maybe_auto_select_blueprint(
     if (selection.outcome == common_blueprint_selection_outcome::instantiated) {
         fprintf(stderr, "agent blueprint auto-selected: %s -> %s\n", selection.logical_id->c_str(), context.current_plan_id.c_str());
         if (context.tooling != nullptr && context.tooling->profile_tools_active && context.tooling->tool_view != nullptr) {
-            const auto binding_request = make_orchestration_selection_request(context.config, context.scope);
+            const auto binding_request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
             std::string binding_error;
             const auto binding_result = bind_llama_cli_blueprint_tools_result(
                 context.inference,
@@ -385,7 +389,7 @@ bool maybe_select_agent_route(
 
     common_agent_route_catalog catalog;
     if (!compile_agent_route_catalog(
-            make_orchestration_selection_request(context.config, context.scope),
+            make_orchestration_selection_request(context.config, context.scope, context.tool_output_format),
             context.plan_store, context.scope, context.installed_blueprint_candidates,
             *context.tooling,
             (context.config.agent_blueprint == "auto" || host_orientation)
@@ -452,7 +456,7 @@ bool maybe_select_agent_route(
         std::string selection_error;
         const auto route_choice = select_llama_cli_route(
             context.inference, context.generation_config,
-            make_orchestration_selection_request(context.config, context.scope),
+            make_orchestration_selection_request(context.config, context.scope, context.tool_output_format),
             catalog, selection_error);
         if (route_choice.route_id) {
             const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
@@ -556,6 +560,7 @@ bool maybe_select_agent_route(
     }
     common_explicit_blueprint_selector selector(selected_route.blueprint_logical_id);
     common_blueprint_selection_config selection_config;
+    selection_config.allow_keyword_fallback = false;
     if(context.tooling)selection_config.template_libraries=context.tooling->template_libraries;
     selection_config.task_plan_id = context.current_plan_id;
     selection_config.session_id = context.scope.session_id;
@@ -580,8 +585,9 @@ bool maybe_select_agent_route(
         route_binding.workflow_revision = selected_route.workflow->workflow_revision;
     }
     selection_config.route_binding = route_binding;
+    selection_config.defer_unmaterialized_blueprint = selected_route.kind == common_agent_route_kind::blueprint;
 
-    auto request = make_orchestration_selection_request(context.config, context.scope);
+    auto request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
     request.selected_workflow = selected_route.workflow;
     request.workflow_definition = selected_route.workflow_definition;
     request.memories = context.route_procedure_memories;
@@ -620,6 +626,7 @@ bool maybe_select_agent_route(
                 const auto found = std::find_if(resolved_route_tools.begin(), resolved_route_tools.end(),
                     [&](const auto & tool) { return tool.name == transition.tool_name; });
                 if (found == resolved_route_tools.end()) {
+                    if (transition.optional_availability) continue;
                     error = "workflow graph entry tool is outside the route envelope";
                     return false;
                 }
@@ -661,6 +668,12 @@ bool maybe_select_agent_route(
                 graph_entry_tools.front().name, deterministic_entry_arguments, "workflow-graph-entry", false};
         } else {
             std::string action_error;
+            if (selected_route.workflow_definition) {
+                for (const auto & transition : selected_route.workflow_definition->transitions) {
+                    if (transition.from_state == selected_route.workflow_definition->start_state && !transition.model_instruction.empty())
+                        request.prompt += "\n[Entry " + transition.tool_name + "]\n" + transition.model_instruction;
+                }
+            }
             const auto action = select_llama_cli_workflow_action(
                 context.inference, context.generation_config, request, selected_tools,
                 request.tool_argument_bindings, host_resolved_dataset_tools,
@@ -719,6 +732,7 @@ bool maybe_select_agent_route(
             }
             common_plan_state out = instance;
             out.kind = common_plan_kind::task;
+            out.observations.push_back(common_plan_make_blueprint_outline(instance, instance.id));
             out.steps.clear();
             out.active_step_id.reset();
             out.next_action.reset();
@@ -788,6 +802,7 @@ bool maybe_select_agent_route(
                 operation.title = transition->id;
                 operation.objective = "Execute workflow transition " + transition->id + ".";
                 operation.intended_contribution = operation.objective;
+                common_agent_workflow_apply_blueprint_phase(out, *transition, operation);
             }
             operation.created_at = instance.created_at;
             operation.updated_at = instance.updated_at;

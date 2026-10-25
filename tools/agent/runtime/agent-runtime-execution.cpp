@@ -1083,6 +1083,7 @@ common_agent_request make_agent_runtime_driver_request(
         request.route_binding = std::move(binding);
         if (!execution.selected_route.blueprint_persisted_id.empty()) {
             request.blueprint_plan_id = execution.selected_route.blueprint_persisted_id;
+            request.blueprint_definition = execution.selected_route.blueprint_definition;
         }
         request.workflow_definition = execution.selected_route.workflow_definition;
     }
@@ -1988,12 +1989,63 @@ bool run_agent_runtime_driver(
             const auto route = execution.selected_route;
             const auto choice_request = request;
             request.workflow_continuation = make_agent_workflow_graph_continuation(route,
-                [&execution, choice_request](const common_plan_observation & observation,
+                [&execution, choice_request, route](const common_plan_observation & observation,
                         const common_plan_workflow_transition & transition,
                         std::string & candidate_id, std::string & choice_error) {
+                    auto current_request = choice_request;
+                    const auto envelope = json::parse(observation.summary, nullptr, false);
+                    const auto & value = envelope.is_object() && envelope.contains("result") ? envelope["result"] : envelope;
+                    if (observation.source == "investigation.case.items" && value.is_object() &&
+                            !(envelope.is_object() && envelope.value("result_truncated", false)) &&
+                            value.value("type", std::string{}) == "sources" && !value.value("has_more", true) &&
+                            value.contains("items") && value["items"].is_array()) {
+                        std::vector<common_investigation_source_kind> kinds;
+                        for (const auto & source : value["items"]) {
+                            if (!source.is_object() || !source.contains("kind") || !source["kind"].is_string()) continue;
+                            if (current_request.investigation_context && !current_request.investigation_context->source_ids.empty() &&
+                                    std::find(current_request.investigation_context->source_ids.begin(),
+                                        current_request.investigation_context->source_ids.end(), source.value("id", std::string{})) ==
+                                        current_request.investigation_context->source_ids.end()) continue;
+                            const auto kind = source["kind"].get<std::string>();
+                            if (kind == "document") kinds.push_back(common_investigation_source_kind::document);
+                            else if (kind == "log_file") kinds.push_back(common_investigation_source_kind::log_file);
+                            else if (kind == "search_connector") kinds.push_back(common_investigation_source_kind::search_connector);
+                        }
+                        if (!kinds.empty() || value["items"].empty()) current_request.investigation_source_kinds = std::move(kinds);
+                    }
+                    auto available = transition;
+                    std::string projection_error;
+                    available.choices.erase(std::remove_if(available.choices.begin(), available.choices.end(), [&](const auto & option) {
+                        if (!projection_error.empty()) return true;
+                        const auto * next = common_agent_workflow_next_transition(*route.workflow_definition,
+                            option.to_state, &route.resolved_tools);
+                        if (!next) return true;
+                        if (next->kind != common_plan_workflow_transition_kind::tool) return false;
+                        const auto tool = std::find_if(execution.tooling.tools.begin(), execution.tooling.tools.end(),
+                            [&](const auto & item) { return item.name == next->tool_name; });
+                        if (tool == execution.tooling.tools.end()) return true;
+                        return !common_agent_workflow_tool_eligible(current_request, *tool, projection_error);
+                    }), available.choices.end());
+                    if (!projection_error.empty()) { choice_error = projection_error; return false; }
+                    if (!transition.choices.empty() && available.choices.empty()) {
+                        choice_error = "workflow has no eligible continuation for the selected sources and capabilities";
+                        return false;
+                    }
                     return select_llama_cli_workflow_candidate(execution.inference,
-                        execution.runtime_config.generation_config, choice_request,
-                        observation, transition, candidate_id, choice_error);
+                        execution.runtime_config.generation_config, current_request,
+                        observation, available, candidate_id, choice_error);
+                }, [&execution, choice_request, route](const common_plan_state & plan,
+                        const common_plan_observation & observation,
+                        const common_plan_workflow_transition & transition,
+                        const std::string & seed, std::string & arguments, std::string & argument_error) {
+                    std::vector<common_chat_tool> allowed;
+                    for (const auto & tool : execution.tooling.tools) {
+                        if (std::find(route.resolved_tools.begin(), route.resolved_tools.end(), tool.name) != route.resolved_tools.end())
+                            allowed.push_back(tool);
+                    }
+                    return select_llama_cli_workflow_transition_arguments(execution.inference,
+                        execution.runtime_config.generation_config, choice_request, allowed,
+                        plan, observation, transition, seed, arguments, argument_error);
                 });
         }
         auto assembly = make_agent_runtime_assembly(

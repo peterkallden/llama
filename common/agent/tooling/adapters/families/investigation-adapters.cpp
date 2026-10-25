@@ -246,13 +246,33 @@ bool investigation_authorize_sources(const common_native_tool_bindings & binding
             static_cast<int64_t>(std::time(nullptr))), error);
 }
 
+common_tool_execution_result investigation_publication_failure(
+        common_agent_publication_status status, std::string error) {
+    switch (status) {
+        case common_agent_publication_status::invalid:
+            return common_adapter_validation_failure("tool.investigation.publication_invalid", std::move(error),
+                "The proposed case revision contains invalid data or evidence references.");
+        case common_agent_publication_status::denied:
+            return common_adapter_failure("tool.investigation.publication_denied", common_tool_failure_class::policy,
+                false, "The case sources are no longer authorized.", std::move(error));
+        case common_agent_publication_status::conflict:
+            return common_adapter_failure("tool.investigation.revision_conflict", common_tool_failure_class::conflict,
+                false, "The case changed; reload and explicitly reconcile the selected revision.", std::move(error));
+        default:
+            return common_adapter_execution_failure("tool.investigation.publication_failed", std::move(error),
+                "The case revision was not published because storage failed.");
+    }
+}
+
 bool investigation_publish_revision(const common_native_tool_bindings & bindings,
         common_investigation_case_revision value, uint64_t expected_revision,
-        common_investigation_case_revision & published, std::string & error) {
+        common_investigation_case_revision & published, std::string & error,
+        common_agent_publication_status & status) {
     value.revision = expected_revision + 1;
     const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
-    return bindings.data_store->publish_investigation_case(value, expected_revision,
+    status = bindings.data_store->publish_investigation_case_checked(value, expected_revision,
         revision_uri, published, error);
+    return status == common_agent_publication_status::published;
 }
 
 
@@ -267,6 +287,7 @@ common_tool_execution_result execute_investigation_tool(
         "tool.investigation.store_unavailable", "investigation persistence is unavailable",
         "Investigation storage is unavailable.");
     std::string error;
+    common_agent_publication_status publication_status = common_agent_publication_status::storage_error;
     if (operation == "investigation.source.list") {
         if (arguments.contains("limit") && !arguments["limit"].is_number_integer())
             return common_adapter_validation_failure("tool.investigation.source_list_invalid_arguments",
@@ -358,10 +379,9 @@ common_tool_execution_result execute_investigation_tool(
         }
         common_investigation_case_revision published;
         const auto revision_uri = "investigation-case://" + value.case_id + "/revision/1";
-        if (!bindings.data_store->publish_investigation_case(value, 0, revision_uri, published, error)) {
-            return common_adapter_execution_failure("tool.investigation.case_create_failed",
-                std::move(error), "The investigation case could not be created.");
-        }
+        publication_status = bindings.data_store->publish_investigation_case_checked(value, 0, revision_uri, published, error);
+        if (publication_status != common_agent_publication_status::published)
+            return investigation_publication_failure(publication_status, std::move(error));
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"scope", {{"namespace_id", published.scope.namespace_id},
                 {"project_id", published.scope.project_id}, {"session_id", published.scope.session_id}}}});
@@ -446,9 +466,8 @@ common_tool_execution_result execute_investigation_tool(
         if (value.sources.size() >= 32) return common_adapter_limit_failure(
             "tool.investigation.case_source_count_limit", "case already contains the maximum 32 sources",
             "Remove a source or create another case before adding more sources.");
-        if (expected != value.revision) return common_adapter_execution_failure(
-            "tool.investigation.revision_conflict", "case revision changed before source attachment",
-            "Reload the case before adding another source.");
+        if (expected != value.revision) return investigation_publication_failure(
+            common_agent_publication_status::conflict, "case revision changed before source attachment");
         if (has_provider) {
             const bool has_window_start = arguments.contains("window_start_ms") && arguments["window_start_ms"].is_number_integer();
             const bool has_window_end = arguments.contains("window_end_ms") && arguments["window_end_ms"].is_number_integer();
@@ -489,9 +508,8 @@ common_tool_execution_result execute_investigation_tool(
         }
         value.sources.push_back(std::move(source));
         common_investigation_case_revision published;
-        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error))
-            return common_adapter_execution_failure("tool.investigation.source_publish_failed",
-                std::move(error), "The source was retained but was not published in the case revision.");
+        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error, publication_status))
+            return investigation_publication_failure(publication_status, std::move(error));
         const auto & added = published.sources.back();
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"source_id", added.id}, {"resource_uri", added.resource_uri}, {"processing_status", added.processing_status},
@@ -512,9 +530,8 @@ common_tool_execution_result execute_investigation_tool(
         if (!source->representation_uri.empty()) return common_adapter_success_json({
             {"case_id", value.case_id}, {"revision", value.revision}, {"source_id", source->id},
             {"resource_uri", source->representation_uri}, {"processor_version", source->processor_version}, {"reused", true}});
-        if (expected != value.revision) return common_adapter_execution_failure(
-            "tool.investigation.revision_conflict", "case revision changed before document preparation",
-            "Reload the case before preparing the document source.");
+        if (expected != value.revision) return investigation_publication_failure(
+            common_agent_publication_status::conflict, "case revision changed before document preparation");
         if (bindings.resource_runtime.store == nullptr ||
                 (bindings.resource_processing_service == nullptr && !bindings.resource_processing_provider_factory))
             return common_adapter_not_found_failure("tool.investigation.processor_unavailable",
@@ -569,9 +586,8 @@ common_tool_execution_result execute_investigation_tool(
         const std::string prepared_resource_uri = source->representation_uri;
         const std::string prepared_processor_version = source->processor_version;
         common_investigation_case_revision published;
-        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error))
-            return common_adapter_execution_failure("tool.investigation.processing_publish_failed",
-                std::move(error), "The derived text was created but was not published in the case revision.");
+        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error, publication_status))
+            return investigation_publication_failure(publication_status, std::move(error));
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"source_id", prepared_source_id}, {"resource_uri", prepared_resource_uri},
             {"processor_version", prepared_processor_version}, {"reused", false}});
@@ -613,9 +629,8 @@ common_tool_execution_result execute_investigation_tool(
             return common_adapter_success_json({{"case_id", value.case_id}, {"revision", value.revision},
                 {"published_revision", existing->published_revision}, {"analysis_id", analysis_id}, {"reused", true}});
         }
-        if (expected != value.revision) return common_adapter_execution_failure(
-            "tool.investigation.revision_conflict", "case revision changed before analysis publication",
-            "Reload the case and retry the analysis against its current revision.");
+        if (expected != value.revision) return investigation_publication_failure(
+            common_agent_publication_status::conflict, "case revision changed before analysis publication");
         std::set<std::string> analysis_sources;
         for (const auto & source_ref : arguments["source_ids"]) {
             if (!source_ref.is_string() || !analysis_sources.insert(source_ref.get<std::string>()).second ||
@@ -789,9 +804,8 @@ common_tool_execution_result execute_investigation_tool(
         }
         value.analyses.push_back(std::move(record));
         common_investigation_case_revision published;
-        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error))
-            return common_adapter_execution_failure("tool.investigation.analysis_publish_failed",
-                std::move(error), "The analysis candidate was not published to the case.");
+        if (!investigation_publish_revision(bindings, std::move(value), expected, published, error, publication_status))
+            return investigation_publication_failure(publication_status, std::move(error));
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"published_revision", published.revision},
             {"analysis_id", analysis_id}, {"statement_count", published.statements.size()},
@@ -866,9 +880,8 @@ common_tool_execution_result execute_investigation_tool(
         if (!common_investigation_actor_associations(proposed,associations,error))
             return common_adapter_validation_failure("tool.investigation.review_conflict",error);
         common_investigation_case_revision published;
-        if (!investigation_publish_revision(bindings,std::move(value),expected,published,error))
-            return common_adapter_failure("tool.investigation.review_publish_failed",common_tool_failure_class::conflict,false,
-                "The decision was not published. Reload before retrying.",error);
+        if (!investigation_publish_revision(bindings,std::move(value),expected,published,error, publication_status))
+            return investigation_publication_failure(publication_status, std::move(error));
         return common_adapter_success_json({{"case_id",published.case_id},{"revision",published.revision},
             {"published_revision",published.revision},{"review_ids",review_ids},{"reused",false}});
     }
@@ -982,9 +995,9 @@ common_tool_execution_result execute_investigation_tool(
                 return common_adapter_validation_failure("tool.investigation.report_invalid_arguments",
                     "unsupported report argument: " + it.key());
         }
-        if (arguments.value("expected_revision", uint64_t(0)) != value.revision) return
-            common_adapter_execution_failure("tool.investigation.revision_conflict",
-                "case revision changed before report composition", "Reload the case before composing a report.");
+        if (arguments.value("expected_revision", uint64_t(0)) != value.revision)
+            return investigation_publication_failure(common_agent_publication_status::conflict,
+                "case revision changed before report composition");
         if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
             "tool.investigation.report_store_unavailable", "resource store is unavailable",
             "A durable report resource cannot be created.");
@@ -1872,9 +1885,9 @@ common_tool_execution_result execute_investigation_tool(
         const uint64_t expected = value.revision++;
         common_investigation_case_revision published;
         const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
-        if (!bindings.data_store->publish_investigation_case(value, expected, revision_uri, published, error))
-            return common_adapter_execution_failure("tool.investigation.revision_conflict", std::move(error),
-                "The case changed while evidence was being collected; reload and retry.");
+        publication_status = bindings.data_store->publish_investigation_case_checked(value, expected, revision_uri, published, error);
+        if (publication_status != common_agent_publication_status::published)
+            return investigation_publication_failure(publication_status, std::move(error));
         if (file_import) return common_adapter_success_json(import_result);
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"collected_events", collected_events.size()}, {"complete", page.value("complete", false)},
@@ -2083,10 +2096,9 @@ common_tool_execution_result execute_investigation_tool(
         const uint64_t expected = value.revision++;
         common_investigation_case_revision published;
         const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
-        if (!bindings.data_store->publish_investigation_case(value, expected, revision_uri, published, error)) {
-            return common_adapter_execution_failure("tool.investigation.revision_conflict",
-                std::move(error), "The case changed; reload it before recording the hypothesis.");
-        }
+        publication_status = bindings.data_store->publish_investigation_case_checked(value, expected, revision_uri, published, error);
+        if (publication_status != common_agent_publication_status::published)
+            return investigation_publication_failure(publication_status, std::move(error));
         return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
             {"claim_state", "hypothesis"}});
     }

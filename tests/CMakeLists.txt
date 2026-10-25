@@ -764,6 +764,18 @@ test-agent-flydelta-alpha-response-search.cpp
     add_test(NAME test-agent-template-library COMMAND test-agent-template-library)
     set_tests_properties(test-agent-template-library PROPERTIES LABELS "agent;model-free;template-library")
 
+    add_executable(test-agent-flexible-workflow test-agent-flexible-workflow.cpp)
+    target_include_directories(test-agent-flexible-workflow PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(test-agent-flexible-workflow PRIVATE llama-agent-core llama-agent-runtime-support)
+    target_compile_features(test-agent-flexible-workflow PRIVATE cxx_std_17)
+    target_compile_definitions(test-agent-flexible-workflow PRIVATE NDEBUG LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    foreach(CONTRACT formats continuation blueprint package)
+        add_test(NAME test-agent-flexible-workflow-${CONTRACT}
+            COMMAND test-agent-flexible-workflow ${CONTRACT})
+        set_tests_properties(test-agent-flexible-workflow-${CONTRACT} PROPERTIES
+            LABELS "agent;investigation;orchestration;model-free" TIMEOUT 30)
+    endforeach()
+
     add_executable(test-agent-planner-orchestration test-agent-planner-orchestration.cpp)
     target_include_directories(test-agent-planner-orchestration PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(test-agent-planner-orchestration PRIVATE
@@ -771,7 +783,7 @@ test-agent-flydelta-alpha-response-search.cpp
     target_compile_features(test-agent-planner-orchestration PRIVATE cxx_std_17)
     # Exercise the contracts with release assertions disabled as in production.
     target_compile_definitions(test-agent-planner-orchestration PRIVATE NDEBUG)
-    foreach(CONTRACT rejection recovery dispatch interruptions)
+    foreach(CONTRACT rejection recovery dispatch interruptions blueprint)
         add_test(NAME test-agent-planner-${CONTRACT}
             COMMAND test-agent-planner-orchestration ${CONTRACT})
         set_tests_properties(test-agent-planner-${CONTRACT} PROPERTIES

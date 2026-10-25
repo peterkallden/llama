@@ -158,7 +158,11 @@ bool common_plan_instantiate_blueprint(
     out.workflow_policy = blueprint.workflow_policy;
     out.procedure_refs = blueprint.procedure_refs;
     out.workflow_bindings = blueprint.workflow_bindings;
-    out.next_action = blueprint.next_action;
+    if (blueprint.next_action) {
+        const auto next = ids.find(*blueprint.next_action);
+        if (next == ids.end()) { error = "blueprint next action references an unknown step"; return false; }
+        out.next_action = next->second;
+    }
     out.created_at = now;
     out.updated_at = now;
     for (const auto & source : blueprint.steps) {

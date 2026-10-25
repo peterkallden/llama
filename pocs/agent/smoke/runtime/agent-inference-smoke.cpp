@@ -1862,6 +1862,7 @@ static void test_tool_family_preserves_explicit_tool_requirement() {
         true,
         tooling,
     };
+    execution.tool_output_format = common_agent_tool_output_format::native;
     execution.require_tool_execution = true;
 
     common_agent_result result;

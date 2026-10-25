@@ -138,3 +138,18 @@ bool common_plan_workflow_is_terminal(
     return !state.empty() && std::find(definition.terminal_states.begin(),
         definition.terminal_states.end(), state) != definition.terminal_states.end();
 }
+
+bool common_plan_workflow_choice_available(const common_plan_observation & observation,
+        const common_plan_workflow_transition::choice & choice) {
+    if (!common_plan_workflow_observation_is_usable(observation)) return false;
+    const auto value = nlohmann::ordered_json::parse(observation.summary, nullptr, false);
+    return std::all_of(choice.required_observation_json_pointers.begin(),
+        choice.required_observation_json_pointers.end(), [&](const auto & path) {
+            if (path.empty() || path.front() != '/') return false;
+            try {
+                const nlohmann::ordered_json::json_pointer pointer(path);
+                return value.contains(pointer) && !value.at(pointer).is_null() &&
+                    (!value.at(pointer).is_string() || !value.at(pointer).get<std::string>().empty());
+            } catch (const std::exception &) { return false; }
+        });
+}

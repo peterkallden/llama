@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+enum class common_agent_publication_status { published, invalid, denied, conflict, storage_error };
+
 struct common_agent_data_store_config {
     std::string backend = "auto";
     std::string path;
@@ -174,6 +176,17 @@ public:
             uint64_t, const std::string &, common_investigation_case_revision &,
             std::string &) {
         return false;
+    }
+    // Legacy backends remain usable; never infer a conflict from an arbitrary
+    // backend error string. Production backends override the typed boundary.
+    virtual common_agent_publication_status publish_investigation_case_checked(
+            const common_investigation_case_revision & value, uint64_t expected,
+            const std::string & uri, common_investigation_case_revision & published,
+            std::string & error) {
+        published = {};
+        if (!common_investigation_case_validate(value, error)) return common_agent_publication_status::invalid;
+        return publish_investigation_case(value, expected, uri, published, error)
+            ? common_agent_publication_status::published : common_agent_publication_status::storage_error;
     }
     virtual bool publish_investigation_report(const common_agent_scope &,
             const common_investigation_report_index_entry &,

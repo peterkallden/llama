@@ -181,6 +181,9 @@ struct common_agent_request {
     common_agent_cognitive_state cognitive_state;
     // Host-owned bounded reader. No model tool call, new authority or store.
     std::function<bool(const std::string &, nlohmann::ordered_json &, std::string &)> grounding_dataset_reader;
+    // Immutable host-resolved method for ordinary planning when no executable
+    // workflow is selected. Never accepted from client/model arguments.
+    std::optional<common_plan_state> blueprint_definition;
 };
 
 inline common_agent_scope common_agent_scope_from_request(const common_agent_request & request) {

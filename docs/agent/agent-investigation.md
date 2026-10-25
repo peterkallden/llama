@@ -737,3 +737,43 @@ This is an internal binding correction, not a public lifecycle/ID limit change.
 
 The final combined regression after the host retry binding correction passed
 all 17 selected CTests. No model-quality success is inferred from that result.
+
+### Executable v5 methods — implementation awaiting verification
+
+The configured package path `docs/examples/agent-investigation-workflows-v1.json`
+now contains package revision v5 (schema version 2). The filename remains stable
+for existing configuration. The previous v4 package is retained separately as
+`agent-investigation-workflows-v4.json`; existing installed/pinned v4 definitions
+are not overwritten. Import v5 at the intended host/namespace/project level to
+make its methods available after the new binaries have been built and started.
+
+All nine methods now declare executable graphs and blueprint phase mappings:
+identity, communication, event-chain, integration-trace, hypothesis-testing,
+report-composition, actor-relationship, narrative-comparison and document-provenance.
+The shared paths inspect retained sources first, allow missing text preparation
+or bounded log/search acquisition, perform the method, then offer evidence-bound
+follow-up, a later hypothesis, additional analysis or a requested frozen report.
+Empty-underlay exits have explicit grounding checks. Event counts, source kinds,
+processing status, partial coverage and unknown times remain observations rather
+than inferred intent. Analyst review remains outside model-controlled operations.
+
+Report composition has a separate graph using only saved-case, report and resource
+reading capabilities. It does not require acquisition or hypothesis tools. Report
+review reads the exact Markdown reference from the successful frozen publication.
+
+Case publication now exposes typed internal results for invalid case/evidence
+content, source authorization denial, actual revision conflict and storage failure.
+The legacy boolean store method delegates to the typed Cozo implementation. The
+hypothesis adapter no longer labels unknown supporting evidence as a CAS conflict;
+its validation diagnostic is preserved and the rejected case is not published.
+
+No compilation or tests were run for this implementation at the user's request.
+The next verification block must first inspect active processes, use the existing
+Vulkan/Cozo build and home ccache, then run the new contracts and relevant routing,
+bootstrap, adapter, data-store and plan-persistence regression tests. Run functional
+smokes serially with both `--agent-trace` and `--generation-trace` verified before
+start, keeping FlyDelta workers off. Cover saved versus newly acquired evidence,
+a later search/hypothesis, validation versus genuine conflict, restart/resume,
+then the actual browser graph/evidence/report flow. Preserve the request, selected
+transitions, tool outcomes and published revisions. A fixture or response text
+alone is not model or production proof.

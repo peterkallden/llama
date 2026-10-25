@@ -26,6 +26,10 @@ struct common_agent_workflow_action_selection_result {
     std::optional<common_agent_generated_text_result> generation;
 };
 
+// Eligibility derives only from declared tool prerequisites and host context.
+bool common_agent_workflow_tool_eligible(const common_agent_request &,
+    const common_chat_tool &, std::string & error);
+
 // Select one exact tool and schema-valid argument object inside a compiled
 // workflow route. The host later owns plan IDs, dependencies and materializing
 // any deterministic A* prefix.
@@ -38,6 +42,15 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     const std::vector<std::string> & host_resolved_dataset_tools,
     common_agent_tool_output_format output_format,
     std::string & error);
+
+// Materialize a later declared transition using the same DSL/native action
+// generator, with case baselines drawn only from successful completed steps.
+bool select_llama_cli_workflow_transition_arguments(
+    common_agent_inference &, const common_agent_generation_config &,
+    const common_agent_request &, const std::vector<common_chat_tool> &,
+    const common_plan_state &, const common_plan_observation &,
+    const common_plan_workflow_transition &, const std::string &,
+    std::string &, std::string &);
 
 // Choose one exact entity id from a host-recorded observation.  The caller
 // validates the result against the same observation before binding it.

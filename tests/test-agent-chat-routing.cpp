@@ -517,6 +517,9 @@ int main() {
     {
         common_agent_generation_config generation_config;
         common_agent_request selection_request;
+        // These fixtures exercise explicit JSON selection; DSL default is
+        // covered by test-agent-flexible-workflow-formats.
+        selection_request.tool_output_format = common_agent_tool_output_format::native;
         selection_request.prompt = "Use the investigation already selected in this session.";
         common_plan_state candidate;
         candidate.id = "saved-plan";

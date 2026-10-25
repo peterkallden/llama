@@ -1,3 +1,4 @@
+#include "plan/plan-workflow-binding.h"
 #include "agent/agent-package-json.h"
 #include "plan/plan-workflow-verification.h"
 
@@ -115,6 +116,7 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.artifact_section_id = source.value("artifact_section_id", std::string{});
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
+        transition.optional_availability = source.value("optional_availability", false);
         if (source.contains("max_pages")) {
             if (!source["max_pages"].is_number_integer()) {
                 error = "workflow transition max_pages must be an integer";
@@ -303,10 +305,12 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                     error = "workflow transition model_instruction exceeds its bounded text contract";
                     return false;
                 }
+                if (transition.optional_availability && transition.kind != common_plan_workflow_transition_kind::tool) {
+                    error = "optional availability requires a tool transition"; return false;
+                }
                 if (transition.model_supplies_arguments &&
-                        (transition.kind != common_plan_workflow_transition_kind::tool ||
-                         transition.from_state != definition.start_state)) {
-                    error = "model-supplied workflow arguments are supported only on a graph entry tool transition";
+                        transition.kind != common_plan_workflow_transition_kind::tool) {
+                    error = "model-supplied workflow arguments require a tool transition";
                     return false;
                 }
                 if (transition.kind == common_plan_workflow_transition_kind::tool &&
@@ -417,6 +421,28 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
             }
         }
     }
+    for (const auto & blueprint : package.blueprints) for (const auto & binding : blueprint.workflow_bindings) {
+        if (binding.phase_bindings.empty()) continue;
+        for (const auto & phase : binding.phase_bindings) {
+            if (phase.second.empty() || std::none_of(blueprint.steps.begin(), blueprint.steps.end(),
+                    [&](const auto & step) { return step.id == phase.first; })) {
+                error = "workflow phase binding names an unknown or empty blueprint phase"; return false;
+            }
+        }
+        for (const auto & step : blueprint.steps) if (!binding.phase_bindings.count(step.id)) {
+            error = "workflow phase bindings omit a blueprint step"; return false;
+        }
+        const auto workflow = std::find_if(package.workflows.begin(), package.workflows.end(), [&](const auto & item) {
+            return item.definition.workflow_ref == binding.workflow_ref && item.definition.workflow_revision == binding.workflow_revision;
+        });
+        if (workflow == package.workflows.end()) continue;
+        for (const auto & phase : binding.phase_bindings) for (const auto & id : phase.second) {
+            if (std::none_of(workflow->definition.transitions.begin(), workflow->definition.transitions.end(),
+                    [&](const auto & transition) { return transition.id == id; })) {
+                error = "workflow phase binding names an unknown transition"; return false;
+            }
+        }
+    }
     for (const auto & workflow : package.workflows) {
         for (const auto & link : workflow.definition.continuation_links) {
             const auto target = std::find_if(package.workflows.begin(), package.workflows.end(), [&](const auto & candidate) {
@@ -519,7 +545,7 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                     if (!item["workflow_bindings"].is_array()) { error = "blueprint workflow_bindings must be an array"; return false; }
                     for (const auto & source : item["workflow_bindings"]) {
                         if (!source.is_object() || !source["workflow_ref"].is_string() || !source["workflow_revision"].is_string()) { error = "blueprint workflow binding is invalid"; return false; }
-                        blueprint.workflow_bindings.push_back({source["workflow_ref"].get<std::string>(), source["workflow_revision"].get<std::string>()});
+                        blueprint.workflow_bindings.push_back(common_plan_workflow_binding_from_json(source));
                     }
                 }
                 for (const auto & source : item["steps"]) {
@@ -604,7 +630,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         if (blueprint.next_action) value["next_action"] = *blueprint.next_action;
         if (!blueprint.constraints.empty()) { value["constraints"] = json::array(); for (const auto & constraint : blueprint.constraints) value["constraints"].push_back({{"id", constraint.id}, {"description", constraint.description}, {"hard", constraint.hard}}); }
         if (!blueprint.assumptions.empty()) { value["assumptions"] = json::array(); for (const auto & assumption : blueprint.assumptions) value["assumptions"].push_back({{"id", assumption.id}, {"statement", assumption.statement}, {"confidence", assumption.confidence}}); }
-        if (!blueprint.workflow_bindings.empty()) { value["workflow_bindings"] = json::array(); for (const auto & binding : blueprint.workflow_bindings) value["workflow_bindings"].push_back({{"workflow_ref", binding.workflow_ref}, {"workflow_revision", binding.workflow_revision}}); }
+        if (!blueprint.workflow_bindings.empty()) { value["workflow_bindings"] = json::array(); for (const auto & binding : blueprint.workflow_bindings) value["workflow_bindings"].push_back(common_plan_workflow_binding_to_json(binding)); }
         for (const auto & step : blueprint.steps) { json item = {{"id", step.id}, {"title", step.title}, {"objective", step.objective}}; if (!step.intended_contribution.empty() && step.intended_contribution != step.objective) item["contribution"] = step.intended_contribution; if (step.optional) item["optional"] = true; if (!step.depends_on.empty()) item["depends_on"] = step.depends_on; if (!step.required_evidence.empty()) item["required_evidence"] = step.required_evidence; value["steps"].push_back(std::move(item)); }
         root["blueprints"].push_back(std::move(value));
     }
@@ -652,6 +678,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                     {"kind", workflow_transition_kind_name(transition.kind)}, {"arguments", transition.arguments_template_json}, {"cost", transition.cost}};
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
                 if (transition.model_supplies_arguments) item["model_supplies_arguments"] = true;
+                if (transition.optional_availability) item["optional_availability"] = true;
                 if (!transition.model_instruction.empty()) item["model_instruction"] = transition.model_instruction;
                 if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
                     item["artifact_profile_ref"] = transition.artifact_profile_ref;

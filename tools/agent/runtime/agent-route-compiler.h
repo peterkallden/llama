@@ -34,6 +34,7 @@ struct common_agent_route_candidate {
     std::vector<std::string> required_context;
     std::vector<std::string> procedure_refs;
     std::vector<std::string> resolved_tools;
+    std::optional<common_plan_state> blueprint_definition;
 };
 
 struct common_agent_route_rejection {
