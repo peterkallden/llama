@@ -25,7 +25,7 @@ bool project_package(const common_agent_bootstrap_package & source,
     auto result=source;
     for(auto & b:result.blueprints){
         auto p=plans.get(manifest.definition_prefix+"blueprint:"+b.id,error);
-        if(!p || p->kind!=common_plan_kind::blueprint){error="library blueprint is missing";return false;}
+        if(!p || p->kind!=common_plan_kind::blueprint){error="library blueprint is missing: "+b.id;return false;}
         b.source_revision=p->source_revision;b.selection_description=p->selection_description;
         b.purpose=p->purpose;b.goal=p->goal;b.success_criteria=p->success_criteria;b.steps=p->steps;
         b.required_capabilities=p->required_capabilities;b.constraints=p->constraints;b.assumptions=p->assumptions;
@@ -91,7 +91,8 @@ std::string fingerprint(const common_agent_template_library_config & c,const std
 bool load_agent_template_libraries(const std::vector<common_agent_template_library_config> & libraries,
         common_memory_store & memories,common_plan_store & plans,agent_resource_store & resources,
         common_agent_bootstrap_embedder embed,common_agent_template_library_snapshot & snapshot,
-        std::vector<common_blueprint_candidate> & candidates,std::string & error){
+        std::vector<common_blueprint_candidate> & candidates,std::string & error,
+    bool restore_fresh_ephemeral_definitions){
     snapshot={};candidates.clear();error.clear();
     common_agent_template_library_snapshot staged;
     std::vector<common_blueprint_candidate> staged_candidates;
@@ -137,10 +138,25 @@ bool load_agent_template_libraries(const std::vector<common_agent_template_libra
             if(historical.library_id!=config.id || historical.level!=config.level || historical.namespace_id!=config.namespace_id || historical.project_id!=config.project_id)continue;
             common_agent_bootstrap_package old;
             std::string old_canonical;
-            if(!common_agent_package_parse_json(envelope["package"].dump(),old,error)||!common_agent_package_to_json(old,old_canonical,error,false)||
-                    fingerprint(config,old_canonical)!=historical.fingerprint||!verify(old,historical,memories,plans,error)){
+            if(!common_agent_package_parse_json(envelope["package"].dump(),old,error)||
+                    !common_agent_package_to_json(old,old_canonical,error,false)||
+                    fingerprint(config,old_canonical)!=historical.fingerprint){
                 if(error.empty())error="historical library receipt failed verification";return false;
             }
+            // Resource receipts survive an in-memory daemon restart. Restore
+            // only through the ordinary scoped installer, after validating the
+            // receipt, and only when the caller opened both stores fresh.
+            // Persistent/live stores must still expose missing definitions as
+            // integrity failures, rather than silently repairing corruption.
+            if (restore_fresh_ephemeral_definitions) {
+                common_agent_bootstrap_result restored;
+                if (!common_agent_install_bootstrap_package(memories,plans,installation(historical),
+                        old,embed,restored,error) || !restored.rejected_items.empty()) {
+                    if(error.empty())error="historical library restoration rejected a definition";
+                    return false;
+                }
+            }
+            if(!verify(old,historical,memories,plans,error)) return false;
             historical.resource_uri=resource.uri;historical.current=historical.fingerprint==m.fingerprint;
             if(historical.current){found=true;m.resource_uri=resource.uri;continue;}
             const bool duplicate=std::any_of(staged.revisions.begin(),staged.revisions.end(),[&](const auto & r){return r.library_id==historical.library_id&&r.fingerprint==historical.fingerprint;});

@@ -11,4 +11,7 @@ bool load_agent_template_libraries(
     common_memory_store & memories, common_plan_store & plans,
     agent_resource_store & resources, common_agent_bootstrap_embedder embed,
     common_agent_template_library_snapshot & snapshot,
-    std::vector<common_blueprint_candidate> & candidates, std::string & error);
+    std::vector<common_blueprint_candidate> & candidates, std::string & error,
+    // Only the daemon's fresh in-memory startup may reconstruct definitions
+    // from verified receipts. Live reload and persistent stores remain strict.
+    bool restore_fresh_ephemeral_definitions = false);

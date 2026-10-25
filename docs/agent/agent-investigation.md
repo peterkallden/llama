@@ -569,3 +569,23 @@ contracts cost 1842 standalone tokens; workflow/method text cost 489, case JSON
 which still did not fit. The actual Identity workflow route was selected, and
 its DSL action generation was rejected before sampling. This correction does
 not change orchestration, context limits or workflow candidate semantics.
+
+### Library revisions with ephemeral definition stores
+
+A persistent resource store may retain old library receipts even when memory
+and plan stores are both in-memory. A package upgrade changes its immutable
+fingerprint; reinstalling only the current package is insufficient to resolve
+older receipt definitions after a restart. The daemon's fresh in-memory startup
+now reinstalls those historical packages through the normal scoped installer,
+only after their receipt fingerprints have been validated, then performs the
+same complete definition verification. Only current revisions supply new-route
+candidates. Historical definitions remain available for their pinned references.
+
+This recovery is internal to startup when **both** definition stores have just
+been opened in-memory. Live reloads, persistent stores, changed owners and
+modified definitions retain strict verification. No receipt is discarded, no
+package revision is overwritten, and no new authority or configuration switch
+is exposed to the model.
+
+The restart contract and scope tests passed, and a real daemon restart loaded
+two revisions with nine current candidates after upgrading the package.

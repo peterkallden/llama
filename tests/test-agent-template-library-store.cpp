@@ -83,6 +83,23 @@ int main(){
     package.version="v2";package.procedures[0].content="Read and compare authorized evidence.";write();
     check(load_agent_template_libraries(configs,memories,plans,*resources,embed,reopened,candidates,error),error);
     check(reopened.revisions.size()==2&&candidates.front().persisted_id!=id&&reopened.permits(id,"a",""),"update lost pinned historical revision");
+    // Durable receipts with freshly opened ephemeral stores must retain both
+    // the current library and pinned historical definitions after restart.
+    common_memory_in_memory_store cold_memories;
+    common_plan_in_memory_store cold_plans;
+    check(cold_memories.open("",error)&&cold_plans.open("",error),error);
+    common_agent_template_library_snapshot cold_snapshot;
+    std::vector<common_blueprint_candidate> cold_candidates;
+    check(load_agent_template_libraries(configs,cold_memories,cold_plans,*resources,embed,
+        cold_snapshot,cold_candidates,error,true),error);
+    check(cold_snapshot.revisions.size()==2 && cold_snapshot.permits(id,"a","") &&
+        cold_plans.get(id,error).has_value() && cold_candidates.size()==1 &&
+        cold_candidates.front().persisted_id==candidates.front().persisted_id,
+        "ephemeral restart lost historical definitions or changed active candidates");
+    check(cold_plans.erase(id,error),error);
+    check(!load_agent_template_libraries(configs,cold_memories,cold_plans,*resources,embed,
+        cold_snapshot,cold_candidates,error),"live reload silently restored an erased historical definition");
+    check(cold_snapshot.revisions.empty()&&cold_candidates.empty(),"failed live verification exposed a snapshot");
     common_plan_state task;
     check(common_plan_instantiate_blueprint(*resolved, "task-a", "session-a", task, error), error);
     task.namespace_id="a";

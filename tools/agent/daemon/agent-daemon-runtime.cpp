@@ -1937,8 +1937,13 @@ bool import_daemon_template_libraries(const daemon_options & options,
     };
     auto snapshot=std::make_shared<common_agent_template_library_snapshot>();
     std::vector<common_blueprint_candidate> candidates;
+    const auto memory_backend = resolve_memory_backend(options.backend, options.memory_db, error);
+    if (!error.empty()) return false;
+    const auto plan_backend = resolve_plan_backend(options.plan_backend, options.plan_db, error);
+    if (!error.empty()) return false;
+    const bool restore_fresh_ephemeral = memory_backend == "in-memory" && plan_backend == "in-memory";
     if(!load_agent_template_libraries(libraries,*runtime.memory_store,*runtime.plan_store,*runtime.resource_store,
-            std::move(embed),*snapshot,candidates,error))return false;
+            std::move(embed),*snapshot,candidates,error,restore_fresh_ephemeral))return false;
     runtime.template_libraries=std::move(snapshot);runtime.template_library_candidates=std::move(candidates);
     std::fprintf(stderr,"agent template libraries: revisions=%zu candidates=%zu\n",
         runtime.template_libraries->revisions.size(),runtime.template_library_candidates.size());
