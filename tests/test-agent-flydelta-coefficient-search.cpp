@@ -285,6 +285,65 @@ int main() {
     CHECK(batch_trials_result.size() == 4);
     CHECK(batch_selection.selected);
 
+    auto calibrated_config = batch_config;
+    calibrated_config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
+    calibrated_config.max_candidates = 12;
+    calibrated_config.max_dose_retries = 0;
+    auto & calibration = calibrated_config.residual_calibration;
+    calibration.reference = "calibration:coefficient-contract";
+    calibration.model_profile_fingerprint = fixture().model_profile_fingerprint;
+    calibration.tokenizer_fingerprint = fixture().tokenizer_fingerprint;
+    calibration.template_fingerprint = fixture().template_fingerprint;
+    calibration.capture_layout_revision = "layer-input:v1";
+    calibration.token_selection = "generation_boundary";
+    calibration.layer_index = basis.layer_index;
+    calibration.sample_count = 1;
+    calibration.dimension = basis.dimension;
+    calibration.sample_norms = {5.0f};
+    calibration.median_norm = 5.0f;
+    calibrated_config.injection_capture_layout_revision = calibration.capture_layout_revision;
+    calibrated_config.injection_token_selection = calibration.token_selection;
+    CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_config, batch_baseline_runner,
+        coefficient_batch_runner, batch_trials_result, batch_selection, error));
+    const auto coarse_trial_count = batch_trials_result.size();
+    const common_flydelta_coefficient_search_batch_runner calibrated_batch_runner =
+        [&](const auto & current_fixture, const auto & current_basis, const auto & coefficients,
+                auto & results, auto & margins, auto & geometries, auto & available, std::string & current_error) {
+            if (!coefficient_batch_runner(current_fixture, current_basis, coefficients,
+                    results, margins, geometries, available, current_error)) return false;
+            for (size_t i = 0; i < margins.size(); ++i) {
+                results[i].overlay_applied = true;
+                margins[i].available = true;
+                margins[i].positive_total_logprob = coefficients[i][0] - 1.0f;
+                margins[i].negative_total_logprob = -2.0f;
+                margins[i].positive_token_count = margins[i].negative_token_count = 1;
+            }
+            return true;
+        };
+    CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_config, batch_baseline_runner,
+        calibrated_batch_runner, batch_trials_result, batch_selection, error));
+    CHECK(batch_trials_result.size() >= coarse_trial_count);
+    CHECK(std::any_of(batch_trials_result.begin(), batch_trials_result.end(), [](const auto & trial) {
+        return trial.mutation_kind == "dose_refinement";
+    }));
+    CHECK(batch_trials_result.size() < calibrated_config.max_candidates);
+    CHECK(batch_selection.selected);
+    for (const auto & trial : batch_trials_result) {
+        CHECK(trial.residual_calibration_ref == calibration.reference);
+        CHECK(trial.requested_residual_fraction > 0);
+        CHECK(trial.applied_residual_fraction > 0);
+        CHECK(std::fabs(trial.applied_intervention_norm /
+            calibration.median_norm - trial.applied_residual_fraction) < 1e-6f);
+    }
+    calibrated_config.residual_calibration.layer_index = basis.layer_index + 1;
+    const size_t before_invalid = coefficient_batch_calls;
+    CHECK(!common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_config, batch_baseline_runner,
+        coefficient_batch_runner, batch_trials_result, batch_selection, error));
+    CHECK(coefficient_batch_calls == before_invalid);
+
     common_flydelta_coefficient_search_config batched_tfo_config = tfo_config;
     batched_tfo_config.max_candidates = 5;
     batched_tfo_config.max_batch_arms = 2;

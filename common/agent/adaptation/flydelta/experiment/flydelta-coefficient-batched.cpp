@@ -247,7 +247,12 @@ bool run_coefficient_arms_batched(
     results.resize(requested.size());
     std::vector<size_t> retry_indices;
     std::vector<std::vector<float>> retry_coefficients;
+    std::vector<common_flydelta_dose_state> calibrated_states(
+        config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::raw_coefficients
+        ? 0 : requested.size());
     for (size_t index = 0; index < requested.size(); ++index) {
+        auto & active_dose_state = config.experimental_dose_mode ==
+            common_flydelta_coefficient_dose_mode::raw_coefficients ? dose_state : calibrated_states[index];
         auto & result = results[index];
         result = {};
         result.requested_coefficients = requested[index];
@@ -276,7 +281,7 @@ bool run_coefficient_arms_batched(
             result.geometry_available ? result.geometry.progress : 0.0f,
             result.geometry_available ? result.geometry.leakage : 0.0f,
         };
-        if (!common_flydelta_dose_observe(config.dose_policy, dose_state,
+        if (!common_flydelta_dose_observe(config.dose_policy, active_dose_state,
                 observation, result.dose_decision, error)) return false;
         result.dose_evaluated = true;
         result.dose_safety_limited = result.dose_decision.safety_limited;
@@ -305,6 +310,9 @@ bool run_coefficient_arms_batched(
         return false;
     }
     for (size_t retry = 0; retry < retry_indices.size(); ++retry) {
+        auto & active_dose_state = config.experimental_dose_mode ==
+            common_flydelta_coefficient_dose_mode::raw_coefficients
+            ? dose_state : calibrated_states[retry_indices[retry]];
         auto & result = results[retry_indices[retry]];
         result.counterfactual = std::move(counterfactuals[retry]);
         result.margin = std::move(margins[retry]);
@@ -323,7 +331,7 @@ bool run_coefficient_arms_batched(
             result.geometry_available ? result.geometry.progress : 0.0f,
             result.geometry_available ? result.geometry.leakage : 0.0f,
         };
-        if (!common_flydelta_dose_observe(config.dose_policy, dose_state,
+        if (!common_flydelta_dose_observe(config.dose_policy, active_dose_state,
                 observation, result.dose_decision, error)) return false;
         result.dose_safety_limited = true;
         result.dose_reason = "retry_lower: " + result.dose_decision.reason;
@@ -359,8 +367,13 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
             trials, selection, error, adviser);
     }
     std::vector<std::vector<float>> proposals;
-    if (!common_flydelta_propose_low_rank_coefficients(
-            config, basis.vectors.size(), proposals, error)) return false;
+    std::vector<float> requested_fractions;
+    auto proposal_config = config;
+    const bool refine_dose = config.experimental_dose_mode ==
+        common_flydelta_coefficient_dose_mode::direction_dose && config.max_candidates >= 5;
+    if (refine_dose) proposal_config.max_candidates -= 2;
+    if (!common_flydelta_propose_calibrated_coefficients(
+            fixture, basis, proposal_config, proposals, error, &requested_fractions)) return false;
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
     common_flydelta_representation_diagnostics baseline_geometry;
@@ -374,7 +387,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
     common_flydelta_dose_state dose_state;
     std::vector<std::vector<float>> requested_coefficients;
     for (size_t index = 1; index < proposals.size(); ++index) {
-        if (common_flydelta_coefficient_detail::norm(proposals[index]) <= config.max_l2_norm) {
+        if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients ||
+                common_flydelta_coefficient_detail::norm(proposals[index]) <= config.max_l2_norm) {
             requested_coefficients.push_back(proposals[index]);
         }
     }
@@ -382,7 +396,61 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
     if (!common_flydelta_coefficient_detail::run_coefficient_arms_batched(
             fixture, basis, config, batch_runner,
             dose_state, requested_coefficients, arms, error)) return false;
-    for (const auto & arm : arms) {
+    const size_t coarse_arm_count = arms.size();
+    if (refine_dose && !arms.empty()) {
+        size_t best = 0;
+        float best_score = -std::numeric_limits<float>::infinity();
+        for (size_t i = 0; i < arms.size(); ++i) {
+            if (config.use_dose_controller && arms[i].dose_evaluated &&
+                    arms[i].dose_decision.action != common_flydelta_dose_action::accept) continue;
+            common_flydelta_coefficient_trial candidate;
+            common_flydelta_coefficient_trial_set_observation(candidate, baseline, arms[i].counterfactual);
+            candidate.geometry_available = arms[i].geometry_available;
+            candidate.geometry = arms[i].geometry;
+            candidate.coefficients = arms[i].executed_coefficients;
+            const float score = common_flydelta_coefficient_detail::diagnostic_fitness(
+                candidate, baseline_margin, arms[i].margin, config);
+            if (std::isfinite(score) && score > best_score && arms[i].margin.available) {
+                best = i; best_score = score;
+            }
+        }
+        if (std::isfinite(best_score)) {
+            std::vector<std::vector<float>> refinement;
+            std::vector<float> refinement_doses;
+            for (float factor : {0.75f, 1.25f}) {
+                auto coefficients = arms[best].executed_coefficients;
+                float previous_norm = 0;
+                if (!common_flydelta_intervention_norm(basis, coefficients, previous_norm, error)) return false;
+                const float dose = previous_norm / config.residual_calibration.median_norm * factor;
+                if (dose > 1) continue;
+                for (float & coefficient : coefficients) coefficient *= factor;
+                coefficients = common_flydelta_coefficient_detail::bound_coefficients(
+                    std::move(coefficients), config.max_l2_norm);
+                float actual = 0;
+                if (!common_flydelta_intervention_norm(basis, coefficients, actual, error)) return false;
+                if (actual <= 1e-12f) continue;
+                bool duplicate = false;
+                for (const auto & previous : proposals) {
+                    auto difference = coefficients;
+                    for (size_t i = 0; i < difference.size(); ++i) difference[i] -= previous[i];
+                    float distance = 0;
+                    if (!common_flydelta_intervention_norm(basis, difference, distance, error)) return false;
+                    if (distance <= actual * 1e-6f) { duplicate = true; break; }
+                }
+                if (duplicate) continue;
+                refinement.push_back(coefficients);
+                proposals.push_back(coefficients);
+                refinement_doses.push_back(dose);
+            }
+            std::vector<common_flydelta_coefficient_detail::coefficient_arm_result> refined;
+            if (!common_flydelta_coefficient_detail::run_coefficient_arms_batched(
+                    fixture, basis, config, batch_runner, dose_state, refinement, refined, error)) return false;
+            arms.insert(arms.end(), std::make_move_iterator(refined.begin()), std::make_move_iterator(refined.end()));
+            requested_fractions.insert(requested_fractions.end(), refinement_doses.begin(), refinement_doses.end());
+        }
+    }
+    for (size_t arm_index = 0; arm_index < arms.size(); ++arm_index) {
+        const auto & arm = arms[arm_index];
         common_flydelta_coefficient_trial trial;
         trial.coefficients = arm.executed_coefficients;
         trial.requested_coefficients = arm.requested_coefficients;
@@ -390,8 +458,21 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
             arm.requested_coefficients);
         trial.executed_strength = common_flydelta_coefficient_detail::norm(
             arm.executed_coefficients);
+        if (!common_flydelta_intervention_norm(basis, arm.requested_coefficients,
+                trial.requested_intervention_norm, error) ||
+            !common_flydelta_intervention_norm(basis, arm.executed_coefficients,
+                trial.applied_intervention_norm, error)) return false;
         trial.dose_action = arm.dose_decision.action;
         trial.relative_dose = arm.dose_decision.relative_dose;
+        if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients) {
+            trial.requested_residual_fraction = requested_fractions.at(arm_index + 1);
+            trial.requested_intervention_norm = trial.requested_residual_fraction *
+                config.residual_calibration.median_norm;
+            trial.applied_residual_fraction = trial.applied_intervention_norm /
+                config.residual_calibration.median_norm;
+            trial.residual_calibration_ref = config.residual_calibration.reference;
+            trial.mutation_kind = arm_index < coarse_arm_count ? "calibrated_direction" : "dose_refinement";
+        }
         trial.dose_evaluated = arm.dose_evaluated;
         trial.dose_safety_limited = arm.dose_safety_limited;
         trial.dose_reason = arm.dose_reason;
@@ -408,6 +489,9 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
     }
     for (size_t index = 0; index < trials.size(); ++index) {
         const auto & trial = trials[index];
+        if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients &&
+                config.use_dose_controller && trial.dose_evaluated &&
+                trial.dose_action != common_flydelta_dose_action::accept) continue;
         if (!common_flydelta_coefficient_detail::valid_outcome(trial.outcome) ||
                 trial.outcome != common_flydelta_counterfactual_outcome::helped ||
                 !trial.executed || !trial.verifier_known) continue;

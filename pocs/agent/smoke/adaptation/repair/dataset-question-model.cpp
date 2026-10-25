@@ -445,6 +445,11 @@ common_agent_generation_request make_request(const options & value, const std::s
 }
 
 int main(int argc, char ** argv) {
+    const char * dose_environment = std::getenv("LLAMA_AGENT_DOSE_EXPERIMENT");
+    const std::string dose_experiment = dose_environment ? dose_environment : "raw";
+    if (dose_experiment != "raw" && dose_experiment != "normalized" && dose_experiment != "direction-dose") {
+        std::cerr << "invalid LLAMA_AGENT_DOSE_EXPERIMENT\n"; return 2;
+    }
     options value;
     if (!parse_args(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
@@ -611,6 +616,13 @@ int main(int argc, char ** argv) {
     capture->position = common_flydelta_capture_position::generation_boundary;
     capture->max_bytes = 4U * 1024U * 1024U;
     capture->model_profile_fingerprint = "sha256:flydelta-dataset-question-repair";
+    if (dose_environment) {
+        const char * fingerprint = std::getenv("LLAMA_AGENT_DOSE_MODEL_FINGERPRINT");
+        if (!fingerprint || !*fingerprint) {
+            host.close(); std::cerr << "dose comparison requires a model content fingerprint\n"; return 2;
+        }
+        capture->model_profile_fingerprint = fingerprint;
+    }
     capture->capture_layout_revision = "layer-input:generation-boundary:v1";
 
     std::filesystem::path learning_ledger_path;
@@ -634,6 +646,7 @@ int main(int argc, char ** argv) {
     std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
     std::map<std::string, bootstrap_case> bootstrap_cases_by_delta;
     std::map<std::string, std::vector<common_flydelta_behavior_delta>> deltas_by_case;
+    std::map<std::string, common_flydelta_hidden_state_capture> dose_calibration_captures;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0, synthetic_repairs = 0,
         repair_echo_failures = 0;
     const bool replay_mode = suite.value("replay_mode", false);
@@ -862,6 +875,7 @@ int main(int argc, char ** argv) {
                       << " mode=host.forced_context.v1 common_prefix=original_task"
                       << " baseline=observed_output preferred=host_canonical learning_credit=none\n";
             const auto & baseline_capture = *capture_results[0].flydelta_capture;
+            dose_calibration_captures[id] = baseline_capture;
             const auto & preferred_capture = *capture_results[1].flydelta_capture;
             common_flydelta_capture_manifest manifest;
             manifest.id = "flydelta://capture/dataset-repair-replay/" + id;
@@ -942,6 +956,7 @@ int main(int argc, char ** argv) {
         manifest.capture_layout_revision = capture->capture_layout_revision;
         manifest.evidence_hash = "sha256:dataset-repair:" + id;
         manifest.redaction_attested = true;
+        dose_calibration_captures[id] = *failed_result.flydelta_capture;
         manifest.captured_bytes = (failed_result.flydelta_capture->values.size() +
             repaired_result.flydelta_capture->values.size()) * sizeof(float);
         std::vector<common_flydelta_behavior_delta> deltas;
@@ -1914,6 +1929,51 @@ int main(int argc, char ** argv) {
                 deep_backend_batch_used = false;
                 common_flydelta_deep_search_config rank_config = deep_config;
                 rank_config.max_rank = requested_rank;
+                if (dose_environment) {
+                    if (!value.low_rank_rank_sweep || value.force_tfo_lite) {
+                        host.close(); std::cerr << "dose comparison requires coordinate rank-sweep mode\n"; return 2;
+                    }
+                    auto & coefficients = rank_config.coefficients;
+                    coefficients.max_candidates = 16;
+                    // No retries: baseline + 15 proposals is the same inference
+                    // budget in all three conditions; unavailable arms are explicit.
+                    coefficients.max_dose_retries = 0;
+                    if (dose_experiment != "raw") {
+                        std::vector<common_flydelta_hidden_state_capture> calibration_captures;
+                        std::vector<std::string> calibration_ids;
+                        for (const auto & item : dose_calibration_captures) {
+                            if (item.first == deep_case.id) continue;
+                            calibration_captures.push_back(item.second); calibration_ids.push_back(item.first);
+                        }
+                        if (!common_flydelta_calibrate_residual_dose(calibration_captures,
+                                deep_directions.front().direction.layer_index,
+                                "dose-calibration:" + deep_case.id,
+                                "generation_boundary", coefficients.residual_calibration, error)) {
+                            host.close(); std::cerr << "dose calibration unavailable: " << error << '\n'; return 1;
+                        }
+                        coefficients.residual_calibration.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
+                        coefficients.residual_calibration.template_fingerprint = deep_fixture.template_fingerprint;
+                        coefficients.injection_capture_layout_revision = capture->capture_layout_revision;
+                        coefficients.injection_token_selection = "generation_boundary";
+                        coefficients.experimental_dose_mode = dose_experiment == "normalized"
+                            ? common_flydelta_coefficient_dose_mode::residual_fraction
+                            : common_flydelta_coefficient_dose_mode::direction_dose;
+                        const auto & c = coefficients.residual_calibration;
+                        std::cout << "flydelta_dose_calibration " << ordered_json({
+                            {"schema_version", c.schema_version}, {"reference", c.reference},
+                            {"model_profile_fingerprint", c.model_profile_fingerprint},
+                            {"tokenizer_fingerprint", c.tokenizer_fingerprint},
+                            {"template_fingerprint", c.template_fingerprint},
+                            {"capture_layout_revision", c.capture_layout_revision},
+                            {"token_selection", c.token_selection}, {"layer", c.layer_index},
+                            {"median_norm", c.median_norm}, {"sample_count", c.sample_count},
+                            {"dimension", c.dimension}, {"sample_norms", c.sample_norms},
+                            {"capture_position", common_flydelta_capture_position_name(c.position)},
+                            {"token_index", c.token_index},
+                            {"source_scenarios", calibration_ids}, {"excluded_evaluation_scenario", deep_case.id},
+                            {"learning_credit_granted", false}}).dump() << std::endl;
+                    }
+                }
                 common_flydelta_deep_search_result deep_result;
                 const auto deep_started = std::chrono::steady_clock::now();
                 if (!common_flydelta_run_deep_search_batched(
@@ -1986,7 +2046,18 @@ int main(int argc, char ** argv) {
                         {"task", deep_case.question}, {"arm_id", trial.arm_id},
                         {"raw_output_trace_id", trial.arm_id},
                         {"requested_rank", requested_rank}, {"trial_index", trial_index},
+                        {"basis_identity", common_flydelta_coefficient_basis_identity(deep_result.basis)},
                         {"coefficients", trial.coefficients}, {"layer", deep_result.layer_index},
+                        {"dose_experiment", dose_experiment},
+                        {"calibration_ref", trial.residual_calibration_ref},
+                        {"requested_coefficient_norm", trial.requested_strength},
+                        {"executed_coefficient_norm", trial.executed_strength},
+                        {"requested_residual_fraction", trial.requested_residual_fraction},
+                        {"applied_residual_fraction", trial.applied_residual_fraction},
+                        {"requested_intervention_norm", trial.requested_intervention_norm},
+                        {"applied_intervention_norm", trial.applied_intervention_norm},
+                        {"behavior_delta_relative_displacement", trial.relative_dose},
+                        {"dose_reason", trial.dose_reason},
                         {"mutation", trial.mutation_kind},
                         {"executed", trial.executed}, {"host_evaluated", trial.host_evaluated},
                         {"verifier_known", trial.verifier_known},
@@ -2006,6 +2077,10 @@ int main(int argc, char ** argv) {
                         {"evidence_ref", trial.evidence_ref},
                         {"search_fitness", trial.search_fitness},
                     };
+                    if (trial.residual_calibration_ref.empty()) {
+                        arm["requested_residual_fraction"] = nullptr;
+                        arm["applied_residual_fraction"] = nullptr;
+                    }
                     if (trial.margin.available) {
                         arm["margin_normalized"] = trial.margin.normalized_delta();
                     }

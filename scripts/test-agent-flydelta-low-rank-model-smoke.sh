@@ -19,11 +19,17 @@ work_dir=$(agent_smoke_prepare_workdir flydelta-low-rank-model)
 
 repair_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-dataset-question-repair-model-smoke)
 cvec_bin=$(agent_smoke_binary "$build_dir" llama-agent-flydelta-cvec-batch-model-smoke)
-agent_smoke_build_if_requested llama-agent-flydelta-dataset-question-repair-model-smoke llama-agent-flydelta-cvec-batch-model-smoke
+if [[ -n "${LLAMA_AGENT_DOSE_EXPERIMENT:-}" ]]; then
+    agent_smoke_build_if_requested llama-agent-flydelta-dataset-question-repair-model-smoke
+else
+    agent_smoke_build_if_requested llama-agent-flydelta-dataset-question-repair-model-smoke llama-agent-flydelta-cvec-batch-model-smoke
+fi
 agent_smoke_require_file "$model" "Qwen Instruct model"
 agent_smoke_require_file "$suite" "FlyDelta dataset repair replay"
 agent_smoke_require_executable "$repair_bin" "FlyDelta dataset question repair model smoke"
-agent_smoke_require_executable "$cvec_bin" "FlyDelta native cvec batch smoke"
+if [[ -z "${LLAMA_AGENT_DOSE_EXPERIMENT:-}" ]]; then
+    agent_smoke_require_executable "$cvec_bin" "FlyDelta native cvec batch smoke"
+fi
 
 rank_log="$work_dir/low-rank-rank-sweep.log"
 rank_exit=0
@@ -89,6 +95,15 @@ elif [[ "$rank_exit" -eq 124 ]] && grep -Fq 'flydelta_low_rank_rank_sweep group=
 else
     echo "rank_comparison=failed exit=${rank_exit}; log=${rank_log}" >&2
     rank_status=failed
+fi
+
+if [[ -n "${LLAMA_AGENT_DOSE_EXPERIMENT:-}" ]]; then
+    if [[ "$rank_status" != completed ]]; then
+        echo "dose comparison incomplete: rank_status=$rank_status" >&2
+        exit 1
+    fi
+    echo "dose_condition=$LLAMA_AGENT_DOSE_EXPERIMENT trace=$rank_log"
+    exit 0
 fi
 
 # The rank sweep keeps its existing Deep runner intentionally visible in the

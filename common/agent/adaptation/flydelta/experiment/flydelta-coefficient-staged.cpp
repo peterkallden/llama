@@ -36,7 +36,11 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
     std::vector<size_t> ranking;
     ranking.reserve(diagnostic_trials.size());
     for (size_t index = 0; index < diagnostic_trials.size(); ++index) {
-        if (diagnostic_trials[index].executed) ranking.push_back(index);
+        const auto & trial = diagnostic_trials[index];
+        if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients &&
+                config.use_dose_controller && trial.dose_evaluated &&
+                trial.dose_action != common_flydelta_dose_action::accept) continue;
+        if (trial.executed) ranking.push_back(index);
     }
     std::stable_sort(ranking.begin(), ranking.end(), [&](const size_t left, const size_t right) {
         if (diagnostic_trials[left].search_fitness != diagnostic_trials[right].search_fitness) {
@@ -129,6 +133,13 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         full_trial.margin_comparison.baseline = baseline_margin;
         full_trial.margin_comparison.candidate = full_margins[rank];
         common_flydelta_coefficient_trial_set_observation(full_trial, baseline, candidate);
+        if (candidate.overlay_applied) {
+            if (!common_flydelta_intervention_norm(basis, full_trial.coefficients,
+                    full_trial.applied_intervention_norm, error)) return false;
+            if (!full_trial.residual_calibration_ref.empty())
+                full_trial.applied_residual_fraction = full_trial.applied_intervention_norm /
+                    config.residual_calibration.median_norm;
+        }
         full_trial.geometry_available = full_geometry_available[rank];
         full_trial.geometry = full_geometries[rank];
         full_trial.iteration = diagnostic.iteration;

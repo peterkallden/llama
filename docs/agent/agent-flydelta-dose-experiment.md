@@ -42,7 +42,8 @@ calibration fails explicitly. Numerically cancelling directions are skipped;
 all-degenerate candidate sets fail. Duplicate composed interventions are removed
 before inference. Calibrated dose-control state is isolated per arm and its retry;
 it is not reused across different directions, layers or searches. Legacy state
-sharing is unchanged. Geometry does not grant HELPED or activation authority.
+sharing is unchanged. Rejected calibrated doses are excluded from refinement and the full-generation
+frontier. Geometry does not grant HELPED or activation authority.
 
 ## Prepared verification
 

@@ -22,6 +22,10 @@ void common_flydelta_coefficient_trial_set_observation(
     target.host_evaluated = baseline.host_evaluated && candidate.host_evaluated;
     target.verifier_known = baseline.verifier_known && candidate.verifier_known;
     target.overlay_applied = candidate.overlay_applied;
+    if (!candidate.overlay_applied) {
+        target.applied_intervention_norm = 0;
+        target.applied_residual_fraction = 0;
+    }
 }
 
 bool common_flydelta_coefficient_trial_to_region(
