@@ -1093,7 +1093,8 @@ common_tool_execution_result execute_investigation_tool(
         for (const auto * event : ordered_events) {
             markdown += "- " + (event->time.has_event_time ? std::to_string(event->time.event_time_ms) : std::string("time unknown")) +
                 " — " + safe_text(event->event_type) + " (`" + safe_text(event->id) + "`; document `" +
-                safe_text(event->source_document_id) + "`" + (event->source_index.empty() ? std::string() : "; index `" + safe_text(event->source_index) + "`") +
+                safe_text(event->source_document_id) + "`; outcome `" +
+                safe_text(event->outcome.empty() ? "unknown" : event->outcome) + "`" + (event->source_index.empty() ? std::string() : "; index `" + safe_text(event->source_index) + "`") +
                 ") [raw: " + safe_text(event->raw_resource_uri) + "]\n";
         }
         markdown += "\n## Relations\n\n";
@@ -1682,6 +1683,7 @@ common_tool_execution_result execute_investigation_tool(
                 source_document_id.empty() ? event_id : source_document_id, event_type, event_time,
                 refs, {}, {}, {}, {}});
             collected_events.back().source_index = source_index;
+            collected_events.back().outcome = get_alias(row, {"event.outcome", "event_outcome"});
             if (file_import) {
                 auto & event = collected_events.back();
                 event.source_byte_offset = row.value("@source.byte_offset", uint64_t(0));
@@ -1704,6 +1706,7 @@ common_tool_execution_result execute_investigation_tool(
             existing_events.insert(event_id);
             normalized_rows.push_back({{"event_id", event_id}, {"source_index", source_index},
                 {"source_document_id", source_document_id}, {"event_type", event_type},
+                {"outcome", collected_events.back().outcome},
                 {"source_byte_offset",collected_events.back().source_byte_offset},
                 {"source_byte_length",collected_events.back().source_byte_length},
                 {"source_line",collected_events.back().source_line},{"parser_version",collected_events.back().parser_version},
@@ -2041,7 +2044,7 @@ common_tool_execution_result execute_investigation_tool(
                 {"source_document_id", event.source_document_id},
                 {"source_byte_offset",event.source_byte_offset},{"source_byte_length",event.source_byte_length},
                 {"source_line",event.source_line},{"parser_version",event.parser_version},
-                {"event_type", event.event_type}, {"time", {{"event_time_ms", event.time.event_time_ms},
+                {"event_type", event.event_type}, {"outcome", event.outcome}, {"time", {{"event_time_ms", event.time.event_time_ms},
                     {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
                     {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},
                 {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}};

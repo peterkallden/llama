@@ -134,7 +134,7 @@ public:
     std::set<std::string> denied_sources;
     std::map<std::string, common_investigation_case_revision> cases;
     std::vector<common_investigation_report_index_entry> reports;
-    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id","event.outcome"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2","success"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
 
     bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
         if (denied_sources.count(source_id) || (source_id != source.ref.source_provider &&
@@ -1777,6 +1777,7 @@ int main() {
     investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
     investigation_store.source.columns = {{"event.id", common_agent_dataset_column_type::string, false},
         {"event.type", common_agent_dataset_column_type::string, false},
+        {"event.outcome", common_agent_dataset_column_type::string, true},
         {"@timestamp", common_agent_dataset_column_type::string, true},
         {"user.id", common_agent_dataset_column_type::string, true},
         {"host.name", common_agent_dataset_column_type::string, true},
@@ -1798,6 +1799,7 @@ int main() {
     };
     investigation_case.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
         {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}, {}}};
+    investigation_case.events[0].outcome = "success";
     investigation_case.relations = {{"rel:1", "logs", "user:logs:alice", "host:logs:app1",
         common_investigation_relation_kind::authenticated_to, 200, 200, true, 1,
         "auth-v1", "1", "observed", {"event:1"}}};
@@ -2022,7 +2024,7 @@ int main() {
                 relation.evidence_event_ids.end();
         }));
     const auto & newly_collected_event = investigation_store.cases.at("graph-case").events[1];
-    if (newly_collected_event.entity_roles.at("user") != "entity:logs:user:alice" ||
+    if (newly_collected_event.outcome != "success" || newly_collected_event.entity_roles.at("user") != "entity:logs:user:alice" ||
             newly_collected_event.entity_roles.at("host") != "entity:logs:host:db2") {
         std::cerr << "new authentication events must preserve user and host endpoint roles\n";
         return 20;
@@ -2183,6 +2185,30 @@ int main() {
             result.output.find("unlinked_observations") == std::string::npos) {
         std::cerr << "unmatched profile limitations must survive relation building and publication\n";
         return 22;
+    }
+    auto outcome_case = collision_case;
+    outcome_case.case_id = "authentication-outcomes";
+    investigation_store.source.columns.push_back({"event_outcome", common_agent_dataset_column_type::string, true});
+    investigation_store.seed(outcome_case);
+    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","event_outcome"],"rows":[["success","authentication",300,"alice","app","success"],["failed","authentication",400,"alice","app","failure"],["unknown","authentication",500,"alice","app",null]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    result = investigation_registry.execute({"investigation.collect", R"({"case_id":"authentication-outcomes","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    const auto & outcomes = investigation_store.cases.at("authentication-outcomes");
+    if (!result.ok || outcomes.events.size() != 3 || outcomes.relations.size() != 1 ||
+            outcomes.events[0].outcome != "success" || outcomes.events[1].outcome != "failure" ||
+            !outcomes.events[2].outcome.empty() || outcomes.relations[0].event_count != 1 ||
+            outcomes.relations[0].evidence_event_ids != std::vector<std::string>{outcomes.events[0].id} ||
+            outcomes.relations[0].first_seen_ms != 300 || outcomes.relations[0].last_seen_ms != 300 ||
+            outcomes.gaps.empty() ||
+            nlohmann::json::parse(investigation_resources.requests.back().text)["events"][1]["outcome"] != "failure") {
+        std::cerr << "collection must preserve outcomes without counting failed or unknown logons as authenticated access\n";
+        return 61;
+    }
+    result = investigation_registry.execute({"investigation.events", R"({"case_id":"authentication-outcomes","case_revision":2,"limit":20})"});
+    const auto outcome_page = nlohmann::json::parse(result.output);
+    if (!result.ok || outcome_page["events"].size() != 3 ||
+            outcome_page["events"][1]["outcome"] != "failure") {
+        std::cerr << "paginated event consumers must receive the retained source outcome\n";
+        return 62;
     }
     auto logical_case = collision_case;
     logical_case.case_id = "logical-field-case";

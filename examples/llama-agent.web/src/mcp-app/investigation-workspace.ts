@@ -193,7 +193,7 @@ if (!window.__investigationWorkspace) {
           let profile: Json | null = null;
           try { profile = source.log_parser_profile_json ? JSON.parse(source.log_parser_profile_json) : null; } catch { /* The host reports invalid saved profiles. */ }
           if (profile) { format.value = String(profile.format); fields.value = JSON.stringify(profile.fields, null, 2); format.disabled = true; fields.readOnly = true; }
-          const help = document.createElement("small"); help.textContent = "Explicit mapping: normalized field → exact JSON key/JSON pointer or CSV header. event.type is required. Up to 200 records per page; unknown formats are not guessed.";
+          const help = document.createElement("small"); help.textContent = "Explicit mapping: normalized field → exact JSON key/JSON pointer or CSV header. event.type is required. Map event.outcome to preserve authentication success/failure; missing outcomes do not prove success. Up to 200 records per page; unknown formats are not guessed.";
           const progress = document.createElement("small"); progress.textContent = `Processed ${source.log_import_next_record ?? 0} records · rejected ${source.log_import_rejected_records ?? 0}`;
           const button = document.createElement("button"); button.type = "button";
           button.textContent = profile ? "Import next page" : "Import first page";
@@ -688,7 +688,7 @@ if (!window.__investigationWorkspace) {
       const button = document.createElement("button"); button.className = `event${selectedEvent === event.id ? " selected" : ""}`;
       const time = document.createElement("time"); time.textContent = event.time?.has_event_time
         ? new Date(event.time.event_time_ms).toLocaleString() : "Unknown event time";
-      const title = document.createElement("strong"); title.textContent = event.event_type || "Event";
+      const title = document.createElement("strong"); title.textContent = `${event.event_type || "Event"} · outcome: ${event.outcome || "unknown"}`;
       const id = document.createElement("small"); id.textContent = `Source: ${event.source_index ? `${event.source_index}/` : ""}${event.source_document_id}`;
       button.append(time, title, id); button.addEventListener("click", () => { selectedEvent = event.id; showEvidence(event); });
       list.append(button);
@@ -698,7 +698,7 @@ if (!window.__investigationWorkspace) {
   function showEvidence(event: Json) {
     selectedEvent = event.id;
     q("#evidence").textContent = JSON.stringify({
-      event_id: event.id, source_index: event.source_index, source_document_id: event.source_document_id, event_type: event.event_type,
+      event_id: event.id, source_index: event.source_index, source_document_id: event.source_document_id, event_type: event.event_type, outcome: event.outcome || "unknown",
       event_time: event.time, entities: event.entity_ids, raw_resource_uri: event.raw_resource_uri,
       normalized_resource_uri: event.normalized_resource_uri,
       source_resource_uri: event.source_resource_uri, source_byte_offset: event.source_byte_offset,

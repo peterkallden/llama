@@ -25,7 +25,7 @@ inline bool common_investigation_parse_log(const std::string & text,
     using json = nlohmann::ordered_json;
     result = {};
     error.clear();
-    const std::set<std::string> allowed = {"@timestamp", "event.type", "event.id", "user.id", "user.name",
+    const std::set<std::string> allowed = {"@timestamp", "event.type", "event.id", "event.outcome", "user.id", "user.name",
         "host.id", "host.name", "source.ip", "destination.ip", "process.entity_id", "process.pid", "process.start",
         "process.parent.entity_id", "process.parent.pid", "process.parent.start", "file.path", "file.hash.sha256",
         "trace.id", "message.id"};

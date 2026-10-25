@@ -179,6 +179,8 @@ struct common_investigation_event {
     uint64_t source_byte_length = 0;
     uint64_t source_line = 0;
     std::string parser_version;
+    // Source-reported ECS outcome; empty means it was not collected.
+    std::string outcome;
 };
 
 struct common_investigation_relation {

@@ -2277,7 +2277,7 @@ bool validate_agent_host_config(
         static const std::unordered_set<std::string> mapped_fields = {
             "event_id", "event_time", "collected_time", "host_id", "host_name", "user_id",
             "source_ip", "destination_ip", "process_id", "process_start_time", "file_hash",
-            "trace_id", "message_id", "event_type"
+            "trace_id", "message_id", "event_type", "event_outcome"
         };
         for (const auto & field : source.fields) {
             if (!mapped_fields.count(field.first) || field.second.empty() || field.second.size() > 256) {

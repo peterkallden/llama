@@ -22,6 +22,7 @@ common_investigation_case_revision sample() {
                       {"host:2", "elastic-a", common_investigation_entity_kind::host, "h-2", "host", "", 0, 0}};
     value.events = {{"event:1", "elastic-a", "doc:1", "auth", {200, 300, 5, true}, {"user:1", "host:1"}, "resource://raw/1", "resource://normalized/1", {}, {}},
                     {"event:2", "elastic-a", "doc:2", "auth", {400, 500, 5, true}, {"user:1", "host:2"}, "resource://raw/2", "resource://normalized/2", {}, {}}};
+    for (auto & event : value.events) event.outcome = "success";
     value.relations = {{"rel:1", "elastic-a", "user:1", "host:1", common_investigation_relation_kind::authenticated_to, 200, 200, true, 1, "auth-v1", "1", "observed", {"event:1"}},
                        {"rel:2", "elastic-a", "user:1", "host:2", common_investigation_relation_kind::authenticated_to, 400, 400, true, 1, "auth-v1", "1", "observed", {"event:2"}}};
     return value;
@@ -233,6 +234,37 @@ int main() {
             rebuilt[0].confidence_label == "observed" &&
             rebuilt[0].evidence_event_ids.size() == 1,
           "derived edges must retain their rule and concrete event evidence");
+    for (const auto * outcome : {"failure", "unknown", "", "SUCCESS"}) {
+        auto unsuccessful = value.events;
+        unsuccessful[0].outcome = outcome;
+        check(common_investigation_build_relations("elastic-a", value.entities, unsuccessful,
+                relation_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 1 &&
+                rebuilt_again[0].evidence_event_ids == std::vector<std::string>({"event:2"}) &&
+                rebuilt_again[0].rule_revision == "2",
+              "authentication failure or unproven success must never become authenticated_to");
+        check(std::string(outcome) == "failure" || !limitations.empty(),
+              "missing and unknown authentication outcomes require an explicit limitation");
+    }
+    auto mixed = value.events;
+    auto failed_same_target = mixed[0];
+    failed_same_target.id = "event:failed-same-target";
+    failed_same_target.outcome = "failure";
+    mixed.push_back(failed_same_target);
+    check(common_investigation_build_relations("elastic-a", value.entities, mixed,
+            relation_rules, rebuilt_again, limitations, error) && rebuilt_again.size() == 2 &&
+            rebuilt_again[0].event_count == 1 && rebuilt_again[1].event_count == 1,
+          "failure must not contaminate a successful edge's count, time or evidence");
+    const auto saved_outcomes = common_investigation_case_to_json(value);
+    common_investigation_case_revision restored_outcomes;
+    check(common_investigation_case_from_json(saved_outcomes, restored_outcomes, error) &&
+            restored_outcomes.events[0].outcome == "success",
+          "published outcome must survive case serialization");
+    auto legacy_outcomes = saved_outcomes;
+    for (auto & event : legacy_outcomes["events"]) event.erase("outcome");
+    check(common_investigation_case_from_json(legacy_outcomes, restored_outcomes, error) &&
+            restored_outcomes.events[0].outcome.empty() &&
+            common_investigation_case_to_json(restored_outcomes) == legacy_outcomes,
+          "legacy revisions must not invent outcomes or change their serialized content");
     auto role_bound_rules = relation_rules;
     role_bound_rules[0].from_role = "user";
     role_bound_rules[0].to_role = "host";
@@ -296,6 +328,11 @@ int main() {
           "scoped outcome posterior should lower historically unhelpful work without overstating evidence");
     // Declarative log parsing is independent of daemon, model and assertions.
     common_investigation_log_page log_page;
+    check(common_investigation_parse_log(R"({"event":{"type":"authentication","outcome":"failure"}})",
+            "jsonl", {{"event.type", "/event/type"}, {"event.outcome", "/event/outcome"}},
+            0, 2, log_page, error) && log_page.rows.size() == 1 &&
+            log_page.rows[0]["event.outcome"] == "failure",
+          "uploaded log profiles must retain explicit source outcomes");
     const std::map<std::string,std::string> log_fields = {{"event.type","/event/type"},{"@timestamp","/@timestamp"},{"user.id","/user/id"}};
     const std::string log_text = "{\"event\":{\"type\":\"auth\"},\"user\":{\"id\":\"åsa\"}}\ninvalid\n{\"event\":{\"type\":\"network\"}}\n";
     check(common_investigation_parse_log(log_text,"jsonl",log_fields,0,2,log_page,error) &&

@@ -85,7 +85,18 @@ nlohmann::ordered_json common_investigation_case_to_json(const common_investigat
     json sources=json::array(),statements=json::array(),comparisons=json::array(),analyses=json::array();
     json actor_mentions=json::array(), actors=json::array(), evidence_links=json::array(), association_reviews=json::array();
     for(const auto & e:c.entities) entities.push_back({{"id",e.id},{"source_id",e.source_id},{"kind",entity_kind(e.kind)},{"value",e.value},{"display_name",e.display_name},{"host_identity",e.host_identity},{"valid_from_ms",e.valid_from_ms},{"valid_to_ms",e.valid_to_ms}});
-    for(const auto & e:c.events) events.push_back({{"id",e.id},{"source_id",e.source_id},{"source_index",e.source_index},{"source_byte_offset",e.source_byte_offset},{"source_byte_length",e.source_byte_length},{"source_line",e.source_line},{"parser_version",e.parser_version},{"source_document_id",e.source_document_id},{"event_type",e.event_type},{"time",{{"event_time_ms",e.time.event_time_ms},{"collected_time_ms",e.time.collected_time_ms},{"uncertainty_ms",e.time.uncertainty_ms},{"has_event_time",e.time.has_event_time}}},{"entity_ids",e.entity_ids},{"entity_roles",e.entity_roles},{"raw_resource_uri",e.raw_resource_uri},{"normalized_resource_uri",e.normalized_resource_uri}});
+    for (const auto & event : c.events) {
+        events.push_back({{"id",event.id},{"source_id",event.source_id},{"source_index",event.source_index},
+            {"source_byte_offset",event.source_byte_offset},{"source_byte_length",event.source_byte_length},
+            {"source_line",event.source_line},{"parser_version",event.parser_version},
+            {"source_document_id",event.source_document_id},{"event_type",event.event_type},
+            {"time",{{"event_time_ms",event.time.event_time_ms},{"collected_time_ms",event.time.collected_time_ms},
+                {"uncertainty_ms",event.time.uncertainty_ms},{"has_event_time",event.time.has_event_time}}},
+            {"entity_ids",event.entity_ids},{"entity_roles",event.entity_roles},
+            {"raw_resource_uri",event.raw_resource_uri},{"normalized_resource_uri",event.normalized_resource_uri}});
+        // Keep pre-outcome revision serialization unchanged; never invent legacy success.
+        if (!event.outcome.empty()) events.back()["outcome"] = event.outcome;
+    }
     for(const auto & r:c.relations) relations.push_back({{"id",r.id},{"source_id",r.source_id},{"from_entity_id",r.from_entity_id},{"to_entity_id",r.to_entity_id},{"kind",relation_kind(r.kind)},{"first_seen_ms",r.first_seen_ms},{"last_seen_ms",r.last_seen_ms},{"has_time",r.has_time},{"event_count",r.event_count},{"rule_id",r.rule_id},{"rule_revision",r.rule_revision},{"confidence_label",r.confidence_label},{"evidence_event_ids",r.evidence_event_ids}});
     for(const auto & c1:c.claims) claims.push_back({{"id",c1.id},{"text",c1.text},{"state",static_cast<int>(c1.state)},{"supporting_event_ids",c1.supporting_event_ids},{"contradicting_event_ids",c1.contradicting_event_ids},{"limitations",c1.limitations},{"supporting_statement_ids",c1.supporting_statement_ids},{"contradicting_statement_ids",c1.contradicting_statement_ids}});
     for (const auto & s : c.sources) sources.push_back({{"id",s.id},{"kind",source_kind(s.kind)},
@@ -137,7 +148,7 @@ bool common_investigation_case_from_json(const nlohmann::ordered_json & j, commo
         c.case_id=j.at("case_id").get<std::string>(); c.revision=j.at("revision").get<uint64_t>(); c.previous_revision_uri=j.value("previous_revision_uri",std::string{}); c.title=j.at("title").get<std::string>(); c.question=j.value("question",std::string{});
         const auto & s=j.at("scope"); c.scope.namespace_id=s.value("namespace_id",std::string("local")); c.scope.session_id=s.value("session_id",std::string("default")); c.scope.project_id=s.value("project_id",std::string{}); c.scope.turn_id=s.value("turn_id",std::string{}); c.source_id=j.at("source_id").get<std::string>(); c.window_start_ms=j.at("window_start_ms").get<int64_t>(); c.window_end_ms=j.at("window_end_ms").get<int64_t>(); c.fingerprint=j.value("fingerprint",std::string{}); c.gaps=j.value("gaps",std::vector<std::string>{});
         for(const auto & x:j.at("entities")){common_investigation_entity e;e.id=x.at("id").get<std::string>();e.source_id=x.at("source_id").get<std::string>();if(!enum_from(x.at("kind").get<std::string>(),e.kind))throw std::runtime_error("unknown entity kind");e.value=x.at("value").get<std::string>();e.display_name=x.value("display_name",std::string{});e.host_identity=x.value("host_identity",std::string{});e.valid_from_ms=x.value("valid_from_ms",int64_t(0));e.valid_to_ms=x.value("valid_to_ms",int64_t(0));c.entities.push_back(std::move(e));}
-        for(const auto & x:j.at("events")){common_investigation_event e;e.id=x.at("id").get<std::string>();e.source_id=x.at("source_id").get<std::string>();e.source_index=x.value("source_index",std::string{});e.source_byte_offset=x.value("source_byte_offset",uint64_t(0));e.source_byte_length=x.value("source_byte_length",uint64_t(0));e.source_line=x.value("source_line",uint64_t(0));e.parser_version=x.value("parser_version",std::string{});e.source_document_id=x.at("source_document_id").get<std::string>();e.event_type=x.value("event_type",std::string{});const auto & t=x.at("time");e.time.event_time_ms=t.value("event_time_ms",int64_t(0));e.time.collected_time_ms=t.value("collected_time_ms",int64_t(0));e.time.uncertainty_ms=t.value("uncertainty_ms",uint64_t(0));e.time.has_event_time=t.value("has_event_time",false);e.entity_ids=x.value("entity_ids",std::vector<std::string>{});e.entity_roles=x.value("entity_roles",std::map<std::string,std::string>{});e.raw_resource_uri=x.value("raw_resource_uri",std::string{});e.normalized_resource_uri=x.value("normalized_resource_uri",std::string{});c.events.push_back(std::move(e));}
+        for(const auto & x:j.at("events")){common_investigation_event e;e.id=x.at("id").get<std::string>();e.source_id=x.at("source_id").get<std::string>();e.source_index=x.value("source_index",std::string{});e.source_byte_offset=x.value("source_byte_offset",uint64_t(0));e.source_byte_length=x.value("source_byte_length",uint64_t(0));e.source_line=x.value("source_line",uint64_t(0));e.parser_version=x.value("parser_version",std::string{});e.source_document_id=x.at("source_document_id").get<std::string>();e.event_type=x.value("event_type",std::string{});e.outcome=x.value("outcome",std::string{});const auto & t=x.at("time");e.time.event_time_ms=t.value("event_time_ms",int64_t(0));e.time.collected_time_ms=t.value("collected_time_ms",int64_t(0));e.time.uncertainty_ms=t.value("uncertainty_ms",uint64_t(0));e.time.has_event_time=t.value("has_event_time",false);e.entity_ids=x.value("entity_ids",std::vector<std::string>{});e.entity_roles=x.value("entity_roles",std::map<std::string,std::string>{});e.raw_resource_uri=x.value("raw_resource_uri",std::string{});e.normalized_resource_uri=x.value("normalized_resource_uri",std::string{});c.events.push_back(std::move(e));}
         for(const auto & x:j.at("relations")){common_investigation_relation r;r.id=x.at("id").get<std::string>();r.source_id=x.at("source_id").get<std::string>();r.from_entity_id=x.at("from_entity_id").get<std::string>();r.to_entity_id=x.at("to_entity_id").get<std::string>();if(!enum_from(x.at("kind").get<std::string>(),r.kind))throw std::runtime_error("unknown relation kind");r.first_seen_ms=x.value("first_seen_ms",int64_t(0));r.last_seen_ms=x.value("last_seen_ms",int64_t(0));r.has_time=x.value("has_time",false);r.event_count=x.value("event_count",uint64_t(0));r.rule_id=x.value("rule_id",std::string{});r.rule_revision=x.value("rule_revision",std::string{});r.confidence_label=x.value("confidence_label",std::string("observed"));r.evidence_event_ids=x.value("evidence_event_ids",std::vector<std::string>{});c.relations.push_back(std::move(r));}
         for(const auto & x:j.at("claims")){common_investigation_claim v;v.id=x.at("id").get<std::string>();v.text=x.at("text").get<std::string>();const int state=x.value("state",2);if(state<0||state>3)throw std::runtime_error("unknown claim state");v.state=static_cast<common_investigation_claim_state>(state);v.supporting_event_ids=x.value("supporting_event_ids",std::vector<std::string>{});v.contradicting_event_ids=x.value("contradicting_event_ids",std::vector<std::string>{});v.limitations=x.value("limitations",std::vector<std::string>{});v.supporting_statement_ids=x.value("supporting_statement_ids",std::vector<std::string>{});v.contradicting_statement_ids=x.value("contradicting_statement_ids",std::vector<std::string>{});c.claims.push_back(std::move(v));}
         if (j.contains("sources")) for (const auto & x : j.at("sources")) {
@@ -415,7 +426,7 @@ bool common_investigation_case_validate(
     for (const auto & event : value.events) {
         if (!valid_id(event.id) || !source_ids.count(event.source_id) ||
                 event.source_document_id.empty() || event.source_document_id.size() > 512 || event.source_index.size() > 512 ||
-                event.entity_ids.size() > 64 || event.parser_version.size() > 128 ||
+                event.entity_ids.size() > 64 || event.outcome.size() > 256 || event.parser_version.size() > 128 ||
                 event.source_byte_length > 65536 || (!event.parser_version.empty() && (!event.source_byte_length || !event.source_line)) || !events.insert(event.id).second) {
             error = "investigation event has invalid identity or exceeds bounds";
             return false;
@@ -884,7 +895,7 @@ bool common_investigation_build_relations(
     std::unordered_set<std::string> event_ids;
     for (const auto & event : events) {
         if (!valid_id(event.id) || event.source_id != source_id ||
-                event.event_type.empty() || event.event_type.size() > 256 ||
+                event.event_type.empty() || event.event_type.size() > 256 || event.outcome.size() > 256 ||
                 !event_ids.insert(event.id).second) {
             error = "relation build contains duplicate or invalid source-scoped events";
             return false;
@@ -917,9 +928,17 @@ bool common_investigation_build_relations(
     std::map<key_type, common_investigation_relation> aggregated;
     bool missing_time = false;
     bool missing_endpoints = false;
+    bool unknown_authentication_outcome = false;
     for (const auto & event : events) {
         for (const auto & rule : rules) {
             if (rule.event_type != event.event_type) continue;
+            // An authentication category or endpoint match does not establish success.
+            // Preserve unsuccessful/unknown events without promoting them to access.
+            if (rule.relation_kind == common_investigation_relation_kind::authenticated_to &&
+                    event.outcome != "success") {
+                if (event.outcome != "failure") unknown_authentication_outcome = true;
+                continue;
+            }
             std::vector<const common_investigation_entity *> from, to;
             if (!rule.from_role.empty() || !rule.to_role.empty()) {
                 const auto from_role = event.entity_roles.find(rule.from_role);
@@ -975,7 +994,7 @@ bool common_investigation_build_relations(
                     relation.to_entity_id = right->id;
                     relation.kind = rule.relation_kind;
                     relation.rule_id = rule.id;
-                    relation.rule_revision = "1";
+                    relation.rule_revision = rule.relation_kind == common_investigation_relation_kind::authenticated_to ? "2" : "1";
                     relation.confidence_label = "observed";
                 }
                 if (std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), event.id) == relation.evidence_event_ids.end()) {
@@ -1018,6 +1037,7 @@ bool common_investigation_build_relations(
         std::sort(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end());
         relations.push_back(std::move(relation));
     }
+    if (unknown_authentication_outcome) limitations.push_back("authentication_events_without_explicit_success_outcome_remain_unlinked");
     if (missing_time) limitations.push_back("one_or_more_relation_events_have_unknown_event_time");
     if (missing_endpoints) limitations.push_back("one_or_more_relation_profiles_have_missing_or_ambiguous_endpoints");
     return true;

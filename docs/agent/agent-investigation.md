@@ -35,6 +35,7 @@ index administration requests.
         "fields": {
           "event_id": "event.id",
           "event_type": "event.category",
+          "event_outcome": "event.outcome",
           "event_time": "@timestamp",
           "user_id": "user.id",
           "host_name": "host.name"
@@ -105,14 +106,19 @@ profiles, a small built-in exact event-type profile set is used. Unknown or
 near-matching event types remain unlinked observations and add a case
 limitation.
 
-**Authentication outcome limitation:** profiles currently match event category and
-endpoint roles, not outcome predicates. An `authentication` category may include
-failed attempts. Mapping that entire category to `authenticated_to` must not be
-interpreted as proof of successful access. The 2026-10-24 Elasticsearch UI smoke
-reproduced a failed logon appearing as an observed authentication relation, with
-`event.outcome` absent from the configured retained field projection. Preserving
-outcome/action evidence and distinguishing attempts from successful access remain
-required correctness work; a model instruction cannot reconstruct omitted data.
+**Authentication outcomes:** `authenticated_to` requires an explicit source-reported
+`success` outcome. Map logical `event_outcome` to `event.outcome` for search
+sources, or map `event.outcome` in an uploaded log profile. Collection preserves
+the outcome in normalized evidence and case events. Failures remain timeline
+observations and never contribute to successful relation counts, time ranges
+or evidence references. Missing or unrecognized outcomes remain unlinked with
+an explicit limitation; success is not inferred from category, names or message
+text. Authentication derivation uses rule revision 2. Earlier revisions without
+outcomes remain readable and serialize unchanged; their frozen reports are not
+rewritten. Previously discarded source outcomes require a new explicit source
+collection (for example, in a new case); duplicate IDs do not upgrade old events
+silently. A source-reported success is not proof of causality or identity beyond
+the source's observation.
 
 Declared endpoint roles must be present. Older authentication events without any
 role metadata can resolve `user` and `host` only when each kind has one endpoint;
@@ -328,6 +334,7 @@ For example, a JSONL source with nested ECS fields can use:
   "format": "jsonl",
   "fields": {
     "event.type": "/event/type",
+    "event.outcome": "/event/outcome",
     "@timestamp": "/@timestamp",
     "user.id": "/user/id",
     "host.id": "/host/id"
@@ -535,3 +542,30 @@ path. It reached workflow action selection but failed before analysis tools:
 context. The UI returned to ready after the lane drained. The model-backed
 workflow remains blocked; neither production budgets nor output requirements
 were changed to obtain a passing test.
+
+### Authentication outcome correction — 2026-10-25
+
+The failed-logon finding from the preceding browser pass is corrected for new
+collections. The shared event contract retains source outcomes; the search
+configuration and uploaded-log mappings accept the outcome field. Authentication
+relations require explicit success, and paginated events, the evidence panel and
+new report timelines expose the retained outcome. Legacy revisions without that
+field remain readable and serialize unchanged; old frozen reports are preserved.
+
+Three targeted CTest families passed: investigation configuration, investigation
+domain contracts and native tool adapters. These cover success/failure/unknown
+outcomes, mixed outcomes against one target, counts/times/evidence, legacy JSON,
+configuration roundtrip and event-page projection. Frontend tests passed 104
+cases. A real Elasticsearch check preserved five events and produced three
+relations, excluding the failed bastion authentication while retaining its
+failure event. The corrected case and byte-identical frozen Markdown report were
+reread after daemon restart; the browser showed distinct outcomes and source
+references.
+
+A separate fresh-chat diagnostic reproduced the existing action-selector budget
+failure at 3085 prompt plus 128 output tokens against 3072. Its 14 compact tool
+contracts cost 1842 standalone tokens; workflow/method text cost 489, case JSON
+358 and dataset inventory 106. Compacting only the case JSON saved 105 tokens,
+which still did not fit. The actual Identity workflow route was selected, and
+its DSL action generation was rejected before sampling. This correction does
+not change orchestration, context limits or workflow candidate semantics.
