@@ -1934,6 +1934,7 @@ int main(int argc, char ** argv) {
                         host.close(); std::cerr << "dose comparison requires coordinate rank-sweep mode\n"; return 2;
                     }
                     auto & coefficients = rank_config.coefficients;
+                    coefficients.record_intervention_norms = true;
                     coefficients.max_candidates = 16;
                     // No retries: baseline + 15 proposals is the same inference
                     // budget in all three conditions; unavailable arms are explicit.
@@ -2043,6 +2044,7 @@ int main(int argc, char ** argv) {
                                     : "baseline_and_candidate_did_not_establish_helped";
                     ordered_json arm = {
                         {"group", entry.first}, {"fixture_id", deep_fixture.id},
+                        {"evaluation_scenario_id", deep_case.id},
                         {"task", deep_case.question}, {"arm_id", trial.arm_id},
                         {"raw_output_trace_id", trial.arm_id},
                         {"requested_rank", requested_rank}, {"trial_index", trial_index},
@@ -2077,6 +2079,10 @@ int main(int argc, char ** argv) {
                         {"evidence_ref", trial.evidence_ref},
                         {"search_fitness", trial.search_fitness},
                     };
+                    if (!trial.intervention_norms_available) {
+                        arm["requested_intervention_norm"] = nullptr;
+                        arm["applied_intervention_norm"] = nullptr;
+                    }
                     if (trial.residual_calibration_ref.empty()) {
                         arm["requested_residual_fraction"] = nullptr;
                         arm["applied_residual_fraction"] = nullptr;

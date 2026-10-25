@@ -374,6 +374,11 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
     if (refine_dose) proposal_config.max_candidates -= 2;
     if (!common_flydelta_propose_calibrated_coefficients(
             fixture, basis, proposal_config, proposals, error, &requested_fractions)) return false;
+    if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients &&
+            requested_fractions.size() != proposals.size()) {
+        error = "FlyDelta calibrated proposal metadata is incomplete";
+        return false;
+    }
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
     common_flydelta_representation_diagnostics baseline_geometry;
@@ -401,6 +406,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         size_t best = 0;
         float best_score = -std::numeric_limits<float>::infinity();
         for (size_t i = 0; i < arms.size(); ++i) {
+            if (!arms[i].counterfactual.executed || !arms[i].counterfactual.overlay_applied) continue;
             if (config.use_dose_controller && arms[i].dose_evaluated &&
                     arms[i].dose_decision.action != common_flydelta_dose_action::accept) continue;
             common_flydelta_coefficient_trial candidate;
@@ -458,19 +464,10 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
             arm.requested_coefficients);
         trial.executed_strength = common_flydelta_coefficient_detail::norm(
             arm.executed_coefficients);
-        if (!common_flydelta_intervention_norm(basis, arm.requested_coefficients,
-                trial.requested_intervention_norm, error) ||
-            !common_flydelta_intervention_norm(basis, arm.executed_coefficients,
-                trial.applied_intervention_norm, error)) return false;
         trial.dose_action = arm.dose_decision.action;
         trial.relative_dose = arm.dose_decision.relative_dose;
         if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients) {
             trial.requested_residual_fraction = requested_fractions.at(arm_index + 1);
-            trial.requested_intervention_norm = trial.requested_residual_fraction *
-                config.residual_calibration.median_norm;
-            trial.applied_residual_fraction = trial.applied_intervention_norm /
-                config.residual_calibration.median_norm;
-            trial.residual_calibration_ref = config.residual_calibration.reference;
             trial.mutation_kind = arm_index < coarse_arm_count ? "calibrated_direction" : "dose_refinement";
         }
         trial.dose_evaluated = arm.dose_evaluated;
@@ -481,6 +478,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         trial.margin_comparison.baseline = baseline_margin;
         trial.margin_comparison.candidate = arm.margin;
         common_flydelta_coefficient_trial_set_observation(trial, baseline, arm.counterfactual);
+        if (!common_flydelta_coefficient_detail::update_dose_metrics(basis, config, trial, error)) return false;
         if (!common_flydelta_coefficient_detail::copy_geometry(
                 arm.geometry, arm.geometry_available, trial, error)) return false;
         trial.search_fitness = common_flydelta_coefficient_detail::diagnostic_fitness(

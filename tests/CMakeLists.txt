@@ -379,6 +379,9 @@ endif()
 
 if (LLAMA_AGENT_RUNTIME)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME test-agent-flydelta-dose-summary
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test-agent-flydelta-dose-summary.py)
+    set_property(TEST test-agent-flydelta-dose-summary PROPERTY LABELS "agent;flydelta;model-free")
     foreach(TEST_SOURCE
         test-agent-contract.cpp
         test-agent-semi-oracle.cpp

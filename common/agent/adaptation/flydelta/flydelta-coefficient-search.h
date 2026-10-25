@@ -145,6 +145,8 @@ struct common_flydelta_coefficient_search_config {
     // Opt-in experiment only. Legacy fields retain their original semantics.
     common_flydelta_coefficient_dose_mode experimental_dose_mode =
         common_flydelta_coefficient_dose_mode::raw_coefficients;
+    // Extra composition diagnostics are opt-in even for the raw control arm.
+    bool record_intervention_norms = false;
     common_flydelta_residual_calibration residual_calibration;
     std::string injection_capture_layout_revision;
     std::string injection_token_selection;
@@ -197,6 +199,7 @@ struct common_flydelta_coefficient_trial {
     common_flydelta_dose_action dose_action = common_flydelta_dose_action::reject;
     // Legacy behavior-delta-relative displacement, not residual-relative dose.
     float relative_dose = 0.0f;
+    bool intervention_norms_available = false;
     float requested_intervention_norm = 0.0f;
     float applied_intervention_norm = 0.0f;
     float requested_residual_fraction = 0.0f;

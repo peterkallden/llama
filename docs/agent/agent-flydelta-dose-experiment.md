@@ -11,6 +11,11 @@ Production defaults, host verdicts, promotion rules and legacy persistence field
 displacement with that delta. Neither is an angle or dose relative to the baseline residual.
 
 The experiment adds requested/applied intervention norms and residual fractions.
+Extra norm diagnostics are opt-in (`record_intervention_norms`) for the raw control;
+ordinary production searches do not run the extra vector compositions. A shared
+internal helper updates the measurements after each observed execution, including
+staged full generation and TFO diagnostics. Missing diagnostics are explicit rather
+than being represented as a measured zero.
 For direction `d = Bc`, requested intervention is `q * median_norm * d / ||d||`.
 Norms use the composed vector, including basis overlap. Requested norm/fraction
 precede coefficient clipping; applied values describe the final coefficients,
@@ -31,7 +36,7 @@ production calibration store or automatic reuse is introduced.
 
 `raw_coefficients` retains the coordinate/TFO defaults. `residual_fraction` uses
 the coordinate directions at one normalized dose. `direction_dose` adds signed
-pairwise directions, a bounded dose grid and two local refinement proposals
+pairwise directions in both polarities, a bounded dose grid and two local refinement proposals
 (0.75 and 1.25 times the best executed diagnostic direction/dose). Two proposal
 slots are reserved for refinement when the total budget permits. Missing margins
 skip refinement. The no-op counts toward `max_candidates`; full-generation
@@ -67,10 +72,36 @@ still uses the original replay data. A missing calibration set fails explicitly.
 Different conditions can exhaust their distinct candidate sets before the ceiling;
 actual arms and time are reported, rather than claiming equal consumed compute.
 
-`dose-comparison.json` preserves calibration provenance, arm diagnostics, host
-outcomes and search wall time. Fixture/rank mismatches or missing arms fail the
-summary. Raw model exchanges, failures and timeout diagnostics remain in the logs.
+`dose-comparison.json` preserves calibration provenance, arm diagnostics, process
+exit codes, host outcomes and search wall time, including failed or missing
+conditions. Each attempt uses a fresh directory, so interrupted runs cannot reuse
+stale logs. A failed condition does not suppress the other conditions' diagnostics;
+an interrupt stops further inference. The summary is still written and returns a
+nonzero exit code when the comparison is incomplete.
+
+Cross-condition matching uses evaluation scenario, rank, layer and basis identity.
+Scope-local resource IDs are preserved for provenance but may legitimately differ
+between processes. A complete trace does not imply a known host verdict: verified
+full arms are counted separately, and UNKNOWN remains an unknown quality result. Raw model exchanges, failures and timeout diagnostics remain in the logs.
 A successful fixture or diagnostic score is not evidence of improved steering.
 Independent evaluation fixtures, repeated runs and agreed quantitative acceptance
 thresholds are still required before any production-adoption decision. No thresholds
 or production adoption are chosen by this implementation.
+
+## Static review follow-up
+
+The review isolated measurement overhead from the production defaults, centralized
+metric updates, checked proposal/metadata alignment before baseline execution, and
+excluded unexecuted/unapplied arms from refinement. Signed mixed directions now
+include both polarities. Offline Python summary contracts are registered with CTest
+for partial failures, damaged/missing records, calibration overlap and comparison
+identity. These contracts and the revised C++ contracts remain unrun.
+
+This remains an experimental implementation of normalized dosing and bounded
+joint exploration, not evidence that either strategy improves steering. In
+particular, a small candidate budget can truncate the configured direction/dose
+grid, and coefficient clipping can make several requested doses physically
+identical. Deduplication avoids paying for those duplicates; the actual trace and
+requested/applied measurements, rather than the configured grid alone, define
+what was evaluated. Independent direction-learning/evaluation separation and
+production-adoption criteria remain prerequisites for a later production decision.

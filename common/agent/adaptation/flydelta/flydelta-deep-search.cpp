@@ -296,13 +296,7 @@ bool common_flydelta_run_deep_search_batched(
         trial.margin_comparison.baseline = baseline_margin;
         trial.margin_comparison.candidate = margin;
         common_flydelta_coefficient_trial_set_observation(trial, baseline, candidate);
-        if (candidate.overlay_applied) {
-            if (!common_flydelta_intervention_norm(result.basis, trial.coefficients,
-                    trial.applied_intervention_norm, error)) return false;
-            if (!trial.residual_calibration_ref.empty())
-                trial.applied_residual_fraction = trial.applied_intervention_norm /
-                    coefficient_config.residual_calibration.median_norm;
-        }
+        if (!common_flydelta_coefficient_detail::update_dose_metrics(result.basis, coefficient_config, trial, error)) return false;
         trial.geometry_available = geometry_available;
         if (geometry_available &&
                 !common_flydelta_representation_diagnostics_validate(geometry, error)) {

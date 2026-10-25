@@ -10,6 +10,13 @@ namespace common_flydelta_coefficient_detail {
 
 float norm(const std::vector<float> & values);
 
+// Run after setting the observed overlay status. Raw production searches do
+// not compose vectors or acquire new validation failures for diagnostics.
+bool update_dose_metrics(
+    const common_flydelta_low_rank_basis & basis,
+    const common_flydelta_coefficient_search_config & config,
+    common_flydelta_coefficient_trial & trial, std::string & error);
+
 bool valid_outcome(common_flydelta_counterfactual_outcome outcome);
 
 std::vector<float> bound_coefficients(

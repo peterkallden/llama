@@ -1,8 +1,9 @@
-#include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 bool common_flydelta_intervention_norm(
         const common_flydelta_low_rank_basis & basis,
@@ -97,10 +98,10 @@ bool common_flydelta_propose_calibrated_coefficients(
         std::vector<float> * requested_fractions) {
     proposals.clear(); error.clear();
     if (requested_fractions) requested_fractions->clear();
-    if (!common_flydelta_coefficient_search_config_validate(config, basis.vectors.size(), error) ||
-            !common_flydelta_low_rank_basis_validate(basis, 16, error)) return false;
     if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::raw_coefficients)
         return common_flydelta_propose_low_rank_coefficients(config, basis.vectors.size(), proposals, error);
+    if (!common_flydelta_coefficient_search_config_validate(config, basis.vectors.size(), error) ||
+            !common_flydelta_low_rank_basis_validate(basis, 16, error)) return false;
     const auto & c = config.residual_calibration;
     if (c.schema_version != 1 || c.reference.empty() || c.sample_count == 0 || c.sample_count > 4096 ||
             c.dimension != basis.dimension || c.sample_norms.size() != c.sample_count ||
@@ -138,10 +139,11 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::direction_dose) {
         for (size_t i = 0; i < basis.vectors.size(); ++i)
             for (size_t j = i + 1; j < basis.vectors.size(); ++j)
-                for (float sign : {-1.0f, 1.0f}) {
-                    std::vector<float> d(basis.vectors.size(), 0);
-                    d[i] = 1; d[j] = sign; directions.push_back(d);
-                }
+                for (float polarity : {1.0f, -1.0f})
+                    for (float sign : {1.0f, -1.0f}) {
+                        std::vector<float> d(basis.vectors.size(), 0);
+                        d[i] = polarity; d[j] = polarity * sign; directions.push_back(d);
+                    }
     }
     proposals.push_back(std::vector<float>(basis.vectors.size(), 0));
     if (requested_fractions) requested_fractions->push_back(0);
@@ -172,14 +174,14 @@ bool common_flydelta_propose_calibrated_coefficients(
         const double coefficient_norm = std::sqrt(coefficient_squared);
         if (coefficient_norm > config.max_l2_norm)
             for (float & v : candidate) v *= config.max_l2_norm / coefficient_norm;
+        float actual = 0;
+        if (!common_flydelta_intervention_norm(basis, candidate, actual, error)) return false;
         bool duplicate = false;
         for (const auto & existing : proposals) {
             auto difference = candidate;
             for (size_t i = 0; i < difference.size(); ++i) difference[i] -= existing[i];
             float distance = 0;
             if (!common_flydelta_intervention_norm(basis, difference, distance, error)) return false;
-            float actual = 0;
-            if (!common_flydelta_intervention_norm(basis, candidate, actual, error)) return false;
             if (distance <= 1e-6f * std::max(actual, 1e-12f)) { duplicate = true; break; }
         }
         if (!duplicate) {
@@ -190,5 +192,40 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (proposals.size() == 1 && config.max_candidates > 1) {
         error = "FlyDelta calibrated search has no usable directions"; return false;
     }
+    return true;
+}
+
+bool common_flydelta_coefficient_detail::update_dose_metrics(
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        common_flydelta_coefficient_trial & trial, std::string & error) {
+    trial.intervention_norms_available = false;
+    trial.requested_intervention_norm = 0;
+    trial.applied_intervention_norm = 0;
+    trial.applied_residual_fraction = 0;
+    const bool calibrated = config.experimental_dose_mode !=
+        common_flydelta_coefficient_dose_mode::raw_coefficients;
+    if (!calibrated && !config.record_intervention_norms) return true;
+    float requested = 0, applied = 0;
+    if (!common_flydelta_intervention_norm(basis, trial.requested_coefficients, requested, error) ||
+            (trial.overlay_applied && !common_flydelta_intervention_norm(
+                basis, trial.coefficients, applied, error))) return false;
+    if (calibrated) {
+        const auto & calibration = config.residual_calibration;
+        if (calibration.reference.empty() || !std::isfinite(calibration.median_norm) ||
+                calibration.median_norm <= 0 || !std::isfinite(trial.requested_residual_fraction) ||
+                trial.requested_residual_fraction <= 0) {
+            error = "FlyDelta trial dose metadata is invalid"; return false;
+        }
+        requested = trial.requested_residual_fraction * calibration.median_norm;
+        trial.applied_residual_fraction = applied / calibration.median_norm;
+        trial.residual_calibration_ref = calibration.reference;
+    }
+    if (!std::isfinite(requested) || !std::isfinite(trial.applied_residual_fraction)) {
+        error = "FlyDelta trial dose metadata overflow"; return false;
+    }
+    trial.requested_intervention_norm = requested;
+    trial.applied_intervention_norm = applied;
+    trial.intervention_norms_available = true;
     return true;
 }

@@ -284,6 +284,10 @@ int main() {
     CHECK(largest_coefficient_batch <= batch_config.max_batch_arms);
     CHECK(batch_trials_result.size() == 4);
     CHECK(batch_selection.selected);
+    for (const auto & trial : batch_trials_result) {
+        CHECK(!trial.intervention_norms_available);
+        CHECK(trial.requested_intervention_norm == 0);
+    }
 
     auto calibrated_config = batch_config;
     calibrated_config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
@@ -307,6 +311,12 @@ int main() {
         fixture(), basis, calibrated_config, batch_baseline_runner,
         coefficient_batch_runner, batch_trials_result, batch_selection, error));
     const auto coarse_trial_count = batch_trials_result.size();
+    for (const auto & trial : batch_trials_result) {
+        CHECK(trial.intervention_norms_available);
+        CHECK(!trial.overlay_applied);
+        CHECK(trial.applied_intervention_norm == 0);
+        CHECK(trial.applied_residual_fraction == 0);
+    }
     const common_flydelta_coefficient_search_batch_runner calibrated_batch_runner =
         [&](const auto & current_fixture, const auto & current_basis, const auto & coefficients,
                 auto & results, auto & margins, auto & geometries, auto & available, std::string & current_error) {
@@ -331,6 +341,7 @@ int main() {
     CHECK(batch_trials_result.size() < calibrated_config.max_candidates);
     CHECK(batch_selection.selected);
     for (const auto & trial : batch_trials_result) {
+        CHECK(trial.intervention_norms_available);
         CHECK(trial.residual_calibration_ref == calibration.reference);
         CHECK(trial.requested_residual_fraction > 0);
         CHECK(trial.applied_residual_fraction > 0);

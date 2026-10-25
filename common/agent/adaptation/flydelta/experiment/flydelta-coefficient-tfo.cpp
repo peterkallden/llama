@@ -148,6 +148,7 @@ bool run_tfo_lite_coefficient_search(
             trial.margin_comparison.baseline = baseline_margin;
             trial.margin_comparison.candidate = arm.margin;
             common_flydelta_coefficient_trial_set_observation(trial, baseline, arm.counterfactual);
+            if (!update_dose_metrics(basis, config, trial, error)) return false;
             if (!copy_geometry(arm.geometry, arm.geometry_available, trial, error)) return false;
             trial.iteration = iteration;
             trial.parent_trial_index = population_parents[population_index];
