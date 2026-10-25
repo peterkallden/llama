@@ -212,6 +212,37 @@ bool validate_workflow_action_dataset_columns(
     return true;
 }
 
+bool resolve_workflow_dataset_handles(
+        const common_agent_request & request,
+        const common_chat_tool & tool,
+        json & arguments,
+        std::string & error) {
+    if (!arguments.is_object() || request.available_datasets.empty()) return true;
+    const auto schema = json::parse(tool.parameters, nullptr, false);
+    const auto properties = schema.is_object() ? schema.value("properties", json::object()) : json::object();
+    if (!properties.is_object()) return true;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (!it.value().is_object() || it.value().value("x-agent-type", std::string()) != "dataset_ref" ||
+                !arguments.contains(it.key()) || !arguments[it.key()].is_string()) continue;
+        const auto handle = arguments[it.key()].get<std::string>();
+        if (handle.size() < 2 || handle.front() != 'd' ||
+                !std::all_of(handle.begin() + 1, handle.end(), [](unsigned char character) {
+                    return std::isdigit(character);
+                })) continue;
+        size_t index = 0;
+        try { index = static_cast<size_t>(std::stoull(handle.substr(1))); }
+        catch (...) { index = 0; }
+        if (index == 0 || index > request.available_datasets.size() ||
+                request.available_datasets[index - 1].ref.uri.empty()) {
+            error = "workflow action selected an unavailable host dataset handle";
+            return false;
+        }
+        arguments[it.key()] = request.available_datasets[index - 1].ref.uri;
+    }
+    error.clear();
+    return true;
+}
+
 bool normalize_workflow_optional_grouping(json & arguments) {
     const auto grouping = arguments.find("group_by");
     if (grouping == arguments.end()) return false;
@@ -276,6 +307,7 @@ std::vector<common_chat_tool> workflow_action_model_tools(
         const std::vector<common_chat_tool> & tools,
         const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
         const std::vector<std::string> & host_resolved_dataset_tools,
+        const common_agent_request & request,
         bool require_explicit_dataset,
         std::string & error) {
     auto projected = tools;
@@ -302,7 +334,21 @@ std::vector<common_chat_tool> workflow_action_model_tools(
             schema["x-agent-autowire-fields"] = std::move(autowire);
             tool.parameters = common_project_model_input_schema_required_parameters(schema.dump(), {"dataset"}, error);
             if (!error.empty()) return {};
+            schema = json::parse(tool.parameters);
         }
+        if (!hidden.count("dataset") && !request.available_datasets.empty() &&
+                schema.value("properties", json::object()).contains("dataset")) {
+            auto & dataset_schema = schema["properties"]["dataset"];
+            if (dataset_schema.is_object() && dataset_schema.value("type", std::string()) == "string" &&
+                    dataset_schema.value("x-agent-type", std::string()) == "dataset_ref") {
+                json handles = json::array();
+                for (size_t index = 0; index < request.available_datasets.size(); ++index)
+                    handles.push_back("d" + std::to_string(index + 1));
+                dataset_schema["enum"] = std::move(handles);
+                dataset_schema["description"] = "Select one exact dN host dataset handle from the current scoped inventory; the host resolves it to the authorized dataset.";
+            }
+        }
+        tool.parameters = schema.dump();
         if (hidden.empty()) continue;
         tool.parameters = common_project_model_input_schema_without_bound_fields(
             tool.parameters, std::vector<std::string>(hidden.begin(), hidden.end()), error);
@@ -456,7 +502,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         // Choose an operation before exposing its arguments. Both generations
         // use the ordinary inference boundary, cancellation and token admission.
         const auto choice_tools = workflow_action_model_tools(
-            tools, fixed_bindings, host_resolved_dataset_tools, false, error);
+            tools, fixed_bindings, host_resolved_dataset_tools, request, false, error);
         if (!error.empty()) return result;
         std::string catalog;
         std::string grammar = "root ::= ";
@@ -522,7 +568,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         return result;
     }
 
-    const auto model_tools = workflow_action_model_tools(tools, fixed_bindings, host_resolved_dataset_tools,
+    const auto model_tools = workflow_action_model_tools(tools, fixed_bindings, host_resolved_dataset_tools, request,
         request.workflow_definition && request.workflow_definition->family == "dataset", error);
     if (!error.empty()) return result;
     common_agent_request argument_request = request;
@@ -557,6 +603,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     }
     const auto contracts = workflow_action_contracts(model_tools, error);
     if (!error.empty()) return result;
+    std::string previous_action_text;
     for (size_t attempt = 0; attempt < 2; ++attempt) {
         common_chat_msg system{
             "system",
@@ -595,8 +642,10 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             workflow_action_method_context(request) +
             "\n[Task]\n" + request.prompt +
             common_agent_render_dataset_inventory(request.available_datasets, 2048) +
-            (attempt == 0 ? std::string{} : "\n[Correction]\n" + last_error +
-                "\nReturn the corrected action only."),
+            (attempt == 0 ? std::string{} : "\n[Previous action rejected by host validation]\n" + previous_action_text +
+                "\n[Correction]\n" + last_error +
+                "\nPreserve fields that were already valid. Correct only the rejected field; omit an optional field when it is not needed. "
+                "Do not change the selected tool or other valid selections. Return the corrected action only."),
         };
         auto generation_request = make_agent_cli_generation_request(
             request,
@@ -623,6 +672,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             error = describe_agent_cli_generation_failure("workflow action selection", generated);
             return result;
         }
+        previous_action_text = generated.content.substr(0, 2048);
         std::string tool_name;
         json arguments;
         if (!parse_workflow_action(
@@ -647,6 +697,10 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         if (selected == tools.end()) {
             last_error = "workflow action selected a tool outside the exact route enum";
             if (attempt == 0 && output_format == common_agent_tool_output_format::compact_dsl) continue;
+            error = last_error;
+            return result;
+        }
+        if (!resolve_workflow_dataset_handles(request, *selected, arguments, last_error)) {
             error = last_error;
             return result;
         }

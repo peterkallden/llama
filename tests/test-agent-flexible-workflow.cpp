@@ -85,6 +85,58 @@ void selection_formats() {
         "failed observations enabled a choice");
 }
 
+void workflow_action_dataset_handles() {
+    common_agent_request request;
+    request.prompt = "Describe only the amount column.";
+    common_agent_dataset_descriptor customers;
+    customers.ref.uri = "dataset://seed/customers";
+    customers.ref.name = "customers";
+    common_agent_dataset_descriptor orders;
+    orders.ref.uri = "dataset://seed/orders";
+    orders.ref.name = "orders";
+    orders.columns = {{"order_id"}, {"customer_id"}, {"amount"}};
+    request.available_datasets = {customers, orders};
+
+    const common_chat_tool tool{
+        "statistics.describe", "Describe dataset columns.",
+        R"({"type":"object","additionalProperties":false,"required":["dataset"],"properties":{"dataset":{"type":"string","x-agent-type":"dataset_ref"},"columns":{"type":"array","items":{"type":"string"}}}})",
+    };
+    common_agent_generation_config config;
+    config.n_predict = 128;
+    scripted_inference inference;
+    inference.replies = {"open! statistics.describe\ndataset: d2\ncolumns: amount"};
+    std::string error;
+    const auto selected = select_llama_cli_workflow_action(inference, config, request,
+        {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
+    require(error.empty() && selected.action.has_value(), "dataset handle action selection failed: " + error);
+    const auto arguments = json::parse(selected.action->arguments_json, nullptr, false);
+    require(arguments.is_object() && arguments.value("dataset", std::string()) == orders.ref.uri &&
+        arguments.value("columns", json::array()) == json::array({"amount"}),
+        "scoped dataset handle did not resolve to the selected dataset");
+    require(inference.requests.size() == 1 && inference.requests.front().json_schema.empty() &&
+        inference.requests.front().grammar.find("d1") != std::string::npos &&
+        inference.requests.front().grammar.find("d2") != std::string::npos,
+        "DSL action grammar did not constrain dataset selection to current host handles");
+
+    scripted_inference repair;
+    repair.replies = {
+        "open! statistics.describe\ndataset: d2\ncolumns: amount\ngroup_by: null_count",
+        "open! statistics.describe\ndataset: d2\ncolumns: amount",
+    };
+    const auto repaired = select_llama_cli_workflow_action(repair, config, request,
+        {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
+    require(error.empty() && repaired.action.has_value() && repair.requests.size() == 2,
+        "workflow action did not recover after a rejected optional field: " + error);
+    require(repair.requests[1].json_schema.empty() &&
+        repair.requests[1].messages.back().content.find("dataset: d2") != std::string::npos &&
+        repair.requests[1].messages.back().content.find("Preserve fields that were already valid") != std::string::npos,
+        "DSL repair prompt did not retain the previously valid dataset choice");
+    const auto repaired_arguments = json::parse(repaired.action->arguments_json, nullptr, false);
+    require(repaired_arguments.is_object() && repaired_arguments.value("dataset", std::string()) == orders.ref.uri &&
+        repaired_arguments.value("columns", json::array()) == json::array({"amount"}),
+        "DSL repair changed the valid dataset or column selection");
+}
+
 void transitions_and_resume() {
     common_agent_route_candidate route;
     route.id = "bound-route"; route.resolved_tools = {"inspect", "query"};
@@ -190,6 +242,7 @@ int main(int argc, char ** argv) {
     require(argc == 2, "choose formats, continuation, blueprint or package");
     const std::string group = argv[1];
     if (group == "formats") selection_formats();
+    else if (group == "dataset-handles") workflow_action_dataset_handles();
     else if (group == "continuation") transitions_and_resume();
     else if (group == "blueprint") blueprint_and_publication_context();
     else if (group == "package") package_contracts();

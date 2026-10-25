@@ -1019,7 +1019,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (request.blueprint_definition) {
             const auto & method = *request.blueprint_definition;
             proposal.plan.source_revision = method.source_revision;
-            proposal.plan.purpose = method.purpose;
+            proposal.plan.purpose = method.purpose.empty() ? method.goal : method.purpose;
             if (proposal.plan.success_criteria.empty()) proposal.plan.success_criteria = method.success_criteria;
             else if (!method.success_criteria.empty() && proposal.plan.success_criteria != method.success_criteria)
                 proposal.plan.success_criteria += "\nBlueprint criteria: " + method.success_criteria;

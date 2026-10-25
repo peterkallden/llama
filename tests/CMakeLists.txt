@@ -769,7 +769,7 @@ test-agent-flydelta-alpha-response-search.cpp
     target_link_libraries(test-agent-flexible-workflow PRIVATE llama-agent-core llama-agent-runtime-support)
     target_compile_features(test-agent-flexible-workflow PRIVATE cxx_std_17)
     target_compile_definitions(test-agent-flexible-workflow PRIVATE NDEBUG LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-    foreach(CONTRACT formats continuation blueprint package)
+    foreach(CONTRACT formats dataset-handles continuation blueprint package)
         add_test(NAME test-agent-flexible-workflow-${CONTRACT}
             COMMAND test-agent-flexible-workflow ${CONTRACT})
         set_tests_properties(test-agent-flexible-workflow-${CONTRACT} PROPERTIES

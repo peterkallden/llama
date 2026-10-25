@@ -171,7 +171,8 @@ struct fixture {
         check_generation_context(generations);
     }
 
-    void check_completed(const common_agent_result & result, const std::string & expected_tool) {
+    void check_completed(const common_agent_result & result, const std::string & expected_tool,
+            size_t expected_observations = 1) {
         require(result.error.empty() && result.response == "verified-tool-result", result.error);
         require(calls.size() == 1 && calls.front().name == expected_tool,
             "rejected or unrelated steps leaked into execution");
@@ -182,8 +183,11 @@ struct fixture {
             "executed plan was not persisted as completed");
         require(plan->namespace_id == request.namespace_id && plan->project_id == request.project_id &&
             plan->session_id == request.session_id, "published plan lost its host scope");
-        require(plan->observations.size() == 1 &&
-            plan->observations.front().summary.find("verified-tool-result") != std::string::npos,
+        const auto tool_evidence_count = std::count_if(plan->observations.begin(), plan->observations.end(),
+            [](const common_plan_observation & observation) {
+                return observation.summary.find("verified-tool-result") != std::string::npos;
+            });
+        require(plan->observations.size() == expected_observations && tool_evidence_count == 1,
             "tool evidence was lost or duplicated in the published plan");
     }
 };
@@ -317,7 +321,7 @@ void blueprint_planning_contracts() {
     test.request.blueprint_definition = method;
     test.inference.replies = {reply(inspect_plan)};
     const auto result = test.run();
-    test.check_completed(result, "code.inspect");
+    test.check_completed(result, "code.inspect", 2);
     test.check_generation_context(1);
     const auto & prompt = test.inference.requests.front().messages;
     require(std::any_of(prompt.begin(), prompt.end(), [](const auto & message) {
@@ -328,6 +332,8 @@ void blueprint_planning_contracts() {
     const auto plan = test.plans.get(*result.plan_id, error);
     require(plan && plan->derived_from_plan_id == method.id && !plan->workflow_definition,
         "unbound method invented a persistent workflow definition");
+    require(plan->purpose == method.goal,
+        "unbound blueprint without an explicit purpose did not inherit its goal");
     require(std::any_of(plan->observations.begin(), plan->observations.end(), [](const auto & item) {
         return item.source == "blueprint_outline" && item.confidence == 0.0f;
     }), "blueprint outline was lost or counted as execution evidence");
