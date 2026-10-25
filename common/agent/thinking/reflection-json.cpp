@@ -675,10 +675,36 @@ bool common_reflection_parse_compact_dsl(
     if (!complete.empty()) normalized["complete"] = std::move(complete);
     if (!activate.empty()) normalized["activate"] = std::move(activate);
     if (!reset.empty()) normalized["reset"] = std::move(reset);
+    // Model-written IDs keep the canonical length limit. An explicit host
+    // choice is an opaque plan identity and may be longer; validate a local
+    // alias, then restore that exact authorized identity in the result.
+    std::vector<std::pair<size_t, std::string>> bound_retries;
+    const auto retry_offset = normalized.value("complete", json::array()).size() + normalized.value("activate", json::array()).size();
+    for (size_t index = 0; index < retry.size(); ++index) {
+        auto & item = retry[index];
+        if (!item.is_string()) continue;
+        const auto target = item.get<std::string>();
+        const bool host_bound = (!inferred_retry_step_id.empty() && target == inferred_retry_step_id) ||
+            std::any_of(retry_step_choices.begin(), retry_step_choices.end(),
+                [&](const auto & choice) { return choice.second == target; });
+        if (target.size() <= 64 || !host_bound) continue;
+        const auto alias = "host-retry-" + std::to_string(retry_offset + index);
+        bound_retries.emplace_back(retry_offset + index, target);
+        item = alias;
+    }
     if (!retry.empty()) normalized["retry"] = std::move(retry);
     if (!additions.empty()) normalized["add_steps"] = std::move(additions);
     if (!replacements.empty()) normalized["replace_steps"] = std::move(replacements);
     if (!operations.empty()) normalized["operations"] = std::move(operations);
-    return common_reflection_parse_json(
-        normalized.dump(), result, error, max_operations, inferred_replace_step_id);
+    if (!common_reflection_parse_json(
+            normalized.dump(), result, error, max_operations, inferred_replace_step_id)) return false;
+    for (const auto & bound : bound_retries) {
+        if (bound.first >= result.proposed_plan_operations.size()) { error = "host retry projection lost its operation"; return false; }
+        auto & operation = result.proposed_plan_operations[bound.first];
+        if (operation.kind != common_plan_operation_kind::activate_step || operation.step_id != "host-retry-" + std::to_string(bound.first)) {
+            error = "host retry projection changed operation ordering"; return false;
+        }
+        operation.step_id = bound.second;
+    }
+    return true;
 }

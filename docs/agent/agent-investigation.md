@@ -726,3 +726,14 @@ phase-specific candidates and transitions in the existing JSON workflow system,
 with host checks on source readiness and model decisions inside those boundaries.
 This change does not invent such phases in C++, infer intent from message words,
 or force a particular operation to make a model smoke pass.
+
+Inspection of the fourth run's reflection revealed that both generations emitted
+valid `reflect retry`, not an abort decision. The host-bound workflow step ID was
+longer than the JSON parser's 64-character model-ID limit. Compact reflection now
+validates a local retry alias and restores the exact host-authorized step identity
+only in its corresponding operation afterward. Arbitrary model-written long IDs
+remain rejected, and an alias collision cannot rewrite another model operation.
+This is an internal binding correction, not a public lifecycle/ID limit change.
+
+The final combined regression after the host retry binding correction passed
+all 17 selected CTests. No model-quality success is inferred from that result.
