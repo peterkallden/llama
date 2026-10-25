@@ -711,3 +711,18 @@ for the model.
 
 The final seven-test block, including the shared JSON-schema grammar regression,
 passed after the numeric and CAS corrections.
+
+The last model pass used the bound case/revision and stayed inside the context
+budget, but selected source attachment rather than identity analysis. It exposed
+another pre-existing schema mismatch: the adapter requires exactly one resource
+or provider, while the schema permitted neither. A oneOf requirement now mirrors
+that invariant; the final seven-test block passed again. This final schema
+correction was replayed deterministically, not in another model run.
+
+The model scenario therefore remains unsuccessful as identity-analysis proof.
+The current graph-less method selects an action followed by an answer; a broad
+route catalog does not encode investigation phases. A follow-up should declare
+phase-specific candidates and transitions in the existing JSON workflow system,
+with host checks on source readiness and model decisions inside those boundaries.
+This change does not invent such phases in C++, infer intent from message words,
+or force a particular operation to make a model smoke pass.

@@ -259,6 +259,15 @@ void catalog_contracts() {
         std::vector<common_chat_tool> tools;
         for (const auto & definition : definitions) tools.push_back({definition.name, definition.description,
             common_tool_model_input_schema(definition), common_tool_model_result_schema(definition)});
+        for (const auto & tool : tools) if (tool.name == "investigation.source.attach") {
+            const auto action_grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
+            require(error.empty() && !matches(action_grammar, "open! investigation.source.attach\ncase_id: case-1\nexpected_revision: 2") &&
+                matches(action_grammar, "open! investigation.source.attach\ncase_id: case-1\nexpected_revision: 2\nprovider_id: provider-1"), "source attachment omitted its required reference: " + error);
+            std::string validation_error, normalized;
+            require(!common_schema_normalize_and_validate_object(
+                R"({"case_id":"case-1","expected_revision":2,"provider_id":"provider-1","resource_uri":"resource://original"})", tool.parameters, normalized, validation_error),
+                "source attachment accepted both resource and provider");
+        }
         for (const auto & tool : tools) if (tool.name == "investigation.analyze") {
             const auto action_grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
             require(error.empty() && matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: graph_metrics"), "metrics acquired spurious prerequisites: " + error);
