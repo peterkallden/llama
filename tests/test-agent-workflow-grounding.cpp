@@ -236,5 +236,154 @@ int main() {
         "open", "{}", R"({"result":{}})", "document.open").passed &&
         !common_agent_workflow_requires_claims(document_plan),
         "generic operation verification assumed a dataset or mandatory numerical answer");
+    // Operation requirements are task-specific, versioned and independent of
+    // argument syntax. Both grouped and overall analyses use the same profile.
+    common_plan_state contracted = analyzed;
+    contracted.steps.resize(1);
+    contracted.workflow_definition->workflow_ref = "workflow://dataset/analysis";
+    contracted.workflow_definition->workflow_revision = "v4";
+    contracted.steps[0].status = common_plan_step_status::active;
+    contracted.workflow_definition->result_contracts = {{"statistics.describe","statistics.describe.v1"}};
+    auto required_value = json{{"dataset","dataset://orders"},{"columns",json::array({"amount"})},
+        {"measures",json::array({"count","mean"})},{"group_by",json::array()},{"coverage","complete"}};
+    const auto bind = [&]() {
+        contracted.steps[0].tool_call->result_requirement_json = json{{"schema","analysis-result.v1"},
+            {"profile","statistics.describe.v1"},{"value",required_value},
+            {"workflow",contracted.workflow_definition->workflow_ref},
+            {"workflow_revision",contracted.workflow_definition->workflow_revision}}.dump();
+    };
+    bind();
+    std::string normalized;
+    CHECK_CONTRACT(common_agent_validate_result_requirement("statistics.describe.v1", required_value.dump(), normalized, error));
+    CHECK_CONTRACT(!common_agent_validate_result_requirement("invented.v1", required_value.dump(), normalized, error));
+    auto duplicate = required_value; duplicate["measures"].push_back("mean");
+    CHECK_CONTRACT(!common_agent_validate_result_requirement("statistics.describe.v1", duplicate.dump(), normalized, error));
+    const auto total_args = R"({"dataset":"dataset://orders","columns":["amount"]})";
+    CHECK_CONTRACT(common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_tool,
+        "describe", total_args, "{}").passed);
+    const auto wrong_group = common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_tool,
+        "describe", R"({"dataset":"dataset://orders","columns":["amount"],"group_by":["customer_id"]})", "{}");
+    CHECK_CONTRACT(!wrong_group.passed && wrong_group.records[0]["category"] == "argument_mismatch");
+    auto versioned = json::parse(contracted.steps[0].tool_call->result_requirement_json);
+    versioned["source_version"] = {{"content_hash","hash-one"},{"read_context_id","read-one"}};
+    contracted.steps[0].tool_call->result_requirement_json = versioned.dump();
+    common_agent_request changed_source;
+    common_agent_dataset_descriptor changed_dataset;
+    changed_dataset.ref.uri = "dataset://orders"; changed_dataset.ref.content_hash = "hash-two";
+    changed_dataset.read_context_id = "read-two"; changed_source.available_datasets = {changed_dataset};
+    CHECK_CONTRACT(!common_agent_verify_workflow(changed_source, contracted, common_plan_verification_phase::before_tool,
+        "describe", total_args, "{}").passed);
+    contracted.steps[0].status = common_plan_step_status::completed;
+    CHECK_CONTRACT(common_agent_verify_workflow(changed_source, contracted, common_plan_verification_phase::before_tool,
+        "describe", total_args, "{}").passed);
+    contracted.steps[0].status = common_plan_step_status::active;
+    bind();
+    const auto total_result = json::parse(R"({"ok":true,"result":{"dataset":"dataset://orders","selected_columns":["amount"],"group_by":[],"columns":[{"name":"amount","count":3,"mean":13.333333333333334}],"groups":[],"scanned_rows":3,"scan_truncated":false}})");
+    CHECK_CONTRACT(common_agent_verify_workflow({}, contracted, common_plan_verification_phase::after_tool,
+        "describe", total_args, total_result.dump()).passed);
+    auto partial = total_result; partial["result"]["scan_truncated"] = true;
+    CHECK_CONTRACT(!common_agent_verify_workflow({}, contracted, common_plan_verification_phase::after_tool,
+        "describe", total_args, partial.dump()).passed);
+    auto incomplete = total_result; incomplete["result"]["columns"][0].erase("mean");
+    CHECK_CONTRACT(!common_agent_verify_workflow({}, contracted, common_plan_verification_phase::after_tool,
+        "describe", total_args, incomplete.dump()).passed);
+    contracted.steps[0].status = common_plan_step_status::completed;
+    contracted.observations = {{"tool:describe:statistics.describe","statistics.describe",total_result.dump(),1.0f}};
+    auto required_handles = common_agent_workflow_claim_handles({}, contracted);
+    CHECK_CONTRACT(required_handles.size() == 2);
+    json required_claims = json::array();
+    for (const auto & handle : required_handles) required_claims.push_back({{"handle",handle["handle"]},{"value",handle["value"]}});
+    auto proof = common_agent_verify_declared_claims(required_claims, required_handles, verified);
+    CHECK_CONTRACT(proof.passed);
+    CHECK_CONTRACT(common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_answer,
+        "answer", "{}", json{{"verified_claims",proof.records}}.dump()).passed);
+    required_claims.erase(required_claims.begin());
+    proof = common_agent_verify_declared_claims(required_claims, required_handles, verified);
+    CHECK_CONTRACT(proof.passed);
+    CHECK_CONTRACT(!common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_answer,
+        "answer", "{}", json{{"verified_claims",proof.records}}.dump()).passed);
+    // A null mean is a backed limitation, never a fabricated numeric zero.
+    auto empty = total_result;
+    empty["result"]["columns"][0]["count"] = 0;
+    empty["result"]["columns"][0]["mean"] = nullptr;
+    empty["result"]["scanned_rows"] = 0;
+    contracted.observations[0].summary = empty.dump();
+    required_handles = common_agent_workflow_claim_handles({}, contracted);
+    CHECK_CONTRACT(required_handles.size() == 2 && required_handles[1]["value"].is_null());
+    required_claims = json::array();
+    for (const auto & handle : required_handles) required_claims.push_back({{"handle",handle["handle"]},{"value",handle["value"]}});
+    proof = common_agent_verify_declared_claims(required_claims, required_handles, verified);
+    CHECK_CONTRACT(proof.passed && verified.size() == 1);
+    CHECK_CONTRACT(common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_answer,
+        "answer", "{}", json{{"verified_claims",proof.records}}.dump()).passed);
+    // Grouped results remain supported, with distinct evidence positions.
+    required_value["group_by"] = json::array({"customer_id"}); bind();
+    auto grouped = total_result;
+    grouped["result"]["group_by"] = json::array({"customer_id"});
+    grouped["result"]["groups"] = json::array({json{{"customer_id",10},{"columns",total_result["result"]["columns"]}}});
+    grouped["result"]["columns"] = json::array();
+    CHECK_CONTRACT(common_agent_verify_workflow({}, contracted, common_plan_verification_phase::after_tool,
+        "describe", "{}", grouped.dump()).passed);
+    contracted.observations[0].summary = grouped.dump();
+    required_handles = common_agent_workflow_claim_handles({}, contracted);
+    CHECK_CONTRACT(required_handles.size() == 2 && required_handles[0]["source_location"] == "/result/groups/0/columns/0/count");
+    // Per-step bindings and source observations survive a complementary analysis.
+    auto followup = contracted.steps[0]; followup.id = "followup";
+    contracted.steps.push_back(followup);
+    contracted.observations.push_back({"tool:followup:statistics.describe","statistics.describe",grouped.dump(),1.0f});
+    CHECK_CONTRACT(common_agent_workflow_claim_handles({}, contracted).size() == 4);
+    contracted.steps.resize(1); contracted.observations.resize(1);
+    // Bounded scans require an explicit, backed partial-coverage declaration.
+    required_value["group_by"] = json::array(); required_value["coverage"] = "bounded"; bind();
+    contracted.observations[0].summary = partial.dump();
+    required_handles = common_agent_workflow_claim_handles({}, contracted);
+    CHECK_CONTRACT(required_handles.size() == 3 && required_handles[2]["value"] == true);
+    required_claims = json::array();
+    for (const auto & handle : required_handles) required_claims.push_back({{"handle",handle["handle"]},{"value",handle["value"]}});
+    proof = common_agent_verify_declared_claims(required_claims, required_handles, verified);
+    CHECK_CONTRACT(proof.passed && verified.size() == 2);
+    // The shared store codec roundtrips metadata; legacy calls remain empty.
+    json stored_call = json::object();
+    common_plan_tool_result_requirement_to_json(*contracted.steps[0].tool_call, stored_call);
+    common_plan_tool_call restored_call;
+    common_plan_tool_result_requirement_from_json(stored_call, restored_call);
+    CHECK_CONTRACT(restored_call.result_requirement_json == contracted.steps[0].tool_call->result_requirement_json);
+    common_plan_tool_result_requirement_from_json(json::object(), restored_call);
+    CHECK_CONTRACT(restored_call.result_requirement_json.empty());
+    json stored_definition = json::object();
+    common_plan_workflow_grounding_to_json(*contracted.workflow_definition, stored_definition);
+    common_plan_workflow_definition restored_definition;
+    CHECK_CONTRACT(common_plan_workflow_grounding_from_json(stored_definition, restored_definition, error));
+    CHECK_CONTRACT(restored_definition.result_contracts == contracted.workflow_definition->result_contracts);
+    // Model repair may change arguments, but cannot discard its obligation.
+    contracted.id = "result-contract-plan"; contracted.version = 1;
+    common_plan_operation replacement;
+    replacement.kind = common_plan_operation_kind::replace_step;
+    replacement.plan_id = contracted.id; replacement.expected_version = contracted.version;
+    replacement.step_id = contracted.steps[0].id; replacement.step = contracted.steps[0];
+    contracted.steps[0].status = common_plan_step_status::failed;
+    replacement.step->status = common_plan_step_status::pending;
+    replacement.step->tool_call->result_requirement_json.clear();
+    CHECK_CONTRACT(!plan_policy.validate(contracted, replacement).allowed);
+
+    common_plan_step final_response;
+    final_response.id = "final"; final_response.title = "Answer";
+    final_response.mode = common_plan_step_mode::final_response;
+    final_response.status = common_plan_step_status::active;
+    contracted.steps[0].status = common_plan_step_status::completed;
+    contracted.steps.push_back(final_response);
+    common_plan_operation complete_answer;
+    complete_answer.kind = common_plan_operation_kind::complete_step;
+    complete_answer.plan_id = contracted.id; complete_answer.expected_version = contracted.version;
+    complete_answer.step_id = final_response.id;
+    CHECK_CONTRACT(!plan_policy.validate(contracted, complete_answer).allowed);
+    complete_answer.host_authorized = true;
+    CHECK_CONTRACT(!plan_policy.validate(contracted, complete_answer).allowed);
+    const auto coverage_proof = common_agent_verify_workflow({}, contracted, common_plan_verification_phase::before_answer,
+        "answer", "{}", json{{"verified_claims",proof.records}}.dump());
+    CHECK_CONTRACT(coverage_proof.passed);
+    for (const auto & record : coverage_proof.records)
+        contracted.observations.push_back({"coverage-proof", "workflow_verification", record.dump(), 1.0f});
+    CHECK_CONTRACT(plan_policy.validate(contracted, complete_answer).allowed);
     return 0;
 }

@@ -252,7 +252,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v36");
+        checked_in_starter.version == "v37");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -572,6 +572,25 @@ int main() {
                 transition.kind == common_plan_workflow_transition_kind::model_choice &&
                 transition.candidate_json_pointer == "/results";
         }));
+    auto invalid_verification_tool_package = checked_in_starter;
+    const auto analysis_workflow = std::find_if(invalid_verification_tool_package.workflows.begin(),
+        invalid_verification_tool_package.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://dataset/analysis";
+        });
+    assert(analysis_workflow != invalid_verification_tool_package.workflows.end());
+    assert(!analysis_workflow->definition.verification_checks.empty());
+    analysis_workflow->definition.verification_checks.front().tool_name = "unregistered.operation";
+    assert(!common_agent_package_to_json(invalid_verification_tool_package, package_json, error));
+    assert(error.find("unavailable tool transition") != std::string::npos);
+    auto invalid_result_package = checked_in_starter;
+    const auto result_workflow = std::find_if(invalid_result_package.workflows.begin(), invalid_result_package.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://dataset/analysis"; });
+    if (result_workflow == invalid_result_package.workflows.end() ||
+            result_workflow->definition.result_contracts.at("statistics.describe") != "statistics.describe.v1")
+        throw std::runtime_error("dataset workflow lost its declared result profile");
+    result_workflow->definition.result_contracts["statistics.describe"] = "unsupported.v1";
+    if (common_agent_package_to_json(invalid_result_package, package_json, error))
+        throw std::runtime_error("unsupported result profile was accepted");
     auto invalid_graph_package = checked_in_starter;
     auto & invalid_definition = invalid_graph_package.workflows.back().definition;
     invalid_definition.start_state = "loop-a";
@@ -767,7 +786,7 @@ int main() {
     assert(checked_in_dataset_blueprint != checked_in_starter.blueprints.end());
     assert(checked_in_dataset_blueprint->workflow_bindings.size() == 3);
     assert(checked_in_dataset_blueprint->source_revision ==
-        "agent-workflows-starter@v3");
+        "agent-workflows-starter@v37");
 
     common_memory_in_memory_store checked_in_memory;
     common_plan_in_memory_store checked_in_plans;
@@ -807,12 +826,12 @@ int main() {
     const auto checked_in_dataset = checked_in_plans.get(
         "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2", error);
     assert(checked_in_dataset &&
-        checked_in_dataset->source_revision == "agent-workflows-starter@v32");
+        checked_in_dataset->source_revision == "agent-workflows-starter@v37");
     assert(checked_in_dataset->selection_description ==
         "Analyse a dataset through a host-resolved workflow and verified result.");
     assert(checked_in_dataset->workflow_bindings.size() == 3);
     const auto checked_in_workflow = checked_in_plans.get(
-        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v3", error);
+        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v4", error);
     assert(checked_in_workflow && checked_in_workflow->kind == common_plan_kind::workflow &&
         checked_in_workflow->workflow_definition &&
         checked_in_workflow->workflow_definition->workflow_revision == "v3" &&

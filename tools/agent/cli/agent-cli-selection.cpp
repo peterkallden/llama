@@ -6,6 +6,7 @@
 #include "agent/runtime-json-contracts.h"
 #include "agent/input-resources.h"
 #include "agent/dataset-contracts.h"
+#include "agent/grounding/workflow-grounding.h"
 #include "agent/tooling/catalog/model-projection.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
@@ -668,6 +669,93 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     }
     error = last_error.empty() ? "workflow action selection failed" : last_error;
     return result;
+}
+
+bool select_llama_cli_result_requirement(common_agent_inference & inference,
+        const common_agent_generation_config & config, const common_agent_request & request,
+        const common_plan_state & plan, const common_plan_step & step,
+        const std::vector<common_chat_tool> & authorized_tools,
+        std::string & requirement, std::string & error,
+        common_agent_generated_text_result * generation) {
+    requirement.clear(); error.clear();
+    if (generation) *generation = {};
+    int decoded_tokens = 0;
+    if (!step.tool_call || !plan.workflow_definition) { error = "result selection has no operation/workflow binding"; return false; }
+    const auto declared = plan.workflow_definition->result_contracts.find(step.tool_call->name);
+    if (declared == plan.workflow_definition->result_contracts.end()) { error = "operation has no declared result contract"; return false; }
+    const auto tool = std::find_if(authorized_tools.begin(), authorized_tools.end(),
+        [&](const auto & candidate) { return candidate.name == step.tool_call->name; });
+    if (tool == authorized_tools.end()) { error = "result contract operation is outside the authorized tool view"; return false; }
+    auto schema = json::parse(common_agent_result_requirement_schema(declared->second), nullptr, false);
+    if (!schema.is_object()) { error = "unsupported result contract profile"; return false; }
+    json fixed = json::object();
+    for (const auto & binding : request.tool_argument_bindings) {
+        // A previous model action is not independent evidence of intent.
+        if (binding.tool_name != tool->name || binding.source_ref == "workflow-action") continue;
+        const auto fields = json::parse(binding.arguments_json, nullptr, false);
+        if (!fields.is_object()) { error = "invalid host result-selection binding"; return false; }
+        for (const auto * field : {"dataset", "columns", "group_by"}) if (fields.contains(field)) {
+            if (fixed.contains(field) && fixed[field] != fields[field]) { error = "conflicting host result-selection bindings"; return false; }
+            fixed[field] = fields[field];
+        }
+    }
+    if (!common_agent_project_dataset_model_schema(schema, request.available_datasets, fixed, error)) return false;
+    std::string correction;
+    for (size_t attempt = 0; attempt < 2; ++attempt) {
+        common_agent_generation_request generated_request;
+        const std::string instruction =
+            "Interpret the requested result independently of any proposed tool arguments. "
+            "Select only columns and measures needed to answer the original task. "
+            "Use an empty group_by list for an overall result; choose grouping only when the task calls for separate groups. "
+            "Select complete coverage for statements about the whole dataset; bounded coverage permits a partial scan that must be disclosed. "
+            "Preserve explicit host bindings. This is a task interpretation, not verified evidence.";
+        if (!prepare_selection_request(request, config, common_agent_generation_purpose::operation_selection,
+                {{"system",instruction}, {"user", workflow_action_method_context(request) +
+                    "\n[Original task and conversation context]\n" + request.prompt +
+                    "\n[Current analysis contribution]\n" + step.objective +
+                    "\n[Host-fixed arguments]\n" + fixed.dump() +
+                    common_agent_render_dataset_inventory(request.available_datasets, std::numeric_limits<size_t>::max(), true) + correction}},
+                config.n_predict, "selection.analysis_result", schema, generated_request, error)) return false;
+        generated_request.trace_id = generated_request.trace_id.value_or("") + ":result-requirement:" + std::to_string(attempt);
+        const auto generated = inference.generate_result(std::move(generated_request));
+        decoded_tokens += generated.decoded_tokens;
+        if (generation) {
+            *generation = common_agent_generated_text_result_from_generation_result(generated);
+            generation->decoded_tokens = decoded_tokens;
+        }
+        if (!common_agent_generation_succeeded(generated)) { error = describe_agent_cli_generation_failure("result requirement selection", generated); return false; }
+        if (generated.stop_reason == common_agent_generation_stop_reason::limit) {
+            error = "result requirement selection reached the configured output token limit"; return false;
+        }
+        json chosen;
+        if (!parse_selection_response(request, "selection.analysis_result", schema, generated.content, chosen, error)) {
+            correction = "\n[Selection correction]\n" + error;
+            continue;
+        }
+        common_chat_tool selection_tool = *tool;
+        selection_tool.parameters = schema.dump();
+        if (!resolve_workflow_dataset_handles(request, selection_tool, chosen, error)) return false;
+        bool fixed_match = true;
+        for (const auto & field : fixed.items()) if (!chosen.contains(field.key()) || chosen[field.key()] != field.value()) fixed_match = false;
+        std::string normalized;
+        if (!fixed_match || !common_agent_validate_result_requirement(declared->second, chosen.dump(), normalized, error) ||
+                !common_agent_validate_dataset_column_arguments(schema, chosen, request.available_datasets, error)) {
+            if (!fixed_match) error = "result selection changed an explicit host binding";
+            correction = "\n[Selection correction]\n" + error;
+            continue;
+        }
+        const auto dataset = std::find_if(request.available_datasets.begin(), request.available_datasets.end(),
+            [&](const auto & item) { return item.ref.uri == chosen["dataset"]; });
+        if (dataset == request.available_datasets.end()) { error = "result selection has no scoped dataset descriptor"; return false; }
+        requirement = json{{"schema","analysis-result.v1"},{"profile",declared->second},
+            {"value",json::parse(normalized)},{"origin","model_task_interpretation"},
+            {"turn_id",request.turn_id},{"workflow",plan.workflow_definition->workflow_ref},
+            {"workflow_revision",plan.workflow_definition->workflow_revision},
+            {"source_version",{{"content_hash",dataset->ref.content_hash},{"read_context_id",dataset->read_context_id}}}}.dump();
+        return true;
+    }
+    error = "result requirement selection failed: " + error;
+    return false;
 }
 
 bool select_llama_cli_workflow_transition_arguments(

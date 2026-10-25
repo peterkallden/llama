@@ -166,7 +166,13 @@ inline bool common_plan_chunk_synthesis_from_observations(
     return true;
 }
 // Data proposed by a plan; execution is owned by the agent tool registry.
-struct common_plan_tool_call { std::string name; std::string arguments_json = "{}"; };
+struct common_plan_tool_call {
+    std::string name;
+    std::string arguments_json = "{}";
+    // Host-validated, operation-specific interpretation of the current task.
+    // It is persisted with the step, never forwarded as a provider argument.
+    std::string result_requirement_json;
+};
 // A blueprint binds only to immutable workflow identities.  The host resolves
 // these against the current scope before it materializes any executable plan.
 struct common_plan_workflow_binding {
@@ -336,6 +342,9 @@ struct common_plan_workflow_definition {
     // claims on routes that never execute such an operation. Once required,
     // unrelated reads in the same workflow segment cannot remove assurance.
     std::vector<std::string> declared_claim_tools;
+    // Canonical operation -> versioned result-contract profile. Empty keeps
+    // older workflows readable without inventing missing task requirements.
+    std::map<std::string, std::string> result_contracts;
 };
 
 // Host-owned route provenance for a concrete task plan.  This is deliberately

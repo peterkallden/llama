@@ -24,11 +24,13 @@ void require(bool value, const std::string & message) {
 struct scripted_inference final : common_agent_inference {
     std::vector<std::string> replies;
     std::vector<common_agent_generation_request> requests;
+    common_agent_generation_status status = common_agent_generation_status::completed;
+    common_agent_generation_stop_reason stop = common_agent_generation_stop_reason::eos;
     bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
         require(requests.size() < replies.size(), "unexpected inference call");
         result.content = replies[requests.size()]; requests.push_back(request);
-        result.status = common_agent_generation_status::completed;
-        result.stop_reason = common_agent_generation_stop_reason::eos;
+        result.status = status;
+        result.stop_reason = stop;
         return true;
     }
 };
@@ -87,6 +89,58 @@ void selection_formats() {
     observation.summary = R"({"ok":false,"count":0,"items":[],"complete":false})";
     require(!common_plan_workflow_choice_available(observation, transition.choices.front()),
         "failed observations enabled a choice");
+}
+
+void result_requirement_selection() {
+    common_agent_request request;
+    request.prompt = "Conversation goal: overall amount count and mean, without separate customer groups.";
+    common_agent_dataset_descriptor orders;
+    orders.ref.uri = "dataset://seed/orders"; orders.ref.name = "orders";
+    orders.columns = {{"customer_id"}, {"amount"}};
+    orders.ref.column_count = orders.columns.size();
+    request.available_datasets = {orders};
+    common_plan_state plan;
+    plan.workflow_definition = common_plan_workflow_definition{};
+    plan.workflow_definition->workflow_ref = "workflow://dataset/analysis";
+    plan.workflow_definition->workflow_revision = "v4";
+    plan.workflow_definition->result_contracts = {{"statistics.describe","statistics.describe.v1"}};
+    request.workflow_definition = plan.workflow_definition;
+    common_plan_step step;
+    step.id = "describe"; step.objective = "Describe the selected amount column.";
+    // The proposed action is deliberately wrong. It must not become the
+    // evidence used to infer what the user requested.
+    step.tool_call = common_plan_tool_call{"statistics.describe", R"({"dataset":"dataset://seed/orders","columns":["amount"],"group_by":["customer_id"]})"};
+    request.tool_argument_bindings = {{"statistics.describe",step.tool_call->arguments_json,"workflow-action",false}};
+    common_chat_tool tool{"statistics.describe","Describe numeric columns.","{}"};
+    common_agent_generation_config config; config.n_predict = 128;
+    scripted_inference dsl;
+    dsl.replies = {"open! selection.analysis_result\ndataset: d1\ncolumns: amount\nmeasures: count, mean\ngroup_by: []\ncoverage: complete"};
+    std::string requirement, error;
+    require(select_llama_cli_result_requirement(dsl, config, request, plan, step, {tool}, requirement, error), error);
+    const auto value = json::parse(requirement);
+    require(value["value"]["dataset"] == orders.ref.uri && value["value"]["group_by"].empty(), "result interpretation copied wrong grouping");
+    require(dsl.requests.size() == 1 && dsl.requests[0].json_schema.empty() && !dsl.requests[0].grammar.empty(), "result selection bypassed DSL default");
+    require(dsl.requests[0].messages.back().content.find(request.prompt) != std::string::npos &&
+        dsl.requests[0].messages.back().content.find("[Host-fixed arguments]\n{}") != std::string::npos,
+        "result selection lost task context or treated a proposed action as a host instruction");
+    request.tool_output_format = common_agent_tool_output_format::native;
+    scripted_inference native;
+    native.replies = {R"({"dataset":"d1","columns":["amount"],"measures":["count","mean"],"group_by":[],"coverage":"complete"})"};
+    require(select_llama_cli_result_requirement(native, config, request, plan, step, {tool}, requirement, error), error);
+    require(!native.requests[0].json_schema.empty() && native.requests[0].grammar.empty(), "explicit native mode received DSL");
+    for (const auto interrupted : {true, false}) {
+        scripted_inference stopped;
+        stopped.replies = native.replies;
+        stopped.status = interrupted ? common_agent_generation_status::cancelled : common_agent_generation_status::completed;
+        stopped.stop = interrupted ? common_agent_generation_stop_reason::cancelled : common_agent_generation_stop_reason::limit;
+        common_agent_generated_text_result generated;
+        require(!select_llama_cli_result_requirement(stopped, config, request, plan, step, {tool}, requirement, error, &generated) &&
+            stopped.requests.size() == 1 && requirement.empty() && generated.stop_reason == stopped.stop,
+            "cancellation or output exhaustion became an ordinary selector repair/fallback");
+    }
+    scripted_inference unauthorized;
+    require(!select_llama_cli_result_requirement(unauthorized, config, request, plan, step, {}, requirement, error) &&
+        unauthorized.requests.empty(), "result selection widened the authorized operation view");
 }
 
 void workflow_action_dataset_handles() {
@@ -336,7 +390,7 @@ int main(int argc, char ** argv) {
     require(argc == 2, "choose formats, dataset-handles, continuation, blueprint or package");
     const std::string group = argv[1];
     if (group == "formats") selection_formats();
-    else if (group == "dataset-handles") { workflow_action_dataset_handles(); dataset_projection_contracts(); }
+    else if (group == "dataset-handles") { workflow_action_dataset_handles(); dataset_projection_contracts(); result_requirement_selection(); }
     else if (group == "continuation") transitions_and_resume();
     else if (group == "blueprint") blueprint_and_publication_context();
     else if (group == "package") package_contracts();

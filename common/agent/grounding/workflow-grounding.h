@@ -18,9 +18,17 @@ common_agent_grounding_result common_agent_verify_workflow(
 
 // Host-built bounded handles are the only model-selectable claim sources.
 nlohmann::ordered_json common_agent_workflow_claim_handles(
-    const common_agent_request &, const common_plan_state &);
+    const common_agent_request &, const common_plan_state &, std::string * diagnostic = nullptr);
 bool common_agent_parse_grounded_draft(const std::string &, bool json_format,
     std::string & answer, nlohmann::ordered_json & claims, std::string & error);
 common_agent_grounding_result common_agent_verify_declared_claims(
     const nlohmann::ordered_json & claims, const nlohmann::ordered_json & handles,
     std::vector<common_agent_research_verification_claim> & verified_claims);
+
+// Shared typed result profiles for selection, validation and persisted steps.
+bool common_agent_result_contract_available(const std::string & operation, const std::string & profile);
+std::string common_agent_result_requirement_schema(const std::string & profile);
+bool common_agent_validate_result_requirement(const std::string & profile,
+    const std::string &, std::string & normalized, std::string & error);
+
+std::string common_agent_render_result_requirements(const common_plan_state &);

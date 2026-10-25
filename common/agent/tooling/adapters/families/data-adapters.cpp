@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/families/data-adapters.h"
 
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "agent/tooling/contracts/schema-contract.h"
 
 #include <algorithm>
 #include <atomic>

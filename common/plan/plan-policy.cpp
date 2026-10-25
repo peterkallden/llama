@@ -65,6 +65,28 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (step && !step->optional && step->semantic_alias && step->semantic_alias->rfind("workflow-transition:", 0) == 0)
             return deny("mandatory guarded workflow transitions require a host-authorized route change");
     }
+    const auto guarded_result = [&](const common_plan_step & step) {
+        return step.tool_call && (!step.tool_call->result_requirement_json.empty() ||
+            (plan.workflow_definition && plan.workflow_definition->result_contracts.count(step.tool_call->name)));
+    };
+    if (!op.host_authorized && op.step_id &&
+            (op.kind == common_plan_operation_kind::remove_step || op.kind == common_plan_operation_kind::skip_step)) {
+        const auto * prior = find_step(plan, *op.step_id);
+        if (prior && !prior->optional && guarded_result(*prior))
+            return deny("mandatory result contract cannot be removed or skipped by model operations");
+    }
+    if (!op.host_authorized && op.step && op.step->tool_call &&
+            (op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step || op.kind == common_plan_operation_kind::revise_step)) {
+        const auto * prior = find_step(plan, op.step_id.value_or(op.step->id));
+        const auto expected = prior && prior->tool_call ? prior->tool_call->result_requirement_json : std::string{};
+        if (op.step->tool_call->result_requirement_json != expected ||
+                (!expected.empty() && prior->tool_call->name != op.step->tool_call->name))
+            return deny("result requirements are host-owned and cannot be changed by model operations");
+    }
+    if (!op.host_authorized && op.step && !op.step->tool_call) {
+        const auto * prior = find_step(plan, op.step_id.value_or(op.step->id));
+        if (prior && guarded_result(*prior)) return deny("model replacement cannot erase a guarded analysis operation");
+    }
     if (op.kind == common_plan_operation_kind::add_step) {
         if (!op.step || op.step->id.empty() || op.step->title.empty()) return deny("add_step requires an identified step with a title");
         if (op.step->objective.size() > config.max_string_length || op.step->intended_contribution.size() > config.max_string_length) return deny("step objective or contribution is too long");
@@ -154,6 +176,24 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         // it: the completing operation must carry the observation emitted by
         // that exact tool step.
         if (target == common_plan_step_status::completed && step->tool_call) {
+            if (guarded_result(*step)) {
+                if (!op.host_authorized || step->tool_call->result_requirement_json.empty())
+                    return deny("analysis completion requires a host-bound result requirement");
+                for (const auto * phase : {"before_tool", "after_tool"}) {
+                    bool passed = false;
+                    for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                        if (item->source != "workflow_verification") continue;
+                        const auto value = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+                        if (!value.is_object() || value.value("step_id", nlohmann::ordered_json{}) != step->id ||
+                                value.value("check", nlohmann::ordered_json{}) != "analysis-result-contract" ||
+                                value.value("phase", nlohmann::ordered_json{}) != phase) continue;
+                        passed = value.value("status", nlohmann::ordered_json{}) == "passed";
+                        break;
+                    }
+                    if (!passed) return deny("analysis completion requires passed argument and result verification");
+                }
+            }
+
             if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty()) {
                 std::string transition;
                 if (step->semantic_alias && step->semantic_alias->rfind("workflow-transition:", 0) == 0) {
@@ -194,6 +234,31 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             (op.kind == common_plan_operation_kind::complete_step && op.step_id &&
              find_step(plan, *op.step_id) &&
              common_plan_step_effective_mode(*find_step(plan, *op.step_id)) == common_plan_step_mode::final_response)) {
+        // A completed work plan may still need draft synthesis. Gate the
+        // response step here; the runtime separately verifies answers even
+        // when a planner produced no explicit final-response step.
+        if (op.kind == common_plan_operation_kind::complete_step &&
+                plan.workflow_definition && !plan.workflow_definition->result_contracts.empty()) {
+            const size_t first = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+            for (size_t index = first; index < plan.steps.size(); ++index) {
+                const auto & analysis = plan.steps[index];
+                if (analysis.optional || !analysis.tool_call || analysis.status != common_plan_step_status::completed ||
+                        !plan.workflow_definition->result_contracts.count(analysis.tool_call->name)) continue;
+                if (!op.host_authorized) return deny("analysis answer completion is host-authorized only");
+                bool passed = false;
+                for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                    if (item->source != "workflow_verification") continue;
+                    const auto proof = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+                    if (!proof.is_object() || proof.value("check", nlohmann::ordered_json{}) != "analysis-result-contract" ||
+                            proof.value("phase", nlohmann::ordered_json{}) != "before_answer" ||
+                            proof.value("analysis_step_id", nlohmann::ordered_json{}) != analysis.id) continue;
+                    passed = proof.value("status", nlohmann::ordered_json{}) == "passed" &&
+                        proof.value("workflow_revision", nlohmann::ordered_json{}) == plan.workflow_definition->workflow_revision;
+                    break;
+                }
+                if (!passed) return deny("analysis answer coverage is missing or incomplete");
+            }
+        }
         for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
             if (item->source != "response_review") continue;
             const auto review = nlohmann::ordered_json::parse(item->summary, nullptr, false);

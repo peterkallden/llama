@@ -445,9 +445,11 @@ int main() {
     common_agent_dataset_descriptor unknown_numeric;
     unknown_numeric.ref.uri = "dataset://local/unknown-numeric";
     unknown_numeric.ref.name = "unknown numeric";
+    unknown_numeric.ref.source_resource_uri = "resource://test/unknown-numeric.csv";
     unknown_numeric.ref.row_count = 1;
     unknown_numeric.ref.column_count = 1;
     unknown_numeric.columns = {{"amount", common_agent_dataset_column_type::unknown, true}};
+    unknown_numeric.import_processor_id = "test-importer";
     TEST_ASSERT(store.put_dataset_descriptor(unknown_numeric, error));
     TEST_ASSERT(store.put_row(unknown_numeric.ref.uri, "1", R"({"amount":12})", error));
     TEST_ASSERT(!store.execute("statistics.describe", json{{"dataset",unknown_numeric.ref.uri}}.dump(), output, error));

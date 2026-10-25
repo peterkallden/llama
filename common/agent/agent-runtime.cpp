@@ -547,11 +547,12 @@ static bool merge_reflection_tool_repair_arguments(
         const common_plan_state & plan,
         common_plan_operation & operation,
         std::string & error) {
-    if (!operation.step || !operation.step->tool_call) return false;
+    if (operation.kind != common_plan_operation_kind::replace_step || !operation.step_id ||
+            !operation.step || !operation.step->tool_call) return false;
 
     const common_plan_step * failed_base = nullptr;
     for (auto it = plan.steps.rbegin(); it != plan.steps.rend(); ++it) {
-        if (it->status == common_plan_step_status::failed && it->tool_call &&
+        if (it->id == *operation.step_id && it->status == common_plan_step_status::failed && it->tool_call &&
                 it->tool_call->name == operation.step->tool_call->name) {
             failed_base = &*it;
             break;
@@ -584,24 +585,6 @@ static bool reflection_operation_has_active_tool_failure(
         return false;
     };
 
-    if (operation.kind == common_plan_operation_kind::add_step) {
-        if (!operation.step || !operation.step->tool_call) return true;
-        bool completed_same_tool = false;
-        for (const auto & step : plan.steps) {
-            if (step.status == common_plan_step_status::failed && step.tool_call &&
-                    step.tool_call->name == operation.step->tool_call->name) {
-                return true;
-            }
-            completed_same_tool = completed_same_tool ||
-                (step.status == common_plan_step_status::completed && step.tool_call &&
-                 step.tool_call->name == operation.step->tool_call->name);
-        }
-        // A new tool operation can be a legitimate reflection extension. It
-        // becomes stale only when reflection tries to schedule another call
-        // for a tool that has already completed successfully.
-        return !completed_same_tool;
-    }
-
     if (operation.kind == common_plan_operation_kind::replace_step && operation.step) {
         return failed_step(operation.step->id);
     }
@@ -620,8 +603,7 @@ static void discard_stale_reflection_repairs(
     std::vector<common_plan_operation> retained;
     retained.reserve(reflection.proposed_plan_operations.size());
     for (auto & operation : reflection.proposed_plan_operations) {
-        const bool repair_operation = operation.kind == common_plan_operation_kind::add_step ||
-            operation.kind == common_plan_operation_kind::replace_step ||
+        const bool repair_operation = operation.kind == common_plan_operation_kind::replace_step ||
             operation.kind == common_plan_operation_kind::activate_step ||
             operation.kind == common_plan_operation_kind::reset_step ||
             operation.kind == common_plan_operation_kind::unblock_step;
@@ -1201,9 +1183,32 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "workflow_verification " + record.dump(), plan.id, step_id, tool, operation.observation->id);
         }
         if (!checked.passed && fail_step && step_id != "request") {
-            auto failure = tool_failure(tool, step_id, "", "workflow.verification_incomplete",
+            const auto failed_check = std::find_if(checked.records.begin(), checked.records.end(), [](const auto & record) {
+                return record.value("status", json{}) != "passed";
+            });
+            const auto category = failed_check == checked.records.end() ? std::string{} : failed_check->value("category", std::string{});
+            const auto code = category == "argument_mismatch" ? "workflow.argument_mismatch" :
+                category == "insufficient_analysis" ? "workflow.analysis_incomplete" : "workflow.verification_incomplete";
+            auto failure = tool_failure(tool, step_id, "", code,
                 common_agent_failure_class::validation, true, checked.summary);
             failure.stage = "workflow_verification";
+            if (tools) {
+                const auto step = std::find_if(plan.steps.begin(), plan.steps.end(),
+                    [&](const auto & candidate) { return candidate.id == step_id; });
+                if (step != plan.steps.end() && step->tool_call) {
+                    const common_agent_tool_call call{tool, step->tool_call->arguments_json};
+                    failure.repair_context_json = tool_repair_context_json(tools->make_repair_context(call, checked.summary));
+                }
+            }
+            const auto failure_id = next_tool_observation_id(plan, step_id, tool);
+            failure.evidence_id = failure_id;
+            common_plan_operation observed;
+            observed.kind = common_plan_operation_kind::record_observation;
+            observed.plan_id = plan.id; observed.expected_version = plan.version; observed.host_authorized = true;
+            observed.reason_summary = "retain workflow verification failure for bounded argument repair";
+            observed.observation = common_plan_observation{failure_id, tool,
+                common_agent_runtime_failure_observation_json(failure), 0.0f};
+            if (!store.apply(observed, plan, error)) return false;
             result.failures.push_back(failure);
             common_plan_operation failed;
             failed.kind = common_plan_operation_kind::fail_step;
@@ -1332,6 +1337,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             common_plan_operation complete_plan;
             complete_plan.kind = common_plan_operation_kind::complete_plan;
+            complete_plan.host_authorized = true;
             complete_plan.plan_id = plan.id;
             complete_plan.expected_version = plan.version;
             complete_plan.reason_summary = "all mandatory plan steps completed";
@@ -1440,6 +1446,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         complete.plan_id = plan.id;
         complete.expected_version = plan.version;
         complete.step_id = active->id;
+        complete.host_authorized = true;
         complete.reason_summary = "final response synthesis completed";
         const std::string completed_step_id = active->id;
         for (const auto & observation : plan.observations) {
@@ -2132,6 +2139,62 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
+            // Bind a separate interpretation of the original task, not a copy
+            // of the already-generated arguments. Persist before execution so
+            // retries and reflection cannot silently change the requirement.
+            if (plan.workflow_definition && plan.workflow_definition->result_contracts.count(tool_call->name)) {
+                const auto selected_step = std::find_if(plan.steps.begin(), plan.steps.end(),
+                    [&](const auto & candidate) { return candidate.id == tool_step_id; });
+                if (selected_step == plan.steps.end() || !selected_step->tool_call) {
+                    result.error = "result contract requires a persistent tool step"; return result;
+                }
+                if (selected_step->tool_call->result_requirement_json.empty()) {
+                    if (!request.result_requirement_selector) {
+                        result.error = "result contract selection is unavailable; saved step remains resumable"; return result;
+                    }
+                    std::string requirement;
+                    common_agent_generated_text_result generated;
+                    const bool selected = request.result_requirement_selector(request, plan, *selected_step, requirement, generated, error);
+                    result.total_decoded_tokens += generated.decoded_tokens;
+                    // Result interpretation is part of planning; resident
+                    // traces retain its operation-selection purpose/trace id.
+                    result.generation_records.push_back(common_agent_generation_record_from_result(
+                        common_agent_generation_stage::planner, generated));
+                    if (!selected) {
+                        result.response_generation_status = generated.status;
+                        result.response_stop_reason = generated.stop_reason;
+                        result.limit_reached = generated.stop_reason == common_agent_generation_stop_reason::limit;
+                        append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::failed,
+                            std::string("analysis_result_requirement_selection_failed status=") +
+                            common_agent_generation_status_name(generated.status) + " stop=" +
+                            common_agent_generation_stop_reason_name(generated.stop_reason), plan.id, tool_step_id, tool_call->name);
+                        result.error = "result contract selection failed: " + error; return result;
+                    }
+                    auto envelope = json::parse(requirement, nullptr, false);
+                    const auto profile = plan.workflow_definition->result_contracts.at(tool_call->name);
+                    std::string normalized;
+                    if (requirement.size() > 8192 || !envelope.is_object() || envelope.value("schema", json{}) != "analysis-result.v1" ||
+                            envelope.value("profile", json{}) != profile ||
+                            envelope.value("workflow", json{}) != plan.workflow_definition->workflow_ref ||
+                            envelope.value("workflow_revision", json{}) != plan.workflow_definition->workflow_revision ||
+                            !envelope.contains("value") || !common_agent_validate_result_requirement(
+                                profile, envelope["value"].dump(), normalized, error)) {
+                        result.error = "invalid host-selected result requirement: " + error; return result;
+                    }
+                    envelope["value"] = json::parse(normalized);
+                    common_plan_operation bind;
+                    bind.kind = common_plan_operation_kind::revise_step;
+                    bind.plan_id = plan.id; bind.expected_version = plan.version; bind.host_authorized = true;
+                    bind.step = *selected_step;
+                    bind.step->selected_tool = bind.step->tool_call->name;
+                    bind.step->tool_call->result_requirement_json = envelope.dump();
+                    bind.reason_summary = "bind independently selected analysis result requirement";
+                    if (!store.apply(bind, plan, error)) { result.error = error; return result; }
+                    append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::decided,
+                        "analysis_result_requirement_bound profile=" + profile + " origin=model_task_interpretation",
+                        plan.id, tool_step_id, tool_call->name);
+                }
+            }
             const auto before = common_agent_verify_workflow(request, plan,
                 common_plan_verification_phase::before_tool, tool_step_id, tool_call->arguments_json, "{}", tool_call->name);
             if (!record_grounding(before, tool_step_id, tool_call->name, true)) { result.error = error; return result; }
@@ -2150,6 +2213,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
             if (plan.workflow_definition && (!plan.workflow_definition->verification_checks.empty() ||
+                    !plan.workflow_definition->result_contracts.empty() ||
                     common_agent_workflow_requires_claims(plan) ||
                     !plan.workflow_definition->declared_claim_tools.empty())) {
                 common_plan_operation arguments;
@@ -2225,8 +2289,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 break;
             }
-            std::string tool_result = bounded_tool_observation_payload(
-                tool_observation_payload(execution), context_budgets.tool_observation_chars);
+            const auto full_tool_result = tool_observation_payload(execution);
+            const bool contracted_result = plan.workflow_definition &&
+                plan.workflow_definition->result_contracts.count(tool_call->name);
+            // Evidence retention and prompt projection are different budgets.
+            // A contracted result must survive resume without losing required
+            // cells to the optional model-context summarizer.
+            std::string tool_result = contracted_result && full_tool_result.size() <= 65536
+                ? full_tool_result : bounded_tool_observation_payload(
+                    full_tool_result, context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
             for (auto signal : execution.learning_signals) {
                 signal.plan_id = plan.id;
@@ -2579,7 +2650,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             plan_has_failed_mandatory_tool_step(plan);
 
         if (!draft_deferred_for_tool_repair && plan.workflow_definition &&
-                !plan.workflow_definition->verification_checks.empty()) {
+                (!plan.workflow_definition->verification_checks.empty() || !plan.workflow_definition->result_contracts.empty())) {
             const auto completed_steps = plan.steps;
             const size_t start = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, completed_steps.size()) : 0;
             for (size_t index = start; index < completed_steps.size(); ++index) {
@@ -2689,6 +2760,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
         if (!draft_deferred_for_tool_repair) {
             json claims = json::array();
+            json verified_claim_records = json::array();
             common_agent_grounding_result grounded;
             if (common_agent_workflow_requires_claims(plan)) {
                 std::string answer, parse_error;
@@ -2697,10 +2769,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         answer, claims, parse_error)) {
                     grounded.passed = false;
                     grounded.summary = parse_error;
-                    grounded.records.push_back({{"status", "unknown"}, {"reason", parse_error}});
+                    grounded.records.push_back({{"status", "unknown"}, {"reason", parse_error},
+                        {"category",result.response_stop_reason == common_agent_generation_stop_reason::limit
+                            ? "generation_output_limit" : "draft_contract_invalid"}});
                 } else {
                     grounded = common_agent_verify_declared_claims(claims,
                         common_agent_workflow_claim_handles(request, plan), declared_claims);
+                    verified_claim_records = grounded.records;
                     if (grounded.passed) draft = std::move(answer);
                 }
                 if (!grounded.records.empty()) {
@@ -2711,7 +2786,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             auto final_checks = common_agent_verify_workflow(request, plan,
                 common_plan_verification_phase::before_answer, "answer", "{}",
-                json{{"answer", draft}, {"claims", claims}}.dump());
+                json{{"answer", draft}, {"claims", claims}, {"verified_claims",verified_claim_records}}.dump());
             for (auto & record : final_checks.records) grounded.records.push_back(std::move(record));
             grounded.passed = grounded.passed && final_checks.passed;
             grounded.summary += final_checks.summary;
@@ -3099,6 +3174,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     common_runtime_trace_stage::reflection)) {
             result.error = "invalid cognitive-mode transition for reflection replan";
             return result;
+        }
+        for (auto & operation : reflection.proposed_plan_operations) {
+            if (!operation.step || !operation.step->tool_call ||
+                    (operation.kind != common_plan_operation_kind::replace_step &&
+                     operation.kind != common_plan_operation_kind::revise_step)) continue;
+            const auto target = operation.step_id.value_or(operation.step->id);
+            const auto prior = std::find_if(plan.steps.begin(), plan.steps.end(),
+                [&](const auto & step) { return step.id == target; });
+            if (prior != plan.steps.end() && prior->tool_call &&
+                    prior->tool_call->name == operation.step->tool_call->name)
+                operation.step->tool_call->result_requirement_json = prior->tool_call->result_requirement_json;
         }
         for (auto & operation : reflection.proposed_plan_operations) {
             if ((operation.kind != common_plan_operation_kind::add_step &&

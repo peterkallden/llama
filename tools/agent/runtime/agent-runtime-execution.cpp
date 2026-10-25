@@ -1984,6 +1984,13 @@ bool run_agent_runtime_driver(
             ? execution.tooling.tools
             : execution.model_tools;
         common_agent_request request = make_agent_runtime_driver_request(execution);
+        request.result_requirement_selector = [&execution, &model_tools](
+                const common_agent_request & current, const common_plan_state & plan,
+                const common_plan_step & step, std::string & requirement, common_agent_generated_text_result & generated, std::string & selection_error) {
+            return select_llama_cli_result_requirement(execution.inference,
+                execution.runtime_config.generation_config, current, plan, step,
+                model_tools, requirement, selection_error, &generated);
+        };
         if (execution.route_selected && execution.selected_route.workflow_definition &&
                 !execution.selected_route.workflow_definition->transitions.empty()) {
             const auto route = execution.selected_route;

@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <filesystem>
+#include <cstdlib>
+#include <iostream>
 
 int main() {
     namespace fs = std::filesystem;
@@ -208,6 +210,39 @@ int main() {
         assert(store.erase("p", error));
     }
 
+
+    // A real close/reopen preserves the task contract independently of the
+    // original continuation fixture. These checks remain active with NDEBUG.
+    const std::filesystem::path analysis_path = dir / "analysis.db";
+    common_plan_state analysis;
+    analysis.id = "analysis-result-roundtrip";
+    analysis.workflow_definition = common_plan_workflow_definition{};
+    analysis.workflow_definition->workflow_ref = "workflow://dataset/analysis";
+    analysis.workflow_definition->workflow_revision = "v4";
+    analysis.workflow_definition->result_contracts = {{"statistics.describe","statistics.describe.v1"}};
+    common_plan_step measure;
+    measure.id = "measure"; measure.title = "Describe amount";
+    measure.tool_call = common_plan_tool_call{"statistics.describe", R"({"dataset":"dataset://orders","columns":["amount"]})"};
+    measure.result_summary = "Pending analysis";
+    measure.tool_call->result_requirement_json = R"({"schema":"analysis-result.v1","profile":"statistics.describe.v1","value":{"dataset":"dataset://orders","columns":["amount"],"measures":["count","mean"],"group_by":[],"coverage":"complete"}})";
+    analysis.steps = {measure};
+    {
+        common_plan_cozo_store writer;
+        if (!writer.open(analysis_path.string(), error) || !writer.create(analysis, error)) {
+            std::cerr << "analysis persistence failed: " << error << '\n'; std::exit(1);
+        }
+    }
+    {
+        common_plan_cozo_store reader;
+        if (!reader.open(analysis_path.string(), error)) { std::cerr << error << '\n'; std::exit(1); }
+        const auto saved = reader.get(analysis.id, error);
+        if (!saved || saved->steps.size() != 1 || !saved->steps[0].tool_call ||
+                saved->steps[0].tool_call->result_requirement_json != measure.tool_call->result_requirement_json ||
+                !saved->workflow_definition || saved->workflow_definition->result_contracts != analysis.workflow_definition->result_contracts) {
+            std::cerr << "analysis result contract lost on restart\n"; std::exit(1);
+        }
+    }
+    std::filesystem::remove(analysis_path);
     fs::remove_all(dir, ec);
     return 0;
 }

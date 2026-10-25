@@ -43,6 +43,14 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     common_agent_tool_output_format output_format,
     std::string & error);
 
+// Interpret the result independently, through the existing DSL/JSON selection
+// boundary. The runtime owns persistence and subsequent contract checks.
+bool select_llama_cli_result_requirement(common_agent_inference &,
+    const common_agent_generation_config &, const common_agent_request &,
+    const common_plan_state &, const common_plan_step &,
+    const std::vector<common_chat_tool> &, std::string &, std::string &,
+    common_agent_generated_text_result * generation = nullptr);
+
 // Materialize a later declared transition using the same DSL/native action
 // generator, with case baselines drawn only from successful completed steps.
 bool select_llama_cli_workflow_transition_arguments(

@@ -199,7 +199,8 @@ static const common_plan_observation * declared_operation_observation(const comm
         if (!step.tool_call || step.status != common_plan_step_status::completed) continue;
         if (std::find(plan.workflow_definition->declared_claim_tools.begin(),
                 plan.workflow_definition->declared_claim_tools.end(), step.tool_call->name) ==
-                plan.workflow_definition->declared_claim_tools.end()) continue;
+                plan.workflow_definition->declared_claim_tools.end() &&
+                !plan.workflow_definition->result_contracts.count(step.tool_call->name)) continue;
         if (const auto * observation = common_plan_workflow_observation(plan, {}, false, step.tool_call->name)) return observation;
     }
     return nullptr;
@@ -217,11 +218,225 @@ bool common_agent_workflow_requires_claims(const common_plan_state & plan) {
     });
 }
 
+// Profiles describe typed operation results, not caller intent. Intent remains
+// a model interpretation, checked separately against the original task.
+bool common_agent_result_contract_available(const std::string & operation, const std::string & profile) {
+    return operation == "statistics.describe" && profile == "statistics.describe.v1";
+}
+
+std::string common_agent_result_requirement_schema(const std::string & profile) {
+    if (profile != "statistics.describe.v1") return {};
+    return R"({"type":"object","additionalProperties":false,"required":["dataset","columns","measures","group_by","coverage"],"properties":{"dataset":{"type":"string","minLength":1,"maxLength":256,"x-agent-type":"dataset_ref"},"columns":{"type":"array","minItems":1,"maxItems":16,"x-agent-column-of":"dataset","items":{"type":"string","minLength":1,"maxLength":128}},"measures":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"string","enum":["count","null_count","min","max","mean","stddev"]}},"group_by":{"type":"array","maxItems":16,"x-agent-column-of":"dataset","items":{"type":"string","minLength":1,"maxLength":128}},"coverage":{"type":"string","enum":["complete","bounded"]}}})";
+}
+
+bool common_agent_validate_result_requirement(const std::string & profile,
+        const std::string & text, std::string & normalized, std::string & error) {
+    const auto schema = common_agent_result_requirement_schema(profile);
+    if (schema.empty()) { error = "unsupported result contract profile: " + profile; return false; }
+    if (text.size() > 8192 || !common_schema_normalize_and_validate_object(text, schema, normalized, error)) return false;
+    const auto value = json::parse(normalized);
+    for (const auto * field : {"columns", "measures", "group_by"}) {
+        std::set<std::string> unique;
+        for (const auto & item : value[field]) if (!unique.insert(item.get<std::string>()).second) {
+            error = "duplicate result requirement " + std::string(field); return false;
+        }
+    }
+    if (value["columns"].size() * value["measures"].size() > 16) {
+        error = "result requirement exceeds claim budget"; return false;
+    }
+    return true;
+}
+
+namespace {
+bool requirement_value(const common_plan_tool_call & call, const std::string & profile,
+        json & value, std::string & error) {
+    const auto envelope = json::parse(call.result_requirement_json, nullptr, false);
+    if (!envelope.is_object() || envelope.value("schema", json{}) != "analysis-result.v1" ||
+            envelope.value("profile", json{}) != profile || !envelope.contains("value")) {
+        error = "missing or incompatible step-bound result requirement"; return false;
+    }
+    std::string normalized;
+    if (!common_agent_validate_result_requirement(profile, envelope["value"].dump(), normalized, error)) return false;
+    value = json::parse(normalized);
+    return true;
+}
+
+// Return exact source positions, including null measures and explicit partial
+// coverage. Nothing is estimated or synthesized into a numeric observation.
+bool required_result_cells(const json & requirement, const json & payload,
+        json & cells, std::string & error) {
+    cells = json::array();
+    if (payload.dump().size() > 65536) { error = "analysis result exceeds the retained evidence byte budget"; return false; }
+    if (!payload.is_object() || payload.value("ok", json(true)) != true ||
+            !payload.contains("result") || !payload["result"].is_object()) {
+        error = "typed analysis result unavailable"; return false;
+    }
+    const auto & result = payload["result"];
+    if (result.value("dataset", json{}) != requirement["dataset"] ||
+            result.value("selected_columns", json{}) != requirement["columns"] ||
+            result.value("group_by", json::array()) != requirement["group_by"]) {
+        error = "result dataset, columns or grouping differs from the selected requirement"; return false;
+    }
+    if (!result.contains("scan_truncated") || !result["scan_truncated"].is_boolean() ||
+            !result.contains("scanned_rows") || (!result["scanned_rows"].is_number_integer() || result["scanned_rows"] < 0)) {
+        error = "analysis coverage metadata unavailable"; return false;
+    }
+    if ((payload.contains("result_truncated") && !payload["result_truncated"].is_boolean()) ||
+            (result.contains("result_truncated") && !result["result_truncated"].is_boolean())) {
+        error = "analysis truncation metadata is invalid"; return false;
+    }
+    const bool output_truncated = payload.value("result_truncated", false) || result.value("result_truncated", false);
+    if (output_truncated || (requirement["coverage"] == "complete" && result["scan_truncated"] == true)) {
+        error = "analysis coverage does not meet the selected requirement"; return false;
+    }
+    const auto append = [&](const json & columns, const std::string & prefix) {
+        if (!columns.is_array() || columns.size() != requirement["columns"].size()) return false;
+        std::set<std::string> names;
+        for (size_t index = 0; index < columns.size(); ++index) {
+            const auto & column = columns[index];
+            if (!column.is_object() || !column.contains("name") || !column["name"].is_string() ||
+                    !names.insert(column["name"].get<std::string>()).second ||
+                    std::find(requirement["columns"].begin(), requirement["columns"].end(), column["name"]) == requirement["columns"].end()) return false;
+            for (const auto & measure : requirement["measures"]) {
+                const auto name = measure.get<std::string>();
+                if (!column.contains(name) || (!column[name].is_number() && !column[name].is_null())) return false;
+                // Null is valid only for undefined measures in an empty column.
+                if ((name == "count" || name == "null_count") &&
+                        (!column[name].is_number_integer() || column[name] < 0)) return false;
+                if (column[name].is_null() && column.value("count", json{}) != 0) return false;
+                cells.push_back({{"pointer",prefix + "/" + std::to_string(index) + "/" + name},
+                    {"value",column[name]}, {"column",column["name"]}, {"measure",name}});
+            }
+        }
+        return true;
+    };
+    if (requirement["group_by"].empty()) {
+        if (!append(result.value("columns", json{}), "/result/columns")) {
+            error = "selected column measures are missing or invalid"; return false;
+        }
+    } else {
+        const auto groups = result.value("groups", json{});
+        if (!groups.is_array() || groups.size() > 16) { error = "group projection is unavailable or exceeds the claim budget"; return false; }
+        std::set<std::string> keys;
+        for (size_t index = 0; index < groups.size(); ++index) {
+            const auto & group = groups[index];
+            if (!group.is_object()) { error = "invalid group projection"; return false; }
+            json key = json::array(), group_identity = json::object();
+            const auto first_cell = cells.size();
+            for (const auto & field : requirement["group_by"]) {
+                const auto name = field.get<std::string>();
+                if (!group.contains(name) || (!group[name].is_primitive())) { error = "group key missing or invalid"; return false; }
+                key.push_back(group[name]);
+                group_identity[name] = group[name];
+            }
+            if (!keys.insert(key.dump()).second ||
+                    !append(group.value("columns", json{}), "/result/groups/" + std::to_string(index) + "/columns")) {
+                error = "grouped measures are missing, duplicated or invalid"; return false;
+            }
+            for (size_t cell = first_cell; cell < cells.size(); ++cell) cells[cell]["group"] = group_identity;
+        }
+        if (groups.empty()) {
+            if (result["scanned_rows"] != 0) { error = "empty groups do not establish empty input"; return false; }
+            cells.push_back({{"pointer","/result/scanned_rows"},{"value",0},{"limitation","empty_group_set"}});
+        }
+    }
+    if (result["scan_truncated"] == true)
+        cells.push_back({{"pointer","/result/scan_truncated"},{"value",true},{"limitation","partial_scan"}});
+    if (cells.size() > 16) { error = "required result cells exceed the claim budget"; return false; }
+    return true;
+}
+
+const common_plan_observation * step_result(const common_plan_state & plan, const common_plan_step & step) {
+    for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+        const auto * owner = common_plan_find_tool_observation_step(plan, *item);
+        if (owner && owner->id == step.id && step.tool_call && item->source == step.tool_call->name &&
+                common_plan_workflow_observation_is_usable(*item)) return &*item;
+    }
+    return nullptr;
+}
+
+common_agent_grounding_result verify_result_contract(const common_agent_request & request, const common_plan_state & plan,
+        common_plan_verification_phase phase, const std::string & step_id,
+        const json & arguments, const json & payload) {
+    common_agent_grounding_result checked;
+    if (!plan.workflow_definition || plan.workflow_definition->result_contracts.empty()) return checked;
+    const size_t first = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+    for (size_t index = first; index < plan.steps.size(); ++index) {
+        const auto & step = plan.steps[index];
+        if (!step.tool_call || (phase != common_plan_verification_phase::before_answer && step.id != step_id)) continue;
+        const auto contract = plan.workflow_definition->result_contracts.find(step.tool_call->name);
+        if (contract == plan.workflow_definition->result_contracts.end()) continue;
+        if (phase == common_plan_verification_phase::before_answer && (step.status != common_plan_step_status::completed || step.optional)) continue;
+        std::string error;
+        json requirement, cells;
+        bool passed = requirement_value(*step.tool_call, contract->second, requirement, error);
+        if (passed) {
+            const auto envelope = json::parse(step.tool_call->result_requirement_json);
+            if (envelope.value("workflow", json{}) != plan.workflow_definition->workflow_ref ||
+                    envelope.value("workflow_revision", json{}) != plan.workflow_definition->workflow_revision) {
+                passed = false; error = "result requirement belongs to a different workflow revision";
+            }
+        }
+        std::string category = "argument_mismatch";
+        if (passed && phase == common_plan_verification_phase::before_tool && step.status != common_plan_step_status::completed) {
+            const auto envelope = json::parse(step.tool_call->result_requirement_json);
+            const auto version = envelope.value("source_version", json::object());
+            if (!version.is_object()) { passed = false; error = "invalid bound source version"; }
+            else if (version.value("content_hash", json("")) != "" || version.value("read_context_id", json("")) != "") {
+                const auto dataset = std::find_if(request.available_datasets.begin(), request.available_datasets.end(),
+                    [&](const auto & item) { return item.ref.uri == requirement["dataset"]; });
+                if (dataset == request.available_datasets.end() ||
+                        version.value("content_hash", json("")) != dataset->ref.content_hash ||
+                        version.value("read_context_id", json("")) != dataset->read_context_id) {
+                    passed = false; error = "bound dataset revision or read context is stale";
+                }
+            }
+        }
+        if (passed && phase == common_plan_verification_phase::before_tool) {
+            for (const auto * field : {"dataset", "columns", "group_by"}) {
+                const auto actual = arguments.is_object() ? arguments.value(field, json::array()) : json{};
+                if (actual != requirement[field]) {
+                    passed = false; error = std::string("argument ") + field + " differs from selected result requirement"; break;
+                }
+            }
+        } else if (passed) {
+            category = "insufficient_analysis";
+            const auto * observed = phase == common_plan_verification_phase::before_answer ? step_result(plan, step) : nullptr;
+            const auto result = observed ? json::parse(observed->summary, nullptr, false) : payload;
+            passed = required_result_cells(requirement, result, cells, error);
+            if (passed && phase == common_plan_verification_phase::before_answer) {
+                category = "answer_coverage";
+                const auto claims = payload.value("verified_claims", json::array());
+                for (const auto & cell : cells) {
+                    if (!observed || !claims.is_array() || std::none_of(claims.begin(), claims.end(), [&](const auto & claim) {
+                        return claim.value("status", json{}) == "passed" &&
+                            claim.value("evidence_ids", json::array()) == json::array({observed->id}) &&
+                            claim.value("source_location", json{}) == cell["pointer"] && claim.value("value", json{}) == cell["value"];
+                    })) { passed = false; error = "answer omits a required verified measure or limitation"; break; }
+                }
+            }
+        }
+        checked.records.push_back({{"check","analysis-result-contract"},{"step_id",step.id},{"analysis_step_id",step.id},
+            {"phase", phase == common_plan_verification_phase::before_tool ? "before_tool" :
+                phase == common_plan_verification_phase::after_tool ? "after_tool" : "before_answer"},
+            {"status",passed ? "passed" : "failed"},{"required",true},{"workflow_revision",plan.workflow_definition->workflow_revision},{"category",category},
+            {"repair",category == "answer_coverage" ? "response" : "analysis"},
+            {"reason",passed ? "bound result requirement satisfied" : error},
+            {"input_fingerprint",fingerprint(step.tool_call->result_requirement_json + arguments.dump() + payload.dump())},
+            {"requirement_fingerprint",fingerprint(step.tool_call->result_requirement_json)}});
+        if (const auto * observed = step_result(plan, step)) checked.records.back()["evidence_ids"] = json::array({observed->id});
+        if (!passed) { checked.passed = false; checked.summary += step.id + ": " + error + "; "; }
+    }
+    return checked;
+}
+} // namespace
+
 common_agent_grounding_result common_agent_verify_workflow(const common_agent_request & request,
         const common_plan_state & plan, common_plan_verification_phase phase,
         const std::string & step_id, const std::string & arguments_text, const std::string & result_text,
         const std::string & canonical_tool_name) {
-    common_agent_grounding_result outcome;
+    auto outcome = verify_result_contract(request, plan, phase, step_id,
+        json::parse(arguments_text, nullptr, false), json::parse(result_text, nullptr, false));
     if (!plan.workflow_definition) return outcome;
     std::string transition;
     std::string current_tool = canonical_tool_name;
@@ -286,8 +501,52 @@ common_agent_grounding_result common_agent_verify_workflow(const common_agent_re
     return outcome;
 }
 
-json common_agent_workflow_claim_handles(const common_agent_request & request, const common_plan_state & plan) {
+json common_agent_workflow_claim_handles(const common_agent_request & request, const common_plan_state & plan,
+        std::string * diagnostic) {
+    if (diagnostic) diagnostic->clear();
     json handles = json::array();
+    // A contracted analysis exposes its required cells first, across all
+    // completed operations in this route segment. Never silently drop a
+    // requirement because a later read or the handle limit hid its evidence.
+    if (plan.workflow_definition && !plan.workflow_definition->result_contracts.empty()) {
+        bool contracted = false;
+        const size_t first = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+        for (size_t index = first; index < plan.steps.size(); ++index) {
+            const auto & step = plan.steps[index];
+            if (!step.tool_call || step.status != common_plan_step_status::completed || step.optional) continue;
+            const auto profile = plan.workflow_definition->result_contracts.find(step.tool_call->name);
+            if (profile == plan.workflow_definition->result_contracts.end()) continue;
+            contracted = true;
+            const auto * observed = step_result(plan, step);
+            json requirement, cells;
+            std::string reason;
+            if (!observed || !requirement_value(*step.tool_call, profile->second, requirement, reason) ||
+                    !required_result_cells(requirement, json::parse(observed->summary, nullptr, false), cells, reason)) {
+                if (diagnostic) *diagnostic = reason.empty() ? "required analysis evidence unavailable" : reason;
+                return json::array();
+            }
+            const auto payload = json::parse(observed->summary);
+            for (const auto & cell : cells) {
+                const auto pointer = cell["pointer"].get<std::string>();
+                json handle = {{"handle","E" + std::to_string(handles.size() + 1)},
+                    {"kind","result_field"},{"value",cell["value"]},
+                    {"status",cell["value"].is_null() ? json("undefined") : json(nullptr)},
+                    {"evidence_id",observed->id},{"operation",observed->source},
+                    {"source_location",pointer},{"source_resource",""},{"content_hash",""},
+                    {"dataset",requirement["dataset"]},
+                    {"coverage",payload["result"]["scan_truncated"] == true ? "partial" : "complete"},
+                    {"evidence_fingerprint",fingerprint(observed->id + observed->summary + pointer)}};
+                for (const auto * field : {"column","measure","limitation","group"}) if (cell.contains(field)) handle[field] = cell[field];
+                if (handles.size() >= 16 || handles.dump().size() + handle.dump().size() > 8192) {
+                    if (diagnostic) *diagnostic = "required analysis evidence exceeds the bounded claim context";
+                    return json::array();
+                }
+                handles.push_back(std::move(handle));
+            }
+        }
+        if (contracted) return handles;
+    }
+
     // Only active-route successful results produce claim handles. Older
     // source data remains reachable through the declared handoff snapshot.
     const auto * declared = declared_operation_observation(plan);
@@ -371,7 +630,7 @@ json common_agent_workflow_claim_handles(const common_agent_request & request, c
 }
 
 std::string common_agent_grounded_draft_schema() {
-    return R"({"type":"object","additionalProperties":false,"required":["answer","claims"],"properties":{"answer":{"type":"string","minLength":1,"maxLength":16384},"claims":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["handle","value"],"properties":{"handle":{"type":"string","maxLength":32},"value":{"type":"number"},"unit":{"type":"string","maxLength":256},"dimensions":{"type":"object","additionalProperties":{"type":"string"}}}}}}})";
+    return R"({"type":"object","additionalProperties":false,"required":["answer","claims"],"properties":{"answer":{"type":"string","minLength":1,"maxLength":16384},"claims":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["handle","value"],"properties":{"handle":{"type":"string","maxLength":32},"value":{"anyOf":[{"type":"number"},{"type":"null"},{"type":"boolean"}]},"unit":{"type":"string","maxLength":256},"dimensions":{"type":"object","additionalProperties":{"type":"string"}}}}}}})";
 }
 
 std::string common_agent_grounded_draft_grammar(const json & handles) {
@@ -484,22 +743,28 @@ common_agent_grounding_result common_agent_verify_declared_claims(const json & c
             matching_dimensions = (!claim.contains("dimensions") || claim["dimensions"] == json::object()) &&
                 (!claim.contains("unit") || claim["unit"] == "");
         }
-        const bool matched = found != handles.end() && claim.contains("value") && claim["value"].is_number() &&
+        const bool matched = found != handles.end() && claim.contains("value") &&
+            (claim["value"].is_number() || (result_field && (claim["value"].is_null() || claim["value"].is_boolean()))) &&
             claim["value"] == (*found)["value"] &&
             (result_field || (claim.contains("unit") && claim["unit"] == (*found)["unit"])) &&
             matching_dimensions &&
-            (!present((*found)["status"])) && seen.insert((*found)["handle"].get<std::string>()).second;
+            (!present((*found)["status"]) || (result_field && claim["value"].is_null() && (*found)["status"] == "undefined")) && seen.insert((*found)["handle"].get<std::string>()).second;
         outcome.records.push_back({{"status", matched ? "passed" : "unknown"},
             {"handle", claim.is_object() ? claim.value("handle", json{}) : json{}},
-            {"reason", matched ? "declared numeric claim matches a host cell" : "claim lacks matching cell, unit, dimensions or usable status"}});
+            {"reason", matched ? "declared claim matches a host result position" : "claim lacks matching cell, unit, dimensions or usable status"}});
         if (matched) {
             outcome.records.back()["evidence_ids"] = json::array({(*found)["evidence_id"]});
             outcome.records.back()["source_location"] = (*found)["source_location"];
             outcome.records.back()["value"] = claim["value"];
+            for (const auto * field : {"column","measure","group","limitation"})
+                if (found->contains(field)) outcome.records.back()[field] = (*found)[field];
             outcome.records.back()["content_hash"] = (*found)["content_hash"];
             outcome.records.back()["input_fingerprint"] = (*found)["evidence_fingerprint"];
         }
         if (!matched) { outcome.passed = false; outcome.summary += "unsupported declared numeric claim; "; continue; }
+        // Undefined statistics and explicit coverage flags are verifiable
+        // limitations, not numerical research claims.
+        if (!claim["value"].is_number()) continue;
         common_agent_research_verification_claim accepted;
         accepted.claim_id = "numeric:" + (*found)["evidence_fingerprint"].get<std::string>();
         accepted.statement = claim.dump();
@@ -515,4 +780,21 @@ common_agent_grounding_result common_agent_verify_declared_claims(const json & c
         verified.push_back(std::move(accepted));
     }
     return outcome;
+}
+
+std::string common_agent_render_result_requirements(const common_plan_state & plan) {
+    std::string text;
+    const size_t first = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+    for (size_t index = first; index < plan.steps.size(); ++index) {
+        const auto & step = plan.steps[index];
+        if (!step.tool_call || step.tool_call->result_requirement_json.empty()) continue;
+        const auto envelope = json::parse(step.tool_call->result_requirement_json, nullptr, false);
+        if (!envelope.is_object() || !envelope.contains("value") || !envelope["value"].is_object()) continue;
+        if (text.empty()) text = "\n[Step-bound result requirements: model interpretations, not evidence]\n";
+        text += "step: " + json(step.id).dump() + "\noperation: " + json(step.tool_call->name).dump() + "\n";
+        for (const auto & field : envelope["value"].items()) text += field.key() + ": " + field.value().dump() + "\n";
+    }
+    if (!text.empty()) text += "Check these choices against the original user goal. Consistency alone does not establish task correctness. "
+        "If the analysis is insufficient or misdirected, request bounded analysis repair rather than merely rewriting the answer.\n";
+    return text;
 }

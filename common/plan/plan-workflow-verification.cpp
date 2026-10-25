@@ -34,6 +34,7 @@ void common_plan_workflow_grounding_to_json(const common_plan_workflow_definitio
     if (!definition.preferred_thinking_mode.empty()) value["preferred_thinking_mode"] = definition.preferred_thinking_mode;
     if (definition.require_declared_claims) value["require_declared_claims"] = true;
     if (!definition.declared_claim_tools.empty()) value["declared_claim_tools"] = definition.declared_claim_tools;
+    if (!definition.result_contracts.empty()) value["result_contracts"] = definition.result_contracts;
     if (definition.verification_checks.empty()) return;
     value["verification_checks"] = json::array();
     for (const auto & check : definition.verification_checks) {
@@ -61,6 +62,15 @@ bool common_plan_workflow_grounding_from_json(const json & value,
             if (!tool.is_string() || tool.get<std::string>().empty() || tool.get<std::string>().size() > 128)
                 throw std::runtime_error("declared claim tool must be a canonical operation name");
             definition.declared_claim_tools.push_back(tool.get<std::string>());
+        }
+        definition.result_contracts.clear();
+        const auto contracts = value.value("result_contracts", json::object());
+        if (!contracts.is_object() || contracts.size() > 32) throw std::runtime_error("result_contracts must be a bounded object");
+        for (const auto & item : contracts.items()) {
+            if (item.key().empty() || item.key().size() > 128 || !item.value().is_string() ||
+                    item.value().get<std::string>().empty() || item.value().get<std::string>().size() > 128)
+                throw std::runtime_error("invalid result contract operation/profile");
+            definition.result_contracts.emplace(item.key(), item.value().get<std::string>());
         }
         definition.verification_checks.clear();
         const auto checks = value.value("verification_checks", json::array());
@@ -99,5 +109,18 @@ bool common_plan_workflow_grounding_from_json(const json & value,
         error.clear(); return true;
     } catch (const std::exception & exception) {
         error = std::string("workflow grounding contract: ") + exception.what(); return false;
+    }
+}
+
+void common_plan_tool_result_requirement_to_json(const common_plan_tool_call & call, json & value) {
+    if (!call.result_requirement_json.empty())
+        value["result_requirement"] = json::parse(call.result_requirement_json);
+}
+void common_plan_tool_result_requirement_from_json(const json & value, common_plan_tool_call & call) {
+    call.result_requirement_json.clear();
+    if (value.contains("result_requirement")) {
+        if (!value["result_requirement"].is_object() || value["result_requirement"].dump().size() > 8192)
+            throw std::runtime_error("invalid stored result requirement");
+        call.result_requirement_json = value["result_requirement"].dump();
     }
 }

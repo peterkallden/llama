@@ -1,5 +1,6 @@
 #include "plan/plan-workflow-binding.h"
 #include "agent/agent-package-json.h"
+#include "agent/grounding/workflow-grounding.h"
 #include "plan/plan-workflow-verification.h"
 
 #include <nlohmann/json.hpp>
@@ -258,19 +259,55 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 }
             }
         }
+        for (const auto & contract : definition.result_contracts) {
+            // Profile support is a contract check. Actual operation authority
+            // remains with host capability resolution and the effective view.
+            if (!common_agent_result_contract_available(contract.first, contract.second)) {
+                error = "result contract names an unsupported operation/profile pair"; return false;
+            }
+        }
         for (const auto & check : definition.verification_checks) {
             const auto known_transition = [&](const std::string & id) {
                 return std::any_of(definition.transitions.begin(), definition.transitions.end(),
                     [&](const auto & transition) { return transition.id == id &&
                         transition.kind == common_plan_workflow_transition_kind::tool; });
             };
-            if (check.phase != common_plan_verification_phase::before_answer && !known_transition(check.transition_id)) {
+            const auto known_tool = [&](const std::string & name) {
+                const auto contains = [&](const std::vector<std::string> & values) {
+                    return std::find(values.begin(), values.end(), name) != values.end();
+                };
+                return contains(definition.allowed_tools) || contains(definition.required_capabilities) ||
+                    contains(definition.optional_capabilities);
+            };
+            const auto check_selector_valid = [&]() {
+                if (!check.transition_id.empty() && !known_transition(check.transition_id)) return false;
+                if (!check.tool_name.empty() && !known_tool(check.tool_name)) return false;
+                if (check.phase == common_plan_verification_phase::before_answer) return true;
+                if (check.transition_id.empty() && check.tool_name.empty()) return false;
+                if (!check.transition_id.empty() && !check.tool_name.empty()) {
+                    const auto transition = std::find_if(definition.transitions.begin(), definition.transitions.end(),
+                        [&](const auto & item) { return item.id == check.transition_id; });
+                    if (transition == definition.transitions.end() || transition->tool_name != check.tool_name) return false;
+                }
+                return true;
+            };
+            if (!check_selector_valid()) {
                 error = "verification check names an unavailable tool transition"; return false;
             }
             for (const auto * operand : {&check.left, &check.right}) {
-                if ((operand->source == "observation" || operand->source == "transition_arguments") &&
-                        !known_transition(operand->transition_id)) {
-                    error = "verification operand names an unavailable tool transition"; return false;
+                if (operand->source == "observation" || operand->source == "transition_arguments") {
+                    if ((!operand->transition_id.empty() && !known_transition(operand->transition_id)) ||
+                            (!operand->tool_name.empty() && !known_tool(operand->tool_name)) ||
+                            (operand->transition_id.empty() && operand->tool_name.empty())) {
+                        error = "verification operand names an unavailable tool transition"; return false;
+                    }
+                    if (!operand->transition_id.empty() && !operand->tool_name.empty()) {
+                        const auto transition = std::find_if(definition.transitions.begin(), definition.transitions.end(),
+                            [&](const auto & item) { return item.id == operand->transition_id; });
+                        if (transition == definition.transitions.end() || transition->tool_name != operand->tool_name) {
+                            error = "verification operand transition and tool selectors disagree"; return false;
+                        }
+                    }
                 }
                 if (check.phase == common_plan_verification_phase::before_tool && operand->source == "result") {
                     error = "before_tool verification cannot read a future result"; return false;

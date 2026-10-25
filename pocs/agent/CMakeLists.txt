@@ -1195,6 +1195,12 @@ target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
 if (LLAMA_MEMORY_COZO)
+    if (LLAMA_PLAN_COZO)
+        add_executable(llama-agent-analysis-result-smoke smoke/runtime/agent-analysis-result-smoke.cpp)
+        target_include_directories(llama-agent-analysis-result-smoke PRIVATE ${PROJECT_SOURCE_DIR})
+        target_link_libraries(llama-agent-analysis-result-smoke PRIVATE llama-agent-runtime-support llama-agent-storage-cozo)
+        target_compile_features(llama-agent-analysis-result-smoke PRIVATE cxx_std_17)
+    endif()
     set(TARGET llama-agent-data-manipulation-smoke)
     add_executable(${TARGET}
         smoke/data/agent-data-manipulation-smoke.cpp

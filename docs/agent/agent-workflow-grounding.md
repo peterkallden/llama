@@ -56,7 +56,7 @@ verification or declared-claim contracts require package `schema_version: 2`;
 the current importer accepts schema 1 and 2. Export chooses schema 2 when these
 contracts are present, so an older schema-1-only importer rejects rather than
 silently dropping mandatory gates. The historical starter filename is retained;
-its package version is now v24.
+its current package version is v37.
 
 ## Verification contract
 
@@ -195,3 +195,99 @@ Record model input/output, host verification observations, route/mode changes,
 handoffs, and final answer separately. Until that run completes, workflow-level
 model behavior remains unverified; the direct tests and MCP tool checks above
 must not be summarized as model E2E success.
+
+## Step-bound analysis result contracts
+
+The starter dataset analysis and quality workflows are revision v4 in package
+v37. They opt `statistics.describe` into `statistics.describe.v1` through:
+
+```json
+"result_contracts": {"statistics.describe": "statistics.describe.v1"}
+```
+
+A result contract is conditional on that operation actually being used. It does
+not replace the workflow graph, tool catalog, authorization, planner or response
+review. Other operations and older stored workflow revisions retain their
+existing behavior. Package admission rejects unavailable operations and unknown
+profiles rather than silently ignoring a requirement.
+
+Before executing a contracted step, the runtime asks the existing operation
+selection inference boundary to interpret the original task independently of
+the proposed tool arguments. Compact DSL remains the default; explicit native
+mode uses the equivalent JSON schema. The model selects dataset, columns,
+measures, grouping (an explicit empty list for an overall result), and complete
+or bounded coverage. Scoped dataset handles and column annotations reuse the
+existing dataset projection and validation. No input keyword matching is used.
+
+The normalized `analysis-result.v1` envelope is host metadata on the plan's tool
+call, separate from provider arguments. SQLite and Cozo retain it across restart.
+The envelope records its workflow revision, originating turn and available source
+hash/read-context binding. An unversioned dataset does not acquire a fictional
+snapshot identity. A known changed source version prevents an unexecuted step
+from silently reading a different baseline; completed retained results remain
+historical evidence. Raw read-context identities are not shown to the model.
+
+The existing three verification phases enforce:
+
+- `before_tool`: dataset, columns and grouping match the selected requirement.
+- `after_tool`: requested measures exist in the appropriate columns/groups,
+  group identities are unambiguous, and coverage meets the selected requirement.
+- `before_answer`: every required measure or limitation has a verified claim
+  referencing the exact successful observation and JSON position.
+
+Null measures in an empty column remain null, not zero. They are exposed as
+undefined-result handles. An empty grouped input is established through its
+zero scanned-row count. A bounded partial scan exposes its actual boolean
+`scan_truncated` position as a required limitation. Null and boolean result-field
+claims are validated as limitations, not converted into numeric research claims.
+Output truncation cannot establish complete group coverage.
+
+Contracted tool output is retained separately from the optional prompt projection,
+with a 64 KiB evidence bound. Required handles use the existing 16-handle / 8 KiB
+claim-context bounds. Exceeding either bound produces an explicit incomplete
+result; mandatory evidence is never silently omitted. Multiple mandatory analyses
+in an active route segment retain separate step/observation bindings. Optional
+exploratory steps do not add mandatory answer cells.
+
+Argument and analysis failures are recorded through the existing structured tool
+failure path, allowing bounded reflection argument repair. Replacements preserve
+the original requirement. A new complementary operation receives its own
+requirement; sharing a tool name is not proof that it is a stale retry. Model
+operations cannot drop, replace or mark a guarded mandatory analysis complete
+without host verification. Missing answer claims request response repair when the
+executed analysis is otherwise sufficient.
+
+The draft and reflection receive the bound choices as model interpretations and
+must compare them with the original goal. Agreement between requirement,
+arguments and output proves consistency, not understanding of the user's intent.
+Draft parsing failure and output-token exhaustion have distinct trace categories;
+selection cancellation and output exhaustion keep their generation status and token accounting. This change does not raise configured output/context budgets or claim to fix the
+previous Qwen draft-generation failure.
+
+### Prepared verification; not run for this change
+
+The implementation and new checks have not been compiled or executed. Relevant
+CTest coverage is in `test-agent-workflow-grounding`,
+`test-agent-flexible-workflow-dataset-handles`, `test-agent-bootstrap`,
+`test-plan-cozo` and `test-plan-sqlite-continuation` (when available). New checks
+remain active with `NDEBUG`.
+
+`llama-agent-analysis-result-smoke` is a model-free runtime/provider/Cozo smoke
+with controlled planner, selection and reflection fixtures. It covers overall
+and grouped results, a tool-only plan without an explicit final-response step, argument repair, insufficient scan coverage, missing answer
+measures, and close/reopen of persisted evidence. It prints the full runtime trace.
+It is not a daemon, UI or model-understanding proof and is not registered as a
+contract CTest.
+
+The existing traced `scripts/test-qwen-nomic-agent-workflow-action.sh` now also
+requires all three result-contract verification phases. Run its `overall` and
+`grouped` scenarios separately using `LLAMA_AGENT_WORKFLOW_ACTION_SCENARIO`.
+Both use the resident model/runtime path with generation tracing. Check actual
+semantic results separately from format compliance. A real multi-turn daemon
+scenario remains necessary to evaluate context-dependent task changes.
+
+After the source review, use the existing Vulkan/Cozo tree and home-directory
+ccache, with sandbox elevation, for a grouped build and deterministic contracts.
+Then run the model-free smoke and the two model scenarios serially, with tracing
+and FlyDelta workers disabled. Daemon/UI and context-dependent model validation
+remain outstanding until those production paths are explicitly exercised.

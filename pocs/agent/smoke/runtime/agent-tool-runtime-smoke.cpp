@@ -377,7 +377,7 @@ int main() {
     tool_context.request_id = "runtime-smoke";
     tool_context.turn_id = "turn-1";
     tool_context.profile_id = "research";
-    tool_context.max_calls = 3;
+    tool_context.max_calls = 8;
     tool_context.allow_network = true;
     tool_context.async_exposed_tool_names = {"web.search"};
     tool_context.scope.namespace_id = "runtime-smoke";
@@ -594,6 +594,7 @@ int main() {
         review.accept_rewrite = accept_rewrite;
         common_agent_runtime reviewed_runtime(review_store, planner, executor, review, tool_runtime.get(), nullptr);
         auto reviewed_request = request;
+        reviewed_request.enable_reflection = true;
         reviewed_request.max_iterations = 2;
         reviewed_request.max_reflection_rounds = accept_rewrite ? 2 : 1;
         const auto reviewed = reviewed_runtime.run(reviewed_request);

@@ -230,6 +230,7 @@ json serialize_plan(const common_plan_state & plan) {
         if (step.semantic_alias) value["semantic_alias"] = *step.semantic_alias;
         if(step.artifact_binding)value["artifact_binding"]={{"transition_id",step.artifact_binding->transition_id},{"profile_ref",step.artifact_binding->profile_ref},{"profile_revision",step.artifact_binding->profile_revision},{"section_id",step.artifact_binding->section_id},{"snapshot_id",step.artifact_binding->snapshot_id}};
         if (step.tool_call) value["tool_call"] = {{"name", step.tool_call->name}, {"arguments_json", step.tool_call->arguments_json}};
+        if (step.tool_call) common_plan_tool_result_requirement_to_json(*step.tool_call, value["tool_call"]);
         steps.push_back(std::move(value));
     }
     json constraints = json::array();
@@ -336,6 +337,7 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
             if(item.contains("artifact_binding")&&item["artifact_binding"].is_object()){const auto & b=item["artifact_binding"];step.artifact_binding=common_plan_artifact_binding{b.value("transition_id",std::string{}),b.value("profile_ref",std::string{}),b.value("profile_revision",std::string{}),b.value("section_id",std::string{}),b.value("snapshot_id",std::string{})};}
             else step.artifact_binding=common_plan_artifact_binding_effective(step);
         if (item.contains("tool_call") && item["tool_call"].is_object()) step.tool_call = common_plan_tool_call{item["tool_call"].value("name", std::string{}), item["tool_call"].value("arguments_json", std::string("{}"))};
+        if (step.tool_call) common_plan_tool_result_requirement_from_json(item["tool_call"], *step.tool_call);
         plan.steps.push_back(std::move(step));
     }
     for (const auto & item : value.value("constraints", json::array())) plan.constraints.push_back({item.value("id", std::string{}), item.value("description", std::string{}), item.value("hard", true)});

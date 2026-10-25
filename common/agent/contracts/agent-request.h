@@ -150,6 +150,10 @@ struct common_agent_request {
     // Optional host-owned A* continuation for a selected workflow. It may
     // append only steps within the already selected route contract.
     common_agent_workflow_continuation_provider workflow_continuation;
+    // Existing model selection boundary supplies an independent interpretation
+    // of the original task. The runtime validates and persists it before tools.
+    std::function<bool(const common_agent_request &, const common_plan_state &,
+        const common_plan_step &, std::string &, common_agent_generated_text_result &, std::string &)> result_requirement_selector;
     // Host-owned, scoped dataset inventory captured for this turn. These are
     // lookup candidates, not model-created plan aliases.
     std::vector<common_agent_dataset_descriptor> available_datasets;

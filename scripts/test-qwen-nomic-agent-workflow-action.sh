@@ -26,6 +26,12 @@ grep -Eq 'seeded_orders=[1-9]' "$seed_log"
 
 gpu_layers="${LLAMA_AGENT_GPU_LAYERS:-99}"
 prompt='Describe only the amount column in the orders dataset using the available dataset-analysis workflow. Count and mean are requested statistics, not column names. Report the count and mean from the executed result; do not guess.'
+scenario="${LLAMA_AGENT_WORKFLOW_ACTION_SCENARIO:-overall}"
+case "$scenario" in
+    overall) ;;
+    grouped) prompt='Describe the amount column in orders separately for each customer_id. Report count and mean for every observed customer group from the executed result.' ;;
+    *) echo "unsupported workflow action scenario: $scenario" >&2; exit 2 ;;
+esac
 run_status=0
 if LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
     LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-900}" \
@@ -69,18 +75,20 @@ if [[ "$gpu_layers" =~ ^[0-9]+$ ]] && (( gpu_layers >= 99 )); then
     }
 fi
 grep -Fq 'workflow_action_selected' "$agent_log"
+grep -Fq 'analysis_result_requirement_bound' "$agent_log"
 grep -Eq 'stage=tool kind=(succeeded|completed).*tool=statistics.describe' "$agent_log"
 grep -Eq 'workflow-action trace: attempt=[0-9]+ parse=ok tool=statistics[.]describe canonical_args=.*"columns":\["amount"\]' "$agent_log" || {
     echo "workflow action smoke did not normalize the selected arguments to columns=[amount]" >&2
     exit 1
 }
 # Schema compliance is separate from whether the requested measures were proven.
-python3 - "$agent_log" <<'PY_VERIFY'
+python3 - "$agent_log" "$scenario" <<'PY_VERIFY'
 import json
 import math
 import re
 import sys
 proofs = []
+contract_phases = set()
 with open(sys.argv[1], encoding="utf-8") as trace:
     for line in trace:
         match = re.search(r"workflow_verification (\{.*\})", line)
@@ -90,16 +98,33 @@ with open(sys.argv[1], encoding="utf-8") as trace:
             record = json.loads(match.group(1))
         except json.JSONDecodeError:
             continue
+        if record.get("check") == "analysis-result-contract" and record.get("status") == "passed":
+            contract_phases.add(record.get("phase"))
         if record.get("kind") == "declared_numeric_claims" and record.get("status") == "passed":
             proofs.extend(record.get("claims", []))
-def proved(field, expected):
+def proved(pointer, expected, group=None):
     return any(item.get("status") == "passed" and
-        item.get("source_location") == "/result/columns/0/" + field and
-        isinstance(item.get("value"), (int, float)) and
+        item.get("source_location") == pointer and
+        (group is None or item.get("group", {}).get("customer_id") == group) and
+        isinstance(item.get("value"), (int, float)) and not isinstance(item["value"], bool) and
         math.isclose(item["value"], expected, rel_tol=1e-9, abs_tol=1e-9)
         for item in proofs)
-if not proved("count", 3) or not proved("mean", 40 / 3):
-    raise SystemExit("workflow action smoke lacks host-verified count/mean claims from orders.amount")
+if contract_phases != {"before_tool", "after_tool", "before_answer"}:
+    raise SystemExit("workflow action smoke lacks argument, result or answer-coverage proof")
+if sys.argv[2] == "overall":
+    expected = [("/result/columns/0/count", 3), ("/result/columns/0/mean", 40 / 3)]
+else:
+    # The fixture has two groups. Group ordering is intentionally not assumed.
+    pairs = []
+    for group in range(2):
+        prefix = f"/result/groups/{group}/columns/0/"
+        pairs.append((proved(prefix + "count", 2, 10) and proved(prefix + "mean", 10, 10),
+                      proved(prefix + "count", 1, 11) and proved(prefix + "mean", 20, 11)))
+    if not (any(a for a, b in pairs) and any(b for a, b in pairs)):
+        raise SystemExit("workflow action smoke lacks both fixture customer-group measures")
+    expected = []
+if any(not proved(pointer, value) for pointer, value in expected):
+    raise SystemExit("workflow action smoke lacks host-verified requested count/mean claims")
 print("qwen_nomic_workflow_action_numeric_evidence=passed")
 PY_VERIFY
 echo "qwen_nomic_workflow_action_execution=passed"
