@@ -71,6 +71,8 @@ struct common_flydelta_semantic_progress_observation {
     int schema_version = 1;
     bool available = false;
     bool contract_valid = false;
+    // Host verifier attests that all objective dimensions are represented.
+    bool regression_coverage_complete = false;
     std::string operation;
     std::string dataset;
     std::string grouping;
@@ -104,6 +106,8 @@ struct common_flydelta_semantic_progress {
     common_flydelta_semantic_progress_outcome outcome =
         common_flydelta_semantic_progress_outcome::unknown;
     bool comparable = false;
+    // True only when every currently represented dimension was compared on both sides.
+    bool regression_known = false;
     int baseline_score = 0;
     int candidate_score = 0;
     std::vector<std::string> improved_dimensions;
@@ -124,3 +128,7 @@ common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
         const common_flydelta_semantic_progress_observation & candidate,
         bool baseline_strict_passed,
         bool candidate_strict_passed);
+
+// A partial search anchor needs explicit objective coverage and no known regression.
+bool common_flydelta_semantic_progress_is_safe_anchor(
+        const common_flydelta_semantic_progress & progress);

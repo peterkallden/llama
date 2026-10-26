@@ -493,6 +493,16 @@ common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
     result.baseline_score = baseline.score;
     result.candidate_score = candidate.score;
     result.comparable = baseline.available && candidate.available;
+    const auto known = [](common_flydelta_semantic_progress_field_state state) {
+        return state != common_flydelta_semantic_progress_field_state::unknown;
+    };
+    result.regression_known = result.comparable &&
+        baseline.regression_coverage_complete && candidate.regression_coverage_complete &&
+        known(baseline.operation_state) && known(candidate.operation_state) &&
+        known(baseline.dataset_state) && known(candidate.dataset_state) &&
+        known(baseline.grouping_state) && known(candidate.grouping_state) &&
+        known(baseline.measure_state) && known(candidate.measure_state) &&
+        known(baseline.contract_state) && known(candidate.contract_state);
     if (candidate_strict_passed) {
         result.outcome = common_flydelta_semantic_progress_outcome::solved;
     } else if (baseline_strict_passed && candidate.available) {
@@ -525,4 +535,13 @@ common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
         result.residual_dimensions.emplace_back("contract_shape");
     }
     return result;
+}
+
+bool common_flydelta_semantic_progress_is_safe_anchor(
+        const common_flydelta_semantic_progress & progress) {
+    return progress.comparable && progress.regression_known &&
+        progress.regressed_dimensions.empty() &&
+        ((progress.outcome == common_flydelta_semantic_progress_outcome::improved &&
+          !progress.improved_dimensions.empty()) ||
+         progress.outcome == common_flydelta_semantic_progress_outcome::solved);
 }

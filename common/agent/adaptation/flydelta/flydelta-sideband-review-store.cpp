@@ -107,7 +107,8 @@ json summary_json(const common_flydelta_promotion_summary & summary) {
 
 json canary_progress_json(const common_flydelta_semantic_progress & progress) {
     return {{"outcome", common_flydelta_semantic_progress_outcome_name(progress.outcome)},
-        {"comparable", progress.comparable}, {"baseline_score", progress.baseline_score},
+        {"comparable", progress.comparable}, {"regression_known", progress.regression_known},
+        {"baseline_score", progress.baseline_score},
         {"candidate_score", progress.candidate_score},
         {"improved_dimensions", progress.improved_dimensions},
         {"regressed_dimensions", progress.regressed_dimensions},
@@ -122,6 +123,7 @@ void canary_progress_from_json(const json & value, common_flydelta_semantic_prog
     else if (outcome == "unchanged") progress.outcome = common_flydelta_semantic_progress_outcome::unchanged;
     else if (outcome == "regressed") progress.outcome = common_flydelta_semantic_progress_outcome::regressed;
     progress.comparable = value.value("comparable", false);
+    progress.regression_known = value.value("regression_known", false);
     progress.baseline_score = value.value("baseline_score", 0);
     progress.candidate_score = value.value("candidate_score", 0);
     progress.improved_dimensions = value.value("improved_dimensions", std::vector<std::string>{});

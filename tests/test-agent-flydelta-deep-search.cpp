@@ -155,6 +155,11 @@ int main() {
             trial.evidence_ref = "evidence:partial";
             auto & progress = trial.semantic_progress_observation;
             progress.available = true;
+            progress.regression_coverage_complete = true;
+            progress.operation_state = common_flydelta_semantic_progress_field_state::matched;
+            progress.dataset_state = common_flydelta_semantic_progress_field_state::matched;
+            progress.grouping_state = common_flydelta_semantic_progress_field_state::matched;
+            progress.contract_state = common_flydelta_semantic_progress_field_state::matched;
             const bool improved = overlay && !coefficients.empty() && coefficients[0] > 0;
             progress.measure_state = improved ? common_flydelta_semantic_progress_field_state::matched
                 : common_flydelta_semantic_progress_field_state::mismatch;
@@ -168,7 +173,35 @@ int main() {
     const auto & partial = partial_result.coefficient_trials[partial_result.provisional_selection.trial_index];
     CHECK(partial.outcome == common_flydelta_counterfactual_outcome::unknown);
     CHECK(partial.semantic_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(partial.semantic_progress.regression_known);
     CHECK(!partial.coefficients.empty());
+    const common_flydelta_coefficient_search_runner unknown_regression =
+        [full_partial](const common_flydelta_experiment_fixture & f, const common_flydelta_low_rank_basis & b,
+           const std::vector<float> & c, bool overlay, common_flydelta_counterfactual_trial & trial,
+           common_flydelta_decision_margin & margin, common_flydelta_representation_diagnostics & geometry,
+           bool & has_geometry, std::string & e) {
+            if (!full_partial(f, b, c, overlay, trial, margin, geometry, has_geometry, e)) return false;
+            if (overlay) trial.semantic_progress_observation.grouping_state =
+                common_flydelta_semantic_progress_field_state::unknown;
+            return true;
+        };
+    common_flydelta_deep_search_result unknown_result;
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), config, input, diagnostic_partial, unknown_regression, unknown_result, error));
+    CHECK(!unknown_result.provisional_selection.selected);
+    const common_flydelta_coefficient_search_runner incomplete_coverage =
+        [full_partial](const common_flydelta_experiment_fixture & f, const common_flydelta_low_rank_basis & b,
+           const std::vector<float> & c, bool overlay, common_flydelta_counterfactual_trial & trial,
+           common_flydelta_decision_margin & margin, common_flydelta_representation_diagnostics & geometry,
+           bool & has_geometry, std::string & e) {
+            if (!full_partial(f, b, c, overlay, trial, margin, geometry, has_geometry, e)) return false;
+            trial.semantic_progress_observation.regression_coverage_complete = false;
+            return true;
+        };
+    common_flydelta_deep_search_result incomplete_result;
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), config, input, diagnostic_partial, incomplete_coverage, incomplete_result, error));
+    CHECK(!incomplete_result.provisional_selection.selected);
 
     size_t diagnostic_batch_calls = 0;
     size_t full_batch_calls = 0;

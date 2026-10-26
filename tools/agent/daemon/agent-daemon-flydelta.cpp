@@ -468,10 +468,13 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         next.best_margin_delta = selected.margin_delta;
         next.best_search_score = next.selection.search_score;
     }
+    if (next.progress_available && !common_flydelta_semantic_progress_is_safe_anchor(next.best_progress)) {
+        next.progress_available = false;
+        next.best_progress = {};
+        next.best_experimental_candidate_ref.clear();
+    }
     for (const auto & trial : next.completed_trials) {
-        if (!trial.progress_available ||
-                (trial.progress.outcome != common_flydelta_semantic_progress_outcome::improved &&
-                 trial.progress.outcome != common_flydelta_semantic_progress_outcome::solved)) {
+        if (!trial.progress_available || !common_flydelta_semantic_progress_is_safe_anchor(trial.progress)) {
             continue;
         }
         if (!next.progress_available ||

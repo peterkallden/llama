@@ -21,6 +21,7 @@ json progress_observation_to_json(
     return json{
         {"available", observation.available},
         {"contract_valid", observation.contract_valid},
+        {"regression_coverage_complete", observation.regression_coverage_complete},
         {"operation", observation.operation},
         {"dataset", observation.dataset},
         {"grouping", observation.grouping},
@@ -38,6 +39,7 @@ json progress_to_json(const common_flydelta_semantic_progress & progress) {
     return json{
         {"outcome", common_flydelta_semantic_progress_outcome_name(progress.outcome)},
         {"comparable", progress.comparable},
+        {"regression_known", progress.regression_known},
         {"baseline_score", progress.baseline_score},
         {"candidate_score", progress.candidate_score},
         {"improved_dimensions", progress.improved_dimensions},
@@ -127,6 +129,8 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
     const auto progress = value.value("semantic_progress_observation", json::object());
     trial.semantic_progress_observation.available = progress.value("available", false);
     trial.semantic_progress_observation.contract_valid = progress.value("contract_valid", false);
+    trial.semantic_progress_observation.regression_coverage_complete =
+        progress.value("regression_coverage_complete", false);
     trial.semantic_progress_observation.operation = progress.value("operation", "");
     trial.semantic_progress_observation.dataset = progress.value("dataset", "");
     trial.semantic_progress_observation.grouping = progress.value("grouping", "");
@@ -223,6 +227,11 @@ bool common_flydelta_counterfactual_trial_validate(
         const common_flydelta_counterfactual_trial & trial,
         std::string & error) {
     error.clear();
+    if (trial.semantic_progress_observation.regression_coverage_complete &&
+            !trial.semantic_progress_observation.available) {
+        error = "FlyDelta regression coverage requires an available host observation";
+        return false;
+    }
     if (!trial.executed) {
         error = "FlyDelta counterfactual trial did not execute";
         return false;
@@ -296,6 +305,15 @@ bool common_flydelta_counterfactual_report_validate(
     }
     if (!common_flydelta_counterfactual_trial_validate(report.baseline, error) ||
             !common_flydelta_counterfactual_trial_validate(report.candidate, error)) {
+        return false;
+    }
+    if (report.semantic_progress.regression_known &&
+            !common_flydelta_compare_semantic_progress(
+                report.baseline.semantic_progress_observation,
+                report.candidate.semantic_progress_observation,
+                report.baseline.verifier_known && report.baseline.passed,
+                report.candidate.verifier_known && report.candidate.passed).regression_known) {
+        error = "FlyDelta regression comparison lacks complete host observations";
         return false;
     }
     const auto expected = common_flydelta_classify_counterfactual(report.baseline, report.candidate);
@@ -419,6 +437,7 @@ bool common_flydelta_counterfactual_report_from_json(
         const auto progress = value.value("semantic_progress", json::object());
         report.semantic_progress.outcome = parse_progress_outcome(progress.value("outcome", "unknown"));
         report.semantic_progress.comparable = progress.value("comparable", false);
+        report.semantic_progress.regression_known = progress.value("regression_known", false);
         report.semantic_progress.baseline_score = progress.value("baseline_score", 0);
         report.semantic_progress.candidate_score = progress.value("candidate_score", 0);
         report.semantic_progress.improved_dimensions = progress.value(

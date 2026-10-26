@@ -755,7 +755,10 @@ residual iteration.
 Deep coefficient trials carry the host's progress observation and paired
 comparison separately from the strict outcome. Deep can expose an in-memory
 provisional selection for a fully generated, host-evaluated arm that improved
-without a recorded regression. The selected basis and coefficients remain
+and has a known regression comparison without a recorded regression. The
+current dataset-specific comparator does not attest complete objective
+coverage, so it cannot by itself establish a known regression comparison.
+Older records without the coverage flag also remain unknown. The selected basis and coefficients remain
 available in the search result. This is not the verified coefficient winner:
 daemon persistence, resumption and further search from this provisional
 selection are not yet wired.

@@ -78,6 +78,25 @@ int main() {
     CHECK(common_flydelta_counterfactual_report_from_json(json, parsed, error));
     CHECK(parsed.outcome == common_flydelta_counterfactual_outcome::helped);
     CHECK(parsed.baseline.host_evaluated && parsed.candidate.host_evaluated);
+    CHECK(!parsed.semantic_progress.regression_known);
+    report.semantic_progress.regression_known = true;
+    report.baseline.semantic_progress_observation.available = true;
+    report.candidate.semantic_progress_observation.available = true;
+    report.baseline.semantic_progress_observation.regression_coverage_complete = true;
+    report.candidate.semantic_progress_observation.regression_coverage_complete = true;
+    for (auto * observation : {&report.baseline.semantic_progress_observation,
+                               &report.candidate.semantic_progress_observation}) {
+        observation->operation_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->dataset_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->grouping_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->measure_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->contract_state = common_flydelta_semantic_progress_field_state::matched;
+    }
+    CHECK(common_flydelta_counterfactual_report_from_json(
+        common_flydelta_counterfactual_report_to_json(report), parsed, error));
+    CHECK(parsed.semantic_progress.regression_known);
+    CHECK(parsed.baseline.semantic_progress_observation.regression_coverage_complete);
+    CHECK(parsed.candidate.semantic_progress_observation.regression_coverage_complete);
 
     const auto baseline_pass = trial(true, false, "evidence:baseline");
     const auto candidate_fail = trial(false, true, "evidence:candidate");
@@ -108,6 +127,13 @@ int main() {
     CHECK(progress.outcome == common_flydelta_semantic_progress_outcome::improved);
     CHECK(progress.candidate_score > progress.baseline_score);
     CHECK(!progress.residual_dimensions.empty());
+    CHECK(!progress.regression_known);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(progress));
+    auto certified_progress = progress;
+    certified_progress.regression_known = true;
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
+    certified_progress.regressed_dimensions.push_back("grouping");
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
 
     const auto failed_baseline = trial(false, false, "evidence:baseline-failed");
     const auto partial_candidate = trial(false, true, "evidence:partial-candidate");

@@ -336,8 +336,9 @@ bool common_flydelta_run_deep_search_batched(
         const float progress_delta = static_cast<float>(progress.candidate_score - progress.baseline_score);
         if (full_trial.executed && full_trial.host_evaluated && full_trial.overlay_applied &&
                 !full_trial.evidence_ref.empty() &&
-                progress.comparable && progress.outcome == common_flydelta_semantic_progress_outcome::improved &&
-                !progress.improved_dimensions.empty() && progress.regressed_dimensions.empty() &&
+                common_flydelta_semantic_progress_is_safe_anchor(progress) &&
+                progress.outcome == common_flydelta_semantic_progress_outcome::improved &&
+                !progress.improved_dimensions.empty() &&
                 (!result.provisional_selection.selected ||
                  progress_delta > result.provisional_selection.score)) {
             result.provisional_selection.selected = true;

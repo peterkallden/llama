@@ -96,6 +96,7 @@ json progress_json(const common_flydelta_semantic_progress & progress) {
     return {
         {"outcome", progress_outcome_name(progress.outcome)},
         {"comparable", progress.comparable},
+        {"regression_known", progress.regression_known},
         {"baseline_score", progress.baseline_score},
         {"candidate_score", progress.candidate_score},
         {"improved_dimensions", progress.improved_dimensions},
@@ -109,6 +110,7 @@ bool parse_progress(const json & value, common_flydelta_semantic_progress & prog
     if (!value.is_object() || !parse_progress_outcome(
             value.value("outcome", "unknown"), progress.outcome)) return false;
     progress.comparable = value.value("comparable", false);
+    progress.regression_known = value.value("regression_known", false);
     progress.baseline_score = value.value("baseline_score", 0);
     progress.candidate_score = value.value("candidate_score", 0);
     progress.improved_dimensions = value.value(
