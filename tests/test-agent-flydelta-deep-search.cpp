@@ -133,6 +133,43 @@ int main() {
     region.host_evaluated = false;
     CHECK(!common_flydelta_intervention_region_trial_validate(region, error));
 
+    common_flydelta_deep_search_result partial_result;
+    const common_flydelta_coefficient_search_runner diagnostic_partial =
+        [](const common_flydelta_experiment_fixture &, const common_flydelta_low_rank_basis &,
+           const std::vector<float> & coefficients, bool overlay,
+           common_flydelta_counterfactual_trial & trial, common_flydelta_decision_margin & margin,
+           common_flydelta_representation_diagnostics & geometry, bool & has_geometry, std::string &) {
+            trial = {}; trial.executed = true; trial.overlay_applied = overlay;
+            margin = {}; margin.available = overlay;
+            margin.positive_total_logprob = coefficients.empty() ? 0.0f : coefficients[0];
+            margin.positive_token_count = 1; margin.negative_token_count = 1;
+            geometry = {}; has_geometry = false; return true;
+        };
+    const common_flydelta_coefficient_search_runner full_partial =
+        [](const common_flydelta_experiment_fixture &, const common_flydelta_low_rank_basis &,
+           const std::vector<float> & coefficients, bool overlay,
+           common_flydelta_counterfactual_trial & trial, common_flydelta_decision_margin & margin,
+           common_flydelta_representation_diagnostics & geometry, bool & has_geometry, std::string &) {
+            trial = {}; trial.executed = true; trial.host_evaluated = true;
+            trial.verifier_known = true; trial.passed = false; trial.overlay_applied = overlay;
+            trial.evidence_ref = "evidence:partial";
+            auto & progress = trial.semantic_progress_observation;
+            progress.available = true;
+            const bool improved = overlay && !coefficients.empty() && coefficients[0] > 0;
+            progress.measure_state = improved ? common_flydelta_semantic_progress_field_state::matched
+                : common_flydelta_semantic_progress_field_state::mismatch;
+            progress.score = improved ? 1 : 0;
+            margin = {}; geometry = {}; has_geometry = false; return true;
+        };
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), config, input, diagnostic_partial, full_partial, partial_result, error));
+    CHECK(!partial_result.coefficient_selection.selected);
+    CHECK(partial_result.provisional_selection.selected);
+    const auto & partial = partial_result.coefficient_trials[partial_result.provisional_selection.trial_index];
+    CHECK(partial.outcome == common_flydelta_counterfactual_outcome::unknown);
+    CHECK(partial.semantic_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(!partial.coefficients.empty());
+
     size_t diagnostic_batch_calls = 0;
     size_t full_batch_calls = 0;
     const common_flydelta_coefficient_search_runner batch_probe =

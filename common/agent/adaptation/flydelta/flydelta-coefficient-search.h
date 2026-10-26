@@ -212,6 +212,9 @@ struct common_flydelta_coefficient_trial {
     common_flydelta_margin_comparison margin_comparison;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
+    // Host-observed partial progress is separate from the final verdict.
+    common_flydelta_semantic_progress_observation semantic_progress_observation;
+    common_flydelta_semantic_progress semantic_progress;
     float quality_delta = 0.0f;
     float search_fitness = 0.0f;
     bool geometry_available = false;

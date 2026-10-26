@@ -752,6 +752,14 @@ emitted only when the strict host Oracle passes. Improved safe candidates may
 be retained in the existing bounded Bootstrap/search state for a later
 residual iteration.
 
+Deep coefficient trials carry the host's progress observation and paired
+comparison separately from the strict outcome. Deep can expose an in-memory
+provisional selection for a fully generated, host-evaluated arm that improved
+without a recorded regression. The selected basis and coefficients remain
+available in the search result. This is not the verified coefficient winner:
+daemon persistence, resumption and further search from this provisional
+selection are not yet wired.
+
 The smoke summary records the strict Oracle outcome, semantic progress,
 provenance and the bounded
 `expected_decision`, `observed_decision` and `verifier_reason` fields, but not

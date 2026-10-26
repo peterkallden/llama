@@ -17,6 +17,14 @@ void common_flydelta_coefficient_trial_set_observation(
     target.expected_decision_summary = candidate.expected_decision_summary;
     target.evidence_ref = candidate.evidence_ref;
     target.outcome = common_flydelta_classify_counterfactual(baseline, candidate);
+    target.semantic_progress_observation = candidate.semantic_progress_observation;
+    target.semantic_progress = {};
+    if (baseline.executed && candidate.executed && baseline.host_evaluated && candidate.host_evaluated) {
+        target.semantic_progress = common_flydelta_compare_semantic_progress(
+            baseline.semantic_progress_observation, candidate.semantic_progress_observation,
+            baseline.verifier_known && baseline.passed,
+            candidate.verifier_known && candidate.passed);
+    }
     target.quality_delta = candidate.quality - baseline.quality;
     target.executed = candidate.executed;
     target.host_evaluated = baseline.host_evaluated && candidate.host_evaluated;
@@ -41,6 +49,8 @@ bool common_flydelta_coefficient_trial_to_region(
     target.observed_decision_summary = source.observed_decision_summary;
     target.expected_decision_summary = source.expected_decision_summary;
     target.evidence_ref = source.evidence_ref;
+    target.semantic_progress_observation = source.semantic_progress_observation;
+    target.semantic_progress = source.semantic_progress;
     target.candidate.layer_indices = {static_cast<uint32_t>(basis.layer_index)};
     target.candidate.anchor_layer_index = static_cast<uint32_t>(basis.layer_index);
     target.candidate.total_scale = source.executed_strength;

@@ -55,6 +55,39 @@ static common_flydelta_experiment_fixture fixture() {
 
 int main() {
     std::string error;
+    // Partial host evidence must survive the coefficient adapter without
+    // turning an incomplete result into a verified success.
+    common_flydelta_counterfactual_trial baseline_progress, candidate_progress;
+    baseline_progress.executed = candidate_progress.executed = true;
+    baseline_progress.host_evaluated = candidate_progress.host_evaluated = true;
+    baseline_progress.verifier_known = candidate_progress.verifier_known = true;
+    baseline_progress.semantic_progress_observation.available = true;
+    candidate_progress.semantic_progress_observation.available = true;
+    baseline_progress.semantic_progress_observation.measure_state =
+        common_flydelta_semantic_progress_field_state::mismatch;
+    candidate_progress.semantic_progress_observation.measure_state =
+        common_flydelta_semantic_progress_field_state::matched;
+    candidate_progress.semantic_progress_observation.score = 1;
+    common_flydelta_coefficient_trial partial_trial;
+    common_flydelta_coefficient_trial_set_observation(
+        partial_trial, baseline_progress, candidate_progress);
+    CHECK(partial_trial.outcome == common_flydelta_counterfactual_outcome::unknown);
+    CHECK(partial_trial.semantic_progress.comparable);
+    CHECK(partial_trial.semantic_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(!partial_trial.semantic_progress.improved_dimensions.empty());
+    candidate_progress.host_evaluated = false;
+    common_flydelta_coefficient_trial_set_observation(
+        partial_trial, baseline_progress, candidate_progress);
+    CHECK(!partial_trial.semantic_progress.comparable);
+    candidate_progress.host_evaluated = true;
+    baseline_progress.semantic_progress_observation.grouping_state =
+        common_flydelta_semantic_progress_field_state::matched;
+    candidate_progress.semantic_progress_observation.grouping_state =
+        common_flydelta_semantic_progress_field_state::missing;
+    common_flydelta_coefficient_trial_set_observation(
+        partial_trial, baseline_progress, candidate_progress);
+    CHECK(!partial_trial.semantic_progress.improved_dimensions.empty());
+    CHECK(!partial_trial.semantic_progress.regressed_dimensions.empty());
     common_flydelta_low_rank_basis basis;
     CHECK(common_flydelta_build_low_rank_basis(
         2, 2, {direction(2, 1.0f, 0.0f), direction(2, 0.0f, 1.0f)}, basis, error));

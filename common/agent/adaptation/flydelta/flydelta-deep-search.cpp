@@ -332,6 +332,18 @@ bool common_flydelta_run_deep_search_batched(
         const size_t result_index = result.coefficient_trials.size();
         result.coefficient_trials.push_back(std::move(trial));
         const auto & full_trial = result.coefficient_trials.back();
+        const auto & progress = full_trial.semantic_progress;
+        const float progress_delta = static_cast<float>(progress.candidate_score - progress.baseline_score);
+        if (full_trial.executed && full_trial.host_evaluated && full_trial.overlay_applied &&
+                !full_trial.evidence_ref.empty() &&
+                progress.comparable && progress.outcome == common_flydelta_semantic_progress_outcome::improved &&
+                !progress.improved_dimensions.empty() && progress.regressed_dimensions.empty() &&
+                (!result.provisional_selection.selected ||
+                 progress_delta > result.provisional_selection.score)) {
+            result.provisional_selection.selected = true;
+            result.provisional_selection.trial_index = result_index;
+            result.provisional_selection.score = progress_delta;
+        }
         if (full_trial.outcome == common_flydelta_counterfactual_outcome::helped &&
                 full_trial.executed && full_trial.verifier_known &&
                 (!result.coefficient_selection.selected ||

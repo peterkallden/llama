@@ -36,6 +36,8 @@ struct common_flydelta_deep_search_result {
     common_flydelta_low_rank_basis basis;
     std::vector<common_flydelta_coefficient_trial> coefficient_trials;
     common_flydelta_coefficient_selection coefficient_selection;
+    // An experimental anchor, not a verified winner or activation authority.
+    common_flydelta_coefficient_selection provisional_selection;
     bool matched_evaluation_complete = false;
     std::string matched_evaluation_reason;
     common_flydelta_guidance_fixture_evaluation matched_evaluation;
