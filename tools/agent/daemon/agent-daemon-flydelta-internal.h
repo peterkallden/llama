@@ -214,14 +214,7 @@ bool daemon_flydelta_read_json_bounded(
 
 struct daemon_flydelta_concept_relation_material;
 
-bool daemon_flydelta_read_json_bounded(
-        const daemon_flydelta_resource_provider & provider,
-        const std::string & reference,
-        size_t max_bytes,
-        json & parsed,
-        std::string & error);
 
-struct daemon_flydelta_concept_relation_material;
 
 bool daemon_flydelta_parse_teaching_origin(
         const std::string & value,
@@ -243,18 +236,7 @@ bool daemon_flydelta_parse_teaching_relation(
         daemon_flydelta_concept_relation_material & material,
         std::string & error);
 
-bool daemon_flydelta_read_json(
-        const daemon_flydelta_resource_provider & provider,
-        const std::string & reference,
-        json & parsed,
-        std::string & error);
 
-bool daemon_flydelta_read_json_bounded(
-        const daemon_flydelta_resource_provider & provider,
-        const std::string & reference,
-        size_t max_bytes,
-        json & parsed,
-        std::string & error);
 
 bool daemon_flydelta_parse_context(
         const daemon_flydelta_resource_provider & provider,

@@ -60,6 +60,11 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-template-library.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/bootstrap.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/search.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/augmentation.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/evaluation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-capture.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-synthesis.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/decision-margin.cpp
@@ -205,6 +210,11 @@ set(AGENT_DAEMON_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-template-library.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/bootstrap.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/search.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/augmentation.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/evaluation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-capture.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/concept-synthesis.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/decision-margin.cpp
