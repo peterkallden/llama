@@ -227,6 +227,7 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         region_trial.executed = arm_result.executed;
         region_trial.host_evaluated = full_execution && arm_result.host_evaluated;
         region_trial.verifier_known = full_execution && arm_result.verifier_known;
+        if (full_execution) daemon_flydelta_record_arm_observations(region_trial, arm_result, &baseline_result);
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = diagnostics;
         region_trial.safe_to_continue = arm_result.host_outcome !=
@@ -430,6 +431,7 @@ bool daemon_flydelta_run_adaptive_alpha_slice(
         region_trial.executed = alpha_trial.counterfactual.executed;
         region_trial.host_evaluated = alpha_trial.counterfactual.host_evaluated;
         region_trial.verifier_known = alpha_trial.counterfactual.verifier_known;
+        if (alpha_trial.counterfactual.host_evaluated) region_trial.candidate_observation = alpha_trial.counterfactual;
         region_trial.geometry_available = alpha_trial.geometry_available;
         region_trial.geometry = alpha_trial.geometry;
         region_trial.observed_decision_summary = alpha_trial.counterfactual.observed_decision_summary;
@@ -699,6 +701,7 @@ bool daemon_flydelta_run_orthogonal_slice(
         region_trial.executed = arm.executed;
         region_trial.host_evaluated = full_execution && arm.host_evaluated;
         region_trial.verifier_known = full_execution && arm.verifier_known;
+        if (full_execution) daemon_flydelta_record_arm_observations(region_trial, arm, &baseline_result);
         region_trial.geometry_available = trial.diagnostics_available;
         region_trial.geometry = trial.diagnostics;
         region_trial.observed_decision_summary = arm.observed_decision_summary;

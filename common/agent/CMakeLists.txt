@@ -197,6 +197,7 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-worker-commit.cpp adaptation/flydelta/flydelta-worker-commit.h
     adaptation/flydelta/flydelta-search-budget.cpp adaptation/flydelta/flydelta-search-budget.h
     adaptation/flydelta/flydelta-collection.cpp adaptation/flydelta/flydelta-collection.h
+    adaptation/flydelta/flydelta-trace.cpp adaptation/flydelta/flydelta-trace-internal.h
     adaptation/flydelta/flydelta-worker.cpp adaptation/flydelta/flydelta-worker.h
     adaptation/flydelta/flydelta-worker-budget.cpp adaptation/flydelta/flydelta-worker-budget.h
     adaptation/flydelta/flydelta-gate.cpp adaptation/flydelta/flydelta-gate.h

@@ -2,6 +2,7 @@
 #include "agent/adaptation/flydelta/flydelta-bootstrap-zoom-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-representation-augmentation-state-store.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-trace-internal.h"
 
 #include <cmath>
 #include <utility>
@@ -140,6 +141,41 @@ static common_flydelta_search_pipeline_result search_pipeline_result() {
 }
 
 int main() {
+    // Individual truth must survive a neutral pair and must not be inferred
+    // from HELPED when the original observations are absent.
+    {
+        common_flydelta_experiment_worker_result result;
+        common_flydelta_search_pipeline_result pipeline;
+        common_flydelta_search_pipeline_direction_result direction;
+        common_flydelta_intervention_region_trial trial;
+        trial.outcome = common_flydelta_counterfactual_outcome::neutral;
+        trial.executed = trial.host_evaluated = trial.verifier_known = true;
+        trial.dose_evaluated = true;
+        trial.candidate.total_scale = 0.2f;
+        trial.requested_total_scale = 0.2f;
+        trial.executed_total_scale = 0.0f;
+        common_flydelta_counterfactual_trial observation;
+        observation.executed = observation.host_evaluated = observation.verifier_known = observation.passed = true;
+        trial.candidate_observation = trial.baseline_observation = observation;
+        direction.region_trials.push_back(trial);
+        pipeline.directions.push_back(direction);
+        result.search_pipeline_results.push_back(pipeline);
+        common_flydelta_trace trace;
+        common_flydelta_trace_detail::append_worker_result(base_job(common_flydelta_experiment_job_kind::search_pipeline, "trace"), result, trace);
+        CHECK(trace.arms.size() == 1);
+        CHECK(trace.arms[0].candidate_evaluation_available && trace.arms[0].verifier_passed);
+        CHECK(trace.arms[0].baseline_passed && trace.arms[0].candidate_passed);
+        CHECK(trace.arms[0].host_outcome == common_flydelta_counterfactual_outcome::neutral);
+        CHECK(trace.arms[0].executed_scale == 0.0f);
+        auto & unknown = result.search_pipeline_results.front().directions.front().region_trials.front();
+        unknown.candidate_observation.reset();
+        unknown.baseline_observation.reset();
+        unknown.outcome = common_flydelta_counterfactual_outcome::helped;
+        trace = {};
+        common_flydelta_trace_detail::append_worker_result(base_job(common_flydelta_experiment_job_kind::search_pipeline, "trace"), result, trace);
+        CHECK(!trace.arms[0].candidate_evaluation_available && !trace.arms[0].has_baseline);
+        CHECK(!trace.arms[0].candidate_passed && !trace.arms[0].verifier_passed);
+    }
     std::string error;
     common_flydelta_evaluator_config config;
     config.basis.dimension = 3;

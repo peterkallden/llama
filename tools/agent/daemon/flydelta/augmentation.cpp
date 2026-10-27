@@ -366,6 +366,8 @@ bool daemon_flydelta_run_representation_augmentation(
                 trial.margin_comparison.available = baseline_margins.front().available && margins[index].available;
                 trial.margin_comparison.baseline = baseline_margins.front();
                 trial.margin_comparison.candidate = margins[index];
+                trial.candidate_observation = trials[index];
+                if (!baseline_trials.empty()) trial.baseline_observation = baseline_trials.front();
                 trial.executed = trials[index].executed;
                 trial.verifier_known = trials[index].verifier_known;
                 trial.geometry_available = geometry_available[index];
@@ -404,6 +406,7 @@ bool daemon_flydelta_run_representation_augmentation(
                     return false;
                 }
                 auto & selected_trial = direction.region_trials[best_index];
+                selected_trial.candidate_observation = frontier_trials.front();
                 selected_trial.outcome = frontier_trials.front().passed
                     ? common_flydelta_counterfactual_outcome::helped
                     : frontier_trials.front().verifier_known

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -236,6 +237,9 @@ bool common_flydelta_coefficient_search_config_validate(
         std::string & error);
 
 struct common_flydelta_coefficient_trial {
+    // Original observations retained for presentation, never search authority.
+    std::optional<common_flydelta_counterfactual_trial> candidate_observation;
+    std::optional<common_flydelta_counterfactual_trial> baseline_observation;
     std::string arm_id;
     std::string intervention_ref;
     std::string verifier_reason;

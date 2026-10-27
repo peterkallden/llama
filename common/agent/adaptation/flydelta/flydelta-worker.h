@@ -35,6 +35,13 @@ struct common_flydelta_trace_arm {
     std::string dose_action;
     std::string dose_reason;
     std::vector<float> coefficients;
+    std::vector<float> requested_coefficients;
+    bool intervention_norms_available = false;
+    float requested_intervention_norm = 0.0f;
+    float applied_intervention_norm = 0.0f;
+    float requested_residual_fraction = 0.0f;
+    float applied_residual_fraction = 0.0f;
+    std::string residual_calibration_ref;
     bool margin_available = false;
     float margin_total = 0.0f;
     float margin_normalized = 0.0f;
@@ -51,6 +58,7 @@ struct common_flydelta_trace_arm {
     std::string execution_class;
     bool host_evaluated = false;
     bool verifier_known = false;
+    bool candidate_evaluation_available = false;
     bool verifier_passed = false;
     bool candidate_passed = false;
     bool has_baseline = false;

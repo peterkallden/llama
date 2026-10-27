@@ -235,6 +235,8 @@ bool common_flydelta_run_intervention_region_search(
         }
         region_trial = {};
         region_trial.candidate = candidate;
+        region_trial.candidate_observation = counterfactual;
+        region_trial.baseline_observation = baseline;
         region_trial.outcome = common_flydelta_classify_counterfactual(baseline, counterfactual);
         region_trial.quality_delta = counterfactual.quality - baseline.quality;
         region_trial.margin = margin;

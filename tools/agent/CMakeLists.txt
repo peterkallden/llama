@@ -61,6 +61,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state-codec.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/bootstrap.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/search.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/augmentation.cpp
@@ -211,6 +212,7 @@ set(AGENT_DAEMON_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-runtime.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-flydelta.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/state-codec.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/bootstrap.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/search.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/flydelta/augmentation.cpp

@@ -804,6 +804,8 @@ bool daemon_flydelta_run_search_pipeline(
         // but the result still comes from the arm's actual execution metadata.
         trial.host_evaluated = candidate_trial.host_evaluated;
         trial.verifier_known = baseline_trial.verifier_known && candidate_trial.verifier_known;
+        trial.candidate_observation = candidate_trial;
+        trial.baseline_observation = baseline_trial;
         trial.semantic_progress_observation = candidate_trial.semantic_progress_observation;
         trial.observed_decision_summary = candidate_trial.observed_decision_summary;
         trial.expected_decision_summary = candidate_trial.expected_decision_summary;

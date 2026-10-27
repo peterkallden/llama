@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent-daemon-flydelta.h"
+#include "flydelta/state.h"
 
 #include "agent-daemon-adapter.h"
 #include "../adaptation/flydelta-teaching-material-store.h"
@@ -352,6 +353,11 @@ bool daemon_flydelta_arm_semantic_passed(const common_flydelta_arm_result & resu
 common_flydelta_counterfactual_outcome daemon_flydelta_classify_arm_pair(
     const common_flydelta_arm_result & baseline, const common_flydelta_arm_result & candidate);
 
+void daemon_flydelta_record_arm_observations(
+        common_flydelta_intervention_region_trial & trial,
+        const common_flydelta_arm_result & candidate,
+        const common_flydelta_arm_result * baseline = nullptr);
+
 bool daemon_flydelta_finalize_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const common_flydelta_arm_request & arm,
@@ -395,35 +401,6 @@ void daemon_flydelta_bind_execution_callbacks(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const std::shared_ptr<common_flydelta_teaching_material_runtime> & teaching_material_runtime,
         common_agent_server_flydelta_binding & binding);
-
-bool daemon_flydelta_fixture_from_job(
-        const common_flydelta_experiment_job & job,
-        common_flydelta_experiment_fixture & fixture,
-        std::string & error);
-
-bool daemon_flydelta_parse_depth(
-        const std::string & value, common_flydelta_search_depth & depth);
-
-bool daemon_flydelta_parse_phase(
-        const std::string & value, common_flydelta_experiment_phase & phase);
-
-bool daemon_flydelta_parse_refinement(
-        const std::string & value, common_flydelta_bootstrap_refinement_kind & kind);
-
-json daemon_flydelta_orchestration_state_json(
-        const common_flydelta_experiment_plan & plan,
-        const common_flydelta_utility_history & history,
-        const std::string & bootstrap_state_ref);
-
-std::string daemon_flydelta_continuation_key(const common_flydelta_experiment_plan & plan);
-
-std::string daemon_flydelta_bootstrap_key(const common_flydelta_bootstrap_zoom_state & state);
-
-bool daemon_flydelta_orchestration_state_from_json(
-        const std::string & text,
-        common_flydelta_experiment_plan & plan,
-        common_flydelta_utility_history & history,
-        std::string & error);
 
 bool daemon_flydelta_capture_for_arm(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

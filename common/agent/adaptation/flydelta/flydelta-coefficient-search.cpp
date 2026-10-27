@@ -53,6 +53,8 @@ void common_flydelta_coefficient_trial_set_observation(
         common_flydelta_coefficient_trial & target,
         const common_flydelta_counterfactual_trial & baseline,
         const common_flydelta_counterfactual_trial & candidate) {
+    target.candidate_observation = candidate;
+    target.baseline_observation = baseline;
     target.arm_id = candidate.arm_id;
     target.intervention_ref = candidate.intervention_ref;
     target.verifier_reason = candidate.verifier_reason;
@@ -85,9 +87,19 @@ bool common_flydelta_coefficient_trial_to_region(
         common_flydelta_intervention_region_trial & target,
         std::string & error) {
     target = {};
+    target.candidate_observation = source.candidate_observation;
+    target.baseline_observation = source.baseline_observation;
     target.arm_id = source.arm_id;
     target.intervention_ref = source.intervention_ref;
     target.coefficients = source.coefficients;
+    target.requested_coefficients = source.requested_coefficients;
+    target.intervention_norms_available = source.intervention_norms_available;
+    target.requested_intervention_norm = source.requested_intervention_norm;
+    target.applied_intervention_norm = source.applied_intervention_norm;
+    target.requested_residual_fraction = source.requested_residual_fraction;
+    target.applied_residual_fraction = source.applied_residual_fraction;
+    target.residual_calibration_ref = source.residual_calibration_ref;
+
     target.verifier_reason = source.verifier_reason;
     target.observed_decision_summary = source.observed_decision_summary;
     target.expected_decision_summary = source.expected_decision_summary;

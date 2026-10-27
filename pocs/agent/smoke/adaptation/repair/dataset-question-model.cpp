@@ -2082,6 +2082,18 @@ int main(int argc, char ** argv) {
                         {"evaluation_scenario_id", deep_case.id},
                         {"task", deep_case.question}, {"arm_id", trial.arm_id},
                         {"raw_output_trace_id", trial.arm_id},
+                        {"baseline_arm_id", trial.baseline_observation
+                            ? trial.baseline_observation->arm_id : std::string()},
+                        {"candidate_evaluation_available", trial.candidate_observation.has_value()},
+                        {"baseline_verifier_known", trial.baseline_observation && trial.baseline_observation->verifier_known},
+                        {"baseline_passed", trial.baseline_observation && trial.baseline_observation->passed},
+                        {"objective_assessment", ordered_json::parse(common_flydelta_progress_assessment_to_json(
+                            trial.semantic_progress_observation.objective))},
+                        {"semantic_progress", {{"outcome", common_flydelta_semantic_progress_outcome_name(trial.semantic_progress.outcome)},
+                            {"comparable", trial.semantic_progress.comparable}, {"regression_known", trial.semantic_progress.regression_known},
+                            {"improved_dimensions", trial.semantic_progress.improved_dimensions},
+                            {"regressed_dimensions", trial.semantic_progress.regressed_dimensions},
+                            {"residual_dimensions", trial.semantic_progress.residual_dimensions}}},
                         {"requested_rank", requested_rank}, {"trial_index", trial_index},
                         {"basis_identity", common_flydelta_coefficient_basis_identity(deep_result.basis)},
                         {"coefficients", trial.coefficients}, {"layer", deep_result.layer_index},
@@ -2098,9 +2110,8 @@ int main(int argc, char ** argv) {
                         {"mutation", trial.mutation_kind},
                         {"executed", trial.executed}, {"host_evaluated", trial.host_evaluated},
                         {"verifier_known", trial.verifier_known},
-                        {"verifier_passed", full_generation && trial.verifier_known &&
-                            trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
-                            trial.outcome != common_flydelta_counterfactual_outcome::unknown},
+                        {"verifier_passed", trial.candidate_observation &&
+                            trial.candidate_observation->verifier_known && trial.candidate_observation->passed},
                         {"outcome", common_flydelta_counterfactual_outcome_name(trial.outcome)},
                         {"counterfactual_credit_eligible", learning_credit},
                         {"counterfactual_credit_reason", credit_reason},
