@@ -16,6 +16,11 @@ class DoseSummaryContracts(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = pathlib.Path(self.directory.name)
+        manifest = {"schema": "flydelta-dose-run.v1", "trace_required": True,
+                    "model_fingerprint": "sha256:model", "binary_fingerprint": "sha256:binary",
+                    "suite_fingerprint": "sha256:suite", "commands": {mode: {"argv": ["smoke", "--dose-comparison"],
+                    "environment": {"LLAMA_AGENT_RESIDENT_TRACE": "1"}} for mode in summary.MODES}}
+        (self.root / "run-manifest.json").write_text(json.dumps(manifest))
         for mode in summary.MODES:
             folder = self.root / mode
             folder.mkdir()
@@ -25,12 +30,75 @@ class DoseSummaryContracts(unittest.TestCase):
                    "mutation": "full_generation_top_arm", "outcome": "UNKNOWN",
                    "executed": True, "host_evaluated": True, "verifier_known": False,
                    "dose_experiment": mode}
-            records = ["flydelta_low_rank_arm " + json.dumps(arm),
+            arm.update({"arm_id": "arm:1", "raw_output_trace_id": "arm:1", "baseline_arm_id": "baseline:1",
+                        "task": "Calculate regional totals"})
+            baseline = {"phase": "full", "arm_id": "baseline:1", "executed": True,
+                        "messages": [{"role": "user", "content": "Calculate regional totals"}],
+                        "content": "before", "overlay_requested": False, "overlay_applied": False}
+            candidate = {**baseline, "arm_id": "arm:1", "content": "after",
+                         "overlay_requested": True, "overlay_applied": True}
+            records = ["flydelta_daemon_arm " + json.dumps(baseline),
+                       "flydelta_daemon_arm " + json.dumps(candidate),
+                       "flydelta_low_rank_arm " + json.dumps(arm),
                        "flydelta_low_rank_rank_sweep group=test elapsed_ms=12"]
             if mode != "raw":
                 records.append("flydelta_dose_calibration " + json.dumps({
                     "excluded_evaluation_scenario": "scenario-1", "source_scenarios": ["scenario-2"]}))
             (folder / "low-rank-rank-sweep.log").write_text("\n".join(records) + "\n")
+
+    def test_rank_sweep_manifest_cannot_pass_as_dose_comparison(self):
+        manifest = json.loads((self.root / "run-manifest.json").read_text())
+        manifest["commands"]["raw"]["argv"] = ["smoke", "--low-rank-rank-sweep"]
+        (self.root / "run-manifest.json").write_text(json.dumps(manifest))
+        self.assertEqual(summary.build_report(self.root)["status"], "incomplete")
+
+    def test_paired_profile_does_not_require_normalized_condition(self):
+        report = summary.build_report(self.root, ("raw", "direction-dose"))
+        self.assertEqual(report["status"], "complete")
+        self.assertNotIn("normalized", report["conditions"])
+        pair = report["conditions"]["raw"]["response_pairs"][0]
+        self.assertEqual(pair["baseline"]["content"], "before")
+        self.assertEqual(pair["candidate"]["content"], "after")
+        self.assertIn("| Scenario |", summary.render_markdown(report))
+
+    def test_missing_baseline_is_incomplete_even_with_successful_process(self):
+        path = self.root / "raw/low-rank-rank-sweep.log"
+        path.write_text("\n".join(line for line in path.read_text().splitlines()
+                                if not line.startswith("flydelta_daemon_arm ") or '"arm_id": "baseline:1"' not in line))
+        report = summary.build_report(self.root)
+        self.assertEqual(report["conditions"]["raw"]["execution_status"], "completed")
+        self.assertEqual(report["status"], "incomplete")
+
+    def test_repair_echo_cannot_substitute_for_arm_response(self):
+        path = self.root / "raw/low-rank-rank-sweep.log"
+        path.write_text(path.read_text().replace('"phase": "full", "arm_id": "arm:1"',
+                                                '"phase": "repair", "arm_id": "arm:1"'))
+        self.assertEqual(summary.build_report(self.root)["status"], "incomplete")
+
+    def test_mismatched_prompts_are_not_comparable(self):
+        path = self.root / "direction-dose/low-rank-rank-sweep.log"
+        path.write_text(path.read_text().replace('"content": "Calculate regional totals"', '"content": "Another question"'))
+        report = summary.build_report(self.root)
+        self.assertEqual(report["comparability"], "unmatched")
+        self.assertEqual(report["status"], "incomplete")
+
+    def test_interrupted_condition_preserves_raw_responses(self):
+        (self.root / "raw/process.exit").write_text("130\n")
+        report = summary.build_report(self.root)
+        self.assertEqual(report["conditions"]["raw"]["execution_status"], "interrupted")
+        self.assertEqual(report["conditions"]["raw"]["coverage_status"], "complete")
+        self.assertEqual(report["conditions"]["raw"]["response_pairs"][0]["candidate"]["content"], "after")
+
+    def test_unknown_host_outcome_keeps_comparable_partial_progress(self):
+        path = self.root / "raw/low-rank-rank-sweep.log"
+        records = path.read_text().splitlines()
+        for index, line in enumerate(records):
+            if line.startswith("flydelta_low_rank_arm "):
+                arm = json.loads(line.split(" ", 1)[1])
+                arm["semantic_progress"] = {"outcome": "improved", "comparable": True, "regression_known": False}
+                records[index] = "flydelta_low_rank_arm " + json.dumps(arm)
+        path.write_text("\n".join(records))
+        self.assertEqual(summary.build_report(self.root)["conditions"]["raw"]["behavior_status"], "partial_progress")
 
     def test_scope_local_resource_references_do_not_invalidate_same_scenario(self):
         report = summary.build_report(self.root)

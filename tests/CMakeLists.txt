@@ -382,6 +382,9 @@ if (LLAMA_AGENT_RUNTIME)
     add_test(NAME test-agent-flydelta-dose-summary
         COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test-agent-flydelta-dose-summary.py)
     set_property(TEST test-agent-flydelta-dose-summary PROPERTY LABELS "agent;flydelta;model-free")
+    add_test(NAME test-agent-flydelta-dose-runner
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/test-agent-flydelta-dose-runner.py)
+    set_property(TEST test-agent-flydelta-dose-runner PROPERTY LABELS "agent;flydelta;model-free")
     foreach(TEST_SOURCE
         test-agent-contract.cpp
         test-agent-semi-oracle.cpp
