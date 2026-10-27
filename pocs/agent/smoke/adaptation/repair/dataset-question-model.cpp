@@ -563,7 +563,7 @@ int main(int argc, char ** argv) {
         server_config.context_key.n_threads = value.n_threads;
         server_config.per_sequence_cvec_batch = true;
         server_config.per_sequence_factorized_cvec_batch =
-            value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch;
+            (value.low_rank_rank_sweep || value.dose_comparison) && !value.disable_factorized_cvec_batch;
         std::cout << "flydelta_smoke_factorized_cvec_enabled="
                   << (server_config.per_sequence_factorized_cvec_batch ? "yes" : "no") << '\n';
         server_config.agent_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
@@ -1435,7 +1435,7 @@ int main(int argc, char ** argv) {
                     activation_request.il_end = static_cast<int32_t>(n_layers - 1);
                     activation_request.coefficients = coefficients;
                     activation_request.allow_factorized_overlay =
-                        value.low_rank_rank_sweep && !value.disable_factorized_cvec_batch &&
+                        (value.low_rank_rank_sweep || value.dose_comparison) && !value.disable_factorized_cvec_batch &&
                         allow_factorized_overlay;
                     if (activation_request.allow_factorized_overlay) {
                         if (!deep_factorized_basis) {
@@ -2096,7 +2096,8 @@ int main(int argc, char ** argv) {
                             {"residual_dimensions", trial.semantic_progress.residual_dimensions}}},
                         {"requested_rank", requested_rank}, {"trial_index", trial_index},
                         {"basis_identity", common_flydelta_coefficient_basis_identity(deep_result.basis)},
-                        {"coefficients", trial.coefficients}, {"layer", deep_result.layer_index},
+                        {"coefficients", trial.coefficients}, {"requested_coefficients", trial.requested_coefficients},
+                        {"dose_safety_limited", trial.dose_safety_limited}, {"layer", deep_result.layer_index},
                         {"dose_experiment", dose_experiment},
                         {"calibration_ref", trial.residual_calibration_ref},
                         {"requested_coefficient_norm", trial.requested_strength},

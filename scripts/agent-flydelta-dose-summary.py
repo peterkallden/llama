@@ -163,7 +163,7 @@ def read_condition(root, mode):
                 "outcome": arm["outcome"], "verifier_known": arm["verifier_known"],
                 "verifier_reason": arm.get("verifier_reason"), "semantic_progress": arm.get("semantic_progress"),
                 "objective_assessment": arm.get("objective_assessment"),
-                "dose": {key: arm.get(key) for key in ("coefficients", "calibration_ref", "requested_coefficient_norm",
+                "dose": {key: arm.get(key) for key in ("requested_coefficients", "coefficients", "dose_safety_limited", "calibration_ref", "requested_coefficient_norm",
                     "executed_coefficient_norm", "requested_residual_fraction", "applied_residual_fraction",
                     "requested_intervention_norm", "applied_intervention_norm", "dose_reason")}, "issues": errors}
         condition["response_pairs"].append(pair)

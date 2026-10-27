@@ -605,7 +605,8 @@ bool daemon_flydelta_finalize_arm(
             {"physical_batch_size", generation.flydelta_runtime.physical_batch_size},
             {"overlay_requested", arm.apply_overlay},
             {"executed", result.executed}, {"generation_available", result.generation_available},
-            {"executed_alpha", result.executed_alpha},
+            {"executed_alpha", generation.flydelta_runtime.applied ? json(result.executed_alpha)
+                : (!arm.apply_overlay && result.executed ? json(0.0f) : json(nullptr))},
             {"overlay_applied", generation.flydelta_runtime.applied},
             {"applied_artifact_id", generation.flydelta_runtime.artifact_id},
             {"factorized_binding", generation.flydelta_runtime.factorized_binding},

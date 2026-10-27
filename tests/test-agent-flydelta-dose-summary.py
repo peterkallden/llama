@@ -29,7 +29,8 @@ class DoseSummaryContracts(unittest.TestCase):
                    "requested_rank": 1, "layer": 2, "basis_identity": "basis-1",
                    "mutation": "full_generation_top_arm", "outcome": "UNKNOWN",
                    "executed": True, "host_evaluated": True, "verifier_known": False,
-                   "dose_experiment": mode}
+                   "dose_experiment": mode, "requested_coefficients": [0.5],
+                   "coefficients": [0.25], "dose_safety_limited": True}
             arm.update({"arm_id": "arm:1", "raw_output_trace_id": "arm:1", "baseline_arm_id": "baseline:1",
                         "task": "Calculate regional totals"})
             baseline = {"phase": "full", "arm_id": "baseline:1", "executed": True,
@@ -59,6 +60,9 @@ class DoseSummaryContracts(unittest.TestCase):
         pair = report["conditions"]["raw"]["response_pairs"][0]
         self.assertEqual(pair["baseline"]["content"], "before")
         self.assertEqual(pair["candidate"]["content"], "after")
+        self.assertEqual(pair["dose"]["requested_coefficients"], [0.5])
+        self.assertEqual(pair["dose"]["coefficients"], [0.25])
+        self.assertTrue(pair["dose"]["dose_safety_limited"])
         self.assertIn("| Scenario |", summary.render_markdown(report))
 
     def test_missing_baseline_is_incomplete_even_with_successful_process(self):
