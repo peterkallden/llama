@@ -138,6 +138,12 @@ bool validate_search_pipeline_result(
         const common_flydelta_search_pipeline_result & result,
         const common_flydelta_search_pipeline_config & config,
         std::string & error) {
+    if (result.provisional_anchor_ref.size() > 512 ||
+            (result.search_model_call_limit == 0 && result.search_model_calls_used != 0) ||
+            result.search_model_calls_used > result.search_model_call_limit) {
+        error = "FlyDelta search pipeline anchor or execution budget is invalid";
+        return false;
+    }
     if (result.directions.empty() || result.directions.size() > config.max_directions) {
         error = "FlyDelta search pipeline result direction count is invalid";
         return false;
@@ -149,7 +155,8 @@ bool validate_search_pipeline_result(
         // classic layer-search plan. Validate the representation that the
         // bounded slice actually produced instead of rejecting a valid
         // region result as an incomplete layer plan.
-        if (direction.region_trials.empty()) {
+        if (direction.region_trials.empty() &&
+                !common_flydelta_search_status_is_terminal_without_candidate(result.search_status)) {
             if (!common_flydelta_layer_search_plan_validate(
                     direction.layer_plan, config.layer, error)) return false;
         }
@@ -814,7 +821,8 @@ bool common_flydelta_evaluate_job(
                 std::string next_state_ref;
                 if (!callbacks.run_search_pipeline_with_search_state(
                         job, job.search_state_ref, pipeline_result, next_state_ref, error) ||
-                        next_state_ref.size() > 512) {
+                        next_state_ref.size() > 512 ||
+                        !validate_search_pipeline_result(pipeline_result, config.pipeline, error)) {
                     if (error.empty()) error = "FlyDelta search state-aware runner returned an invalid state reference";
                     return false;
                 }
@@ -878,6 +886,33 @@ bool common_flydelta_evaluate_job(
             const bool has_resume_state = !job.search_state_ref.empty() ||
                 !job.bootstrap_zoom_state_ref.empty();
             if (has_resume_state && has_orchestration_resolver(callbacks) &&
+                    result.search_continuations.empty() && has_orchestration_persister(callbacks)) {
+                common_flydelta_experiment_plan terminal_plan;
+                common_flydelta_utility_history terminal_history;
+                const auto & state_ref = job.search_state_ref.empty() ? job.bootstrap_zoom_state_ref : job.search_state_ref;
+                if (!resolve_search_orchestration_state_for_job(
+                        callbacks, job, state_ref, terminal_plan, terminal_history, error)) return false;
+                const auto & completed = result.search_pipeline_results.back();
+                if (completed.search_model_call_limit != 0) {
+                    if (completed.search_model_calls_used < terminal_plan.search_model_calls_used ||
+                            completed.search_model_calls_used > completed.search_model_call_limit ||
+                            (terminal_plan.search_model_calls_used != 0 &&
+                             terminal_plan.search_model_call_limit != completed.search_model_call_limit)) {
+                        error = "FlyDelta terminal model budget is inconsistent"; return false;
+                    }
+                    terminal_plan.search_model_call_limit = completed.search_model_call_limit;
+                    terminal_plan.search_model_calls_used = completed.search_model_calls_used;
+                }
+                terminal_plan.search_anchor_pending = false;
+                if (!persist_search_orchestration_state_for_job(callbacks, job, terminal_plan,
+                        terminal_history, result.search_state_ref, error)) return false;
+                result.has_experiment_plan = true;
+                result.experiment_plan = std::move(terminal_plan);
+                result.next_action_reason = completed.search_status == common_flydelta_search_status::budget_limited
+                    ? "Search budget does not admit another complete bounded slice; checkpoint retained"
+                    : "Bounded search produced no safe improving continuation; checkpoint retained";
+            }
+            if (has_resume_state && has_orchestration_resolver(callbacks) &&
                     !result.search_continuations.empty()) {
                 common_flydelta_experiment_plan current_plan;
                 common_flydelta_utility_history history;
@@ -889,6 +924,18 @@ bool common_flydelta_evaluate_job(
                         "FlyDelta orchestration state resolver returned no state";
                     return false;
                 }
+                const auto & completed_slice = result.search_pipeline_results.back();
+                if (completed_slice.search_model_call_limit != 0) {
+                    if (completed_slice.search_model_calls_used < current_plan.search_model_calls_used ||
+                            completed_slice.search_model_calls_used > completed_slice.search_model_call_limit ||
+                            (current_plan.search_model_calls_used != 0 &&
+                             completed_slice.search_model_call_limit != current_plan.search_model_call_limit)) {
+                        error = "FlyDelta continuation model budget is inconsistent";
+                        return false;
+                    }
+                    current_plan.search_model_call_limit = completed_slice.search_model_call_limit;
+                    current_plan.search_model_calls_used = completed_slice.search_model_calls_used;
+                }
                 std::vector<common_flydelta_subspace_utility_observation> observations;
                 if (!utility_observations_from_pipeline(
                         result.search_pipeline_results.back(), observations, error)) return false;
@@ -896,6 +943,23 @@ bool common_flydelta_evaluate_job(
                 if (!common_flydelta_orchestrate_search_slice(
                         current_plan, config.utility_gate, observations, history,
                         orchestration, error)) return false;
+                orchestration.plan.search_anchor_pending = false;
+                const auto & provisional_ref = result.search_pipeline_results.back().provisional_anchor_ref;
+                if (!provisional_ref.empty() && current_plan.search_anchor_round < 1024 &&
+                        current_plan.search_model_calls_used < current_plan.search_model_call_limit &&
+                        current_plan.phase == common_flydelta_experiment_phase::deep_controls) {
+                    if (provisional_ref.size() > 512) {
+                        error = "FlyDelta search anchor reference exceeds its bound";
+                        return false;
+                    }
+                    orchestration.plan = current_plan;
+                    orchestration.plan.search_anchor_ref = provisional_ref;
+                    orchestration.plan.search_anchor_round = current_plan.search_anchor_round + 1;
+                    orchestration.plan.search_anchor_pending = true;
+                    orchestration.plan.run_tfo_lite = false;
+                    orchestration.next_action = common_flydelta_next_action::run_deep_controls;
+                    orchestration.reason = "Continue bounded experimental search from verified partial progress";
+                }
                 std::string next_orchestration_ref;
                 if (!persist_search_orchestration_state_for_job(
                         callbacks, job, orchestration.plan,

@@ -89,6 +89,9 @@ struct agent_host_config {
     // host reports and uses the scalar fallback.
     std::string adaptation_flydelta_batch_mode = "auto";
     size_t adaptation_flydelta_batch_parallelism = 2;
+    std::string adaptation_flydelta_dose_mode = "direction_dose";
+    std::string adaptation_flydelta_dose_calibration_ref;
+    size_t adaptation_flydelta_search_model_call_budget = 256;
     // Factorized cvec waves are used automatically when the selected
     // server-context profile and Deep/TFO batch path support them. This flag
     // is the explicit opt-out; unsupported configurations keep the sparse path.

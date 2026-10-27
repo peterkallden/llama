@@ -292,7 +292,14 @@ public:
                     error = "invalid DSL flat directive"; return "invalid";
                 }
                 // Positional/named directive parsing remains owned by the codec.
-                directive = repeat(line(literal(annotation["directive"].get<std::string>()) + " \": \" directive-value"));
+                const auto start = line(literal(annotation["directive"].get<std::string>()) + " \": \" directive-value");
+                if (annotation.value("condition_expression", false)) {
+                    const auto continuation = line("[ \\t]* \"& \" directive-value");
+                    directive = repeat(rule(start + " (" + continuation + ")*",
+                        first(start) + " (" + continuation + ")*"));
+                } else {
+                    directive = repeat(start);
+                }
             }
             if (item.value("type", json()) == "object" || item.contains("properties") || item.contains("oneOf") || item.contains("anyOf")) {
                 std::string indexed;

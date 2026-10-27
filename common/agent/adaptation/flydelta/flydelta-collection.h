@@ -104,3 +104,11 @@ bool common_flydelta_collect_next_action_job(
         const std::string & graft_direction_ref,
         common_flydelta_experiment_collection_result & result,
         std::string & error);
+
+// Reconcile the existing journal's published anchor intents with the queue.
+// The immutable parent scope and teaching bindings are replayed unchanged.
+bool common_flydelta_recover_anchor_continuations(
+        const common_learning_lifecycle_store & store,
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        std::string & error);

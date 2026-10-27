@@ -116,9 +116,15 @@ bool common_flydelta_dataset_operation_oracle(
         result.known = true;
         result.confidence = 1.0f;
         std::string actual_arguments;
-        if (!parsed || call.name != request.expected_tool_call.name ||
-                !common_schema_normalize_and_validate_object(call.arguments_json,
-                    schema->parameters, actual_arguments, parse_error)) {
+        const bool contract_valid = parsed && call.name == request.expected_tool_call.name &&
+            common_schema_normalize_and_validate_object(call.arguments_json,
+                schema->parameters, actual_arguments, parse_error);
+        std::string progress_error;
+        (void) common_flydelta_assess_expected_tool_call(request, schema->parameters,
+            expected_arguments, parsed ? &call : nullptr,
+            contract_valid ? actual_arguments : (parsed ? call.arguments_json : ""),
+            contract_valid, false, result.progress, progress_error);
+        if (!contract_valid) {
             result.verdict = common_flydelta_oracle_verdict::violated;
             set_violation(result, parsed && call.name != request.expected_tool_call.name
                     ? common_flydelta_oracle_violation_kind::wrong_tool
@@ -130,6 +136,7 @@ bool common_flydelta_dataset_operation_oracle(
         result.normalized_arguments_json = actual_arguments;
         const bool matches = nlohmann::json::parse(actual_arguments) ==
             nlohmann::json::parse(expected_arguments);
+        if (result.progress.assessment_known) result.progress.target_completed = matches;
         result.verdict = matches ? common_flydelta_oracle_verdict::satisfied
                                  : common_flydelta_oracle_verdict::violated;
         if (!matches) set_violation(result, common_flydelta_oracle_violation_kind::contract_violation,

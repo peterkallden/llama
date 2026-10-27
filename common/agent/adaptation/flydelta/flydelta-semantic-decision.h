@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/adaptation/flydelta/flydelta-progress.h"
+
 #include <string>
 #include <vector>
 
@@ -88,6 +90,9 @@ struct common_flydelta_semantic_progress_observation {
     common_flydelta_semantic_progress_field_state contract_state =
         common_flydelta_semantic_progress_field_state::unknown;
     int score = 0;
+    // Optional complete, domain-neutral host assessment. Legacy field
+    // observations remain diagnostic when this assessment is unavailable.
+    common_flydelta_progress_assessment objective;
 };
 
 enum class common_flydelta_semantic_progress_outcome {

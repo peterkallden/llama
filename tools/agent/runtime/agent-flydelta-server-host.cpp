@@ -468,6 +468,13 @@ bool daemon_flydelta_verify_generation(
                 decision_error;
             return false;
         }
+        if (oracle_result.progress.assessment_known) {
+            progress_observation.objective = oracle_result.progress;
+            progress_observation.available = true;
+            progress_observation.regression_coverage_complete = oracle_result.progress.regression_known;
+            progress_observation.contract_valid = !oracle_result.normalized_arguments_json.empty();
+            progress_observation.score = static_cast<int>(oracle_result.progress.satisfied_goals.size());
+        }
         verifier_known = oracle_result.known;
         passed = oracle_result.verdict == common_flydelta_oracle_verdict::satisfied;
         verifier_reason = oracle_result.reason;
@@ -812,7 +819,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         const bool full_execution,
         const std::string & wave_suffix,
         const common_flydelta_experiment_phase phase,
-        const common_flydelta_coefficient_search_strategy strategy) {
+        const common_flydelta_coefficient_search_strategy strategy,
+        common_flydelta_search_execution_budget * execution_budget) {
     error.clear();
     if (coefficients.empty()) {
         error = "FlyDelta coefficient batch is empty";
@@ -961,8 +969,38 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         request.arms = std::move(paired);
     }
     common_flydelta_arm_batch_result batch;
+    const auto execute_accounted = [&](const common_flydelta_arm_batch_request & current,
+            common_flydelta_arm_batch_result & result) {
+        std::string attempt;
+        if (execution_budget && execution_budget->begin_execution) {
+            std::vector<std::string> logical_ids;
+            for (const auto & arm : current.arms) {
+                const json identity = {{"job", job.id}, {"fixture", fixture.id},
+                    {"basis", basis_fingerprint}, {"generation", arm.request_generation},
+                    {"overlay", arm.apply_overlay},
+                    {"coefficients", arm.apply_overlay ? coefficients.at(arm.proposal_index) : std::vector<float>{}}};
+                const auto serialized = identity.dump();
+                logical_ids.push_back("flydelta://logical-arm/" + hash_sha256_hex(serialized.data(), serialized.size()));
+            }
+            const auto group_json = json{{"logical_ids", logical_ids}, {"wave", current.wave_id},
+                {"device_diagnostics", current.arms.front().request_device_diagnostics}}.dump();
+            const auto group = hash_sha256_hex(group_json.data(), group_json.size());
+            if (!execution_budget->begin_execution(logical_ids, group, attempt, error)) return false;
+        } else if (execution_budget && !common_flydelta_reserve_search_evaluations(
+                *execution_budget, current.arms.size(), error)) return false;
+        const bool ok = daemon_flydelta_execute_batch(provider, current, result, error);
+        if (execution_budget && execution_budget->finish_execution && !attempt.empty()) {
+            std::string finish_error;
+            if (!execution_budget->finish_execution(attempt, ok ? result.arms.size() : 0, ok, finish_error)) {
+                if (!error.empty()) error += "; ";
+                error += finish_error;
+                return false;
+            }
+        }
+        return ok;
+    };
     const auto execution_started = std::chrono::steady_clock::now();
-    if (!daemon_flydelta_execute_batch(provider, request, batch, error) ||
+    if (!execute_accounted(request, batch) ||
             batch.arms.size() != request.arms.size()) {
         if (error.empty()) error = "FlyDelta coefficient batch returned incomplete arms";
         return false;
@@ -1017,8 +1055,7 @@ bool daemon_flydelta_run_coefficient_arm_batch(
             }
             fallback_request.arms = std::move(fallback_arms);
             common_flydelta_arm_batch_result fallback_batch;
-            if (!daemon_flydelta_execute_batch(
-                        provider, fallback_request, fallback_batch, error) ||
+            if (!execute_accounted(fallback_request, fallback_batch) ||
                     fallback_batch.arms.size() != fallback_request.arms.size()) {
                 if (error.empty()) error = "FlyDelta CPU diagnostics fallback returned incomplete arms";
                 return false;

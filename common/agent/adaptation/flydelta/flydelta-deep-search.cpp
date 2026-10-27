@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-progress.h"
 #include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 
 #include <algorithm>
@@ -17,6 +18,31 @@ bool finite(float value) {
 float direction_score(const common_flydelta_deep_search_direction & value) {
     return value.decision_score_available
         ? value.decision_score : value.direction.median_alignment;
+}
+
+common_flydelta_progress_assessment semantic_assessment(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_semantic_progress_observation & observation) {
+    if (observation.objective.assessment_known) return observation.objective;
+    common_flydelta_progress_assessment result;
+    result.objective_id = fixture.task_fingerprint;
+    result.objective_revision = fixture.verifier_revision;
+    result.verifier_ref = fixture.verifier_revision;
+    result.assessment_known = observation.available;
+    result.regression_known = observation.regression_coverage_complete;
+    const auto add = [&](const char * name, common_flydelta_semantic_progress_field_state state) {
+        if (state == common_flydelta_semantic_progress_field_state::unknown) {
+            result.regression_known = false;
+        }
+        (state == common_flydelta_semantic_progress_field_state::matched
+            ? result.satisfied_goals : result.remaining_goals).emplace_back(name);
+    };
+    add("operation", observation.operation_state);
+    add("dataset", observation.dataset_state);
+    add("grouping", observation.grouping_state);
+    add("measure", observation.measure_state);
+    add("contract_shape", observation.contract_state);
+    return result;
 }
 
 common_flydelta_coefficient_search_batch_runner make_scalar_batch_runner(
@@ -128,7 +154,19 @@ bool common_flydelta_run_deep_search_batched(
     std::vector<common_flydelta_direction_candidate> candidates;
     candidates.reserve(result.selected_directions.size());
     for (const auto & value : result.selected_directions) candidates.push_back(value.direction);
-    if (!common_flydelta_build_low_rank_basis(
+    if (config.resume_anchor) {
+        if (!common_flydelta_low_rank_basis_validate(config.anchor_basis, config.max_rank, error) ||
+                config.anchor_basis.dimension != candidates.front().values.size() ||
+                config.anchor_basis.layer_index != candidates.front().layer_index ||
+                config.coefficients.anchor_basis_identity !=
+                    common_flydelta_coefficient_basis_identity(config.anchor_basis) ||
+                !config.anchor_observation.available ||
+                !config.anchor_observation.regression_coverage_complete) {
+            if (error.empty()) error = "FlyDelta Deep anchor is incompatible with the current search";
+            return false;
+        }
+        result.basis = config.anchor_basis;
+    } else if (!common_flydelta_build_low_rank_basis(
             candidates.front().values.size(), config.max_rank, candidates,
             result.basis, error)) return false;
     result.layer_index = result.basis.layer_index;
@@ -334,13 +372,32 @@ bool common_flydelta_run_deep_search_batched(
         const auto & full_trial = result.coefficient_trials.back();
         const auto & progress = full_trial.semantic_progress;
         const float progress_delta = static_cast<float>(progress.candidate_score - progress.baseline_score);
+        // Compare against the incumbent as well as the unsteered baseline.
+        // A higher aggregate score can otherwise hide the loss of a previously
+        // achieved dimension. Incomparable observations cannot replace it.
+        bool improves_incumbent = !result.provisional_selection.selected && !config.resume_anchor;
+        if (result.provisional_selection.selected || config.resume_anchor) {
+            const auto & incumbent_observation = result.provisional_selection.selected
+                ? result.coefficient_trials[result.provisional_selection.trial_index].semantic_progress_observation
+                : config.anchor_observation;
+            const auto relative = common_flydelta_compare_semantic_progress(
+                incumbent_observation, full_trial.semantic_progress_observation,
+                false, false);
+            improves_incumbent = common_flydelta_semantic_progress_is_safe_anchor(relative) &&
+                relative.outcome == common_flydelta_semantic_progress_outcome::improved &&
+                common_flydelta_progress_strictly_dominates(
+                    semantic_assessment(fixture, incumbent_observation),
+                    semantic_assessment(fixture, full_trial.semantic_progress_observation));
+        }
         if (full_trial.executed && full_trial.host_evaluated && full_trial.overlay_applied &&
                 !full_trial.evidence_ref.empty() &&
+                full_trial.outcome != common_flydelta_counterfactual_outcome::harmed &&
+                (!full_trial.geometry_available ||
+                    (full_trial.geometry.shift_norm <= 1 && full_trial.geometry.leakage <= 1)) &&
                 common_flydelta_semantic_progress_is_safe_anchor(progress) &&
                 progress.outcome == common_flydelta_semantic_progress_outcome::improved &&
                 !progress.improved_dimensions.empty() &&
-                (!result.provisional_selection.selected ||
-                 progress_delta > result.provisional_selection.score)) {
+                improves_incumbent) {
             result.provisional_selection.selected = true;
             result.provisional_selection.trial_index = result_index;
             result.provisional_selection.score = progress_delta;

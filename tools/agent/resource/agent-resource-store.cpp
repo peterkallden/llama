@@ -1,4 +1,5 @@
 #include "agent-resource-store.h"
+#include "agent/durable-file.h"
 
 #include <algorithm>
 #include <array>
@@ -304,18 +305,10 @@ bool agent_filesystem_blob_store::put_bytes(
         return false;
     }
 
-    if (!std::filesystem::exists(final_path)) {
-        std::ofstream file(final_path, std::ios::binary | std::ios::trunc);
-        if (!file) {
-            error = "failed to open blob file for write";
-            return false;
-        }
-        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        if (!file.good()) {
-            error = "failed to write blob file";
-            return false;
-        }
-    }
+    // Publish complete bytes before their catalog reference. Atomic replace
+    // also repairs an uncommitted partial file left by older direct writers.
+    if (!common_agent_write_durable_file(final_path, bytes, false, error)) return false;
+    if (!common_agent_sync_directory_ancestors(final_path.parent_path(), error)) return false;
 
     out.sha256 = sha256;
     out.size_bytes = bytes.size();

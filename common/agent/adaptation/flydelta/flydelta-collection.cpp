@@ -4,6 +4,7 @@
 #include "hash/hash.h"
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -193,9 +194,14 @@ bool common_flydelta_collect_next_action_job(
         search_state_ref + "\n" + representation_augmentation_state_ref + "\n" +
         parent_job.teaching_material_group_ref + "\n" + graft_direction_ref;
     common_flydelta_experiment_job follow_up = parent_job;
-    follow_up.id = parent_job.id + "/next/" +
+    const std::string logical_identity = parent_job.id + "\n" +
+        common_flydelta_next_action_name(next_action) + "\n" + state_key;
+    const std::string legacy_id = parent_job.id + "/next/" +
         common_flydelta_next_action_name(next_action) + "/" +
         hash_sha256_hex(state_key.data(), state_key.size()).substr(0, 32);
+    // Keep continuation identity bounded independently of lineage depth.
+    follow_up.id = "flydelta://job/continuation/" +
+        hash_sha256_hex(logical_identity.data(), logical_identity.size());
     follow_up.bootstrap_zoom_state_ref = bootstrap_zoom_state_ref;
     follow_up.search_state_ref = search_state_ref;
     follow_up.representation_augmentation_state_ref =
@@ -247,6 +253,13 @@ bool common_flydelta_collect_next_action_job(
         return false;
     }
     bool contains = false;
+    if (legacy_id.size() <= 512) {
+        if (!common_flydelta_experiment_queue_contains(queue_root, legacy_id, contains, error)) return false;
+        if (contains) {
+            result = common_flydelta_experiment_collection_result::already_present;
+            return true;
+        }
+    }
     if (!common_flydelta_experiment_queue_contains(
             queue_root, follow_up.id, contains, error)) return false;
     if (contains) {
@@ -256,5 +269,63 @@ bool common_flydelta_collect_next_action_job(
     if (!common_flydelta_experiment_queue_enqueue(
             queue_root, follow_up, queue_limits, error)) return false;
     result = common_flydelta_experiment_collection_result::enqueued;
+    return true;
+}
+
+bool common_flydelta_recover_anchor_continuations(
+        const common_learning_lifecycle_store & store,
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        std::string & error) {
+    error.clear();
+    const auto records = store.list(error);
+    if (!error.empty()) return false;
+    using json = nlohmann::ordered_json;
+    for (const auto & record : records) {
+        if (record.kind != common_learning_lifecycle_kind::flydelta_experiment) continue;
+        const auto state = json::parse(record.payload_json, nullptr, false);
+        if (!state.is_object() || !state.contains("anchor_continuation")) continue;
+        try {
+            const auto digest = hash_sha256_hex(record.payload_json.data(), record.payload_json.size());
+            if (record.content_hash != "sha256:" + digest ||
+                    record.subject_id != "flydelta://state/orchestration/" + digest.substr(0, 32) ||
+                    state.value("kind", "") != "flydelta_daemon_orchestration_state" ||
+                    !state.value("search_anchor_pending", false) || state.value("search_anchor_ref", "").empty() ||
+                    state.value("phase", "") != "deep_controls") {
+                error = "FlyDelta anchor continuation has invalid identity or publication state";
+                return false;
+            }
+            const auto limit = state.value("search_model_call_limit", size_t{0});
+            const auto used = state.value("search_model_calls_used", size_t{0});
+            if (limit == 0 || limit > 65536 || used >= limit) {
+                error = "FlyDelta anchor continuation has no remaining execution budget";
+                return false;
+            }
+            const auto & intent = state.at("anchor_continuation");
+            common_flydelta_experiment_job parent;
+            if (!common_flydelta_experiment_job_from_json(intent.at("parent_job").dump(), parent, error)) return false;
+            if (parent.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+                    parent.seed.scope.namespace_id != record.namespace_id ||
+                    parent.seed.scope.project_id != record.project_id ||
+                    parent.seed.scope.session_id != record.session_id) {
+                error = "FlyDelta anchor continuation scope differs from its journal record";
+                return false;
+            }
+            common_flydelta_experiment_collection_result result;
+            if (!common_flydelta_collect_next_action_job(queue_root, queue_limits, parent,
+                    common_flydelta_next_action::run_deep_controls,
+                    intent.value("bootstrap_state_ref", ""), record.subject_id,
+                    intent.value("representation_state_ref", ""), {}, result, error)) return false;
+            // The checkpoint and its intent already commit this search slice.
+            // Requeueing the parent as well would replay the old search and
+            // produce a second branch beside the recovered continuation.
+            if (!common_flydelta_experiment_queue_acknowledge_recovered_result(queue_root,
+                    parent, "Search continued from durable checkpoint; full worker report may be incomplete",
+                    queue_limits, error)) return false;
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta anchor continuation is malformed: ") + exception.what();
+            return false;
+        }
+    }
     return true;
 }

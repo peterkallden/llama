@@ -15,6 +15,7 @@ public:
     std::vector<common_learning_lifecycle_record> list(std::string & error) const override;
 
 private:
+    mutable std::recursive_mutex mutex_;
     bool ensure_schema(std::string & error);
     common_sqlite_database database_;
 };

@@ -759,9 +759,131 @@ and has a known regression comparison without a recorded regression. The
 current dataset-specific comparator does not attest complete objective
 coverage, so it cannot by itself establish a known regression comparison.
 Older records without the coverage flag also remain unknown. The selected basis and coefficients remain
-available in the search result. This is not the verified coefficient winner:
-daemon persistence, resumption and further search from this provisional
-selection are not yet wired.
+available in the search result. This is not the verified coefficient winner.
+The daemon persists a scope-bound basis and applied-coefficient snapshot and
+records the continuation intent in the existing orchestration journal.
+Startup reconciliation requeues the continuation through the existing queue.
+Within a single Deep result, an incumbent
+provisional arm is replaced only when the new arm has a known, regression-free
+improvement relative to that incumbent as well as to the baseline. A larger
+aggregate score alone cannot justify losing a previously improved dimension.
+The shared progress assessment compares the declared goal set and objective
+and verifier identities before accepting strict goal-set dominance. For an
+explicit host-owned expected tool call, the adapter assesses the parsed tool
+identity, contract shape and expected argument values. An unparseable response
+does not establish regression-free coverage and cannot become a search
+anchor. Legacy dataset decision observations do not establish complete goal
+coverage by themselves.
+
+The common coordinate coefficient search accepts an optional host-resolved
+center bound to a basis fingerprint. Its first local arm replays the complete
+center, later local proposals perturb that complete intervention, and at
+least half of the arm proposals remain independent exploration. The unsteered
+baseline remains separate. TFO-lite rejects this center until it supports the
+same semantics. Deep restores the search center from the persisted anchor;
+the end-to-end restart and model paths still require functional verification.
+Composition uses the same basis-identity-checked reconstruction helper as
+the search-center contract; a normalized composed direction by itself is not
+an exact checkpoint of the original applied coefficients or dose.
+
+New daemon coefficient searches default to `direction_dose`; set
+`runtime.adaptation.flydelta.dose_mode` to `raw_coefficients` to select the
+previous mode. `dose_calibration_ref` identifies an authorized JSON resource
+with kind `flydelta_residual_calibration`, schema version 2, model, tokenizer,
+template and capture-layout fingerprints, `token_selection`, `position`,
+`token_index`, `layer_index`, `dimension`, `sample_count`, `sample_norms` and
+`median_norm`. Version 2 also requires `intervention_site`, `measurement_stage`,
+`runtime_configuration_fingerprint`, `runtime_layout_revision`,
+`dataset_revision`, `aggregation` and unique `sequence_ids`. The aggregation
+is `median_of_sequence_medians:v1`: each independent sequence has equal weight.
+The current measurement is the final prompt row (`final_prompt_row`), not a
+measurement of generated-token residuals. The intervention site is separately
+identified as `layer-input:additive-cvec:v1`.
+
+Alternatively, the configured reference may identify a host-approved
+`flydelta_residual_calibration_inputs` manifest (schema version 1). It carries
+the same model, tokenizer, template, layout, runtime-configuration, layer,
+intervention-site and measurement-stage identities, a `dataset_revision`, an
+explicit `unsteered: true` host attestation, and `sequences` entries containing
+`sequence_id` and an authorized `capture_ref`. Each entry selects one final
+prompt-row capture from an independently chosen sequence. Repeated capture
+references and sequence IDs are rejected. The host resolves those references,
+uses the common calibration function, and publishes/read-verifies a version-2
+calibration through the existing resource store. This operation consumes
+already captured material and never launches inference on the evaluation
+fixture. Capture collection and selection of a representative, independent
+dataset remain an explicit host/operator responsibility; the attestation is
+not an inference from tensor values or a model claim.
+
+A missing or incompatible record fails before search. Smoke calibration does
+not establish production calibration. The runtime fingerprint includes context,
+batching, cache precision and configured offload/cvec settings. It is a
+configuration identity, not proof of an actual GPU device or bitwise-equivalent
+execution across backends; those require execution traces.
+The anchor fingerprints the calibration contents and search policy and its
+resource is read back before continuation intent is published. The configured
+model-call budget covers post-Bootstrap coefficient search, not earlier
+Bootstrap work. Logical reservations are charged once per stable arm identity;
+physical execution starts and completions are separate lifecycle records.
+An interrupted start without a completion remains unresolved physical
+consumption. The current per-execution-group limit is three starts, and the
+aggregate physical-row request limit for a job is three times its logical
+budget. Successful callbacks record completed rows; token consumption remains
+explicitly unmeasured by this ledger. Paired baselines and capture fallbacks
+are represented, and retry reservations retain their logical identity.
+The queue also durably counts complete worker-job starts and permits at most
+three crash replays/starts per job by default. This outer bound covers phases
+before the detailed coefficient ledger; it does not claim to measure their
+individual inference rows or tokens. Exhaustion produces a terminal failed
+job instead of another automatic restart.
+The current TFO-lite path does not implement this dosing mode and returns an
+explicit error. Configuration and runtime behavior require verification.
+
+### Queue ownership and crash reconciliation
+
+One daemon process owns a FlyDelta queue directory. The OS lock lives at
+`.owner.lock` and is held before runtime-store initialization until listeners,
+worker pools and runtime writers have stopped. Worker threads share the owner;
+executed subprocesses do not inherit its descriptor. The presence of the file
+does not indicate ownership. Queue APIs acquire the same process owner, so a
+second process using these APIs receives `LOCK_BUSY`. Raw filesystem edits are
+outside this ownership protocol. Deployments must use a local filesystem;
+known network filesystem types are rejected on Linux, and other mount types
+must satisfy the local locking/durability requirement.
+Production daemon workers require a persistent `lifecycle_path`; an in-memory
+journal cannot provide crash recovery. Queue ownership is process-local and
+does not replace namespace/project authorization: shared arm history remains
+subject to its scope and model/runtime compatibility rules.
+
+Before starting workers, recovery reconciles durable worker commit intents,
+their host persistence effects and follow-up scheduling. The commit intent
+retains the exact job envelope, frozen scheduling parent, host counterfactual
+and evaluation results, trace and next-action references. It is written before
+host report effects and before the queue's terminal acknowledgement. Recovery
+invokes the same idempotent host callbacks rather than rerunning inference.
+Checkpoint and continuation intent share one orchestration journal record.
+The checkpoint resource itself is published and read-verified first; an
+unpublished resource is an orphan, not a committed continuation.
+
+| Durable state at interruption | Reconciliation |
+| --- | --- |
+| Execution reservation only | Preserve logical charge; physical outcome remains unresolved; retry is bounded |
+| Validated result commit intent | Replay host effects, acknowledge queue result and schedule idempotently |
+| Queue terminal acknowledgement before directory move | Complete the terminal move |
+| Anchor checkpoint and continuation intent | Recover the continuation and acknowledge the parent slice |
+| Running job with no durable result or checkpoint | Requeue the same logical job |
+| Malformed state, incompatible provenance or conflicting terminal state | Reject recovery with a reason |
+
+Graceful shutdown stops claims and joins both worker pools before releasing
+ownership. File-backed queue publications and JSONL appends synchronize data
+and directory entries. JSONL recovery can remove an unterminated incomplete
+tail, but rejects corruption in completed records. SQLite lifecycle writes use
+WAL with `synchronous=FULL`; Cozo continues to use its existing transactional
+append boundary. Power-loss guarantees additionally depend on the selected
+database backend, resource catalog, filesystem and storage honoring flushes.
+The generic filesystem blob store publishes synchronized complete blobs before
+catalog references. These code paths and the authored crash/concurrency
+contracts have not yet been built or executed for this change.
 
 The smoke summary records the strict Oracle outcome, semantic progress,
 provenance and the bounded
@@ -826,8 +948,9 @@ Its provenance declares `generalization.level=model`, source candidate refs,
 supporting session IDs, task fingerprints and synthesis strategy. The session
 parents are not mutated. Automatic admission requires a host-approved
 resolved relation with contrast/control material, a compatible configured
-profile binding and compatible `IMPROVED`/`SOLVED` progress without regressed
-dimensions. Research or reflection may discover a hypothesis but cannot alone
+profile binding and a host-verified `HELPED` counterfactual without regressed
+dimensions. A provisional improvement alone cannot authorize automatic
+canary admission. Research or reflection may discover a hypothesis but cannot alone
 generalize or stage it.
 
 The default FlyDelta canary mode is `policy` when canary routing is enabled.

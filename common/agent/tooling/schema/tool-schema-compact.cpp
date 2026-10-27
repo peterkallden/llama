@@ -44,6 +44,13 @@ std::string flat_directive_contract(const json & schema) {
             if (slot.is_string()) out << " <" << slot.get<std::string>() << ">";
         }
         out << " (repeat for each item; named slots also accepted)";
+        if (annotation.value("condition_expression", false)) {
+            out << "\n    Each directive is a separate AND condition. Equality alternatives for the same field may use OR"
+                << " (for example: region = \"north\" OR region = \"east\")."
+                << " Membership accepts a bounded scalar list, for example: region in [north, east]."
+                << " A following & line adds a separate AND condition. Use parentheses for grouping; AND binds before OR."
+                << " Cross-field OR is unsupported.";
+        }
         const auto item_schema = property.value()["items"];
         const auto item_properties = item_schema.value("properties", json::object());
         for (const auto & slot : slots) {

@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/oracles/tool-contract.h"
 
 #include "agent/tooling/contracts/schema-contract.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
@@ -98,6 +99,84 @@ bool common_flydelta_parse_model_tool_text(
     }
     error = parse_error;
     return false;
+}
+
+bool common_flydelta_assess_expected_tool_call(
+        const common_flydelta_oracle_request & request,
+        const std::string & schema_json,
+        const std::string & expected_arguments_json,
+        const common_agent_tool_call * observed_call,
+        const std::string & observed_arguments_json,
+        bool contract_valid,
+        bool target_completed,
+        common_flydelta_progress_assessment & assessment,
+        std::string & error) {
+    assessment = {};
+    error.clear();
+    if (!request.expected_tool_call_available || expected_arguments_json.size() > 1024U * 1024U ||
+            observed_arguments_json.size() > 1024U * 1024U) {
+        error = "FlyDelta expected-call progress requires bounded host-owned arguments";
+        return false;
+    }
+    const auto expected = json::parse(expected_arguments_json, nullptr, false);
+    const auto actual = json::parse(observed_arguments_json, nullptr, false);
+    if (!expected.is_object()) { error = "FlyDelta expected arguments must be an object"; return false; }
+    const bool same_tool = observed_call && observed_call->name == request.expected_tool_call.name;
+    // Include the exact expected values and effective schema in the identity.
+    // Different objectives must not accidentally share comparable goal names.
+    const std::string identity = json{{"tool", request.expected_tool_call.name},
+        {"arguments", expected}, {"schema", json::parse(schema_json, nullptr, false)},
+        {"contract", request.expected_contract_ref}, {"revision", request.expected_contract_revision},
+        {"oracle", request.oracle_ref}, {"oracle_revision", request.oracle_revision},
+        {"policy", request.policy_revision}}.dump();
+    assessment.objective_id = "sha256:" + hash_sha256_hex(identity.data(), identity.size());
+    assessment.objective_revision = "expected-call-goals-v1";
+    assessment.verifier_ref = request.oracle_ref.empty() ? "flydelta://oracle/dataset-operation" : request.oracle_ref;
+    // A failed parse cannot establish which previously satisfied goals were
+    // retained. Do not admit it as regression-free partial progress.
+    const bool comparable_observation = observed_call &&
+        (observed_call->name != request.expected_tool_call.name || actual.is_object());
+    assessment.assessment_known = comparable_observation;
+    assessment.regression_known = comparable_observation;
+    assessment.target_completed = comparable_observation && target_completed;
+    const auto add = [&](const std::string & goal, bool satisfied) {
+        (satisfied ? assessment.satisfied_goals : assessment.remaining_goals).push_back(goal);
+    };
+    add("tool_identity", same_tool);
+    add("contract_shape", contract_valid && same_tool);
+    const auto escaped = [](const std::string & key) {
+        std::string out;
+        for (char c : key) { if (c == '~') out += "~0"; else if (c == '/') out += "~1"; else out += c; }
+        return out;
+    };
+    std::function<bool(const json &, const json *, const std::string &, size_t)> visit;
+    visit = [&](const json & want, const json * got, const std::string & path, size_t depth) {
+        if (depth > 16 || path.size() > 480 ||
+                assessment.satisfied_goals.size() + assessment.remaining_goals.size() >= 1024) return false;
+        if (want.is_object()) {
+            bool same_shape = got && got->is_object() && got->size() == want.size();
+            for (auto it = want.begin(); same_shape && it != want.end(); ++it) same_shape = got->contains(it.key());
+            add("arguments" + path + ":shape", same_tool && same_shape);
+            for (auto it = want.begin(); it != want.end(); ++it) {
+                const json * child = got && got->is_object() && got->contains(it.key()) ? &got->at(it.key()) : nullptr;
+                if (!visit(it.value(), child, path + "/" + escaped(it.key()), depth + 1)) return false;
+            }
+        } else if (want.is_array()) {
+            add("arguments" + path + ":shape", same_tool && got && got->is_array() && got->size() == want.size());
+            for (size_t i = 0; i < want.size(); ++i) {
+                const json * child = got && got->is_array() && i < got->size() ? &got->at(i) : nullptr;
+                if (!visit(want.at(i), child, path + "/" + std::to_string(i), depth + 1)) return false;
+            }
+        } else add("arguments" + path, same_tool && got && want == *got);
+        return true;
+    };
+    if (!visit(expected, actual.is_object() ? &actual : nullptr, "", 0)) {
+        assessment = {};
+        error = "FlyDelta expected-call progress exceeds its goal, depth or path bound";
+        return false;
+    }
+    if (!common_flydelta_progress_assessment_validate(assessment, error)) { assessment = {}; return false; }
+    return true;
 }
 
 bool common_flydelta_validate_model_tool_call(

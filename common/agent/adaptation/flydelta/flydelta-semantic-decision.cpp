@@ -490,6 +490,34 @@ common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
         const bool baseline_strict_passed,
         const bool candidate_strict_passed) {
     common_flydelta_semantic_progress result;
+    if (baseline.objective.assessment_known || candidate.objective.assessment_known) {
+        const auto & before = baseline.objective;
+        const auto & after = candidate.objective;
+        result.comparable = common_flydelta_progress_comparable(before, after);
+        if (!result.comparable) return result;
+        result.regression_known = before.regression_known && after.regression_known;
+        result.baseline_score = static_cast<int>(before.satisfied_goals.size());
+        result.candidate_score = static_cast<int>(after.satisfied_goals.size());
+        for (const auto & goal : after.satisfied_goals) {
+            if (std::find(before.satisfied_goals.begin(), before.satisfied_goals.end(), goal) ==
+                    before.satisfied_goals.end()) result.improved_dimensions.push_back(goal);
+        }
+        for (const auto & goal : before.satisfied_goals) {
+            if (std::find(after.satisfied_goals.begin(), after.satisfied_goals.end(), goal) ==
+                    after.satisfied_goals.end()) result.regressed_dimensions.push_back(goal);
+        }
+        result.residual_dimensions = after.remaining_goals;
+        if (before.has_regression || after.has_regression || !result.regressed_dimensions.empty() ||
+                (baseline_strict_passed && !candidate_strict_passed)) {
+            result.outcome = common_flydelta_semantic_progress_outcome::regressed;
+            if (before.has_regression || after.has_regression) result.regressed_dimensions.push_back("declared_controls");
+        } else if (candidate_strict_passed && after.target_completed) {
+            result.outcome = common_flydelta_semantic_progress_outcome::solved;
+        } else if (!result.improved_dimensions.empty()) {
+            result.outcome = common_flydelta_semantic_progress_outcome::improved;
+        } else result.outcome = common_flydelta_semantic_progress_outcome::unchanged;
+        return result;
+    }
     result.baseline_score = baseline.score;
     result.candidate_score = candidate.score;
     result.comparable = baseline.available && candidate.available;
@@ -528,12 +556,16 @@ common_flydelta_semantic_progress common_flydelta_compare_semantic_progress(
     add_dimension("grouping", baseline.grouping_state, candidate.grouping_state);
     add_dimension("measure", baseline.measure_state, candidate.measure_state);
     add_dimension("contract_shape", baseline.contract_state, candidate.contract_state);
-    if (candidate.grouping_state != common_flydelta_semantic_progress_field_state::matched) {
-        result.residual_dimensions.emplace_back("grouping");
-    }
-    if (candidate.contract_state != common_flydelta_semantic_progress_field_state::matched) {
-        result.residual_dimensions.emplace_back("contract_shape");
-    }
+    const auto add_residual = [&](const char * name, common_flydelta_semantic_progress_field_state state) {
+        if (state != common_flydelta_semantic_progress_field_state::matched) {
+            result.residual_dimensions.emplace_back(name);
+        }
+    };
+    add_residual("operation", candidate.operation_state);
+    add_residual("dataset", candidate.dataset_state);
+    add_residual("grouping", candidate.grouping_state);
+    add_residual("measure", candidate.measure_state);
+    add_residual("contract_shape", candidate.contract_state);
     return result;
 }
 

@@ -1,9 +1,52 @@
 #include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 #include "agent/adaptation/flydelta/flydelta-intervention-region-search.h"
 
+#include <cmath>
+
+bool common_flydelta_reserve_search_evaluations(
+        common_flydelta_search_execution_budget & budget, size_t count, std::string & error) {
+    error.clear();
+    if (budget.limit == 0 || budget.used > budget.limit || count > budget.limit - budget.used) {
+        error = "FlyDelta search model evaluation budget exhausted";
+        return false;
+    }
+    budget.used += count;
+    return true;
+}
+
 std::string common_flydelta_coefficient_basis_identity(
         const common_flydelta_low_rank_basis & basis) {
     return common_flydelta_coefficient_detail::guidance_basis_identity(basis);
+}
+
+bool common_flydelta_reconstruct_intervention(
+        const common_flydelta_low_rank_basis & basis,
+        const std::string & expected_basis_identity,
+        const std::vector<float> & applied_coefficients,
+        std::vector<float> & intervention,
+        std::string & error) {
+    intervention.clear();
+    error.clear();
+    if (!common_flydelta_low_rank_basis_validate(basis, 16, error) ||
+            expected_basis_identity.empty() ||
+            expected_basis_identity != common_flydelta_coefficient_basis_identity(basis) ||
+            applied_coefficients.size() != basis.vectors.size()) {
+        if (error.empty()) error = "FlyDelta intervention basis or coefficient identity differs";
+        return false;
+    }
+    intervention.assign(basis.dimension, 0.0f);
+    for (size_t row = 0; row < applied_coefficients.size(); ++row) {
+        if (!std::isfinite(applied_coefficients[row])) {
+            intervention.clear(); error = "FlyDelta intervention coefficient is non-finite"; return false;
+        }
+        for (size_t column = 0; column < basis.dimension; ++column) {
+            intervention[column] += applied_coefficients[row] * basis.vectors[row][column];
+            if (!std::isfinite(intervention[column])) {
+                intervention.clear(); error = "FlyDelta intervention reconstruction overflow"; return false;
+            }
+        }
+    }
+    return true;
 }
 
 void common_flydelta_coefficient_trial_set_observation(

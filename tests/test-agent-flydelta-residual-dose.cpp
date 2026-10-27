@@ -62,10 +62,36 @@ int main() {
     CHECK(doses[1] == config.residual_fraction);
     CHECK(common_flydelta_intervention_norm(basis, proposals[1], norm, error) && norm < 0.1f);
     config.max_l2_norm = 0.32f;
+    common_flydelta_residual_calibration sequence_calibration;
+    larger = capture; larger.values = {6, 8};
+    CHECK(common_flydelta_calibrate_residual_sequences(
+        {{capture, capture, capture, capture, capture}, {larger}}, {"sequence:a", "sequence:b"},
+        2, "calibration:sequences", "generation_boundary", sequence_calibration, error));
+    CHECK(sequence_calibration.sample_count == 2 && sequence_calibration.median_norm == 7.5f);
+    CHECK(!common_flydelta_calibrate_residual_sequences({{capture}, {larger}}, {"same", "same"},
+        2, "calibration:sequences", "generation_boundary", sequence_calibration, error));
+    calibration.schema_version = 2;
+    calibration.intervention_site = "layer-input:additive-cvec:v1";
+    calibration.measurement_stage = "final_prompt_row";
+    calibration.runtime_configuration_fingerprint = "runtime:test";
+    calibration.runtime_layout_revision = "layout:test";
+    calibration.dataset_revision = "dataset:test:v1";
+    calibration.aggregation = "median_of_sequence_medians:v1";
+    calibration.sequence_ids = {"sequence:test"};
+    config.residual_calibration = calibration;
+    config.injection_intervention_site = calibration.intervention_site;
+    config.injection_runtime_configuration_fingerprint = calibration.runtime_configuration_fingerprint;
+    config.injection_runtime_layout_revision = calibration.runtime_layout_revision;
+    config.injection_intervention_site = "layer-output:other";
+    CHECK(!common_flydelta_propose_calibrated_coefficients(fixture, basis, config, proposals, error));
+    config.injection_intervention_site = calibration.intervention_site;
     config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
     config.max_candidates = 12;
     CHECK(common_flydelta_propose_calibrated_coefficients(fixture, basis, config, proposals, error));
     CHECK(proposals.size() <= 12);
+    config.injection_runtime_configuration_fingerprint = "other-runtime";
+    CHECK(!common_flydelta_propose_calibrated_coefficients(fixture, basis, config, proposals, error));
+    config.injection_runtime_configuration_fingerprint = calibration.runtime_configuration_fingerprint;
     config.residual_calibration.model_profile_fingerprint = "wrong-model";
     CHECK(!common_flydelta_propose_calibrated_coefficients(fixture, basis, config, proposals, error));
     config.residual_calibration = calibration;

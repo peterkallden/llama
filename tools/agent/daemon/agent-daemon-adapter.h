@@ -105,6 +105,9 @@ struct daemon_options {
     std::string adaptation_flydelta_queue_path;
     std::string adaptation_flydelta_batch_mode = "auto";
     size_t adaptation_flydelta_batch_parallelism = 2;
+    std::string adaptation_flydelta_dose_mode = "direction_dose";
+    std::string adaptation_flydelta_dose_calibration_ref;
+    size_t adaptation_flydelta_search_model_call_budget = 256;
     bool adaptation_flydelta_factorized_cvec_batch = false;
     bool adaptation_flydelta_capture_candidates = false;
     std::string adaptation_flydelta_lifecycle_backend = "auto";

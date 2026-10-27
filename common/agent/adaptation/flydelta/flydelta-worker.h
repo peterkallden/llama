@@ -80,6 +80,13 @@ struct common_flydelta_trace {
     size_t evidence_rank = 0;
     size_t search_rank = 0;
     size_t model_evaluations = 0;
+    size_t search_model_call_limit = 0;
+    size_t search_model_calls_used = 0;
+    size_t physical_rows_started = 0;
+    size_t physical_rows_completed = 0;
+    size_t physical_rows_unresolved = 0;
+    std::string search_anchor_ref;
+    size_t search_anchor_round = 0;
     size_t region_budget = 0;
     size_t coefficient_budget = 0;
     bool tfo_lite_allowed = false;
@@ -218,6 +225,13 @@ using common_flydelta_experiment_worker_callback = std::function<bool(
         common_flydelta_experiment_worker_result & result,
         std::string & error)>;
 
+using common_flydelta_worker_commit_callback = std::function<bool(
+        const common_flydelta_experiment_job &,
+        const common_flydelta_experiment_worker_report &, std::string &)>;
+
+using common_flydelta_worker_claim_callback = std::function<bool(
+        common_flydelta_claimed_experiment_job &, std::string &)>;
+
 // Claims and processes at most one job. Callback failures become a terminal
 // failed job without exposing callback diagnostics in queue state. An empty
 // queue returns true with state=pending and no job ID.
@@ -226,7 +240,9 @@ bool common_flydelta_experiment_worker_run_once(
         const common_flydelta_experiment_queue_limits & limits,
         const common_flydelta_experiment_worker_callback & callback,
         common_flydelta_experiment_worker_report & report,
-        std::string & error);
+        std::string & error,
+        const common_flydelta_worker_commit_callback & commit = {},
+        const common_flydelta_worker_claim_callback & claim = {});
 
 // Adapts the queue worker to the common evaluator. The evaluator callbacks
 // still own reference resolution, fresh model contexts and host verification;

@@ -8,6 +8,7 @@
 #include "agent/adaptation/flydelta/flydelta-collection.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-worker-commit.h"
 #include "hash/hash.h"
 
 #include "log.h"
@@ -20,6 +21,8 @@
 #include <nlohmann/json.hpp>
 #include <ctime>
 #include <vector>
+#include <optional>
+#include <exception>
 
 namespace {
 
@@ -238,8 +241,29 @@ int main(int argc, char ** argv) {
     }
     common_log_set_verbosity_thold(LOG_LEVEL_WARN);
 
-    common_agent_daemon_runtime runtime;
     std::string error;
+    // Ownership outlives runtime, dispatcher, callbacks and listener threads.
+    // Acquire before opening any host store used by FlyDelta recovery/writers.
+    std::shared_ptr<common_flydelta_queue_owner> flydelta_queue_owner;
+    if (options.adaptation_flydelta_enabled) {
+        if (options.adaptation_flydelta_lifecycle_path.empty()) {
+            std::fprintf(stderr, "FlyDelta workers require a persistent lifecycle_path for queue recovery\n");
+            return 2;
+        }
+        flydelta_queue_owner = common_flydelta_acquire_queue_owner(options.adaptation_flydelta_queue_path, error);
+        if (!flydelta_queue_owner) {
+            std::fprintf(stderr, "FlyDelta queue startup rejected: %s\n", error.c_str());
+            return 2;
+        }
+        if (options.adaptation_flydelta_lifecycle_backend == "jsonl") {
+            common_learning_jsonl_lifecycle_store journal;
+            if (!journal.open(options.adaptation_flydelta_lifecycle_path, error, true)) {
+                std::fprintf(stderr, "failed to reconcile FlyDelta lifecycle journal: %s\n", error.c_str());
+                return 2;
+            }
+        }
+    }
+    common_agent_daemon_runtime runtime;
     if (!initialize_agent_daemon_environment(options, runtime, error)) {
         std::fprintf(stderr, "failed to initialize daemon environment: %s\n", error.c_str());
         return 2;
@@ -369,6 +393,9 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_worker_count != options.adaptation_flydelta_worker_count ||
             candidate.adaptation_flydelta_queue_path != options.adaptation_flydelta_queue_path ||
             candidate.adaptation_flydelta_batch_mode != options.adaptation_flydelta_batch_mode ||
+            candidate.adaptation_flydelta_dose_mode != options.adaptation_flydelta_dose_mode ||
+            candidate.adaptation_flydelta_dose_calibration_ref != options.adaptation_flydelta_dose_calibration_ref ||
+            candidate.adaptation_flydelta_search_model_call_budget != options.adaptation_flydelta_search_model_call_budget ||
             candidate.adaptation_flydelta_batch_parallelism != options.adaptation_flydelta_batch_parallelism ||
             candidate.adaptation_flydelta_capture_candidates != options.adaptation_flydelta_capture_candidates ||
             candidate.adaptation_flydelta_lifecycle_backend != options.adaptation_flydelta_lifecycle_backend ||
@@ -989,9 +1016,56 @@ int main(int argc, char ** argv) {
             if (available) parent_job.teaching_material_group_ref = group.group_ref;
             return true;
         };
-    common_agent_daemon_dispatcher dispatcher(
-        std::move(runtime), options.queue_capacity, options.worker_count,
-        std::move(flydelta_worker_config));
+    const auto persist_effects = flydelta_worker_config.persist_completed_report;
+    const auto bind_parent = flydelta_worker_config.bind_teaching_material_group;
+    const auto schedule_effects = flydelta_worker_config.schedule_next_action;
+    const auto lifecycle_store = runtime.flydelta_review_lifecycle_store;
+    flydelta_worker_config.persist_completed_report =
+        [persist_effects, bind_parent, lifecycle_store](const auto & job, const auto & report, std::string & commit_error) {
+            if (!lifecycle_store) { commit_error = "FlyDelta durable worker commits require a lifecycle store"; return false; }
+            common_flydelta_experiment_job parent;
+            std::string lookup_error;
+            if (!common_flydelta_resolve_worker_commit_parent(*lifecycle_store, job, parent, lookup_error)) {
+                bool existing = false;
+                const auto key = "flydelta://worker-commit/" + hash_sha256_hex(job.id.data(), job.id.size());
+                if (!lifecycle_store->contains_idempotency(key, existing, commit_error)) return false;
+                if (existing) { commit_error = lookup_error; return false; }
+                parent = job;
+                if (!(report.has_experiment_plan && report.experiment_plan.search_anchor_pending) &&
+                        bind_parent && !bind_parent(parent, commit_error)) return false;
+            }
+            return common_flydelta_append_worker_commit_intent(*lifecycle_store, job, report, commit_error, &parent) &&
+                (!persist_effects || persist_effects(job, report, commit_error));
+        };
+    flydelta_worker_config.schedule_next_action =
+        [schedule_effects, lifecycle_store](const auto & job, const auto & report, std::string & schedule_error) {
+            common_flydelta_experiment_job parent;
+            return lifecycle_store && common_flydelta_resolve_worker_commit_parent(
+                *lifecycle_store, job, parent, schedule_error) &&
+                (!schedule_effects || schedule_effects(parent, report, schedule_error));
+        };
+    // The binding has been frozen before commit; never resolve it again
+    // between durable intent and enqueue (including after a restart).
+    flydelta_worker_config.bind_teaching_material_group = {};
+    flydelta_worker_config.recover_continuations =
+        [lifecycle_store, queue_root = flydelta_worker_config.queue_root,
+         queue_limits = flydelta_worker_config.queue_limits,
+         persist_effects, schedule = flydelta_worker_config.schedule_next_action](std::string & recovery_error) {
+            recovery_error.clear();
+            if (!lifecycle_store) { recovery_error = "FlyDelta recovery requires a lifecycle store"; return false; }
+            return common_flydelta_recover_worker_commits(*lifecycle_store, queue_root, queue_limits,
+                    persist_effects, schedule, recovery_error) &&
+                common_flydelta_recover_anchor_continuations(*lifecycle_store, queue_root, queue_limits, recovery_error);
+        };
+    std::optional<common_agent_daemon_dispatcher> dispatcher_holder;
+    try {
+        dispatcher_holder.emplace(std::move(runtime), options.queue_capacity, options.worker_count,
+            std::move(flydelta_worker_config));
+    } catch (const std::exception & exception) {
+        std::fprintf(stderr, "failed to start daemon dispatcher: %s\n", exception.what());
+        return 2;
+    }
+    auto & dispatcher = *dispatcher_holder;
     if (options.http_enabled && !build_http_tool_catalog(options, http_registry, error)) {
         std::fprintf(stderr, "failed to resolve daemon MCP HTTP tool catalog: %s\n", error.c_str());
         return 2;

@@ -1,6 +1,7 @@
 #include "agent/tooling/schema/tool-output-codec.h"
 
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/dataset-contracts.h"
 
 #include <nlohmann/json.hpp>
 
@@ -592,7 +593,17 @@ bool parse_flat_compact(
 
     json arguments = json::object();
     std::set<std::string> bracketed_array_fields;
+    std::string previous_condition_directive;
     for (size_t index = 1; index < lines.size(); ++index) {
+        // A continuation starts a new conjunct, rather than changing the
+        // precedence of the expression on the preceding directive line.
+        if (lines[index].front() == '&') {
+            if (previous_condition_directive.empty()) {
+                error = "flat DSL & continuation requires a preceding condition directive";
+                return false;
+            }
+            lines[index] = previous_condition_directive + ": " + trim(lines[index].substr(1));
+        }
         const size_t separator = lines[index].find(':');
         if (separator == std::string::npos) {
             error = "flat DSL argument line must use `field: value`";
@@ -606,7 +617,16 @@ bool parse_flat_compact(
         }
         if (const auto * directive = find_flat_directive(schema, field)) {
             json item;
-            if (!parse_flat_directive_value(source, *directive, item, error)) return false;
+            json items = json::array();
+            const bool condition_expression = (*directive)["x-agent-flat"].value("condition_expression", false);
+            if (parse_flat_directive_value(source, *directive, item, error)) {
+                items.push_back(std::move(item));
+            } else if (!condition_expression ||
+                    !common_agent_dataset_parse_condition_expression(source, items, error)) {
+                return false;
+            }
+            error.clear();
+            previous_condition_directive = condition_expression ? field : std::string{};
             const auto property_name = flat_directive_property_name(schema, field);
             if (property_name.empty()) {
                 error = "flat DSL directive has no schema destination: " + field;
@@ -617,9 +637,23 @@ bool parse_flat_compact(
                 error = "flat DSL directive conflicts with an existing field path: " + field;
                 return false;
             }
-            arguments[property_name].push_back(std::move(item));
+            const auto allowed = (*directive)["items"].value("properties", json::object())
+                .value("operator", json::object()).value("enum", json::array());
+            for (auto & predicate : items) {
+                if (condition_expression && !allowed.empty() &&
+                        std::find(allowed.begin(), allowed.end(), predicate.value("operator", std::string{})) == allowed.end()) {
+                    error = "flat DSL condition operator is outside the declared tool schema";
+                    return false;
+                }
+                arguments[property_name].push_back(std::move(predicate));
+            }
+            if (condition_expression && arguments[property_name].size() > 16) {
+                error = "flat DSL condition list is too large";
+                return false;
+            }
             continue;
         }
+        previous_condition_directive.clear();
 
         const auto properties = schema.value("properties", json::object());
         const bool scalar_array_field = properties.is_object() && properties.contains(field) &&

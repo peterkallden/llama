@@ -2,6 +2,7 @@
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/contracts/agent-request.h"
+#include "agent/dataset-contracts.h"
 #include "plan/plan-json.h"
 
 #ifdef NDEBUG
@@ -45,7 +46,7 @@ common_chat_tool query_tool() {
     return {
         "data.query",
         "Query a dataset.",
-        R"json({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"},"where":{"type":"array","x-agent-flat":{"directive":"where","positional":["field","operator","value"],"two_slot_value_default_operator":"contains"},"items":{"type":"object","required":["field","operator"],"properties":{"field":{"type":"string"},"operator":{"type":"string","enum":["=","contains","in","not_null"]},"value":{}}}},"order_by":{"type":"array","x-agent-flat":{"directive":"order_by","positional":["field","direction"]},"items":{"type":"object","required":["field"],"properties":{"field":{"type":"string"},"direction":{"type":"string","enum":["asc","desc"]}}}}}})json",
+        R"json({"type":"object","additionalProperties":false,"properties":{"dataset":{"type":"string"},"where":{"type":"array","x-agent-flat":{"directive":"where","positional":["field","operator","value"],"two_slot_value_default_operator":"contains","condition_expression":true},"items":{"type":"object","required":["field","operator"],"properties":{"field":{"type":"string"},"operator":{"type":"string","enum":["=",">=","!=","contains","in","not_null"]},"value":{}}}},"order_by":{"type":"array","x-agent-flat":{"directive":"order_by","positional":["field","direction"]},"items":{"type":"object","required":["field"],"properties":{"field":{"type":"string"},"direction":{"type":"string","enum":["asc","desc"]}}}}}})json",
         R"json({"type":"object"})json",
     };
 }
@@ -280,6 +281,92 @@ void test_predicate_directive_avoids_indexed_bracket_paths() {
         "open! data.query\norder_by[[0]].field: code", tools, call, error));
 }
 
+void test_condition_expressions_and_continuations() {
+    common_agent_tool_call call;
+    std::string error;
+    const std::vector<common_chat_tool> tools{query_tool()};
+    const auto parse = [&](const std::string & body) {
+        return common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+            "open! data.query\n" + body, tools, call, error);
+    };
+    assert(parse("where: region = \"North\" OR region = \"East\"\n"
+        "  & amount >= 4\nwhere: customer_id != 999"));
+    const auto canonical = nlohmann::ordered_json::parse(call.arguments_json);
+    assert(canonical["where"] == nlohmann::ordered_json::array({
+        {{"field", "region"}, {"operator", "in"}, {"value", {"North", "East"}}},
+        {{"field", "amount"}, {"operator", ">="}, {"value", 4}},
+        {{"field", "customer_id"}, {"operator", "!="}, {"value", 999}},
+    }));
+    assert(parse("where: region = \"North\" OR region = \"East\"\n"
+        "where: amount >= 4\nwhere: customer_id != 999"));
+    assert(nlohmann::ordered_json::parse(call.arguments_json) == canonical);
+    assert(parse("where: region in [north, east]\nwhere: customer_id in [10, 12, 14]"));
+    const auto membership = nlohmann::ordered_json::parse(call.arguments_json)["where"];
+    assert(membership.size() == 2);
+    assert(membership[0]["value"] == nlohmann::ordered_json({"north", "east"}));
+    assert(membership[1]["value"] == nlohmann::ordered_json({10, 12, 14}));
+    std::string proposal;
+    assert(common_parse_compact_dsl_plan(
+        "plan goal=\"Filter orders\"\nstep | open! data.query\n"
+        "where: region = \"North\" OR region = \"East\"\n"
+        "& amount >= 4\nwhere: customer_id != 999", tools, proposal, error));
+    assert(nlohmann::ordered_json::parse(proposal)["steps"][0]["args"] == canonical);
+    assert(!parse("& amount >= 4"));
+    assert(!parse("where: amount >= 4\nlimit: 2\n& amount >= 5"));
+    assert(!parse("where: region = North OR amount = 4"));
+    assert(!parse("where: region = North OR region = East AND amount >= 4"));
+    assert(!parse("where: region = North OR"));
+    assert(!parse("where: region = \"North\" trailing"));
+    assert(!parse("where: amount >= 4\n&"));
+    assert(!parse("where: amount >= 4\n&& amount >= 5"));
+
+    nlohmann::ordered_json result;
+    assert(common_agent_dataset_parse_condition_expression(
+        "(region = \"north\" OR region = \"east\") AND amount >= 4", result, error));
+    assert(result.size() == 2 && result[0]["value"] == nlohmann::ordered_json({"north", "east"}));
+    assert(common_agent_dataset_parse_condition_expression(
+        R"(title = "A AND B OR C & D" and amount ">=" 4)", result, error));
+    assert(result[0]["value"] == "A AND B OR C & D");
+    assert(common_agent_dataset_parse_condition_expression(
+        R"(title = "A\" OR B" OR title = "C")", result, error));
+    assert(result[0]["value"][0] == "A\" OR B");
+    assert(common_agent_dataset_parse_condition_expression(
+        "region = north or region = north OR region in [\"east\"]", result, error));
+    assert(result.size() == 1 && result[0]["value"].size() == 2);
+    assert(common_agent_dataset_parse_condition_expression(
+        "region in [north, east]", result, error));
+    assert(result.size() == 1 && result[0]["operator"] == "in" &&
+        result[0]["value"] == nlohmann::ordered_json({"north", "east"}));
+    assert(common_agent_dataset_parse_condition_expression(
+        "customer_id in [10, 12, 14]", result, error));
+    assert(result[0]["value"] == nlohmann::ordered_json({10, 12, 14}));
+    assert(common_agent_dataset_parse_condition_expression(
+        "region in [north, \"East Side\"]", result, error));
+    assert(result[0]["value"] == nlohmann::ordered_json({"north", "East Side"}));
+    assert(!common_agent_dataset_parse_condition_expression("region in [north,]", result, error));
+    assert(!common_agent_dataset_parse_condition_expression("region in [[north]]", result, error));
+    assert(!common_agent_dataset_parse_condition_expression("(amount >= 4", result, error));
+    assert(!common_agent_dataset_parse_condition_expression("amount >= [4", result, error));
+    assert(!common_agent_dataset_parse_condition_expression("amount >= 4 AND", result, error));
+    std::string too_many = "amount >= 0";
+    for (size_t i = 0; i < 16; ++i) too_many += " AND amount >= 0";
+    assert(!common_agent_dataset_parse_condition_expression(too_many, result, error));
+    nlohmann::ordered_json arguments = {{"where", "region = north OR region = east"}};
+    assert(normalize_common_agent_dataset_tool_arguments("data.query", arguments, error));
+    assert(arguments["where"][0]["operator"] == "in");
+    auto filter = query_tool();
+    filter.name = "data.filter";
+    auto schema = nlohmann::ordered_json::parse(filter.parameters);
+    schema["properties"]["conditions"] = schema["properties"]["where"];
+    schema["properties"].erase("where");
+    schema["properties"]["conditions"]["x-agent-flat"]["directive"] = "conditions";
+    filter.parameters = schema.dump();
+    assert(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        "open! data.filter\nconditions: region = north OR region = east\n& amount >= 4",
+        {filter}, call, error));
+    assert(nlohmann::ordered_json::parse(call.arguments_json)["conditions"].size() == 2);
+}
+
 void test_flat_paths_and_multiline_plan() {
     const auto tool = aggregate_tool();
     const std::vector<common_chat_tool> tools{tool};
@@ -470,6 +557,7 @@ int main() {
     test_v1_schema_boundary_and_rendering();
     test_schema_aware_flat_dsl_and_named_slots();
     test_predicate_directive_avoids_indexed_bracket_paths();
+    test_condition_expressions_and_continuations();
     test_flat_paths_and_multiline_plan();
     test_nested_scalar_lists();
     test_nested_arguments_and_multistep_plan();

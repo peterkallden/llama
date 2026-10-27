@@ -294,15 +294,11 @@ bool common_flydelta_decide_auto_canary_admission(
         reject("configured_profile_binding_missing");
     } else if (!input.compatible_arm) {
         reject("compatible_arm_result_missing");
-    } else if (input.regressed_dimensions ||
-            (!input.host_counterfactual_helped &&
-             (!input.progress.comparable ||
-              (input.progress.outcome != common_flydelta_semantic_progress_outcome::improved &&
-               input.progress.outcome != common_flydelta_semantic_progress_outcome::solved)))) {
+    } else if (input.regressed_dimensions || !input.host_counterfactual_helped) {
         reject("arm_has_no_compatible_positive_progress");
     } else {
         decision.admitted = true;
-        decision.reason = "bounded_progress_only_canary_admitted";
+        decision.reason = "host_verified_canary_admitted";
     }
     error.clear();
     return true;

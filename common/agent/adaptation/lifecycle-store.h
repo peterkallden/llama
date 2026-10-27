@@ -119,7 +119,10 @@ private:
 
 class common_learning_jsonl_lifecycle_store final : public common_learning_lifecycle_store {
 public:
-    bool open(const std::filesystem::path & path, std::string & error);
+    // Tail recovery is a writer operation and requires exclusive host
+    // ownership of the journal's lifecycle. Ordinary readers never repair it.
+    bool open(const std::filesystem::path & path, std::string & error,
+            bool recover_incomplete_tail = false);
     bool append(const common_learning_lifecycle_record & record, std::string & error) override;
     bool contains_idempotency(const std::string & key, bool & contains, std::string & error) const override;
     std::vector<common_learning_lifecycle_record> list(std::string & error) const override;

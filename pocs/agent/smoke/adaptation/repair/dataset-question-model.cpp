@@ -54,6 +54,7 @@ struct options {
     bool force_deep = false;
     bool force_tfo_lite = false;
     bool low_rank_rank_sweep = false;
+    bool dose_comparison = false;
     bool disable_factorized_cvec_batch = false;
     bool production_bindings = false;
     bool production_where = false;
@@ -122,6 +123,10 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--force-tfo-lite") { value.force_tfo_lite = true; value.force_deep = true; }
         else if (argument == "--low-rank-rank-sweep") {
             value.low_rank_rank_sweep = true;
+            value.force_deep = true;
+        }
+        else if (argument == "--dose-comparison") {
+            value.dose_comparison = true;
             value.force_deep = true;
         }
         else if (argument == "--disable-factorized-cvec-batch") value.disable_factorized_cvec_batch = true;
@@ -460,9 +465,13 @@ int main(int argc, char ** argv) {
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
                   << " [--outcome-guidance-mode off|shadow|experimental]"
-                  << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep] [--adaptive-alpha-search]"
+                  << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep|--dose-comparison] [--adaptive-alpha-search]"
                   << " [--threads N] [--n-gpu-layers N] [--n-parallel N]"
                   << " [--n-ctx-per-sequence N]\n";
+        return 2;
+    }
+    if (value.dose_comparison && (!dose_environment || value.low_rank_rank_sweep || value.force_tfo_lite)) {
+        std::cerr << "--dose-comparison requires one explicit dose mode and coordinate search\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -1214,7 +1223,7 @@ int main(int argc, char ** argv) {
             deep_fixture.verifier_revision = "verifier:cozo-native-data-adapter-v1";
 
             common_flydelta_deep_search_config deep_config;
-            deep_config.max_rank = 2;
+            deep_config.max_rank = value.dose_comparison ? 1 : 2;
             deep_config.max_directions = 4;
             deep_config.full_generation_top_k = value.low_rank_rank_sweep ? 1 : 3;
             deep_config.coefficients.strategy = value.force_tfo_lite
@@ -1930,8 +1939,8 @@ int main(int argc, char ** argv) {
                 common_flydelta_deep_search_config rank_config = deep_config;
                 rank_config.max_rank = requested_rank;
                 if (dose_environment) {
-                    if (!value.low_rank_rank_sweep || value.force_tfo_lite) {
-                        host.close(); std::cerr << "dose comparison requires coordinate rank-sweep mode\n"; return 2;
+                    if ((!value.low_rank_rank_sweep && !value.dose_comparison) || value.force_tfo_lite) {
+                        host.close(); std::cerr << "dose comparison requires coordinate search mode\n"; return 2;
                     }
                     auto & coefficients = rank_config.coefficients;
                     coefficients.record_intervention_norms = true;
@@ -1952,6 +1961,29 @@ int main(int argc, char ** argv) {
                                 "generation_boundary", coefficients.residual_calibration, error)) {
                             host.close(); std::cerr << "dose calibration unavailable: " << error << '\n'; return 1;
                         }
+                        if (dose_experiment != "normalized") {
+                            std::vector<std::vector<common_flydelta_hidden_state_capture>> sequences;
+                            for (const auto & captured : calibration_captures) sequences.push_back({captured});
+                            if (!common_flydelta_calibrate_residual_sequences(sequences, calibration_ids,
+                                    deep_directions.front().direction.layer_index, "dose-calibration:" + deep_case.id,
+                                    "generation_boundary", coefficients.residual_calibration, error)) {
+                                host.close(); std::cerr << "sequence calibration unavailable: " << error << '\n'; return 1;
+                            }
+                            auto & calibration = coefficients.residual_calibration;
+                            const auto runtime_json = ordered_json{{"n_ctx", server_host->params().n_ctx},
+                                {"n_parallel", server_host->params().n_parallel}, {"n_gpu_layers", server_host->params().n_gpu_layers},
+                                {"cache_type_k", static_cast<int>(server_host->params().cache_type_k)},
+                                {"cache_type_v", static_cast<int>(server_host->params().cache_type_v)}}.dump();
+                            calibration.runtime_configuration_fingerprint = "sha256:" + hash_sha256_hex(runtime_json.data(), runtime_json.size());
+                            calibration.intervention_site = "layer-input:additive-cvec:v1";
+                            calibration.runtime_layout_revision = "dataset-question-smoke-cvec:v1";
+                            const auto dataset_json = ordered_json{{"cases", calibration_ids},
+                                {"measurements", calibration.sample_norms}, {"fixture_revision", "dataset-question:v1"}}.dump();
+                            calibration.dataset_revision = "sha256:" + hash_sha256_hex(dataset_json.data(), dataset_json.size());
+                            coefficients.injection_intervention_site = calibration.intervention_site;
+                            coefficients.injection_runtime_layout_revision = calibration.runtime_layout_revision;
+                            coefficients.injection_runtime_configuration_fingerprint = calibration.runtime_configuration_fingerprint;
+                        }
                         coefficients.residual_calibration.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
                         coefficients.residual_calibration.template_fingerprint = deep_fixture.template_fingerprint;
                         coefficients.injection_capture_layout_revision = capture->capture_layout_revision;
@@ -1966,6 +1998,10 @@ int main(int argc, char ** argv) {
                             {"tokenizer_fingerprint", c.tokenizer_fingerprint},
                             {"template_fingerprint", c.template_fingerprint},
                             {"capture_layout_revision", c.capture_layout_revision},
+                            {"intervention_site", c.intervention_site}, {"measurement_stage", c.measurement_stage},
+                            {"runtime_configuration_fingerprint", c.runtime_configuration_fingerprint},
+                            {"runtime_layout_revision", c.runtime_layout_revision}, {"dataset_revision", c.dataset_revision},
+                            {"aggregation", c.aggregation}, {"sequence_ids", c.sequence_ids},
                             {"token_selection", c.token_selection}, {"layer", c.layer_index},
                             {"median_norm", c.median_norm}, {"sample_count", c.sample_count},
                             {"dimension", c.dimension}, {"sample_norms", c.sample_norms},
@@ -2105,7 +2141,7 @@ int main(int argc, char ** argv) {
         // Running the ordinary Whirlpool region pipeline as well repeats
         // expensive model calls without contributing to the rank measurement.
         // Groups without two compatible directions cannot support comparison.
-        if (value.low_rank_rank_sweep) {
+        if (value.low_rank_rank_sweep || value.dose_comparison) {
             if (entry.second.size() < 2 || directions.size() < 2) {
                 std::cout << "flydelta_low_rank_rank_sweep_skipped group=" << entry.first
                           << " reason=insufficient_compatible_directions"

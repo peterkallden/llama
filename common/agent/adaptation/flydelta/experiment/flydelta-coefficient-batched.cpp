@@ -362,6 +362,10 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         return false;
     }
     if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
+        if (!config.anchor_coefficients.empty() || !config.anchor_basis_identity.empty()) {
+            error = "FlyDelta anchored search requires coordinate strategy";
+            return false;
+        }
         return common_flydelta_coefficient_detail::run_tfo_lite_coefficient_search(
             fixture, basis, config, baseline_runner, batch_runner,
             trials, selection, error, adviser);
@@ -378,6 +382,97 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
             requested_fractions.size() != proposals.size()) {
         error = "FlyDelta calibrated proposal metadata is incomplete";
         return false;
+    }
+    if (!config.anchor_coefficients.empty() || !config.anchor_basis_identity.empty()) {
+        if (config.anchor_coefficients.size() != basis.vectors.size() ||
+                config.anchor_basis_identity != common_flydelta_coefficient_basis_identity(basis)) {
+            error = "FlyDelta search anchor is incompatible with the coefficient basis";
+            return false;
+        }
+        for (float value : config.anchor_coefficients) {
+            if (!std::isfinite(value)) {
+                error = "FlyDelta search anchor has non-finite coefficients";
+                return false;
+            }
+        }
+        if (common_flydelta_coefficient_detail::norm(config.anchor_coefficients) <= 0.0f ||
+                common_flydelta_coefficient_detail::norm(config.anchor_coefficients) > config.max_l2_norm) {
+            error = "FlyDelta search anchor is outside the coefficient bound";
+            return false;
+        }
+        // Keep at least half the existing proposal budget for independent
+        // exploration. The first local arm replays the complete anchor.
+        const size_t local_end = 1 + (proposals.size() - 1) / 2;
+        if (local_end <= 1) {
+            error = "FlyDelta anchored search requires a budget for local and independent proposals";
+            return false;
+        }
+        for (size_t index = 1; index < local_end; ++index) {
+            auto candidate = config.anchor_coefficients;
+            if (index > 1) {
+                if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::direction_dose && index <= 3) {
+                    // Separate strength exploration from directional changes:
+                    // these arms retain the parent's direction at a nearby
+                    // grid dose. Later local arms perturb the direction.
+                    float parent_norm = 0.0f;
+                    if (!common_flydelta_intervention_norm(basis, candidate, parent_norm, error)) return false;
+                    const float parent_dose = parent_norm / config.residual_calibration.median_norm;
+                    if (!std::isfinite(parent_dose) || parent_dose <= 0) {
+                        error = "FlyDelta parent residual dose is invalid"; return false;
+                    }
+                    const float factor = config.dose_policy.backoff_safety_factor;
+                    if (!std::isfinite(factor) || factor <= 0 || factor >= 1) {
+                        error = "FlyDelta anchored dose exploration requires a bounded backoff factor"; return false;
+                    }
+                    float target = index == 2 ? parent_dose * factor : parent_dose / factor;
+                    bool found = false;
+                    for (const float dose : config.residual_fraction_candidates) {
+                        if (index == 2 && dose < parent_dose && (!found || dose > target)) {
+                            target = dose; found = true;
+                        } else if (index == 3 && dose > parent_dose && (!found || dose < target)) {
+                            target = dose; found = true;
+                        }
+                    }
+                    for (float & coefficient : candidate) coefficient *= target / parent_dose;
+                } else {
+                    for (size_t axis = 0; axis < candidate.size(); ++axis) {
+                        candidate[axis] += proposals[index][axis];
+                    }
+                }
+                candidate = common_flydelta_coefficient_detail::bound_coefficients(
+                    std::move(candidate), config.max_l2_norm);
+            }
+            if (common_flydelta_coefficient_detail::norm(candidate) <= 1e-12f) {
+                candidate = config.anchor_coefficients;
+            }
+            proposals[index] = std::move(candidate);
+            if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients) {
+                float magnitude = 0.0f;
+                if (!common_flydelta_intervention_norm(basis, proposals[index], magnitude, error)) return false;
+                requested_fractions[index] = magnitude / config.residual_calibration.median_norm;
+            }
+        }
+    }
+    if (config.evaluated_coefficients.size() > 4096) {
+        error = "FlyDelta evaluated-arm history exceeds its bound"; return false;
+    }
+    for (const auto & previous : config.evaluated_coefficients) {
+        if (previous.size() != basis.vectors.size() ||
+                std::any_of(previous.begin(), previous.end(), [](float value) { return !std::isfinite(value); })) {
+            error = "FlyDelta evaluated-arm history is incompatible with its basis"; return false;
+        }
+    }
+    // Keep the unsteered baseline and one exact parent replay. All other
+    // previously evaluated compositions are reference history, not new work.
+    for (size_t index = proposals.size(); index-- > 1;) {
+        const bool parent_replay = index == 1 && !config.anchor_coefficients.empty() &&
+            proposals[index] == config.anchor_coefficients;
+        if (!parent_replay && (common_flydelta_coefficient_detail::contains_coefficients(
+                config.evaluated_coefficients, proposals[index]) ||
+                std::find(proposals.begin(), proposals.begin() + index, proposals[index]) != proposals.begin() + index)) {
+            proposals.erase(proposals.begin() + index);
+            if (!requested_fractions.empty()) requested_fractions.erase(requested_fractions.begin() + index);
+        }
     }
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
@@ -444,6 +539,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
                     if (distance <= actual * 1e-6f) { duplicate = true; break; }
                 }
                 if (duplicate) continue;
+                if (common_flydelta_coefficient_detail::contains_coefficients(
+                        config.evaluated_coefficients, coefficients)) continue;
                 refinement.push_back(coefficients);
                 proposals.push_back(coefficients);
                 refinement_doses.push_back(dose);

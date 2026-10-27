@@ -91,6 +91,9 @@ struct daemon_flydelta_resource_provider {
     int n_threads = 0;
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
+    std::string dose_mode = "direction_dose";
+    std::string dose_calibration_ref;
+    size_t search_model_call_budget = 256;
     common_flydelta_outcome_guidance_config outcome_guidance_config;
     std::shared_ptr<common_flydelta_outcome_guidance_projection_cache> outcome_projection_cache =
         std::make_shared<common_flydelta_outcome_guidance_projection_cache>();
@@ -145,6 +148,12 @@ struct daemon_flydelta_resource_provider {
             common_flydelta_experiment_plan &, common_flydelta_utility_history &,
         std::string &)> resolve_search_orchestration_state_for_job;
 };
+
+bool daemon_flydelta_load_dose_calibration(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_fixture & fixture, int32_t layer_index,
+        std::string & calibration_ref, common_flydelta_coefficient_search_config & config,
+        std::string & content_fingerprint, std::string & error);
 
 struct daemon_flydelta_concept_relation_material {
     common_flydelta_teaching_relation relation;
@@ -500,7 +509,8 @@ bool daemon_flydelta_run_coefficient_arm_batch(
         const std::string & wave_suffix = {},
         const common_flydelta_experiment_phase phase = common_flydelta_experiment_phase::bootstrap,
         const common_flydelta_coefficient_search_strategy strategy =
-            common_flydelta_coefficient_search_strategy::coordinate);
+            common_flydelta_coefficient_search_strategy::coordinate,
+        common_flydelta_search_execution_budget * execution_budget = nullptr);
 
 bool daemon_flydelta_resolve_evidence_direction_candidates(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

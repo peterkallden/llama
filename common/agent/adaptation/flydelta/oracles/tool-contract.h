@@ -33,6 +33,19 @@ bool common_flydelta_parse_model_tool_text(
         common_agent_tool_call & call,
         std::string & error);
 
+// Project an explicit expected call into bounded goal checks. This uses the
+// host's normalized expectation and parsed output, never text heuristics.
+bool common_flydelta_assess_expected_tool_call(
+        const common_flydelta_oracle_request & request,
+        const std::string & schema_json,
+        const std::string & expected_arguments_json,
+        const common_agent_tool_call * observed_call,
+        const std::string & observed_arguments_json,
+        bool contract_valid,
+        bool target_completed,
+        common_flydelta_progress_assessment & assessment,
+        std::string & error);
+
 // Validates an already parsed native call. This is the native adapter seam;
 // it shares all argument and policy checks with textual model output.
 bool common_flydelta_validate_model_tool_call(

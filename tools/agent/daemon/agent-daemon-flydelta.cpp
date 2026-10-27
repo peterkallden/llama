@@ -1,4 +1,5 @@
 #include "agent-daemon-flydelta-internal.h"
+#include "agent/adaptation/flydelta/flydelta-search-budget.h"
 
 #include "agent/agent-residual-patch.h"
 #include "agent/adaptation/flydelta/experiment/flydelta-guidance-qualification.h"
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 namespace agent_daemon_flydelta_internal {
 
@@ -46,6 +48,59 @@ std::string daemon_flydelta_verifier_contract_revision(
     return revisions.size() == 1 ? *revisions.begin() : std::string();
 }
 
+
+
+json daemon_flydelta_anchor_observation_json(
+        const common_flydelta_semantic_progress_observation & o) {
+    return {{"available", o.available}, {"coverage", o.regression_coverage_complete},
+        {"operation", static_cast<int>(o.operation_state)}, {"dataset", static_cast<int>(o.dataset_state)},
+        {"grouping", static_cast<int>(o.grouping_state)}, {"measure", static_cast<int>(o.measure_state)},
+        {"contract", static_cast<int>(o.contract_state)}, {"score", o.score},
+        {"objective", json::parse(common_flydelta_progress_assessment_to_json(o.objective))}};
+}
+
+bool daemon_flydelta_anchor_observation_from_json(
+        const json & value, common_flydelta_semantic_progress_observation & o, std::string & error) {
+    try {
+        o = {};
+        o.available = value.at("available").get<bool>();
+        o.regression_coverage_complete = value.at("coverage").get<bool>();
+        if (value.contains("objective")) {
+            if (!common_flydelta_progress_assessment_from_json(value.at("objective").dump(), o.objective, error)) return false;
+            if (o.objective.assessment_known) {
+                o.score = static_cast<int>(o.objective.satisfied_goals.size());
+                if (!o.available || !o.regression_coverage_complete || !o.objective.regression_known || o.objective.has_regression) {
+                    error = "FlyDelta anchor objective coverage is incomplete"; return false;
+                }
+                return true;
+            }
+        }
+        auto state = [&](const char * name) {
+            const int raw = value.at(name).get<int>();
+            if (raw < static_cast<int>(common_flydelta_semantic_progress_field_state::unknown) ||
+                    raw > static_cast<int>(common_flydelta_semantic_progress_field_state::matched)) {
+                throw std::runtime_error("invalid progress state");
+            }
+            return static_cast<common_flydelta_semantic_progress_field_state>(raw);
+        };
+        o.operation_state = state("operation"); o.dataset_state = state("dataset");
+        o.grouping_state = state("grouping"); o.measure_state = state("measure");
+        o.contract_state = state("contract"); o.score = value.at("score").get<int>();
+        if (!o.available || !o.regression_coverage_complete ||
+                o.operation_state == common_flydelta_semantic_progress_field_state::unknown ||
+                o.dataset_state == common_flydelta_semantic_progress_field_state::unknown ||
+                o.grouping_state == common_flydelta_semantic_progress_field_state::unknown ||
+                o.measure_state == common_flydelta_semantic_progress_field_state::unknown ||
+                o.contract_state == common_flydelta_semantic_progress_field_state::unknown) {
+            error = "FlyDelta anchor progress coverage is incomplete"; return false;
+        }
+        return true;
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta anchor observation is invalid: ") + exception.what();
+        return false;
+    }
+}
+
 bool daemon_flydelta_parse_depth(
         const std::string & value, common_flydelta_search_depth & depth) {
     if (value == "bootstrap") depth = common_flydelta_search_depth::bootstrap;
@@ -79,6 +134,11 @@ json daemon_flydelta_orchestration_state_json(
     const auto & region = plan.continuation.region;
     return {
         {"kind", "flydelta_daemon_orchestration_state"},
+        {"search_anchor_ref", plan.search_anchor_ref},
+        {"search_anchor_round", plan.search_anchor_round},
+        {"search_anchor_pending", plan.search_anchor_pending},
+        {"search_model_call_limit", plan.search_model_call_limit},
+        {"search_model_calls_used", plan.search_model_calls_used},
         {"continuation", {
             {"direction_index", plan.continuation.direction_index},
             {"region_trial_index", plan.continuation.region_trial_index},
@@ -157,6 +217,17 @@ bool daemon_flydelta_orchestration_state_from_json(
             return false;
         }
         plan = {};
+        plan.search_anchor_ref = value.value("search_anchor_ref", "");
+        plan.search_anchor_round = value.value("search_anchor_round", size_t{0});
+        plan.search_anchor_pending = value.value("search_anchor_pending", false);
+        plan.search_model_call_limit = value.value("search_model_call_limit", size_t{256});
+        plan.search_model_calls_used = value.value("search_model_calls_used", size_t{0});
+        if (plan.search_anchor_ref.size() > 512 || plan.search_anchor_round > 1024 ||
+                plan.search_model_call_limit == 0 || plan.search_model_call_limit > 65536 ||
+                plan.search_model_calls_used > plan.search_model_call_limit) {
+            error = "FlyDelta orchestration search anchor is invalid";
+            return false;
+        }
         const auto continuation = value.at("continuation");
         const auto region = continuation.at("region");
         plan.continuation.direction_index = continuation.value("direction_index", size_t{0});
@@ -1876,11 +1947,40 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     candidates = std::move(resolved_candidates);
 
     common_flydelta_coefficient_search_config coefficient_config;
+    json resume_anchor;
+    std::string effective_dose_mode = provider->dose_mode;
+    std::string effective_calibration_ref = provider->dose_calibration_ref;
+    std::string calibration_fingerprint;
+    if (!plan.search_anchor_ref.empty()) {
+        if (!daemon_flydelta_read_json_bounded(*provider, plan.search_anchor_ref,
+                16U * 1024U * 1024U, resume_anchor, error)) return false;
+        try {
+            effective_dose_mode = resume_anchor.at("dose_mode").get<std::string>();
+            effective_calibration_ref = resume_anchor.at("calibration_ref").get<std::string>();
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta anchor dose identity is malformed: ") + exception.what();
+            return false;
+        }
+    }
+    if (effective_dose_mode == "direction_dose") {
+        coefficient_config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
+        if (!daemon_flydelta_load_dose_calibration(
+                provider, fixture, layer_index, effective_calibration_ref, coefficient_config,
+                calibration_fingerprint, error)) return false;
+    } else if (effective_dose_mode != "raw_coefficients") {
+        error = "FlyDelta coefficient dose mode is invalid";
+        return false;
+    }
     coefficient_config.max_candidates = plan.budget.max_coefficient_trials == 0
         ? 16 : std::min<size_t>(16, plan.budget.max_coefficient_trials);
     coefficient_config.strategy = plan.run_tfo_lite
         ? common_flydelta_coefficient_search_strategy::tfo_lite
         : common_flydelta_coefficient_search_strategy::coordinate;
+    if (coefficient_config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::direction_dose &&
+            coefficient_config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
+        error = "FlyDelta TFO-lite does not yet support direction_dose";
+        return false;
+    }
     // Proposal waves may contain up to the resident parallel capacity. The
     // paired diagnostic runner reserves one physical slot for its baseline
     // and partitions candidates accordingly below.
@@ -2480,7 +2580,68 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             std::clog << "[flydelta] outcome_guidance " << trace.dump() << '\n';
             return true;
         });
-    const auto run_mode = [provider, &job, &fixture, phase = plan.phase,
+    common_flydelta_search_execution_budget execution_budget;
+    execution_budget.limit = plan.search_model_calls_used == 0 && plan.search_anchor_ref.empty()
+        ? provider->search_model_call_budget : plan.search_model_call_limit;
+    execution_budget.used = plan.search_model_calls_used;
+    if (!provider->lifecycle_store) {
+        error = "FlyDelta coefficient search requires a durable execution ledger";
+        return false;
+    }
+    const size_t base_used = plan.search_model_calls_used;
+    const auto update_consumption = [&](const common_flydelta_search_consumption & consumption) {
+        execution_budget.used = consumption.logical_used;
+        execution_budget.physical_rows_started = consumption.physical_rows_started;
+        execution_budget.physical_rows_completed = consumption.physical_rows_completed;
+        execution_budget.physical_rows_unresolved = consumption.physical_rows_unresolved;
+    };
+    common_flydelta_search_consumption consumed;
+    if (!common_flydelta_load_search_consumption(*provider->lifecycle_store, job,
+            base_used, execution_budget.limit, consumed, error)) return false;
+    update_consumption(consumed);
+    execution_budget.begin_execution = [&](const std::vector<std::string> & logical_ids,
+            const std::string & group, std::string & attempt, std::string & begin_error) {
+        common_flydelta_search_consumption consumption;
+        if (!common_flydelta_begin_search_execution(*provider->lifecycle_store, job, base_used,
+                execution_budget.limit, logical_ids, group, execution_budget.max_physical_attempts,
+                attempt, consumption, begin_error)) return false;
+        update_consumption(consumption);
+        return true;
+    };
+    execution_budget.finish_execution = [&](const std::string & attempt, size_t rows, bool succeeded,
+            std::string & finish_error) {
+        common_flydelta_search_consumption consumption;
+        if (!common_flydelta_finish_search_execution(*provider->lifecycle_store, job, attempt, rows, succeeded, finish_error) ||
+                !common_flydelta_load_search_consumption(*provider->lifecycle_store, job, base_used,
+                    execution_budget.limit, consumption, finish_error)) return false;
+        update_consumption(consumption);
+        std::clog << "[flydelta] execution_consumption job=" << job.id
+            << " logical_used=" << consumption.logical_used
+            << " physical_rows_started=" << consumption.physical_rows_started
+            << " physical_rows_completed=" << consumption.physical_rows_completed
+            << " physical_rows_unresolved=" << consumption.physical_rows_unresolved << '\n';
+        return true;
+    };
+    // Admit only slices whose complete worst-case work fits: diagnostic
+    // pairs, one dose retry, capture fallback, full baseline and finalists.
+    // This prevents a budget stop halfway through publishing an anchor.
+    const size_t worst_case_calls = 2 + coefficient_config.max_candidates * 8 +
+        std::max<size_t>(3, guidance_config.matched_evaluation ? guidance_config.matched_max_arms : 3) * 2;
+    if (base_used > execution_budget.limit ||
+            worst_case_calls > execution_budget.limit - base_used) {
+        output = {};
+        common_flydelta_search_pipeline_direction_result direction;
+        direction.direction = candidates.front();
+        output.directions.push_back(std::move(direction));
+        output.search_status = common_flydelta_search_status::budget_limited;
+        output.search_model_call_limit = execution_budget.limit;
+        output.search_model_calls_used = execution_budget.used;
+        output.physical_rows_started = execution_budget.physical_rows_started;
+        output.physical_rows_completed = execution_budget.physical_rows_completed;
+        output.physical_rows_unresolved = execution_budget.physical_rows_unresolved;
+        return true;
+    }
+    const auto run_mode = [provider, &job, &fixture, &execution_budget, phase = plan.phase,
             strategy = coefficient_config.strategy](
             const common_flydelta_experiment_fixture &,
             const common_flydelta_low_rank_basis & current_basis,
@@ -2499,7 +2660,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 provider, job, fixture, current_basis, {coefficients}, apply_overlay,
                 trials, margins, geometries, geometry_flags, runner_error,
                 full_execution, full_execution ? "deep-full-single" : "deep-diagnostic-single",
-                phase, strategy)) {
+                phase, strategy, &execution_budget)) {
             return false;
         }
         trial = std::move(trials.front());
@@ -2508,7 +2669,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         has_geometry = geometry_flags.front();
         return true;
     };
-    const auto run_batch_mode = [provider, &job, &fixture, phase = plan.phase,
+    const auto run_batch_mode = [provider, &job, &fixture, &execution_budget, phase = plan.phase,
             strategy = coefficient_config.strategy,
             resident_parallelism] (
             const common_flydelta_experiment_fixture &,
@@ -2550,7 +2711,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             if (!daemon_flydelta_run_coefficient_arm_batch(
                     provider, job, fixture, current_basis, chunk, true,
                     part_trials, part_margins, part_geometries, part_geometry_flags,
-                    runner_error, full_execution, suffix, phase, strategy)) {
+                    runner_error, full_execution, suffix, phase, strategy, &execution_budget)) {
                 return false;
             }
             trials.insert(trials.end(),
@@ -2619,6 +2780,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     };
     std::vector<common_flydelta_coefficient_trial> trials;
     common_flydelta_coefficient_selection selection;
+    std::string provisional_anchor_ref;
+    size_t provisional_trial_index = static_cast<size_t>(-1);
     if (plan.phase == common_flydelta_experiment_phase::deep_controls) {
         common_flydelta_deep_search_config deep_config;
         deep_config.max_rank = std::min<size_t>(max_rank, 4);
@@ -2626,6 +2789,67 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         deep_config.full_generation_top_k = plan.budget.full_generation_top_k == 0
             ? 3 : std::min<size_t>(3, plan.budget.full_generation_top_k);
         deep_config.coefficients = coefficient_config;
+        const auto & dose_policy = coefficient_config.dose_policy;
+        const json search_policy = {
+            {"version", 1}, {"strategy", static_cast<int>(coefficient_config.strategy)},
+            {"step", coefficient_config.step}, {"max_candidates", coefficient_config.max_candidates},
+            {"max_l2_norm", coefficient_config.max_l2_norm}, {"seed", coefficient_config.seed},
+            {"population_size", coefficient_config.population_size}, {"iterations", coefficient_config.iterations},
+            {"exploration_scale", coefficient_config.exploration_scale}, {"norm_penalty", coefficient_config.norm_penalty},
+            {"leakage_penalty", coefficient_config.leakage_penalty},
+            {"residual_fraction", coefficient_config.residual_fraction},
+            {"residual_fraction_candidates", coefficient_config.residual_fraction_candidates},
+            {"use_dose_controller", coefficient_config.use_dose_controller},
+            {"max_dose_retries", coefficient_config.max_dose_retries},
+            {"max_physical_attempts", execution_budget.max_physical_attempts},
+            {"dose_policy", {{"version", dose_policy.schema_version}, {"max_shift_norm", dose_policy.max_shift_norm},
+                {"max_leakage", dose_policy.max_leakage}, {"target_relative_dose", dose_policy.target_relative_dose},
+                {"target_absolute_fraction", dose_policy.target_absolute_fraction}, {"min_strength", dose_policy.min_strength},
+                {"max_strength", dose_policy.max_strength}, {"backoff_safety_factor", dose_policy.backoff_safety_factor}}},
+            {"max_rank", deep_config.max_rank}, {"max_directions", deep_config.max_directions},
+            {"full_generation_top_k", deep_config.full_generation_top_k}};
+        if (!plan.search_anchor_ref.empty()) {
+            const auto & anchor = resume_anchor;
+            try {
+                if (anchor.at("kind") != "flydelta_search_anchor" || anchor.at("schema_version") != 1 ||
+                        anchor.at("task_fingerprint") != fixture.task_fingerprint ||
+                        anchor.at("model_profile_fingerprint") != fixture.model_profile_fingerprint ||
+                        anchor.at("tokenizer_fingerprint") != fixture.tokenizer_fingerprint ||
+                        anchor.at("template_fingerprint") != fixture.template_fingerprint ||
+                        anchor.at("execution_context_fingerprint") != fixture.execution_context_fingerprint ||
+                        anchor.at("verifier_revision") != fixture.verifier_revision ||
+                        anchor.at("baseline_ref") != job.seed.baseline_ref ||
+                        anchor.at("capture_layout_revision") != provider->capture_layout_revision ||
+                        anchor.at("dose_mode") != effective_dose_mode ||
+                        anchor.at("calibration_ref") != effective_calibration_ref ||
+                        anchor.at("calibration_fingerprint") != calibration_fingerprint ||
+                        anchor.at("search_policy") != search_policy) {
+                    error = "FlyDelta search anchor provenance is incompatible"; return false;
+                }
+                deep_config.anchor_basis.layer_index = anchor.at("layer_index").get<int32_t>();
+                deep_config.anchor_basis.dimension = anchor.at("dimension").get<size_t>();
+                deep_config.anchor_basis.vectors = anchor.at("basis_vectors").get<std::vector<std::vector<float>>>();
+                deep_config.coefficients.anchor_basis_identity = anchor.at("basis_fingerprint").get<std::string>();
+                deep_config.coefficients.anchor_coefficients = anchor.at("applied_coefficients").get<std::vector<float>>();
+                deep_config.coefficients.evaluated_coefficients = anchor.value("evaluated_coefficients",
+                    std::vector<std::vector<float>>{});
+                if (!daemon_flydelta_anchor_observation_from_json(
+                        anchor.at("observation"), deep_config.anchor_observation, error)) return false;
+                std::vector<float> physical;
+                if (!common_flydelta_reconstruct_intervention(deep_config.anchor_basis,
+                        deep_config.coefficients.anchor_basis_identity,
+                        deep_config.coefficients.anchor_coefficients, physical, error)) return false;
+                const auto expected = anchor.at("intervention_fingerprint").get<std::string>();
+                const auto actual = json(physical).dump();
+                if (expected != hash_sha256_hex(actual.data(), actual.size())) {
+                    error = "FlyDelta search anchor physical intervention fingerprint differs"; return false;
+                }
+                deep_config.resume_anchor = true;
+            } catch (const std::exception & exception) {
+                error = std::string("FlyDelta search anchor is malformed: ") + exception.what();
+                return false;
+            }
+        }
         deep_config.matched_evaluation = guidance_config.matched_evaluation &&
             guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
             !guidance_history_load_failed && !matched_evaluation_recorded && provider->lifecycle_store;
@@ -2643,6 +2867,71 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         if (!common_flydelta_run_deep_search_batched(
                 fixture, deep_config, deep_directions, run_diagnostic, run_diagnostic_batch,
                 run_full, run_full_batch, deep_result, error, outcome_adviser)) return false;
+        if (deep_result.provisional_selection.selected && !deep_result.coefficient_selection.selected) {
+            provisional_trial_index = deep_result.provisional_selection.trial_index;
+            const auto & selected = deep_result.coefficient_trials.at(provisional_trial_index);
+            std::vector<float> physical;
+            const auto basis_fingerprint = common_flydelta_coefficient_basis_identity(deep_result.basis);
+            if (!common_flydelta_reconstruct_intervention(deep_result.basis, basis_fingerprint,
+                    selected.coefficients, physical, error)) return false;
+            const auto physical_json = json(physical).dump();
+            auto evaluated = deep_config.coefficients.evaluated_coefficients;
+            for (const auto & trial : deep_result.coefficient_trials) {
+                if (!trial.executed || !trial.overlay_applied || trial.coefficients.empty()) continue;
+                for (const auto & coefficients : {trial.requested_coefficients, trial.coefficients}) {
+                    if (!coefficients.empty() && std::find(evaluated.begin(), evaluated.end(), coefficients) == evaluated.end()) {
+                        evaluated.push_back(coefficients);
+                    }
+                }
+            }
+            if (evaluated.size() > 4096) { error = "FlyDelta anchor trial history exceeds its bound"; return false; }
+            const json anchor = {{"kind", "flydelta_search_anchor"}, {"schema_version", 1},
+                {"task_fingerprint", fixture.task_fingerprint},
+                {"model_profile_fingerprint", fixture.model_profile_fingerprint},
+                {"tokenizer_fingerprint", fixture.tokenizer_fingerprint},
+                {"template_fingerprint", fixture.template_fingerprint},
+                {"execution_context_fingerprint", fixture.execution_context_fingerprint},
+                {"verifier_revision", fixture.verifier_revision}, {"baseline_ref", job.seed.baseline_ref},
+                {"capture_layout_revision", provider->capture_layout_revision},
+                {"dose_mode", effective_dose_mode}, {"calibration_ref", effective_calibration_ref},
+                {"calibration_fingerprint", calibration_fingerprint},
+                {"search_policy", search_policy},
+                {"parent_anchor_ref", plan.search_anchor_ref}, {"arm_id", selected.arm_id},
+                {"evidence_ref", selected.evidence_ref},
+                // Runtime generation references are diagnostic correlation IDs;
+                // the persisted assessment below is the checkpoint evidence.
+                {"evidence_ref_is_runtime", selected.evidence_ref.rfind("flydelta://runtime/", 0) == 0},
+                {"verifier_reason", selected.verifier_reason},
+                {"observed_decision_summary", selected.observed_decision_summary},
+                {"expected_decision_summary", selected.expected_decision_summary},
+                {"search_model_call_limit", execution_budget.limit},
+                {"search_model_calls_used", execution_budget.used},
+                {"physical_rows_started", execution_budget.physical_rows_started},
+                {"physical_rows_completed", execution_budget.physical_rows_completed},
+                {"physical_rows_unresolved", execution_budget.physical_rows_unresolved},
+                {"layer_index", deep_result.basis.layer_index}, {"dimension", deep_result.basis.dimension},
+                {"basis_vectors", deep_result.basis.vectors}, {"basis_fingerprint", basis_fingerprint},
+                {"requested_coefficients", selected.requested_coefficients},
+                {"applied_coefficients", selected.coefficients},
+                {"evaluated_coefficients", evaluated},
+                {"requested_residual_fraction", selected.requested_residual_fraction},
+                {"applied_residual_fraction", selected.applied_residual_fraction},
+                {"intervention_fingerprint", hash_sha256_hex(physical_json.data(), physical_json.size())},
+                {"observation", daemon_flydelta_anchor_observation_json(selected.semantic_progress_observation)}};
+            const auto serialized = anchor.dump();
+            const auto digest = hash_sha256_hex(serialized.data(), serialized.size());
+            if (!daemon_flydelta_put_json_resource(provider,
+                    "flydelta-search-anchor-" + digest.substr(0, 24) + ".json",
+                    "flydelta_search_anchor", job.seed.candidate_ref, serialized,
+                    provisional_anchor_ref, error)) return false;
+            json stored_anchor;
+            if (!daemon_flydelta_read_json_bounded(*provider, provisional_anchor_ref,
+                    16U * 1024U * 1024U, stored_anchor, error)) return false;
+            if (stored_anchor != anchor) {
+                error = "FlyDelta search anchor could not be verified after persistence";
+                return false;
+            }
+        }
         if ((deep_result.matched_evaluation_complete || matched_evaluation_recorded) &&
                 guidance_config.matched_evaluation &&
                 guidance_config.mode != common_flydelta_outcome_guidance_mode::off &&
@@ -2758,10 +3047,19 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         direction_result.selected_coefficients = selected.coefficients;
     }
     direction_result.region_trials.reserve(trials.size());
-    for (const auto & coefficient_trial : trials) {
+    for (size_t trial_index = 0; trial_index < trials.size(); ++trial_index) {
+        const auto & coefficient_trial = trials[trial_index];
         common_flydelta_intervention_region_trial trial;
         if (!common_flydelta_coefficient_trial_to_region(coefficient_trial, basis, trial, error)) return false;
-        trial.evidence_ref = "flydelta://runtime/coefficient-trial/" + job.id;
+        // Preserve the arm's actual host-evaluation reference. The job-level
+        // fallback is useful for diagnostic arms that did not produce one,
+        // but must not replace the evidence needed to resume a finalist.
+        if (trial.evidence_ref.empty()) {
+            trial.evidence_ref = "flydelta://runtime/coefficient-trial/" + job.id;
+        }
+        if (!provisional_anchor_ref.empty() && trial_index == provisional_trial_index) {
+            trial.promising = true;
+        }
         if (!common_flydelta_intervention_region_trial_validate(trial, error)) return false;
         direction_result.region_trials.push_back(std::move(trial));
     }
@@ -2769,10 +3067,18 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     direction_result.region_selection.trial_index = selection.trial_index;
     direction_result.region_selection.score = selection.score;
     output = {};
+    output.provisional_anchor_ref = provisional_anchor_ref;
+    output.search_model_call_limit = execution_budget.limit;
+    output.search_model_calls_used = execution_budget.used;
+    output.physical_rows_started = execution_budget.physical_rows_started;
+    output.physical_rows_completed = execution_budget.physical_rows_completed;
+    output.physical_rows_unresolved = execution_budget.physical_rows_unresolved;
     output.directions.push_back(std::move(direction_result));
-    output.search_status = trials.empty()
-        ? common_flydelta_search_status::no_useful_utility
-        : common_flydelta_search_status::candidate_available;
+    const auto & regions = output.directions.front().region_trials;
+    output.search_status = std::any_of(regions.begin(), regions.end(), [](const auto & trial) {
+        return trial.executed && trial.safe_to_continue && trial.promising &&
+            trial.outcome != common_flydelta_counterfactual_outcome::harmed;
+    }) ? common_flydelta_search_status::candidate_available : common_flydelta_search_status::no_useful_utility;
     output.selection.selected = selection.selected;
     output.selection.intervention_region = true;
     output.selection.direction_index = 0;
@@ -4175,8 +4481,8 @@ make_daemon_flydelta_resource_binding_factory(
                         daemon_flydelta_continuation_key(plan));
                     if (it != provider->bootstrap_state_by_continuation.end()) bootstrap_ref = it->second;
                 }
-                const auto payload = daemon_flydelta_orchestration_state_json(
-                    plan, history, bootstrap_ref).dump();
+                auto state = daemon_flydelta_orchestration_state_json(plan, history, bootstrap_ref);
+                const auto payload = state.dump();
                 const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
                 state_ref = "flydelta://state/orchestration/" + digest;
                 common_flydelta_lifecycle_event_context lifecycle_context;
@@ -4258,8 +4564,17 @@ make_daemon_flydelta_resource_binding_factory(
                         daemon_flydelta_continuation_key(plan));
                     if (it != provider->bootstrap_state_by_continuation.end()) bootstrap_ref = it->second;
                 }
-                const auto payload = daemon_flydelta_orchestration_state_json(
-                    plan, history, bootstrap_ref).dump();
+                auto state = daemon_flydelta_orchestration_state_json(plan, history, bootstrap_ref);
+                if (plan.search_anchor_pending && !plan.search_anchor_ref.empty()) {
+                    // The immutable state and the intent to resume are one
+                    // lifecycle publication, before the worker can enqueue.
+                    state["anchor_continuation"] = {
+                        {"parent_job", json::parse(common_flydelta_experiment_job_to_json(job))},
+                        {"bootstrap_state_ref", job.bootstrap_zoom_state_ref},
+                        {"representation_state_ref", job.representation_augmentation_state_ref},
+                    };
+                }
+                const auto payload = state.dump();
                 const auto digest = hash_sha256_hex(payload.data(), payload.size()).substr(0, 32);
                 state_ref = "flydelta://state/orchestration/" + digest;
                 common_flydelta_lifecycle_event_context lifecycle_context;

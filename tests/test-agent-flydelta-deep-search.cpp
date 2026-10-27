@@ -175,6 +175,56 @@ int main() {
     CHECK(partial.semantic_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
     CHECK(partial.semantic_progress.regression_known);
     CHECK(!partial.coefficients.empty());
+    auto resumed_config = config;
+    resumed_config.resume_anchor = true;
+    resumed_config.anchor_basis = partial_result.basis;
+    resumed_config.anchor_observation = partial.semantic_progress_observation;
+    resumed_config.coefficients.anchor_basis_identity =
+        common_flydelta_coefficient_basis_identity(partial_result.basis);
+    resumed_config.coefficients.anchor_coefficients = partial.coefficients;
+    common_flydelta_deep_search_result resumed_result;
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), resumed_config, input, diagnostic_partial, full_partial, resumed_result, error));
+    CHECK(common_flydelta_coefficient_basis_identity(resumed_result.basis) ==
+        resumed_config.coefficients.anchor_basis_identity);
+    CHECK(!resumed_result.provisional_selection.selected);
+    resumed_config.coefficients.anchor_basis_identity = "wrong-basis";
+    CHECK(!common_flydelta_run_deep_search(
+        fixture(), resumed_config, input, diagnostic_partial, full_partial, resumed_result, error));
+    // The second finalist scores higher but loses the first finalist's goal.
+    // Deep must retain the incumbent rather than rank only by total score.
+    size_t full_arm_index = 0;
+    const common_flydelta_coefficient_search_runner competing_progress =
+        [&full_arm_index](const common_flydelta_experiment_fixture &, const common_flydelta_low_rank_basis &,
+           const std::vector<float> &, bool overlay, common_flydelta_counterfactual_trial & trial,
+           common_flydelta_decision_margin & margin, common_flydelta_representation_diagnostics & geometry,
+           bool & has_geometry, std::string &) {
+            trial = {}; trial.executed = true; trial.host_evaluated = true;
+            trial.verifier_known = true; trial.overlay_applied = overlay;
+            trial.evidence_ref = "evidence:competing-progress";
+            auto & p = trial.semantic_progress_observation;
+            using state = common_flydelta_semantic_progress_field_state;
+            p.available = true; p.regression_coverage_complete = true;
+            p.operation_state = state::missing; p.dataset_state = state::missing;
+            p.grouping_state = state::missing; p.measure_state = state::missing;
+            p.contract_state = state::partial;
+            if (overlay && full_arm_index++ == 0) {
+                p.grouping_state = state::matched;
+                p.score = 1;
+            } else if (overlay) {
+                p.operation_state = state::matched;
+                p.dataset_state = state::matched;
+                p.score = 2;
+            }
+            margin = {}; geometry = {}; has_geometry = false; return true;
+        };
+    common_flydelta_deep_search_result competing_result;
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), config, input, diagnostic_partial, competing_progress, competing_result, error));
+    CHECK(full_arm_index >= 2);
+    CHECK(competing_result.provisional_selection.selected);
+    CHECK(competing_result.coefficient_trials[competing_result.provisional_selection.trial_index]
+        .semantic_progress_observation.grouping_state == common_flydelta_semantic_progress_field_state::matched);
     const common_flydelta_coefficient_search_runner unknown_regression =
         [full_partial](const common_flydelta_experiment_fixture & f, const common_flydelta_low_rank_basis & b,
            const std::vector<float> & c, bool overlay, common_flydelta_counterfactual_trial & trial,

@@ -1,4 +1,5 @@
 #include "workflow-grounding.h"
+#include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include <algorithm>

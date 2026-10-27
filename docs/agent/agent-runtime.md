@@ -2092,11 +2092,26 @@ where: title contains "population density"
 limit: 64
 ```
 
-Each `where:` line maps to one canonical predicate with ordered slots
-`field`, `operator`, and `value`; list-valued operands such as `in` remain one
-bracketed list value. The host normalizes this flat surface to the canonical
-object-array schema before validation and execution. Models should not emit
-synthetic paths such as `where[0].field`.
+Each `where:` line forms an independent expression; separate lines are combined
+with AND. The `conditions:` directive on `data.filter` follows the same rules.
+Operators may be quoted or unquoted. Same-field equality alternatives can use
+OR and normalize to the existing `in` predicate without changing string case:
+
+```text
+where: region = "North" OR region = "East"
+  & amount >= 4
+where: customer_id != 999
+```
+
+A leading `&` immediately after a condition directive adds a separate AND
+condition, equivalent to another `where:` (or `conditions:`) line. It does not
+extend the preceding OR group. Within one expression, AND binds more tightly
+than OR; parentheses make grouping explicit. Quoted values and array contents
+are not split at Boolean operators. General cross-field OR and OR over
+non-equality predicates are rejected because the canonical store contract is
+a conjunction of predicates. Expressions are limited to 2,048 bytes, 16
+canonical predicates, 64 membership alternatives and bounded nesting. Existing
+positional and named directive slots remain supported.
 
 Ordering, grouping, aggregation, inner joins and left joins use the structured
 relation as well. Cozo-backed rows now have a host-owned per-dataset ordinal,

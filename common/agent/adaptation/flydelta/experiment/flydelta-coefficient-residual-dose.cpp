@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <utility>
+#include <set>
 
 bool common_flydelta_intervention_norm(
         const common_flydelta_low_rank_basis & basis,
@@ -103,7 +104,7 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (!common_flydelta_coefficient_search_config_validate(config, basis.vectors.size(), error) ||
             !common_flydelta_low_rank_basis_validate(basis, 16, error)) return false;
     const auto & c = config.residual_calibration;
-    if (c.schema_version != 1 || c.reference.empty() || c.sample_count == 0 || c.sample_count > 4096 ||
+    if ((c.schema_version != 1 && c.schema_version != 2) || c.reference.empty() || c.sample_count == 0 || c.sample_count > 4096 ||
             c.dimension != basis.dimension || c.sample_norms.size() != c.sample_count ||
             !std::isfinite(c.median_norm) || c.median_norm <= 0 ||
             c.model_profile_fingerprint != fixture.model_profile_fingerprint ||
@@ -118,6 +119,21 @@ bool common_flydelta_propose_calibrated_coefficients(
             (c.position == common_flydelta_capture_position::prompt_row &&
              c.token_index != config.injection_token_index)) {
         error = "FlyDelta residual calibration is missing or incompatible"; return false;
+    }
+    if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::direction_dose && c.schema_version != 2) {
+        error = "FlyDelta direction_dose requires a versioned sequence calibration"; return false;
+    }
+    if (c.schema_version == 2 && (c.intervention_site.empty() ||
+            c.intervention_site != config.injection_intervention_site ||
+            c.runtime_configuration_fingerprint.empty() ||
+            c.runtime_configuration_fingerprint != config.injection_runtime_configuration_fingerprint ||
+            c.runtime_layout_revision.empty() || c.runtime_layout_revision != config.injection_runtime_layout_revision ||
+            c.dataset_revision.empty() || c.aggregation != "median_of_sequence_medians:v1" ||
+            c.measurement_stage != "final_prompt_row" || c.position != common_flydelta_capture_position::generation_boundary ||
+            c.sequence_ids.size() != c.sample_count ||
+            std::set<std::string>(c.sequence_ids.begin(), c.sequence_ids.end()).size() != c.sequence_ids.size() ||
+            std::any_of(c.sequence_ids.begin(), c.sequence_ids.end(), [](const auto & id) { return id.empty() || id.size() > 512; }))) {
+        error = "FlyDelta sequence calibration validity contract differs"; return false;
     }
     auto sorted_norms = c.sample_norms;
     for (float norm : sorted_norms) if (!std::isfinite(norm) || norm <= 0) {
@@ -192,6 +208,50 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (proposals.size() == 1 && config.max_candidates > 1) {
         error = "FlyDelta calibrated search has no usable directions"; return false;
     }
+    return true;
+}
+
+bool common_flydelta_calibrate_residual_sequences(
+        const std::vector<std::vector<common_flydelta_hidden_state_capture>> & sequences,
+        const std::vector<std::string> & sequence_ids, int32_t layer_index,
+        const std::string & reference, const std::string & token_selection,
+        common_flydelta_residual_calibration & calibration, std::string & error) {
+    calibration = {};
+    if (sequences.empty() || sequences.size() > 4096 || sequences.size() != sequence_ids.size() ||
+            std::set<std::string>(sequence_ids.begin(), sequence_ids.end()).size() != sequence_ids.size() ||
+            std::any_of(sequence_ids.begin(), sequence_ids.end(), [](const auto & id) { return id.empty() || id.size() > 512; })) {
+        error = "FlyDelta sequence calibration requires unique bounded sequence identities"; return false;
+    }
+    std::vector<float> medians;
+    size_t captures = 0;
+    for (const auto & sequence : sequences) {
+        if (sequence.size() > 4096 - captures) { error = "FlyDelta sequence calibration exceeds capture bound"; return false; }
+        captures += sequence.size();
+        common_flydelta_residual_calibration part;
+        if (!common_flydelta_calibrate_residual_dose(sequence, layer_index, reference, token_selection, part, error)) return false;
+        if (part.position != common_flydelta_capture_position::generation_boundary || token_selection != "generation_boundary") {
+            error = "FlyDelta sequence calibration v2 measures final prompt rows only"; return false;
+        }
+        if (medians.empty()) calibration = part;
+        else if (part.model_profile_fingerprint != calibration.model_profile_fingerprint ||
+                part.capture_layout_revision != calibration.capture_layout_revision || part.position != calibration.position ||
+                part.dimension != calibration.dimension) {
+            error = "FlyDelta independent sequence contexts differ"; return false;
+        }
+        medians.push_back(part.median_norm);
+    }
+    std::sort(medians.begin(), medians.end());
+    const size_t middle = medians.size() / 2;
+    calibration.schema_version = 2;
+    calibration.sample_count = medians.size();
+    calibration.sample_norms = medians;
+    calibration.median_norm = medians.size() % 2 ? medians[middle]
+        : static_cast<float>((double(medians[middle - 1]) + medians[middle]) / 2);
+    calibration.sequence_ids = sequence_ids;
+    calibration.aggregation = "median_of_sequence_medians:v1";
+    // This version measures the final prompt row of each sequence. It makes
+    // no claim to estimate the distribution of later generated-token states.
+    calibration.measurement_stage = "final_prompt_row";
     return true;
 }
 

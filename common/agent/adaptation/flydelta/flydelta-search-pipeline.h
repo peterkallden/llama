@@ -137,6 +137,12 @@ bool common_flydelta_selected_candidate_descriptor_validate(
 struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;
+    std::string provisional_anchor_ref;
+    size_t search_model_call_limit = 0;
+    size_t search_model_calls_used = 0;
+    size_t physical_rows_started = 0;
+    size_t physical_rows_completed = 0;
+    size_t physical_rows_unresolved = 0;
     common_flydelta_search_status search_status =
         common_flydelta_search_status::candidate_available;
     // Optional bounded rank-one refinement summary. The host runner may fill

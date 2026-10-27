@@ -19,6 +19,9 @@ struct common_flydelta_deep_search_config {
     size_t matched_max_arms = 9;
     uint64_t matched_seed = 0;
     common_flydelta_coefficient_search_config coefficients;
+    bool resume_anchor = false;
+    common_flydelta_low_rank_basis anchor_basis;
+    common_flydelta_semantic_progress_observation anchor_observation;
 };
 
 struct common_flydelta_deep_search_direction {

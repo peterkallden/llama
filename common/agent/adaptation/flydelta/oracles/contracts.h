@@ -122,6 +122,7 @@ struct common_flydelta_oracle_result {
         common_flydelta_oracle_violation_kind::none;
     std::vector<std::string> violation_dimensions;
     std::vector<common_flydelta_oracle_check> checks;
+    common_flydelta_progress_assessment progress;
 };
 
 // Returning false means this evaluator does not own the request. Returning

@@ -14,16 +14,21 @@ std::string text_column(common_sqlite_statement & statement, int index) {
 common_agent_sqlite_learning_lifecycle_store::~common_agent_sqlite_learning_lifecycle_store() { close(); }
 
 bool common_agent_sqlite_learning_lifecycle_store::open(const std::string & path, std::string & error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     close();
     if (path.empty()) { error = "SQLite lifecycle store requires a path"; return false; }
-    if (!database_.open(path, error) || !database_.execute("PRAGMA journal_mode = WAL;", error) || !ensure_schema(error)) {
+    if (!database_.open(path, error) || !database_.execute("PRAGMA journal_mode = WAL;", error) ||
+            !database_.execute("PRAGMA synchronous = FULL;", error) || !ensure_schema(error)) {
         close();
         return false;
     }
     return true;
 }
 
-void common_agent_sqlite_learning_lifecycle_store::close() { database_.close(); }
+void common_agent_sqlite_learning_lifecycle_store::close() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    database_.close();
+}
 
 bool common_agent_sqlite_learning_lifecycle_store::ensure_schema(std::string & error) {
     if (!database_.execute(
@@ -60,6 +65,7 @@ bool common_agent_sqlite_learning_lifecycle_store::ensure_schema(std::string & e
 
 bool common_agent_sqlite_learning_lifecycle_store::append(
         const common_learning_lifecycle_record & record, std::string & error) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!common_learning_lifecycle_validate(record, 4 * 1024 * 1024, error)) return false;
     bool contains = false;
     if (!contains_idempotency(record.idempotency_key, contains, error)) return false;
@@ -111,6 +117,7 @@ bool common_agent_sqlite_learning_lifecycle_store::append(
 
 bool common_agent_sqlite_learning_lifecycle_store::contains_idempotency(
         const std::string & key, bool & contains, std::string & error) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     common_sqlite_statement statement;
     if (!database_.prepare("SELECT 1 FROM agent_learning_lifecycle WHERE idempotency_key=? LIMIT 1;", statement, error) ||
             !statement.bind_text(1, key, error)) return false;
@@ -121,6 +128,7 @@ bool common_agent_sqlite_learning_lifecycle_store::contains_idempotency(
 }
 
 std::vector<common_learning_lifecycle_record> common_agent_sqlite_learning_lifecycle_store::list(std::string & error) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     error.clear();
     std::vector<common_learning_lifecycle_record> result;
     common_sqlite_statement statement;

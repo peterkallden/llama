@@ -25,9 +25,35 @@ struct common_flydelta_low_rank_basis {
     std::vector<std::vector<float>> vectors;
 };
 
+// Logical row reservations are separate from physical starts/completions.
+// The host uses the existing lifecycle journal before entering inference.
+struct common_flydelta_search_execution_budget {
+    size_t limit = 256;
+    size_t used = 0;
+    size_t physical_rows_started = 0;
+    size_t physical_rows_completed = 0;
+    size_t physical_rows_unresolved = 0;
+    size_t max_physical_attempts = 3;
+    std::function<bool(const std::vector<std::string> &, const std::string &,
+            std::string &, std::string &)> begin_execution;
+    std::function<bool(const std::string &, size_t, bool, std::string &)> finish_execution;
+};
+
+bool common_flydelta_reserve_search_evaluations(
+        common_flydelta_search_execution_budget & budget, size_t count, std::string & error);
+
 // Stable identity shared by arm preparation, guidance and lifecycle records.
 std::string common_flydelta_coefficient_basis_identity(
         const common_flydelta_low_rank_basis & basis);
+
+// Reconstruct the complete applied intervention from the immutable basis and
+// executed coefficients. No previous overlay is included in this result.
+bool common_flydelta_reconstruct_intervention(
+        const common_flydelta_low_rank_basis & basis,
+        const std::string & expected_basis_identity,
+        const std::vector<float> & applied_coefficients,
+        std::vector<float> & intervention,
+        std::string & error);
 
 bool common_flydelta_low_rank_basis_validate(
         const common_flydelta_low_rank_basis & basis,
@@ -119,7 +145,22 @@ struct common_flydelta_residual_calibration {
     size_t dimension = 0;
     std::vector<float> sample_norms;
     float median_norm = 0.0f;
+    std::string intervention_site;
+    std::string measurement_stage;
+    std::string runtime_configuration_fingerprint;
+    std::string runtime_layout_revision;
+    std::string dataset_revision;
+    std::string aggregation;
+    std::vector<std::string> sequence_ids;
 };
+
+// One contribution per independent sequence. Within-sequence positions are
+// reduced first, so long sequences never gain extra calibration weight.
+bool common_flydelta_calibrate_residual_sequences(
+    const std::vector<std::vector<common_flydelta_hidden_state_capture>> & sequences,
+    const std::vector<std::string> & sequence_ids, int32_t layer_index,
+    const std::string & reference, const std::string & token_selection,
+    common_flydelta_residual_calibration & calibration, std::string & error);
 
 bool common_flydelta_calibrate_residual_dose(
     const std::vector<common_flydelta_hidden_state_capture> & captures,
@@ -152,8 +193,17 @@ struct common_flydelta_coefficient_search_config {
     std::string injection_token_selection;
     common_flydelta_capture_position injection_capture_position = common_flydelta_capture_position::generation_boundary;
     int32_t injection_token_index = -1;
+    std::string injection_intervention_site;
+    std::string injection_runtime_configuration_fingerprint;
+    std::string injection_runtime_layout_revision;
     float residual_fraction = 0.02f;
     std::vector<float> residual_fraction_candidates = {0.01f, 0.02f, 0.04f};
+    // Optional host-resolved search center. These are the complete physical
+    // coefficients, not an additional overlay on top of a previous arm.
+    // The immutable basis identity prevents resuming in a different space.
+    std::vector<float> anchor_coefficients;
+    std::string anchor_basis_identity;
+    std::vector<std::vector<float>> evaluated_coefficients;
     size_t max_candidates = 16;
     // Backend batch wave limit for diagnostic/model-facing coefficient arms.
     // Zero lets the registered batch runner own the limit. This is an

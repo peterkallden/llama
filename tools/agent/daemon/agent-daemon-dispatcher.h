@@ -34,6 +34,8 @@ struct common_agent_daemon_flydelta_worker_config {
             const common_flydelta_experiment_job &,
             const common_flydelta_experiment_worker_report &,
             std::string &)> schedule_next_action;
+    // Reconcile durable continuation intents before starting worker threads.
+    std::function<bool(std::string &)> recover_continuations;
     // Host-owned family association for the next queued slice. This only
     // carries an opaque teaching-material group reference onto search jobs.
     std::function<bool(
@@ -153,6 +155,7 @@ private:
     std::condition_variable condition;
     std::deque<std::shared_ptr<queued_command>> queue;
     common_agent_daemon_flydelta_worker_config flydelta_config;
+    std::shared_ptr<common_flydelta_queue_owner> flydelta_queue_owner;
     common_agent_daemon_service service;
     std::vector<std::thread> workers;
     std::vector<std::thread> flydelta_workers;

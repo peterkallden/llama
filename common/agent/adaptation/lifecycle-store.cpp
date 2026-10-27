@@ -1,10 +1,12 @@
 #include "agent/adaptation/lifecycle-store.h"
+#include "agent/durable-file.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <cstdio>
 
 using json = nlohmann::ordered_json;
 
@@ -22,11 +24,7 @@ bool same_record(const common_learning_lifecycle_record & left,
 }
 
 bool write_text(const std::filesystem::path & path, const std::string & text, std::string & error) {
-    std::ofstream output(path, std::ios::binary | std::ios::app);
-    if (!output) { error = "could not open lifecycle store"; return false; }
-    output << text;
-    if (!output) { error = "could not append lifecycle record"; return false; }
-    return true;
+    return common_agent_write_durable_file(path, text, true, error);
 }
 
 } // namespace
@@ -275,16 +273,56 @@ std::vector<common_learning_lifecycle_record> common_learning_in_memory_lifecycl
 }
 
 bool common_learning_jsonl_lifecycle_store::open(
-        const std::filesystem::path & value, std::string & error) {
+        const std::filesystem::path & value, std::string & error, bool recover_incomplete_tail) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     error.clear();
     if (value.empty()) { error = "lifecycle store requires a path"; return false; }
     path = value;
     std::error_code ec;
-    if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path(), ec);
+    const bool created_parent = !path.parent_path().empty() && std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) { error = "could not create lifecycle store directory"; return false; }
-    std::ofstream output(path, std::ios::app);
-    if (!output) { error = "could not open lifecycle store"; return false; }
+    if (created_parent && !common_agent_sync_directory_ancestors(path.parent_path(), error)) return false;
+    {
+        std::ofstream output(path, std::ios::app);
+        if (!output) { error = "could not open lifecycle store"; return false; }
+    }
+    if (!recover_incomplete_tail) return true;
+    // Writers always synchronize a newline-terminated record. Only an
+    // unterminated, syntactically incomplete tail can be an interrupted
+    // append. Complete malformed records remain explicit corruption errors.
+    std::ifstream input(path, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    if (!input.good() && !input.eof()) { error = "could not read lifecycle journal tail"; return false; }
+    auto bytes = buffer.str();
+    input.close();
+    if (!bytes.empty() && bytes.back() != '\n') {
+        const auto newline = bytes.rfind('\n');
+        const size_t offset = newline == std::string::npos ? 0 : newline + 1;
+        const auto tail = bytes.substr(offset);
+        if (json::parse(tail, nullptr, false).is_discarded()) {
+            const auto discarded = bytes.size() - offset;
+            bytes.resize(offset);
+            std::string validation_error;
+            // Validate committed prefix before repairing any bytes.
+            std::istringstream prefix(bytes);
+            std::string line;
+            while (std::getline(prefix, line)) {
+                common_learning_lifecycle_record record;
+                if (!line.empty() && (!common_learning_lifecycle_from_json(line, record, validation_error) ||
+                        !common_learning_lifecycle_validate(record, 4U * 1024U * 1024U, validation_error))) {
+                    error = "lifecycle committed prefix is corrupt: " + validation_error; return false;
+                }
+            }
+            if (!common_agent_write_durable_file(path, bytes, false, error)) return false;
+            std::fprintf(stderr, "lifecycle journal recovered incomplete tail bytes=%zu\n", discarded);
+        } else {
+            common_learning_lifecycle_record record;
+            if (!common_learning_lifecycle_from_json(tail, record, error) ||
+                    !common_learning_lifecycle_validate(record, 4U * 1024U * 1024U, error)) return false;
+            if (!common_agent_write_durable_file(path, "\n", true, error)) return false;
+        }
+    }
     return true;
 }
 

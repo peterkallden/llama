@@ -58,6 +58,20 @@ void action_contracts() {
     require(matches(empty_args, "") && !matches(empty_args, "field: result"), "empty argument grammar was not empty");
 }
 
+void condition_continuation_contracts() {
+    const common_chat_tool tool{"data.query", "Query",
+        R"({"type":"object","properties":{"where":{"type":"array","x-agent-flat":{"directive":"where","positional":["field","operator","value"],"condition_expression":true},"items":{"type":"object","properties":{"field":{"type":"string"},"operator":{"type":"string","enum":["=",">=","in"]},"value":{}}}}}})", "{}"};
+    std::string error;
+    const auto grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
+    require(!grammar.empty() && error.empty(), "condition grammar was not produced");
+    const std::string text = "open! data.query\nwhere: region = North OR region = East\n  & amount >= 4";
+    require(matches(grammar, text), "condition continuation rejected by constrained decoding");
+    common_agent_tool_call call;
+    require(common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+        text, {tool}, call, error), error);
+    require(!matches(grammar, "open! data.query\n& amount >= 4"), "orphan condition continuation accepted");
+}
+
 void plan_contracts() {
     const common_chat_tool inspect{"code.inspect", "Inspect", R"({"type":"object","additionalProperties":false})", "{}"};
     const common_chat_tool lookup{"lookup", "Lookup",
@@ -298,6 +312,7 @@ void catalog_contracts() {
 
 int main() {
     action_contracts();
+    condition_continuation_contracts();
     plan_contracts();
     nested_contracts();
     typed_contracts();

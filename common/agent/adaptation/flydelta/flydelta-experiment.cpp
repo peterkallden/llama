@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 
 #include <cmath>
+#include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
@@ -32,6 +33,7 @@ json progress_observation_to_json(
         {"measure_state", common_flydelta_semantic_progress_field_state_name(observation.measure_state)},
         {"contract_state", common_flydelta_semantic_progress_field_state_name(observation.contract_state)},
         {"score", observation.score},
+        {"objective", json::parse(common_flydelta_progress_assessment_to_json(observation.objective))},
     };
 }
 
@@ -146,6 +148,13 @@ void trial_from_json(const json & value, common_flydelta_counterfactual_trial & 
     trial.semantic_progress_observation.contract_state = parse_progress_field_state(
         progress.value("contract_state", "unknown"));
     trial.semantic_progress_observation.score = progress.value("score", 0);
+    if (progress.contains("objective")) {
+        std::string progress_error;
+        if (!common_flydelta_progress_assessment_from_json(progress.at("objective").dump(),
+                trial.semantic_progress_observation.objective, progress_error)) {
+            throw std::runtime_error(progress_error);
+        }
+    }
     trial.evidence_ref = value.value("evidence_ref", "");
 }
 
@@ -227,6 +236,12 @@ bool common_flydelta_counterfactual_trial_validate(
         const common_flydelta_counterfactual_trial & trial,
         std::string & error) {
     error.clear();
+    if (!common_flydelta_progress_assessment_validate(trial.semantic_progress_observation.objective, error)) return false;
+    if (trial.semantic_progress_observation.objective.assessment_known &&
+            !trial.semantic_progress_observation.available) {
+        error = "FlyDelta objective assessment requires an available observation";
+        return false;
+    }
     if (trial.semantic_progress_observation.regression_coverage_complete &&
             !trial.semantic_progress_observation.available) {
         error = "FlyDelta regression coverage requires an available host observation";

@@ -714,6 +714,16 @@ bool parse_agent_host_config_json(
                 read_optional(flydelta, "worker_count", config.adaptation_flydelta_worker_count);
                 read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
                 read_optional(flydelta, "batch_mode", config.adaptation_flydelta_batch_mode);
+                read_optional(flydelta, "dose_mode", config.adaptation_flydelta_dose_mode);
+                read_optional(flydelta, "dose_calibration_ref", config.adaptation_flydelta_dose_calibration_ref);
+                if (flydelta.contains("search_model_call_budget")) {
+                    const auto & budget = flydelta.at("search_model_call_budget");
+                    if (!budget.is_number_integer() || budget <= 0 || budget > 65536) {
+                        error = "FlyDelta search_model_call_budget must be an integer between 1 and 65536";
+                        return false;
+                    }
+                    config.adaptation_flydelta_search_model_call_budget = budget.get<size_t>();
+                }
                 read_optional(flydelta, "batch_parallelism", config.adaptation_flydelta_batch_parallelism);
                 if (flydelta.contains("disable_factorized_cvec_batch") &&
                         flydelta.contains("factorized_cvec_batch")) {
@@ -1774,6 +1784,9 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"worker_count", config.adaptation_flydelta_worker_count},
                     {"queue_path", config.adaptation_flydelta_queue_path},
                     {"batch_mode", config.adaptation_flydelta_batch_mode},
+                    {"dose_mode", config.adaptation_flydelta_dose_mode},
+                    {"dose_calibration_ref", config.adaptation_flydelta_dose_calibration_ref},
+                    {"search_model_call_budget", config.adaptation_flydelta_search_model_call_budget},
                     {"batch_parallelism", config.adaptation_flydelta_batch_parallelism},
                     {"disable_factorized_cvec_batch", config.adaptation_flydelta_disable_factorized_cvec_batch},
                     {"capture_candidates", config.adaptation_flydelta_capture_candidates},
@@ -2091,6 +2104,20 @@ bool validate_agent_host_config(
     }
     if (config.adaptation_flydelta_enabled && config.adaptation_flydelta_queue_path.empty()) {
         error = "runtime.adaptation.flydelta.queue_path is required when FlyDelta is enabled";
+        return false;
+    }
+    if (config.adaptation_flydelta_dose_mode != "direction_dose" &&
+            config.adaptation_flydelta_dose_mode != "raw_coefficients") {
+        error = "FlyDelta dose_mode must be direction_dose or raw_coefficients";
+        return false;
+    }
+    if (config.adaptation_flydelta_dose_calibration_ref.size() > 512) {
+        error = "FlyDelta dose calibration reference is too long";
+        return false;
+    }
+    if (config.adaptation_flydelta_search_model_call_budget == 0 ||
+            config.adaptation_flydelta_search_model_call_budget > 65536) {
+        error = "FlyDelta search_model_call_budget must be between 1 and 65536";
         return false;
     }
     if (config.adaptation_flydelta_batch_mode != "disabled" &&
@@ -2755,6 +2782,9 @@ void apply_agent_host_config_to_daemon_options(
     options.adaptation_flydelta_worker_count = config.adaptation_flydelta_worker_count;
     options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
     options.adaptation_flydelta_batch_mode = config.adaptation_flydelta_batch_mode;
+    options.adaptation_flydelta_dose_mode = config.adaptation_flydelta_dose_mode;
+    options.adaptation_flydelta_dose_calibration_ref = config.adaptation_flydelta_dose_calibration_ref;
+    options.adaptation_flydelta_search_model_call_budget = config.adaptation_flydelta_search_model_call_budget;
     options.adaptation_flydelta_batch_parallelism = config.adaptation_flydelta_batch_parallelism;
     const std::string profile_id = config.model_profile.empty()
         ? config.model_catalog.default_profile : config.model_profile;

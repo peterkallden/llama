@@ -55,6 +55,13 @@ static common_flydelta_experiment_fixture fixture() {
 
 int main() {
     std::string error;
+    common_flydelta_search_execution_budget budget;
+    budget.limit = 10;
+    budget.used = 4;
+    CHECK(common_flydelta_reserve_search_evaluations(budget, 6, error));
+    CHECK(budget.used == 10);
+    CHECK(!common_flydelta_reserve_search_evaluations(budget, 1, error));
+    CHECK(budget.used == 10);
     // Partial host evidence must survive the coefficient adapter without
     // turning an incomplete result into a verified success.
     common_flydelta_counterfactual_trial baseline_progress, candidate_progress;
@@ -94,6 +101,16 @@ int main() {
     CHECK(basis.vectors.size() == 2);
     CHECK(std::fabs(basis.vectors[0][0] * basis.vectors[1][0] +
         basis.vectors[0][1] * basis.vectors[1][1]) < 0.0001f);
+    const auto basis_id = common_flydelta_coefficient_basis_identity(basis);
+    std::vector<float> reconstructed;
+    CHECK(common_flydelta_reconstruct_intervention(
+        basis, basis_id, {0.12f, 0.03f}, reconstructed, error));
+    CHECK(reconstructed.size() == 2);
+    CHECK(std::fabs(reconstructed[0] - 0.12f) < 0.00001f);
+    CHECK(std::fabs(reconstructed[1] - 0.03f) < 0.00001f);
+    CHECK(!common_flydelta_reconstruct_intervention(
+        basis, "different-basis", {0.12f, 0.03f}, reconstructed, error));
+    CHECK(reconstructed.empty());
 
     // Experimental captures can span a basis without earning learning credit;
     // repeated/collinear captures must not inflate the measured rank.
@@ -180,6 +197,42 @@ int main() {
     config.iterations = 2;
     config.seed = 17;
     CHECK(common_flydelta_coefficient_search_config_validate(config, 2, error));
+
+    // Anchored proposals are complete interventions and keep an independent
+    // search arm. The unsteered baseline remains a separate invocation.
+    common_flydelta_coefficient_search_config anchored;
+    anchored.max_candidates = 5;
+    anchored.use_dose_controller = false;
+    anchored.anchor_coefficients = {0.12f, 0.03f};
+    anchored.anchor_basis_identity = common_flydelta_coefficient_basis_identity(basis);
+    std::vector<std::vector<float>> executed_arms;
+    bool saw_unsteered = false;
+    const common_flydelta_coefficient_search_runner anchor_runner =
+        [&](const auto &, const auto &, const auto & values, bool overlay,
+                auto & trial, auto & result, auto &, auto &, std::string &) {
+            trial.executed = true; trial.host_evaluated = true;
+            trial.verifier_known = true; trial.overlay_applied = overlay;
+            trial.evidence_ref = "evidence:anchor";
+            if (overlay) executed_arms.push_back(values); else saw_unsteered = true;
+            result = {}; return true;
+        };
+    std::vector<common_flydelta_coefficient_trial> anchored_trials;
+    common_flydelta_coefficient_selection anchored_selection;
+    CHECK(common_flydelta_run_low_rank_coefficient_search(
+        fixture(), basis, anchored, anchor_runner, anchored_trials, anchored_selection, error));
+    CHECK(saw_unsteered && executed_arms.size() >= 3);
+    CHECK(executed_arms.front() == anchored.anchor_coefficients);
+    CHECK(std::find(executed_arms.begin(), executed_arms.end(), std::vector<float>{0.0f, 0.05f}) !=
+        executed_arms.end());
+    anchored.evaluated_coefficients = {{0.0f, 0.05f}, {0.0f, -0.05f}};
+    executed_arms.clear();
+    CHECK(common_flydelta_run_low_rank_coefficient_search(
+        fixture(), basis, anchored, anchor_runner, anchored_trials, anchored_selection, error));
+    CHECK(executed_arms.front() == anchored.anchor_coefficients);
+    CHECK(std::find(executed_arms.begin(), executed_arms.end(), std::vector<float>{0.0f, 0.05f}) == executed_arms.end());
+    anchored.anchor_basis_identity = "different-basis";
+    CHECK(!common_flydelta_run_low_rank_coefficient_search(
+        fixture(), basis, anchored, anchor_runner, anchored_trials, anchored_selection, error));
 
     std::vector<common_flydelta_coefficient_trial> trials;
     common_flydelta_coefficient_selection selection;
@@ -327,6 +380,7 @@ int main() {
     calibrated_config.max_candidates = 12;
     calibrated_config.max_dose_retries = 0;
     auto & calibration = calibrated_config.residual_calibration;
+    calibration.schema_version = 2;
     calibration.reference = "calibration:coefficient-contract";
     calibration.model_profile_fingerprint = fixture().model_profile_fingerprint;
     calibration.tokenizer_fingerprint = fixture().tokenizer_fingerprint;
@@ -338,6 +392,16 @@ int main() {
     calibration.dimension = basis.dimension;
     calibration.sample_norms = {5.0f};
     calibration.median_norm = 5.0f;
+    calibration.intervention_site = "layer-input:additive-cvec:v1";
+    calibration.measurement_stage = "final_prompt_row";
+    calibration.runtime_configuration_fingerprint = "runtime:test";
+    calibration.runtime_layout_revision = "layout:test";
+    calibration.dataset_revision = "dataset:test:v1";
+    calibration.aggregation = "median_of_sequence_medians:v1";
+    calibration.sequence_ids = {"sequence:test"};
+    calibrated_config.injection_intervention_site = calibration.intervention_site;
+    calibrated_config.injection_runtime_configuration_fingerprint = calibration.runtime_configuration_fingerprint;
+    calibrated_config.injection_runtime_layout_revision = calibration.runtime_layout_revision;
     calibrated_config.injection_capture_layout_revision = calibration.capture_layout_revision;
     calibrated_config.injection_token_selection = calibration.token_selection;
     CHECK(common_flydelta_run_low_rank_coefficient_search_batched(

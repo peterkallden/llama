@@ -46,6 +46,12 @@ const char * common_flydelta_experiment_phase_name(
 // runs this bounded plan. This carries no learning or promotion authority.
 struct common_flydelta_experiment_plan {
     common_flydelta_search_continuation continuation;
+    // Opaque scope-bound experimental state, never promotion authority.
+    std::string search_anchor_ref;
+    size_t search_anchor_round = 0;
+    bool search_anchor_pending = false;
+    size_t search_model_call_limit = 256;
+    size_t search_model_calls_used = 0;
     // Evidence depth is the maximum permitted search depth. The current
     // phase always advances sequentially under UtilityGate control.
     common_flydelta_search_depth depth = common_flydelta_search_depth::bootstrap;

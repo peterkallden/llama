@@ -1,6 +1,7 @@
 #include "dataset-contracts.h"
 
 #include <limits>
+#include <iomanip>
 #include <cctype>
 #include <sstream>
 #include <algorithm>
@@ -150,6 +151,221 @@ bool normalize_condition_value(
 bool normalize_condition_list(
         const nlohmann::ordered_json & input,
         nlohmann::ordered_json & output,
+        std::string & error);
+
+bool parse_membership_list(
+        const std::string & text,
+        nlohmann::ordered_json & values,
+        std::string & error) {
+    using json = nlohmann::ordered_json;
+    const auto trimmed = trim_copy(text);
+    if (trimmed.size() < 2 || trimmed.front() != '[' || trimmed.back() != ']') {
+        error = "dataset condition in value must be a bounded non-empty array";
+        return false;
+    }
+
+    const auto parsed = json::parse(trimmed, nullptr, false);
+    if (!parsed.is_discarded()) {
+        if (!parsed.is_array() || parsed.empty() || parsed.size() > 64) {
+            error = "dataset condition in value must be a bounded non-empty array";
+            return false;
+        }
+        for (const auto & item : parsed) {
+            if (item.is_array() || item.is_object()) {
+                error = "dataset condition in values must be scalars";
+                return false;
+            }
+        }
+        values = parsed;
+        return true;
+    }
+
+    // The condition DSL also permits bare identifiers in a membership list:
+    // `region in [north, east]`. Quoted strings and JSON scalar values retain
+    // their normal types; nested structures are deliberately not supported.
+    values = json::array();
+    const std::string body = trimmed.substr(1, trimmed.size() - 2);
+    size_t start = 0;
+    bool quoted = false, escaped = false;
+    for (size_t i = 0; i <= body.size(); ++i) {
+        const char ch = i < body.size() ? body[i] : ',';
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') quoted = false;
+            continue;
+        }
+        if (i < body.size() && ch == '"') { quoted = true; continue; }
+        if (i < body.size() && (ch == '[' || ch == ']' || ch == '{' || ch == '}')) {
+            error = "dataset condition in values must be scalars";
+            return false;
+        }
+        if (ch != ',') continue;
+        const auto token = trim_copy(body.substr(start, i - start));
+        if (token.empty()) {
+            error = "dataset condition in value must be a bounded non-empty array";
+            return false;
+        }
+        auto item = json::parse(token, nullptr, false);
+        if (item.is_discarded()) {
+            if (token.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:-") != std::string::npos) {
+                error = "dataset condition in list contains an invalid scalar";
+                return false;
+            }
+            item = token;
+        }
+        if (item.is_array() || item.is_object()) {
+            error = "dataset condition in values must be scalars";
+            return false;
+        }
+        values.push_back(std::move(item));
+        if (values.size() > 64) {
+            error = "dataset condition in value must be a bounded non-empty array";
+            return false;
+        }
+        start = i + 1;
+    }
+    if (quoted) {
+        error = "dataset condition in list contains an unterminated string";
+        return false;
+    }
+    return !values.empty();
+}
+
+// Preserve the store's conjunction-only contract. A same-field equality
+// disjunction is represented exactly by its existing membership predicate.
+bool parse_condition_expression(
+        const std::string & source,
+        nlohmann::ordered_json & output,
+        std::string & error,
+        size_t depth) {
+    using json = nlohmann::ordered_json;
+    const auto first = source.find_first_not_of(" \t\r\n");
+    const auto last = source.find_last_not_of(" \t\r\n");
+    if (first == std::string::npos || source.size() > 2048 || depth >= 12) {
+        error = "dataset condition expression is empty or exceeds its size/depth limit";
+        return false;
+    }
+    const std::string text = source.substr(first, last - first + 1);
+    std::vector<std::pair<size_t, size_t>> conjunctions, disjunctions;
+    bool quoted = false, escaped = false, outer_group = text.front() == '(';
+    size_t parentheses = 0, brackets = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (ch == '\\') escaped = true;
+            else if (ch == '"') quoted = false;
+            continue;
+        }
+        if (ch == '"') { quoted = true; continue; }
+        if (ch == '[') { ++brackets; continue; }
+        if (ch == ']') {
+            if (!brackets) { error = "dataset condition has unmatched brackets"; return false; }
+            --brackets;
+            continue;
+        }
+        if (brackets) continue;
+        if (ch == '(') { ++parentheses; continue; }
+        if (ch == ')') {
+            if (!parentheses) { error = "dataset condition has unmatched parentheses"; return false; }
+            if (--parentheses == 0 && i + 1 != text.size()) outer_group = false;
+            continue;
+        }
+        if (parentheses) continue;
+        if (ch == '&') { conjunctions.emplace_back(i, 1); continue; }
+        const auto keyword = [&](const std::string & word) {
+            if (i && !std::isspace(static_cast<unsigned char>(text[i - 1]))) return false;
+            if (i + word.size() > text.size()) return false;
+            if (i + word.size() < text.size() &&
+                    !std::isspace(static_cast<unsigned char>(text[i + word.size()]))) return false;
+            for (size_t j = 0; j < word.size(); ++j) {
+                if (std::tolower(static_cast<unsigned char>(text[i + j])) != word[j]) return false;
+            }
+            return true;
+        };
+        if (keyword("or")) disjunctions.emplace_back(i, 2);
+        else if (keyword("and")) conjunctions.emplace_back(i, 3);
+    }
+    if (quoted || parentheses || brackets) {
+        error = "dataset condition contains an unterminated string or group";
+        return false;
+    }
+    if (outer_group) return parse_condition_expression(text.substr(1, text.size() - 2), output, error, depth + 1);
+    // Conventional precedence: AND binds more tightly than OR. Expressions
+    // that cannot be represented by the store are rejected, never regrouped.
+    const bool disjunction = !disjunctions.empty();
+    const auto & separators = disjunction ? disjunctions : conjunctions;
+    if (!separators.empty()) {
+        output = json::array();
+        size_t begin = 0;
+        for (size_t i = 0; i <= separators.size(); ++i) {
+            const size_t end = i < separators.size() ? separators[i].first : text.size();
+            json children;
+            if (!parse_condition_expression(text.substr(begin, end - begin), children, error, depth + 1)) return false;
+            if (disjunction) {
+                if (children.size() != 1 ||
+                        (children[0]["operator"] != "=" && children[0]["operator"] != "in")) {
+                    error = "dataset OR supports only equality alternatives for the same field";
+                    return false;
+                }
+                const auto & child = children[0];
+                if (output.empty()) output.push_back({{"field", child["field"]}, {"operator", "in"}, {"value", json::array()}});
+                if (output[0]["field"] != child["field"]) {
+                    error = "dataset OR alternatives must refer to the same field";
+                    return false;
+                }
+                const json values = child["operator"] == "in" ? child["value"] : json::array({child["value"]});
+                for (const auto & value : values) {
+                    auto & members = output[0]["value"];
+                    if (std::find(members.begin(), members.end(), value) == members.end()) members.push_back(value);
+                    if (members.size() > 64) { error = "dataset OR has too many alternatives"; return false; }
+                }
+            } else {
+                for (auto & child : children) output.push_back(std::move(child));
+                if (output.size() > 16) { error = "dataset condition list is too large"; return false; }
+            }
+            if (i < separators.size()) begin = end + separators[i].second;
+        }
+        return true;
+    }
+    std::istringstream stream(text);
+    std::string field, op, operand;
+    if (!(stream >> field >> std::quoted(op)) || field.empty() || field.size() > 128) {
+        error = "dataset condition expression requires field and operator";
+        return false;
+    }
+    const auto canonical = op == "eq" || op == "-eq" ? "=" :
+        op == "neq" || op == "-neq" ? "!=" : op == "gt" || op == "-gt" ? ">" :
+        op == "gte" || op == "-gte" ? ">=" : op == "lt" || op == "-lt" ? "<" :
+        op == "lte" || op == "-lte" ? "<=" : op;
+    json condition = {{"field", field}, {"operator", canonical}};
+    std::getline(stream, operand);
+    const auto value_start = operand.find_first_not_of(" \t\r\n");
+    if (canonical == "is_null" || canonical == "not_null") {
+        if (value_start != std::string::npos) { error = "dataset null check does not accept a value"; return false; }
+    } else {
+        if (value_start == std::string::npos) { error = "dataset condition expression requires a value"; return false; }
+        operand = operand.substr(value_start, operand.find_last_not_of(" \t\r\n") - value_start + 1);
+        auto value = json::parse(operand, nullptr, false);
+        if (canonical == "in" && operand.front() == '[') {
+            if (!parse_membership_list(operand, value, error)) return false;
+        } else if (value.is_discarded()) {
+            if (operand.front() == '"' || operand.front() == '[' || operand.front() == '{') {
+                error = "dataset condition contains an invalid quoted or structured value";
+                return false;
+            }
+            value = operand;
+        }
+        condition["value"] = std::move(value);
+    }
+    return normalize_condition_list(json::array({condition}), output, error);
+}
+
+bool normalize_condition_list(
+        const nlohmann::ordered_json & input,
+        nlohmann::ordered_json & output,
         std::string & error) {
     output = nlohmann::ordered_json::array();
     if (input.is_array()) {
@@ -187,54 +403,7 @@ bool normalize_condition_list(
         return true;
     }
     if (input.is_string()) {
-        const auto expression = input.get<std::string>();
-        if (expression.empty() || expression.size() > 2048) { error = "dataset condition expression is out of bounds"; return false; }
-        std::string part;
-        bool quoted = false;
-        size_t bracket_depth = 0;
-        std::vector<std::string> parts;
-        for (size_t i = 0, start = 0; i <= expression.size(); ++i) {
-            const char ch = i < expression.size() ? expression[i] : '\0';
-            if (ch == '"' && (i == 0 || expression[i - 1] != '\\')) quoted = !quoted;
-            if (!quoted && ch == '[') ++bracket_depth;
-            if (!quoted && ch == ']' && bracket_depth > 0) --bracket_depth;
-            const bool separator = !quoted && bracket_depth == 0 && i + 5 <= expression.size() &&
-                expression.compare(i, 5, " and ") == 0;
-            if ((separator || ch == '\0') && !quoted && bracket_depth == 0) {
-                part = expression.substr(start, i - start);
-                if (part.empty()) { error = "dataset condition expression contains an empty predicate"; return false; }
-                parts.push_back(part);
-                if (separator) { i += 4; start = i + 1; }
-            }
-        }
-        if (parts.empty() || parts.size() > 16) { error = "dataset condition expression has too many predicates"; return false; }
-        for (const auto & predicate : parts) {
-            std::istringstream stream(predicate);
-            std::string field, operator_name;
-            if (!(stream >> field >> operator_name) || field.size() > 128) { error = "dataset condition expression requires field and operator"; return false; }
-            std::string operand;
-            std::getline(stream, operand);
-            const auto first = operand.find_first_not_of(" \t");
-            if (first == std::string::npos) { error = "dataset condition expression requires a value"; return false; }
-            operand.erase(0, first);
-            const auto canonical = operator_name == "eq" || operator_name == "-eq" ? "=" :
-                operator_name == "neq" || operator_name == "-neq" ? "!=" :
-                operator_name == "gt" || operator_name == "-gt" ? ">" :
-                operator_name == "gte" || operator_name == "-gte" ? ">=" :
-                operator_name == "lt" || operator_name == "-lt" ? "<" :
-                operator_name == "lte" || operator_name == "-lte" ? "<=" : operator_name;
-            if (canonical != "=" && canonical != "!=" && canonical != ">" && canonical != ">=" &&
-                    canonical != "<" && canonical != "<=" && canonical != "in" && canonical != "contains") {
-                error = "unsupported dataset condition expression operator: " + operator_name;
-                return false;
-            }
-            auto value = nlohmann::ordered_json::parse(operand, nullptr, false);
-            if (value.is_discarded()) value = operand;
-            nlohmann::ordered_json normalized = {{"field", field}, {"operator", canonical}, {"value", value}};
-            if (canonical == "in" && (!value.is_array() || value.empty() || value.size() > 64)) { error = "dataset condition expression in value must be a bounded array"; return false; }
-            output.push_back(std::move(normalized));
-        }
-        return true;
+        return parse_condition_expression(input.get<std::string>(), output, error, 0);
     }
     if (!input.is_object() || input.empty() || input.size() > 16) {
         error = "dataset conditions must be an array or a bounded object";
@@ -249,6 +418,17 @@ bool normalize_condition_list(
 }
 
 } // namespace
+
+bool common_agent_dataset_parse_condition_expression(
+        const std::string & expression,
+        nlohmann::ordered_json & conditions,
+        std::string & error) {
+    nlohmann::ordered_json parsed;
+    if (!parse_condition_expression(expression, parsed, error, 0)) return false;
+    conditions = std::move(parsed);
+    error.clear();
+    return true;
+}
 
 const char * common_agent_dataset_column_type_name(
         common_agent_dataset_column_type type) {

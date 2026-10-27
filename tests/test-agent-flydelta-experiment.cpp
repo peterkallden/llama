@@ -1,4 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-progress.h"
+
+#include <algorithm>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -134,6 +137,63 @@ int main() {
     CHECK(common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
     certified_progress.regressed_dimensions.push_back("grouping");
     CHECK(!common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
+
+    // A larger aggregate score does not excuse losing an incumbent dimension.
+    using state = common_flydelta_semantic_progress_field_state;
+    common_flydelta_semantic_progress_observation incumbent;
+    incumbent.available = true;
+    incumbent.regression_coverage_complete = true;
+    incumbent.operation_state = state::matched;
+    incumbent.dataset_state = state::matched;
+    incumbent.grouping_state = state::matched;
+    incumbent.measure_state = state::missing;
+    incumbent.contract_state = state::partial;
+    incumbent.score = 5;
+    auto challenger = incumbent;
+    challenger.grouping_state = state::missing;
+    challenger.measure_state = state::matched;
+    challenger.score = 6;
+    const auto loses_goal = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(loses_goal.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(loses_goal));
+    challenger.grouping_state = state::matched;
+    const auto keeps_goal = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(keeps_goal));
+    challenger.dataset_state = state::unknown;
+    const auto unknown_control = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(unknown_control));
+    CHECK(std::find(unknown_control.residual_dimensions.begin(), unknown_control.residual_dimensions.end(),
+        "dataset") != unknown_control.residual_dimensions.end());
+
+    common_flydelta_progress_assessment anchor;
+    anchor.objective_id = "task:1"; anchor.objective_revision = "rev:1";
+    anchor.verifier_ref = "verifier:1"; anchor.assessment_known = true;
+    anchor.regression_known = true;
+    anchor.satisfied_goals = {"a"}; anchor.remaining_goals = {"b", "c"};
+    auto next = anchor;
+    next.satisfied_goals = {"a", "b"}; next.remaining_goals = {"c"};
+    CHECK(common_flydelta_progress_strictly_dominates(anchor, next));
+    common_flydelta_progress_assessment restored;
+    CHECK(common_flydelta_progress_assessment_from_json(
+        common_flydelta_progress_assessment_to_json(next), restored, error));
+    CHECK(common_flydelta_progress_strictly_dominates(anchor, restored));
+    common_flydelta_semantic_progress_observation objective_before, objective_after;
+    objective_before.available = objective_after.available = true;
+    objective_before.objective = anchor;
+    objective_after.objective = restored;
+    const auto objective_progress = common_flydelta_compare_semantic_progress(objective_before, objective_after, false, false);
+    CHECK(objective_progress.regression_known);
+    CHECK(objective_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(objective_progress));
+    next.satisfied_goals = {"b", "c"}; next.remaining_goals = {"a"};
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next = anchor; next.satisfied_goals.push_back("b"); next.remaining_goals = {"c"};
+    next.objective_revision = "rev:2";
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next.objective_revision = anchor.objective_revision; next.regression_known = false;
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next.regression_known = true; next.remaining_goals = {"b", "c"};
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
 
     const auto failed_baseline = trial(false, false, "evidence:baseline-failed");
     const auto partial_candidate = trial(false, true, "evidence:partial-candidate");

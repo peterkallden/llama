@@ -318,5 +318,11 @@ int main() {
         auto_policy, research_input, admission_decision, error));
     CHECK(!admission_decision.admitted &&
         admission_decision.reason == "configured_profile_binding_missing");
+    auto partial_input = auto_request.admission;
+    partial_input.host_counterfactual_helped = false;
+    partial_input.progress.regression_known = true;
+    CHECK(common_flydelta_decide_auto_canary_admission(
+        auto_policy, partial_input, admission_decision, error));
+    CHECK(!admission_decision.admitted);
     return 0;
 }

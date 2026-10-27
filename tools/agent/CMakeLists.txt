@@ -72,6 +72,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/augmentation-material.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/teaching-material.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/capture-material.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/dose-calibration.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-dispatcher.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-service.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-host-adapter.cpp
@@ -216,6 +217,7 @@ set(AGENT_DAEMON_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/augmentation-material.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/teaching-material.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/capture-material.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/adaptation/flydelta/dose-calibration.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-dispatcher.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-service.cpp
 )

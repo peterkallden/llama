@@ -193,6 +193,9 @@ add_library(${TARGET}
     adaptation/flydelta/flydelta-training.cpp adaptation/flydelta/flydelta-training.h
     adaptation/flydelta/flydelta-job.cpp adaptation/flydelta/flydelta-job.h
     adaptation/flydelta/flydelta-queue.cpp adaptation/flydelta/flydelta-queue.h
+    durable-file.cpp durable-file.h
+    adaptation/flydelta/flydelta-worker-commit.cpp adaptation/flydelta/flydelta-worker-commit.h
+    adaptation/flydelta/flydelta-search-budget.cpp adaptation/flydelta/flydelta-search-budget.h
     adaptation/flydelta/flydelta-collection.cpp adaptation/flydelta/flydelta-collection.h
     adaptation/flydelta/flydelta-worker.cpp adaptation/flydelta/flydelta-worker.h
     adaptation/flydelta/flydelta-worker-budget.cpp adaptation/flydelta/flydelta-worker-budget.h
@@ -232,6 +235,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-representation-augmentation-state-store.cpp adaptation/flydelta/flydelta-representation-augmentation-state-store.h
     adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
     adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
+    adaptation/flydelta/flydelta-progress.cpp adaptation/flydelta/flydelta-progress.h
     adaptation/flydelta/oracles/contracts.cpp adaptation/flydelta/oracles/contracts.h
     adaptation/semi-oracle.cpp adaptation/semi-oracle.h adaptation/semi-oracle-target.cpp
     adaptation/semi-oracle-target.h adaptation/semi-oracle-search.cpp
@@ -372,7 +376,7 @@ target_include_directories(llama-agent-flydelta PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 target_compile_features(llama-agent-flydelta PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-flydelta
     PUBLIC llama-agent-core
-    PRIVATE vendor::hash llama-agent-tooling
+    PRIVATE vendor::hash llama-agent-tooling Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama-agent-flydelta PROPERTIES

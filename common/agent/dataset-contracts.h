@@ -212,6 +212,14 @@ common_agent_dataset_inventory_resolution common_agent_resolve_dataset_inventory
         std::string & resolved,
         std::string & error);
 
+// Parse bounded filter expressions into the existing conjunction-only store
+// format. Same-field equality OR groups become membership predicates; general
+// disjunctions are rejected. AND has higher precedence than OR.
+bool common_agent_dataset_parse_condition_expression(
+        const std::string & expression,
+        nlohmann::ordered_json & conditions,
+        std::string & error);
+
 // Converts the small model-friendly predicate form used by dataset tools into
 // the canonical field/operator/value condition list consumed by data stores.
 // Only dataset query/filter arguments are changed; unrelated tool arguments

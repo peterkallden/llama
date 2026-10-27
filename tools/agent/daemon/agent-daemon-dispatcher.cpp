@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <utility>
+#include <stdexcept>
 
 namespace {
 
@@ -150,6 +151,18 @@ common_agent_daemon_dispatcher::common_agent_daemon_dispatcher(
         flydelta_worker_count = budget.flydelta_workers;
     }
     this->worker_count = worker_count;
+    // Acquire and reconcile before starting either worker pool. The owner
+    // remains alive until the destructor has joined every writer thread.
+    if (flydelta_config.enabled && !flydelta_config.queue_root.empty()) {
+        std::string ownership_error;
+        flydelta_queue_owner = common_flydelta_acquire_queue_owner(flydelta_config.queue_root, ownership_error);
+        if (!flydelta_queue_owner ||
+                (flydelta_config.recover_continuations && !flydelta_config.recover_continuations(ownership_error)) ||
+                !common_flydelta_experiment_queue_recover(
+                    flydelta_config.queue_root, flydelta_config.queue_limits, ownership_error)) {
+            throw std::runtime_error("FlyDelta queue startup rejected: " + ownership_error);
+        }
+    }
     workers.reserve(this->worker_count);
     for (size_t i = 0; i < this->worker_count; ++i) {
         workers.emplace_back([this]() {
@@ -705,27 +718,17 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
         std::string error;
         common_flydelta_experiment_worker_run_once(
             flydelta_config.queue_root, flydelta_config.queue_limits,
-            flydelta_config.callback, report, error);
+            flydelta_config.callback, report, error, flydelta_config.persist_completed_report,
+            [this](common_flydelta_claimed_experiment_job & claimed, std::string & claim_error) {
+                std::lock_guard<std::mutex> lock(mutex);
+                claimed = {};
+                if (stop_requested) return true;
+                return common_flydelta_experiment_queue_claim_next(flydelta_config.queue_root,
+                    flydelta_config.queue_limits, claimed, claim_error);
+            });
+        if (!error.empty()) std::fprintf(stderr, "FlyDelta worker failed or awaits result recovery: %s\n", error.c_str());
 
-        bool report_persisted = true;
-        if (error.empty() && report.state == common_flydelta_experiment_queue_state::succeeded &&
-                flydelta_config.persist_completed_report) {
-            std::string persist_error;
-            if (!(report_persisted = flydelta_config.persist_completed_report(
-                    report.completed_job, report, persist_error))) {
-                // The bounded slice itself remains completed. The persistence
-                // hook is kept separate so a store outage cannot rewrite the
-                // evaluator outcome, while the missing durable result is
-                // still visible in the daemon log. Do not advance the
-                // orchestration cursor until that evidence boundary is
-                // durable; the completed queue item remains retryable by the
-                // host's persistence/reconciliation path.
-                std::fprintf(stderr, "FlyDelta result persistence failed: %s\n",
-                    persist_error.c_str());
-            }
-        }
-
-        if (error.empty() && report_persisted &&
+        if (error.empty() &&
                 report.state == common_flydelta_experiment_queue_state::succeeded &&
                 report.has_next_action &&
                 report.next_action != common_flydelta_next_action::stop &&
@@ -733,7 +736,9 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
                 flydelta_config.schedule_next_action) {
             std::string schedule_error;
             common_flydelta_experiment_job scheduled_parent = report.completed_job;
-            if (flydelta_config.bind_teaching_material_group &&
+            const bool frozen_anchor_binding = report.has_experiment_plan &&
+                report.experiment_plan.search_anchor_pending;
+            if (!frozen_anchor_binding && flydelta_config.bind_teaching_material_group &&
                     !flydelta_config.bind_teaching_material_group(
                         scheduled_parent, schedule_error)) {
                 std::fprintf(stderr, "FlyDelta teaching-material binding failed: %s\n",

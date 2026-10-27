@@ -25,6 +25,8 @@ int main() {
         return 1;
     }
     const auto serialized = agent_host_config_to_json(config);
+    if (config.adaptation_flydelta_dose_mode != "direction_dose" ||
+            serialized["runtime"]["adaptation"]["flydelta"]["dose_mode"] != "direction_dose") return __LINE__;
     if (!serialized["runtime"]["adaptation"]["flydelta"].contains("disable_factorized_cvec_batch") ||
             serialized["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] != false ||
             serialized["runtime"]["adaptation"]["flydelta"].contains("factorized_cvec_batch") ||
@@ -169,6 +171,9 @@ int main() {
     }
 
     auto disabled = compatible;
+    disabled["runtime"]["adaptation"]["flydelta"]["dose_mode"] = "raw_coefficients";
+    disabled["runtime"]["adaptation"]["flydelta"]["dose_calibration_ref"] = "resource://calibration";
+    disabled["runtime"]["adaptation"]["flydelta"]["search_model_call_budget"] = 512;
     disabled["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] = true;
     if (!parse_agent_host_config_json(disabled, config, error) ||
             !config.adaptation_flydelta_disable_factorized_cvec_batch) {
@@ -177,6 +182,9 @@ int main() {
     }
     daemon_options disabled_options;
     apply_agent_host_config_to_daemon_options(config, disabled_options);
+    if (disabled_options.adaptation_flydelta_dose_mode != "raw_coefficients" ||
+            disabled_options.adaptation_flydelta_dose_calibration_ref != "resource://calibration" ||
+            disabled_options.adaptation_flydelta_search_model_call_budget != 512) return __LINE__;
     if (disabled_options.adaptation_flydelta_factorized_cvec_batch) {
         std::cerr << "explicit factorized cvec disable was ignored\n";
         return 1;
@@ -218,6 +226,14 @@ int main() {
     }
 
     auto unsupported_teacher_backend = compatible;
+    auto invalid_dose = compatible;
+    invalid_dose["runtime"]["adaptation"]["flydelta"]["dose_mode"] = "unknown";
+    if (parse_agent_host_config_json(invalid_dose, config, error)) return __LINE__;
+    for (const auto & invalid_budget : {json(-1), json(0), json(65537), json(1.5), json("256")}) {
+        auto invalid = compatible;
+        invalid["runtime"]["adaptation"]["flydelta"]["search_model_call_budget"] = invalid_budget;
+        if (parse_agent_host_config_json(invalid, config, error)) return __LINE__;
+    }
     unsupported_teacher_backend["runtime"]["adaptation"]["flydelta"]["teacher_scoring_backend"] = "cuda-maybe";
     if (parse_agent_host_config_json(unsupported_teacher_backend, config, error)) {
         std::cerr << "unknown teacher scoring backend was accepted\n";

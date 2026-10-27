@@ -140,8 +140,15 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     if (!result.search_pipeline_results.empty()) {
         trace.search_status = common_flydelta_search_status_name(
             result.search_pipeline_results.back().search_status);
+        trace.search_model_call_limit = result.search_pipeline_results.back().search_model_call_limit;
+        trace.search_model_calls_used = result.search_pipeline_results.back().search_model_calls_used;
+        trace.physical_rows_started = result.search_pipeline_results.back().physical_rows_started;
+        trace.physical_rows_completed = result.search_pipeline_results.back().physical_rows_completed;
+        trace.physical_rows_unresolved = result.search_pipeline_results.back().physical_rows_unresolved;
     }
     if (result.has_experiment_plan) {
+        trace.search_anchor_ref = result.experiment_plan.search_anchor_ref;
+        trace.search_anchor_round = result.experiment_plan.search_anchor_round;
         trace.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind_name(
             result.experiment_plan.bootstrap_refinement);
     }
@@ -274,9 +281,12 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"verifier_violation_code", arm.verifier_violation_code},
         {"verifier_violation_kind", arm.verifier_violation_kind},
         {"verifier_violation_dimensions", arm.verifier_violation_dimensions},
+        {"objective_assessment", json::parse(common_flydelta_progress_assessment_to_json(
+            arm.semantic_progress_observation.objective))},
         {"semantic_progress", {
             {"outcome", common_flydelta_semantic_progress_outcome_name(arm.semantic_progress.outcome)},
             {"comparable", arm.semantic_progress.comparable},
+            {"regression_known", arm.semantic_progress.regression_known},
             {"baseline_score", arm.semantic_progress.baseline_score},
             {"candidate_score", arm.semantic_progress.candidate_score},
             {"improved_dimensions", arm.semantic_progress.improved_dimensions},
@@ -465,11 +475,17 @@ bool common_flydelta_experiment_worker_run_once(
         const common_flydelta_experiment_queue_limits & limits,
         const common_flydelta_experiment_worker_callback & callback,
         common_flydelta_experiment_worker_report & report,
-        std::string & error) {
+        std::string & error,
+        const common_flydelta_worker_commit_callback & commit,
+        const common_flydelta_worker_claim_callback & claim) {
     error.clear();
     report = {};
+    const auto queue_owner = common_flydelta_acquire_queue_owner(queue_root, error);
+    if (!queue_owner) return false;
     common_flydelta_claimed_experiment_job claimed;
-    if (!common_flydelta_experiment_queue_claim_next(queue_root, limits, claimed, error)) return false;
+    if (claim) {
+        if (!claim(claimed, error)) return false;
+    } else if (!common_flydelta_experiment_queue_claim_next(queue_root, limits, claimed, error)) return false;
     if (claimed.queue_key.empty()) {
         report.state = common_flydelta_experiment_queue_state::pending;
         return true;
@@ -494,12 +510,6 @@ bool common_flydelta_experiment_worker_run_once(
     const auto safe_summary = succeeded
         ? result.safe_summary
         : "FlyDelta experiment callback or result validation failed";
-    std::string completion_error;
-    if (!common_flydelta_experiment_queue_complete(
-            queue_root, claimed, state, safe_summary, limits, completion_error)) {
-        error = completion_error;
-        return false;
-    }
     if (!succeeded) error = callback_error;
     report.state = state;
     report.safe_summary = safe_summary;
@@ -544,6 +554,15 @@ bool common_flydelta_experiment_worker_run_once(
     report.representation_augmentation_state = std::move(result.representation_augmentation_state);
     report.representation_augmentation_state_ref =
         std::move(result.representation_augmentation_state_ref);
+    // Preserve the validated result and finish host effects before the
+    // terminal acknowledgement. A failed commit leaves the job recoverable.
+    if (succeeded && commit && !commit(claimed.job, report, error)) return false;
+    std::string completion_error;
+    if (!common_flydelta_experiment_queue_complete(
+            queue_root, claimed, state, safe_summary, limits, completion_error)) {
+        error = completion_error;
+        return false;
+    }
     return true;
 }
 
@@ -552,7 +571,10 @@ bool common_flydelta_trace_validate(
     error.clear();
     if (trace.schema_version != 1 || trace.job_id.size() > 512 ||
             trace.phase.size() > 64 || trace.behavior_key.size() > 256 ||
-            trace.fixture_baseline_ref.size() > 512 ||
+            trace.fixture_baseline_ref.size() > 512 || trace.search_anchor_ref.size() > 512 ||
+            trace.search_model_calls_used > trace.search_model_call_limit ||
+            trace.physical_rows_completed > trace.physical_rows_started ||
+            trace.physical_rows_unresolved != trace.physical_rows_started - trace.physical_rows_completed ||
             trace.surface_parent_best_ref.size() > 512 ||
             trace.next_action_reason.size() > 512 || trace.graft_direction_ref.size() > 512 ||
             trace.graft_direction_refs.size() > 8 ||
@@ -581,6 +603,7 @@ bool common_flydelta_trace_validate(
         return false;
     }
     for (const auto & arm : trace.arms) {
+        if (!common_flydelta_progress_assessment_validate(arm.semantic_progress_observation.objective, error)) return false;
         if (arm.phase.size() > 64 || arm.arm_id.size() > 512 ||
                 arm.evidence_ref.size() > 512 || arm.layer_indices.size() > 64 ||
                 arm.coefficients.size() > 64 || !finite(arm.scale) ||
@@ -645,6 +668,13 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"surface_parent_best_ref", trace.surface_parent_best_ref},
         {"evidence_rank", trace.evidence_rank}, {"search_rank", trace.search_rank},
         {"model_evaluations", trace.model_evaluations},
+        {"search_model_call_limit", trace.search_model_call_limit},
+        {"search_model_calls_used", trace.search_model_calls_used},
+        {"physical_rows_started", trace.physical_rows_started},
+        {"physical_rows_completed", trace.physical_rows_completed},
+        {"physical_rows_unresolved", trace.physical_rows_unresolved},
+        {"search_anchor_ref", trace.search_anchor_ref},
+        {"search_anchor_round", trace.search_anchor_round},
         {"region_budget", trace.region_budget},
         {"coefficient_budget", trace.coefficient_budget},
         {"tfo_lite_allowed", trace.tfo_lite_allowed},

@@ -1,6 +1,11 @@
 #include "agent/adaptation/flydelta/flydelta-collection.h"
+#include "agent/adaptation/flydelta/flydelta-search-budget.h"
+#include "agent/adaptation/flydelta/flydelta-worker-commit.h"
+#include "hash/hash.h"
 
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -112,6 +117,142 @@ int main() {
         "flydelta://state/search/orthogonal");
     CHECK(next_action_job.job.representation_augmentation_state_ref ==
         "flydelta://state/augmentation/next");
+
+    // Simulate a crash after publishing the state/intent but before enqueue.
+    // Recovery reopens the real journal and uses the ordinary queue seam.
+    using json = nlohmann::ordered_json;
+    const json intent_state = {{"kind", "flydelta_daemon_orchestration_state"},
+        {"phase", "deep_controls"}, {"search_anchor_ref", "resource://anchor"},
+        {"search_anchor_pending", true}, {"search_model_call_limit", 256}, {"search_model_calls_used", 40},
+        {"anchor_continuation", {
+            {"parent_job", json::parse(common_flydelta_experiment_job_to_json(pipeline_claimed.job))},
+            {"bootstrap_state_ref", pipeline_claimed.job.bootstrap_zoom_state_ref},
+            {"representation_state_ref", pipeline_claimed.job.representation_augmentation_state_ref}}}};
+    common_learning_lifecycle_record intent_record;
+    intent_record.payload_json = intent_state.dump();
+    const auto digest = hash_sha256_hex(intent_record.payload_json.data(), intent_record.payload_json.size());
+    intent_record.subject_id = "flydelta://state/orchestration/" + digest.substr(0, 32);
+    intent_record.event_id = "intent:" + digest;
+    intent_record.idempotency_key = intent_record.event_id;
+    intent_record.kind = common_learning_lifecycle_kind::flydelta_experiment;
+    intent_record.status = common_learning_lifecycle_status::running;
+    intent_record.source_id = "test:anchor-recovery";
+    intent_record.namespace_id = pipeline_claimed.job.seed.scope.namespace_id;
+    intent_record.project_id = pipeline_claimed.job.seed.scope.project_id;
+    intent_record.session_id = pipeline_claimed.job.seed.scope.session_id;
+    intent_record.content_hash = "sha256:" + digest;
+    intent_record.created_at = "2026-10-27T00:00:00Z";
+    const auto journal_path = root / "anchor-lifecycle.jsonl";
+    {
+        common_learning_jsonl_lifecycle_store journal;
+        CHECK(journal.open(journal_path, error));
+        CHECK(journal.append(intent_record, error));
+    }
+    common_learning_jsonl_lifecycle_store reopened;
+    CHECK(reopened.open(journal_path, error));
+    const auto recovery_root = root / "recovered";
+    CHECK(common_flydelta_experiment_queue_enqueue(recovery_root, pipeline_claimed.job, {}, error));
+    common_flydelta_claimed_experiment_job abandoned;
+    CHECK(common_flydelta_experiment_queue_claim_next(recovery_root, {}, abandoned, error));
+    CHECK(abandoned.job.id == pipeline_claimed.job.id);
+    CHECK(common_flydelta_recover_anchor_continuations(reopened, recovery_root, {}, error));
+    CHECK(common_flydelta_recover_anchor_continuations(reopened, recovery_root, {}, error));
+    common_flydelta_claimed_experiment_job recovered;
+    CHECK(common_flydelta_experiment_queue_claim_next(recovery_root, {}, recovered, error));
+    CHECK(recovered.job.search_state_ref == intent_record.subject_id);
+    CHECK(recovered.job.seed.scope.session_id == pipeline_claimed.job.seed.scope.session_id);
+    CHECK(recovered.job.teaching_material_group_ref == pipeline_claimed.job.teaching_material_group_ref);
+    common_flydelta_claimed_experiment_job duplicate;
+    CHECK(common_flydelta_experiment_queue_claim_next(recovery_root, {}, duplicate, error));
+    CHECK(duplicate.queue_key.empty());
+
+    // Physical replay reuses logical reservations, but never erases the
+    // unresolved consumption of the interrupted attempt.
+    common_learning_jsonl_lifecycle_store executions;
+    const auto execution_path = root / "execution-lifecycle.jsonl";
+    CHECK(executions.open(execution_path, error));
+    common_flydelta_search_consumption consumption;
+    std::string first_attempt, interrupted_attempt, resumed_attempt;
+    CHECK(common_flydelta_begin_search_execution(executions, pipeline_claimed.job, 0, 4,
+        {"arm:a", "arm:b"}, "wave:one", 3, first_attempt, consumption, error));
+    CHECK(consumption.logical_used == 2 && consumption.physical_rows_started == 2);
+    CHECK(common_flydelta_finish_search_execution(executions, pipeline_claimed.job, first_attempt, 2, true, error));
+    CHECK(common_flydelta_finish_search_execution(executions, pipeline_claimed.job, first_attempt, 2, true, error));
+    CHECK(common_flydelta_begin_search_execution(executions, pipeline_claimed.job, 0, 4,
+        {"arm:a", "arm:b"}, "wave:one", 3, interrupted_attempt, consumption, error));
+    common_learning_jsonl_lifecycle_store reopened_executions;
+    CHECK(reopened_executions.open(execution_path, error));
+    CHECK(common_flydelta_load_search_consumption(reopened_executions, pipeline_claimed.job, 0, 4, consumption, error));
+    CHECK(consumption.logical_used == 2 && consumption.physical_rows_started == 4);
+    CHECK(consumption.physical_rows_completed == 2 && consumption.physical_rows_unresolved == 2);
+    CHECK(common_flydelta_begin_search_execution(reopened_executions, pipeline_claimed.job, 0, 4,
+        {"arm:a", "arm:b"}, "wave:one", 3, resumed_attempt, consumption, error));
+    CHECK(first_attempt != interrupted_attempt && resumed_attempt != interrupted_attempt);
+    CHECK(consumption.logical_used == 2 && consumption.physical_rows_started == 6);
+    std::string refused;
+    CHECK(!common_flydelta_begin_search_execution(reopened_executions, pipeline_claimed.job, 0, 4,
+        {"arm:a", "arm:b"}, "wave:one", 3, refused, consumption, error));
+    CHECK(!common_flydelta_begin_search_execution(reopened_executions, pipeline_claimed.job, 0, 4,
+        {"arm:a", "arm:b", "arm:c", "arm:d", "arm:e"}, "wave:too-large", 3, refused, consumption, error));
+    CHECK(!common_flydelta_load_search_consumption(reopened_executions, pipeline_claimed.job, 1, 4, consumption, error));
+    CHECK(!common_flydelta_finish_search_execution(reopened_executions, pipeline_claimed.job,
+        "flydelta://execution/missing", 1, true, error));
+    {
+        std::ofstream torn(execution_path, std::ios::binary | std::ios::app);
+        torn << "{\"event_id\":";
+    }
+    common_learning_jsonl_lifecycle_store recovered_tail;
+    CHECK(recovered_tail.open(execution_path, error, true));
+    CHECK(common_flydelta_load_search_consumption(recovered_tail, pipeline_claimed.job, 0, 4, consumption, error));
+    CHECK(consumption.logical_used == 2 && consumption.physical_rows_started == 6);
+    CHECK(consumption.physical_rows_completed == 2 && consumption.physical_rows_unresolved == 4);
+
+    // Result persistence precedes acknowledgement. A crash or failed host
+    // commit replays the saved commit inputs, never the evaluator/model.
+    const auto commit_root = root / "commit-recovery";
+    CHECK(common_flydelta_experiment_queue_enqueue(commit_root, pipeline_claimed.job, {}, error));
+    common_flydelta_claimed_experiment_job committing;
+    CHECK(common_flydelta_experiment_queue_claim_next(commit_root, {}, committing, error));
+    common_flydelta_experiment_worker_report saved_report;
+    saved_report.job_id = committing.job.id;
+    saved_report.completed_job = committing.job;
+    saved_report.state = common_flydelta_experiment_queue_state::succeeded;
+    saved_report.safe_summary = "saved search result";
+    saved_report.has_next_action = true;
+    saved_report.next_action = common_flydelta_next_action::run_deep_controls;
+    saved_report.search_state_ref = "flydelta://state/search/saved";
+    common_learning_jsonl_lifecycle_store commit_store;
+    const auto commit_path = root / "commit-lifecycle.jsonl";
+    CHECK(commit_store.open(commit_path, error));
+    CHECK(common_flydelta_append_worker_commit_intent(commit_store, committing.job, saved_report, error));
+    const auto fail_commit = [](const auto &, const auto &, std::string & failure) {
+        failure = "injected host persistence failure"; return false;
+    };
+    CHECK(!common_flydelta_recover_worker_commits(commit_store, commit_root, {}, fail_commit, {}, error));
+    CHECK(std::filesystem::exists(commit_root / "running" / committing.queue_key));
+    common_learning_jsonl_lifecycle_store restored_commits;
+    CHECK(restored_commits.open(commit_path, error));
+    size_t persisted = 0, scheduled = 0;
+    const auto persist_saved = [&](const auto & job, const auto & report, std::string &) {
+        ++persisted; return job.id == committing.job.id && report.search_state_ref == saved_report.search_state_ref;
+    };
+    const auto schedule_saved = [&](const auto & job, const auto & report, std::string &) {
+        ++scheduled; return job.id == committing.job.id && report.next_action == saved_report.next_action;
+    };
+    CHECK(common_flydelta_recover_worker_commits(restored_commits, commit_root, {}, persist_saved, schedule_saved, error));
+    CHECK(common_flydelta_recover_worker_commits(restored_commits, commit_root, {}, persist_saved, schedule_saved, error));
+    CHECK(persisted == 1 && scheduled == 1);
+    CHECK(std::filesystem::exists(commit_root / "succeeded" / committing.queue_key));
+    auto long_parent = pipeline_claimed.job;
+    long_parent.id.assign(500, 'x');
+    CHECK(common_flydelta_collect_next_action_job(root / "long-lineage", {}, long_parent,
+        common_flydelta_next_action::run_deep_controls, long_parent.bootstrap_zoom_state_ref,
+        intent_record.subject_id, {}, {}, result, error));
+    common_learning_in_memory_lifecycle_store wrong_scope;
+    auto invalid_intent = intent_record;
+    invalid_intent.session_id = "other-session";
+    CHECK(wrong_scope.append(invalid_intent, error));
+    CHECK(!common_flydelta_recover_anchor_continuations(wrong_scope, root / "invalid-recovery", {}, error));
 
     value.enabled = false;
     CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));

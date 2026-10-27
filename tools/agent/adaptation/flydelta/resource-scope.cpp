@@ -36,6 +36,9 @@ daemon_flydelta_provider_for_scope(
     scoped->n_threads = source->n_threads;
     scoped->model_n_embd = source->model_n_embd;
     scoped->model_n_layers = source->model_n_layers;
+    scoped->dose_mode = source->dose_mode;
+    scoped->dose_calibration_ref = source->dose_calibration_ref;
+    scoped->search_model_call_budget = source->search_model_call_budget;
     // These are immutable runtime policies/projections, not scope authority.
     // Preserve them when narrowing the provider to a job so `off` and
     // experimental settings cannot silently revert to provider defaults.

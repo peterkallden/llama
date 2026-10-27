@@ -93,6 +93,9 @@ std::shared_ptr<daemon_flydelta_resource_provider> daemon_flydelta_make_resource
     provider->n_threads = options.n_threads;
     provider->model_n_embd = static_cast<size_t>(llama_model_n_embd(model));
     provider->model_n_layers = static_cast<size_t>(llama_model_n_layer(model));
+    provider->dose_mode = options.adaptation_flydelta_dose_mode;
+    provider->dose_calibration_ref = options.adaptation_flydelta_dose_calibration_ref;
+    provider->search_model_call_budget = options.adaptation_flydelta_search_model_call_budget;
     provider->outcome_guidance_config = options.adaptation_flydelta_outcome_guidance;
     provider->outcome_projection_cache->set_budget(provider->outcome_guidance_config.projection_cache_bytes);
     provider->oracle_registry = common_flydelta_make_default_oracle_registry();

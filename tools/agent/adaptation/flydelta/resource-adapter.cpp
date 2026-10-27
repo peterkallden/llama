@@ -430,6 +430,7 @@ bool daemon_flydelta_put_json_resource(
     request.scope = common_runtime_resource_scope::session;
     request.namespace_id = provider->authority.namespace_id;
     request.session_id = provider->authority.session_id;
+    request.project_id = provider->authority.project_id;
     request.source_provider = "flydelta";
     request.source_tool = purpose;
     request.created_at = std::time(nullptr);
@@ -759,19 +760,12 @@ bool daemon_flydelta_register_composed_direction(
         error = "FlyDelta composed coefficient direction has invalid basis shape";
         return false;
     }
-    std::vector<float> values(basis.dimension, 0.0f);
+    std::vector<float> values;
+    if (!common_flydelta_reconstruct_intervention(
+            basis, common_flydelta_coefficient_basis_identity(basis),
+            coefficients, values, error)) return false;
     double squared = 0.0;
     std::string identity = source_ref + "\n" + std::to_string(basis.layer_index);
-    for (size_t index = 0; index < coefficients.size(); ++index) {
-        if (!std::isfinite(coefficients[index]) ||
-                basis.vectors[index].size() != basis.dimension) {
-            error = "FlyDelta composed coefficient direction contains invalid values";
-            return false;
-        }
-        for (size_t value = 0; value < basis.dimension; ++value) {
-            values[value] += coefficients[index] * basis.vectors[index][value];
-        }
-    }
     identity += "\n" + json(coefficients).dump();
     for (const float value : values) squared += static_cast<double>(value) * value;
     if (!std::isfinite(squared) || squared <= 0.0) {
