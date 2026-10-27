@@ -167,6 +167,18 @@ int main() {
         CHECK(trace.arms[0].baseline_passed && trace.arms[0].candidate_passed);
         CHECK(trace.arms[0].host_outcome == common_flydelta_counterfactual_outcome::neutral);
         CHECK(trace.arms[0].executed_scale == 0.0f);
+        auto & partial = result.search_pipeline_results.front().directions.front().region_trials.front();
+        partial.outcome = common_flydelta_counterfactual_outcome::unknown;
+        partial.semantic_progress.outcome = common_flydelta_semantic_progress_outcome::improved;
+        partial.semantic_progress.comparable = true;
+        partial.semantic_progress.improved_dimensions = {"operation"};
+        partial.candidate_observation->verifier_known = false;
+        partial.candidate_observation->passed = false;
+        trace = {};
+        common_flydelta_trace_detail::append_worker_result(base_job(common_flydelta_experiment_job_kind::search_pipeline, "trace"), result, trace);
+        CHECK(trace.arms[0].host_outcome == common_flydelta_counterfactual_outcome::unknown);
+        CHECK(trace.arms[0].semantic_progress.improved_dimensions.size() == 1);
+        CHECK(!trace.arms[0].verifier_known && !trace.arms[0].verifier_passed);
         auto & unknown = result.search_pipeline_results.front().directions.front().region_trials.front();
         unknown.candidate_observation.reset();
         unknown.baseline_observation.reset();

@@ -57,14 +57,22 @@ zero/non-finite inputs, clipping, duplicate/cancelling directions, deterministic
 proposals, budget bounds, shared batch execution, refinement and rejection before
 model execution. Checks remain active with NDEBUG. They have not been run.
 
-Run `scripts/test-agent-flydelta-dose-comparison-model-smoke.sh` after the existing
-Vulkan/Cozo build is available. The wrapper uses the normal model-smoke helpers,
-hashes the model content, forces resident tracing and runs raw, normalized and
-direction-dose conditions serially. Configure the usual model/build paths and GPU
-device externally. No additional worker is started. The comparison intentionally
-skips unrelated cvec representation benchmarks.
+After explicit authorization to run model tests, use
+`scripts/test-agent-flydelta-dose-paired-model-smoke.sh` for raw versus
+direction-dose, or `scripts/test-agent-flydelta-dose-comparison-model-smoke.sh`
+for raw, normalized and direction-dose. Both use the same runner and the dedicated
+`--dose-comparison --production-bindings` native path; neither launches a rank
+sweep or unrelated cvec benchmark. The paired profile uses two aggregate scenarios;
+the three-condition profile defaults to eight scenarios.
 
-Each condition uses the same replay suite, rank sweep, 16-proposal ceiling,
+Set the existing model/build paths and Vulkan device externally. GPU layers default
+to `-1` for automatic fitting. Each attempt gets a fresh directory and a manifest
+before inference, including exact commands, content fingerprints and requirements.
+All conditions are serial, trace is mandatory, and these profiles have no wall-clock
+timeout. Interrupting the runner terminates its active child, records interruption,
+and prevents subsequent conditions from starting. No daemon worker is started.
+
+Each condition uses the same replay suite, fixed rank-one dose comparison, 16-proposal ceiling,
 full-generation limits and zero dose retries. Normalization excludes the current
 evaluation scenario from its calibration sample set. This is leave-one-scenario-out
 norm calibration, not held-out direction learning: existing direction acquisition
@@ -74,7 +82,13 @@ actual arms and time are reported, rather than claiming equal consumed compute.
 
 `dose-comparison.json` preserves calibration provenance, arm diagnostics, process
 exit codes, host outcomes and search wall time, including failed or missing
-conditions. Each attempt uses a fresh directory, so interrupted runs cannot reuse
+conditions. It also pairs full-generation responses by baseline/candidate arm IDs
+and preserves complete prompt messages and model content. `dose-comparison.md`
+shows a before/with-arm table and detailed dose/progress/verification information.
+Canonical repair echoes and diagnostic captures cannot substitute for full arms.
+Missing response identities, mismatched prompts, unconfirmed overlays or missing
+host evaluation make coverage incomplete. Execution, coverage, comparability and
+behavior are reported separately; UNKNOWN does not erase recorded partial progress. Each attempt uses a fresh directory, so interrupted runs cannot reuse
 stale logs. A failed condition does not suppress the other conditions' diagnostics;
 an interrupt stops further inference. The summary is still written and returns a
 nonzero exit code when the comparison is incomplete.
@@ -105,3 +119,10 @@ identical. Deduplication avoids paying for those duplicates; the actual trace an
 requested/applied measurements, rather than the configured grid alone, define
 what was evaluated. Independent direction-learning/evaluation separation and
 production-adoption criteria remain prerequisites for a later production decision.
+
+### 2026-10-27 verification boundary
+
+The shared runner, strict response pairing and new contract cases have not been
+compiled or executed. The interrupted experiment predates this refactor and is not
+validation of these changes. Do not launch a build, CTest or smoke until the user
+explicitly authorizes verification.

@@ -41,12 +41,13 @@ agent_dose_run_profile() {
     # Record the fully resolved invocation before the first expensive model call.
     python3 "$repo_root/scripts/agent-flydelta-dose-summary.py" --manifest "$work_dir" \
         "$profile" "$repo_root" "$repair_bin" "${args[@]}" || return $?
+    printf 'dose_comparison_started=%s profile=%s artifacts=%s\n' "$(date -Is)" "$profile" "$work_dir"
     trap 'interrupted=1; if [[ -n "$child_pid" ]]; then kill -TERM "$child_pid" 2>/dev/null || true; fi' INT TERM
     for mode in "${modes[@]}"; do
         [[ "$interrupted" == 0 ]] || break
         mode_dir="$work_dir/$mode"
         mkdir -p "$mode_dir"
-        printf 'condition_started=%s mode=%s\n' "$(date -Is)" "$mode" > "$mode_dir/status.log"
+        printf 'condition_started=%s mode=%s\n' "$(date -Is)" "$mode" | tee "$mode_dir/status.log"
         LLAMA_AGENT_DOSE_EXPERIMENT="$mode" LLAMA_AGENT_LEARNING_LEDGER="$mode_dir/learning-ledger.jsonl" \
             "$repair_bin" "${args[@]}" > "$mode_dir/low-rank-rank-sweep.log" 2>&1 &
         child_pid=$!
@@ -72,5 +73,6 @@ agent_dose_run_profile() {
     if [[ "$overall_status" == 0 && "$summary_status" != 0 ]]; then overall_status=$summary_status; fi
     printf '%s\n' "$overall_status" > "$work_dir/exit.status"
     printf 'dose_comparison_artifacts=%s\n' "$work_dir"
+    if [[ "$profile" == paired ]]; then printf 'dose_paired_comparison_artifacts=%s\n' "$work_dir"; fi
     return "$overall_status"
 }

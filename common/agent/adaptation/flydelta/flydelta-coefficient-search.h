@@ -237,9 +237,6 @@ bool common_flydelta_coefficient_search_config_validate(
         std::string & error);
 
 struct common_flydelta_coefficient_trial {
-    // Original observations retained for presentation, never search authority.
-    std::optional<common_flydelta_counterfactual_trial> candidate_observation;
-    std::optional<common_flydelta_counterfactual_trial> baseline_observation;
     std::string arm_id;
     std::string intervention_ref;
     std::string verifier_reason;
@@ -285,6 +282,9 @@ struct common_flydelta_coefficient_trial {
     size_t iteration = 0;
     size_t parent_trial_index = static_cast<size_t>(-1);
     std::string mutation_kind;
+    // Original observations retained for presentation, never search authority.
+    std::optional<common_flydelta_counterfactual_trial> candidate_observation;
+    std::optional<common_flydelta_counterfactual_trial> baseline_observation;
 };
 
 struct common_flydelta_coefficient_selection {

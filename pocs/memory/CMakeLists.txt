@@ -24,6 +24,12 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/daemon/agent-daemon-protocol.cpp
     ../../tools/agent/daemon/agent-daemon-runtime.cpp
     ../../tools/agent/daemon/agent-daemon-flydelta.cpp
+    ../../tools/agent/daemon/flydelta/state.cpp
+    ../../tools/agent/daemon/flydelta/state-codec.cpp
+    ../../tools/agent/daemon/flydelta/bootstrap.cpp
+    ../../tools/agent/daemon/flydelta/search.cpp
+    ../../tools/agent/daemon/flydelta/evaluation.cpp
+    ../../tools/agent/daemon/flydelta/augmentation.cpp
     ../../tools/agent/daemon/flydelta/concept-capture.cpp
     ../../tools/agent/daemon/flydelta/concept-synthesis.cpp
     ../../tools/agent/daemon/flydelta/decision-margin.cpp
@@ -36,6 +42,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/adaptation/flydelta/augmentation-material.cpp
     ../../tools/agent/adaptation/flydelta/teaching-material.cpp
     ../../tools/agent/adaptation/flydelta/capture-material.cpp
+    ../../tools/agent/adaptation/flydelta/dose-calibration.cpp
     ../../tools/agent/daemon/agent-daemon-dispatcher.cpp
     ../../tools/agent/daemon/agent-daemon-service.cpp
     ../../tools/agent/cli/agent-cli-host-adapter.cpp

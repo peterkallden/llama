@@ -383,6 +383,14 @@ research, procedure or dataset observation from being accidentally compared
 with a different behavior. Capture manifests use the same explicit
 source/behavior identity when they become activation material.
 
+## Responsibility and experiment guide
+
+See [FlyDelta architecture and result interpretation](agent-flydelta-architecture.md)
+for the current module map, ownership of durable state, interpretation of arm
+results and the two supported dose-comparison profiles. The 2026-10-27 ownership
+and reporting changes have received static review only; compilation, CTests and
+model-backed verification are explicitly pending user authorization.
+
 ## Production daemon phase boundary
 
 The production daemon is a bounded-slice scheduler around the common batch

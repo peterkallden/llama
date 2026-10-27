@@ -397,6 +397,11 @@ std::shared_ptr<daemon_flydelta_resource_provider> daemon_flydelta_make_resource
         std::shared_ptr<common_learning_lifecycle_store> lifecycle_store,
         std::string & error);
 
+bool daemon_flydelta_register_evaluator(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        common_flydelta_evaluator_config & config,
+        common_flydelta_evaluator_callbacks & callbacks, std::string & error);
+
 void daemon_flydelta_bind_execution_callbacks(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const std::shared_ptr<common_flydelta_teaching_material_runtime> & teaching_material_runtime,

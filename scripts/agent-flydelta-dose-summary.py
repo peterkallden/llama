@@ -97,6 +97,8 @@ def read_condition(root, mode):
                         raise ValueError(f"arm {field} must be a boolean")
                 if arm.get("dose_experiment") != mode:
                     raise ValueError("trace condition mismatch")
+                if arm.get("semantic_progress") is not None and not isinstance(arm["semantic_progress"], dict):
+                    raise ValueError("semantic progress must be an object or unavailable")
                 condition["arms"].append(arm)
             elif line.startswith("flydelta_low_rank_rank_sweep "):
                 run = dict(part.split("=", 1) for part in shlex.split(line)[1:] if "=" in part)
@@ -156,6 +158,8 @@ def read_condition(root, mode):
                 "arm_id": arm.get("arm_id"), "baseline_arm_id": arm.get("baseline_arm_id"),
                 "baseline": baseline[0] if len(baseline) == 1 else None,
                 "candidate": candidate[0] if len(candidate) == 1 else None,
+                "ambiguous_baselines": baseline if len(baseline) > 1 else [],
+                "ambiguous_candidates": candidate if len(candidate) > 1 else [],
                 "outcome": arm["outcome"], "verifier_known": arm["verifier_known"],
                 "verifier_reason": arm.get("verifier_reason"), "semantic_progress": arm.get("semantic_progress"),
                 "objective_assessment": arm.get("objective_assessment"),
@@ -173,8 +177,8 @@ def read_condition(root, mode):
         "search_elapsed_ms": sum(run["elapsed_ms"] for run in condition["search_runs"]),
         "cost_boundary": "search wall time; calibration/capture and setup remain in the full trace",
         "behavior_status": "paired_outcome_available" if any(arm["outcome"].lower() in ("helped", "harmed", "neutral") for arm in full)
-            else "partial_progress" if any(arm.get("semantic_progress", {}).get("comparable") and
-                arm.get("semantic_progress", {}).get("outcome") == "improved" for arm in full) else "unresolved",
+            else "partial_progress" if any((arm.get("semantic_progress") or {}).get("comparable") and
+                (arm.get("semantic_progress") or {}).get("outcome") == "improved" for arm in full) else "unresolved",
         "interpretation": "Inspect raw responses and progress separately from the paired host outcome; no production adoption is inferred.",
     })
     return condition

@@ -52,13 +52,6 @@ struct common_flydelta_intervention_region_trial {
     std::string arm_id;
     std::string intervention_ref;
     std::vector<float> coefficients;
-    std::vector<float> requested_coefficients;
-    bool intervention_norms_available = false;
-    float requested_intervention_norm = 0.0f;
-    float applied_intervention_norm = 0.0f;
-    float requested_residual_fraction = 0.0f;
-    float applied_residual_fraction = 0.0f;
-    std::string residual_calibration_ref;
     common_flydelta_intervention_region_candidate candidate;
     float requested_total_scale = 0.0f;
     float executed_total_scale = 0.0f;
@@ -99,6 +92,13 @@ struct common_flydelta_intervention_region_trial {
     // to consume the existing outcome/utility fields above.
     std::optional<common_flydelta_counterfactual_trial> candidate_observation;
     std::optional<common_flydelta_counterfactual_trial> baseline_observation;
+    std::vector<float> requested_coefficients;
+    bool intervention_norms_available = false;
+    float requested_intervention_norm = 0.0f;
+    float applied_intervention_norm = 0.0f;
+    float requested_residual_fraction = 0.0f;
+    float applied_residual_fraction = 0.0f;
+    std::string residual_calibration_ref;
 };
 
 bool common_flydelta_intervention_region_trial_validate(
