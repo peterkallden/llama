@@ -5,8 +5,10 @@
 The ownership and reporting refactor dated 2026-10-27 is implemented but has not
 been compiled or tested. The interrupted model experiment is retained separately
 and supplies no validation of this refactor. Verification awaits explicit user
-authorization. Search algorithms, admission thresholds and lifecycle policy are
-not intentionally changed by this work.
+authorization. The ownership refactor preserves search and lifecycle policy.
+The subsequent partial-progress guidance change below intentionally extends
+search prediction and qualification utility, while preserving promotion and
+activation authority. That change is also uncompiled and untested.
 
 ## Follow one bounded slice
 
@@ -44,9 +46,10 @@ activation retain their own existing authority boundaries.
 | Existing queue, worker-commit and lifecycle stores | Queue ownership, durable effects, continuation recovery and acknowledgement |
 
 The private `state.h` exposes the codec/binding seam independently of the large
-provider header. No new persistent schema, URI scheme or evidence database is
-introduced. Persisted JSON names, ordering, defaults and identity calculations
-remain at the existing compatibility boundary.
+provider header. The ownership refactor introduces no separate persistent store,
+URI scheme or evidence database. The subsequent progress addition extends the
+existing journal payload with versioned fields and explicitly versions predictor
+and qualification identities, while retaining the legacy observation reader.
 
 ## Distinguish the questions a result answers
 
@@ -67,9 +70,10 @@ not reconstructed from HELPED: a neutral pair can contain two successful arms.
 When the original observation is absent, `candidate_evaluation_available` is false.
 The trace does not invent an individual verdict or a matched baseline.
 
-The optional original observations carried by intermediate region/coefficient
-trials are reporting data. Search selection, scoring and promotion keep consuming
-their existing fields and rules. They are not a second semantic evaluator.
+The original observations carried by intermediate region/coefficient trials
+preserve host verification. Reporting consumes them directly; progress guidance
+uses only validated paired objective assessments projected from those observations.
+They are not a second semantic evaluator or promotion authority.
 
 ## Dose interpretation
 
@@ -144,3 +148,102 @@ After authorization: build in the existing Vulkan/Cozo tree with ccache, execute
 focused checks serially, then model-free recovery and finally the explicitly
 selected traced model experiment. Record those results before claiming behavioral
 preservation or model improvement.
+
+## Partial-progress outcome guidance
+
+The same outcome adviser now has two distinct statistical targets:
+
+- The existing HELPED/NEUTRAL/HARMED/UNKNOWN paired outcome.
+- A verifier-owned goal transition: improved, unchanged, regressed, solved, or
+  unavailable because identity, comparability or control coverage is missing.
+
+UNKNOWN full outcomes may have known partial progress. Missing legacy progress
+is not a negative training example. A failed parser or absent assessment cannot
+establish regression-free improvement. A detected lost goal or declared control
+regression remains negative evidence even when other controls are incomplete.
+"Regression-free" is restricted to the declared host assessment; it does not
+claim coverage of unrelated model capabilities.
+
+`common_flydelta_progress_evidence` stores the original baseline and candidate
+assessments, their arm/evidence references and optional parent assessment. The
+host derives the transition using the existing objective identities and strict
+goal-preservation rules. Serialized labels are not accepted as truth. Coefficient
+lifecycle rows add `outcome_guidance.schema_version=2`; the shared reader accepts
+version 1 as outcome-only history. Captured prompts and model outputs remain in
+the existing trace/resource paths.
+
+The domain-neutral conjugate posterior implementation remains in
+`common/agent/prediction/outcome-guidance.cpp`. FlyDelta builds a separate progress
+posterior through that implementation. It retains progress coverage uncertainty
+independently of full-outcome uncertainty. History with only unknown progress
+can train the coverage probability but cannot contribute partial selection utility
+until known progress assessments exist locally or in the qualifying backoff.
+The partial reward is
+`progress_reward * P(known progress) * P(improved | known progress)` and is added
+to the existing HELPED-minus-HARMED search utility. Solved observations and HELPED
+arms receive no additional actual partial-success reward. The configurable
+`runtime.adaptation.flydelta.outcome_guidance.progress_reward` defaults to 0.25,
+accepts 0..1, and can be set to zero to disable that utility term. The existing
+`off`, `shadow` and qualified `experimental` modes retain their authority limits.
+This numerical weight is a policy choice, not a measured optimal value.
+
+Progress partitions preserve objective schema/verifier identity and dose policy /
+calibration identity. Exact partitions also distinguish immutable basis and signed
+coefficient direction. A bounded compatible backoff supplies only prior weight.
+Each fixture group contributes at most one normalized observation unit; repeated
+arms are not independent proof of generalization. Posterior interval-product
+bounds are diagnostics, not an asserted joint 95-percent credible interval.
+
+### Local continuation and reproducibility
+
+The history snapshot and cached projection retain two evidence views:
+
+1. Other compatible fixture groups provide the cross-fixture forecast.
+2. Earlier completed waves of the current fixture provide local progress evidence,
+   restricted to the same task, search lineage, objective, direction and dose bucket.
+
+These views share the journal and predictor. Local rows never increase the number
+of independent fixture groups used for qualification. When resuming an anchor,
+local candidates are compared to its stored goal assessment as well as the
+original baseline. Losing a parent goal cannot count as cumulative improvement.
+This is discrete, conservative local evidence reuse, not a continuous surrogate
+model or a new optimizer.
+
+A wave identity binds job, phase, parent-anchor reference and committed logical
+budget usage. A new wave freezes a fresh history snapshot. Retrying that wave
+reuses its snapshot, stable observation identities and decision cursor; later
+journal writes do not alter an interrupted decision. The next committed wave may
+consume newly registered progress. Conflicting observations with one stable ID
+are excluded rather than resolved by append order.
+
+The full-generation baseline is reused as the progress query. No additional
+model invocation, GPU allocation or inference branch is introduced. Projection
+aggregation is cached for the wave and local counts are reused per candidate
+partition within a decision. Benefits in total compute require empirical evidence
+of fewer model evaluations to an equal verified objective; fixed-budget searches
+may instead spend the same compute and find better results.
+
+### Qualification, diagnostics and pending verification
+
+The existing matched policy union records paired progress evidence alongside
+actual arm outcomes. Qualification reports partial improvements, progress
+regressions and unavailable progress separately from HELPED/HARMED/UNKNOWN.
+It applies the configured partial reward, does not double-count HELPED as partial
+success, and rejects qualification when the guided policy increases the observed
+progress-regression rate. Missing control coverage cannot earn partial utility.
+No automatic promotion or activation follows from a qualified search policy.
+
+The policy fingerprint versions the progress contract, projection builder and
+reward. Previous qualifications cannot authorize this changed selection policy.
+Independent fixture requirements and existing full-outcome harm checks remain.
+Progress Brier diagnostics use chronological holdouts and do not add holdout
+observations to training history.
+
+Added source contracts cover paired evidence round trips, parent-goal loss,
+missing control coverage, legacy history, separate progress/full outcomes, signed
+directions, duplicate/conflicting observations, isolated local history and
+partial-progress qualification. They have not been executed. Required next work,
+after explicit authorization, is compilation, the focused outcome/Deep/lifecycle/
+qualification CTests, restart/retry coverage through daemon paths, and traced
+model comparisons at equal inference budgets. No quality or compute improvement
+is claimed by the source implementation alone.

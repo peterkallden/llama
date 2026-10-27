@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-decision-margin.h"
 #include "agent/adaptation/lifecycle-store.h"
+#include "agent/adaptation/flydelta/flydelta-progress.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -112,6 +113,11 @@ struct common_flydelta_search_observation {
     bool guidance_comparison_completed = false;
     bool guidance_overlay_applied = false;
     bool guidance_outcome_known = false;
+    std::string guidance_task_fingerprint;
+    std::string guidance_lineage_ref;
+    std::string guidance_direction_id;
+    std::string guidance_dose_identity;
+    std::optional<common_flydelta_progress_evidence> guidance_progress;
 };
 
 bool common_flydelta_search_observation_validate(

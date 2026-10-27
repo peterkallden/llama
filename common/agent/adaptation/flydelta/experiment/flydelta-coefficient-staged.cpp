@@ -51,6 +51,17 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
     const size_t top_k = std::min(full_generation_top_k, ranking.size());
     if (top_k == 0) return true;
 
+    common_flydelta_counterfactual_trial baseline;
+    common_flydelta_decision_margin baseline_margin;
+    common_flydelta_representation_diagnostics baseline_geometry;
+    bool baseline_geometry_available = false;
+    if (!full_generation_runner(
+            fixture, basis, std::vector<float>(basis.vectors.size(), 0.0f), false,
+            baseline, baseline_margin, baseline_geometry,
+            baseline_geometry_available, error) ||
+            !common_flydelta_counterfactual_trial_validate(baseline, error) ||
+            !common_flydelta_decision_margin_validate(baseline_margin, error)) return false;
+
     if (adviser) {
         std::vector<common_flydelta_outcome_guidance_candidate> candidates;
         candidates.reserve(ranking.size());
@@ -67,6 +78,7 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
         std::string guidance_error;
         common_flydelta_outcome_guidance_request request;
         request.stage = "coefficient_full_generation_frontier";
+        request.progress_baseline = baseline.semantic_progress_observation.objective;
         request.candidates = candidates;
         request.selection_limit = top_k;
         request.decision_id = "coefficient-full-generation-frontier";
@@ -83,17 +95,6 @@ bool common_flydelta_run_low_rank_coefficient_search_batched_staged(
             if (reordered.size() == ranking.size()) ranking = std::move(reordered);
         }
     }
-
-    common_flydelta_counterfactual_trial baseline;
-    common_flydelta_decision_margin baseline_margin;
-    common_flydelta_representation_diagnostics baseline_geometry;
-    bool baseline_geometry_available = false;
-    if (!full_generation_runner(
-            fixture, basis, std::vector<float>(basis.vectors.size(), 0.0f), false,
-            baseline, baseline_margin, baseline_geometry,
-            baseline_geometry_available, error) ||
-            !common_flydelta_counterfactual_trial_validate(baseline, error) ||
-            !common_flydelta_decision_margin_validate(baseline_margin, error)) return false;
 
     std::vector<std::vector<float>> top_coefficients;
     top_coefficients.reserve(top_k);

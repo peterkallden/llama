@@ -46,7 +46,151 @@ static common_flydelta_outcome_guidance_observation observation(
     return o;
 }
 
+static common_flydelta_progress_evidence progress_evidence() {
+    common_flydelta_progress_evidence e;
+    e.baseline_ref = "baseline-arm"; e.candidate_ref = "candidate-arm";
+    e.baseline_evidence_ref = "evidence:baseline"; e.candidate_evidence_ref = "evidence:candidate";
+    e.baseline.objective_id = "objective"; e.baseline.objective_revision = "goals:v1";
+    e.baseline.verifier_ref = "verifier:v1";
+    e.baseline.assessment_known = e.baseline.regression_known = true;
+    e.baseline.satisfied_goals = {"A"}; e.baseline.remaining_goals = {"B", "C", "D"};
+    e.candidate = e.baseline;
+    e.candidate.satisfied_goals = {"A", "B"}; e.candidate.remaining_goals = {"C", "D"};
+    return e;
+}
+
+static int progress_contracts() {
+    using transition = common_flydelta_progress_transition;
+    std::string error;
+    auto e = progress_evidence();
+    CHECK(common_flydelta_progress_evidence_classify(e) == transition::improved);
+    common_flydelta_progress_evidence restored;
+    CHECK(common_flydelta_progress_evidence_from_json(common_flydelta_progress_evidence_to_json(e), restored, error));
+    CHECK(common_flydelta_progress_evidence_to_json(restored) == common_flydelta_progress_evidence_to_json(e));
+    e.candidate.regression_known = false;
+    CHECK(common_flydelta_progress_evidence_classify(e) == transition::unknown);
+    e = progress_evidence(); e.parent = e.candidate; e.parent_ref = "anchor:1";
+    e.parent->satisfied_goals = {"A", "C"}; e.parent->remaining_goals = {"B", "D"};
+    e.candidate.satisfied_goals = {"A", "B", "D"}; e.candidate.remaining_goals = {"C"};
+    CHECK(common_flydelta_progress_evidence_classify(e) == transition::regressed);
+    e = progress_evidence(); e.candidate.objective_revision = "goals:v2";
+    CHECK(common_flydelta_progress_evidence_classify(e) == transition::unknown);
+    e = progress_evidence(); e.candidate_evidence_ref.clear();
+    CHECK(!common_flydelta_progress_evidence_validate(e, error));
+
+    auto c = context(); c.progress_baseline = progress_evidence().baseline;
+    common_flydelta_outcome_guidance_candidate a;
+    a.arm_id = "arm"; a.rank = 2; a.relative_layer = a.relative_dose = 0.5;
+    a.basis_identity = "basis"; a.direction_identity = "positive"; a.dose_identity = "dose:v1";
+    auto row = observation("progress:1", "fixture:1", common_flydelta_counterfactual_outcome::unknown);
+    row.basis_identity = a.basis_identity; row.direction_identity = a.direction_identity; row.dose_identity = a.dose_identity;
+    row.task_fingerprint = "task"; row.lineage_ref = "search"; row.progress = progress_evidence();
+    auto negative = row; negative.stable_observation_id = "progress:2";
+    negative.direction_identity = "negative";
+    negative.progress->candidate = negative.progress->baseline;
+    common_flydelta_outcome_guidance_config config;
+    common_flydelta_outcome_guidance_decision decision;
+    auto reverse = a; reverse.arm_id = "opposite"; reverse.direction_identity = "negative";
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row, negative}, {a, reverse}, 2, 7, decision, error));
+    CHECK(decision.predictions[0].p_safe_partial_improved > decision.predictions[1].p_safe_partial_improved);
+    CHECK(decision.predictions[0].effective_unknown_observations > 0);
+    CHECK(decision.predictions[0].effective_progress_known > 0);
+    CHECK(decision.selected_order == decision.original_order); // shadow cannot execute its recommendation
+    const auto original = decision;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row, row, negative}, {a, reverse}, 2, 7, decision, error));
+    CHECK(decision.predictions[0].p_safe_partial_improved == original.predictions[0].p_safe_partial_improved);
+    auto conflict = row; conflict.progress->candidate = conflict.progress->baseline;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row, conflict}, {a}, 1, 7, decision, error));
+    CHECK(!decision.predictions[0].progress_evidence_available);
+    auto uncovered = row; uncovered.progress->candidate.regression_known = false;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {uncovered}, {a}, 1, 7, decision, error));
+    CHECK(decision.predictions[0].effective_progress_unknown > 0);
+    CHECK(!decision.predictions[0].progress_utility_available && decision.predictions[0].progress_utility == 0);
+    auto diagnostic_only = row; diagnostic_only.comparison_completed = false;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {diagnostic_only}, {a}, 1, 7, decision, error));
+    CHECK(decision.rejected_history_rows == 1 && !decision.predictions[0].progress_evidence_available);
+    auto wrong_scope = row; wrong_scope.context.scope_fingerprint = "other-scope";
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {wrong_scope}, {a}, 1, 7, decision, error));
+    CHECK(decision.compatible_history_rows == 0 && !decision.predictions[0].progress_evidence_available);
+    auto legacy = row; legacy.progress.reset();
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {legacy}, {a}, 1, 7, decision, error));
+    CHECK(!decision.predictions[0].progress_evidence_available);
+
+    common_flydelta_outcome_guidance_projection_ptr projection;
+    CHECK(common_flydelta_outcome_guidance_build_projection(c, {row}, projection, error, row.fixture_group_id));
+    c.local_task_fingerprint = row.task_fingerprint; c.local_lineage_ref = row.lineage_ref;
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, projection, {a}, 1, 7, decision, error));
+    CHECK(decision.compatible_history_rows == 0 && decision.predictions[0].fixture_groups == 0);
+    CHECK(decision.predictions[0].local_observations == 1);
+    CHECK(decision.predictions[0].progress_evidence_available);
+    c.local_parent = row.progress->candidate; c.local_parent_ref = "anchor:1";
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, projection, {a}, 1, 7, decision, error));
+    CHECK(decision.predictions[0].p_safe_partial_improved < original.predictions[0].p_safe_partial_improved);
+    c.local_task_fingerprint = "other-task";
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, c, projection, {a}, 1, 7, decision, error));
+    CHECK(decision.predictions[0].local_observations == 0 && !decision.predictions[0].progress_evidence_available);
+    config.progress_reward = 0;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row}, {a}, 1, 7, decision, error));
+    CHECK(decision.predictions[0].progress_utility == 0);
+    config.progress_reward = -0.1;
+    CHECK(!common_flydelta_outcome_guidance_config_validate(config, error));
+
+    nlohmann::ordered_json record = {{"outcome", "unknown"}, {"verifier_known", false}, {"outcome_guidance", {
+        {"schema_version", 2}, {"observation_id", "stable"}, {"outcome_known", false},
+        {"progress", nlohmann::ordered_json::parse(common_flydelta_progress_evidence_to_json(progress_evidence()))}}}};
+    common_flydelta_outcome_guidance_observation decoded;
+    CHECK(common_flydelta_outcome_guidance_observation_from_json(record.dump(), decoded, error));
+    CHECK(decoded.progress && decoded.outcome == common_flydelta_counterfactual_outcome::unknown);
+    record["outcome_guidance"]["progress"]["candidate_evidence_ref"] = "";
+    CHECK(!common_flydelta_outcome_guidance_observation_from_json(record.dump(), decoded, error));
+    record["outcome_guidance"].erase("progress"); record["outcome_guidance"]["schema_version"] = 1;
+    CHECK(common_flydelta_outcome_guidance_observation_from_json(record.dump(), decoded, error) && !decoded.progress);
+
+    common_flydelta_search_observation persisted;
+    persisted.experiment_id = "experiment"; persisted.candidate_id = "experimental:arm"; persisted.host_evaluated = true;
+    persisted.guidance_observation_id = row.stable_observation_id;
+    persisted.guidance_fixture_group_id = row.fixture_group_id;
+    persisted.guidance_scope_fingerprint = row.context.scope_fingerprint;
+    persisted.guidance_model_profile_fingerprint = row.context.model_profile_fingerprint;
+    persisted.guidance_tokenizer_fingerprint = row.context.tokenizer_fingerprint;
+    persisted.guidance_template_fingerprint = row.context.template_fingerprint;
+    persisted.guidance_baseline_deployment_fingerprint = row.context.baseline_deployment_fingerprint;
+    persisted.guidance_verifier_revision = row.context.verifier_revision;
+    persisted.guidance_domain = row.context.semantic_domain; persisted.guidance_strategy = row.context.strategy;
+    persisted.guidance_estimator = row.context.estimator; persisted.guidance_basis_id = row.basis_identity;
+    persisted.guidance_rank = row.rank; persisted.guidance_relative_layer = row.relative_layer;
+    persisted.guidance_relative_dose = row.relative_dose;
+    persisted.guidance_comparison_completed = persisted.guidance_overlay_applied = true;
+    persisted.guidance_task_fingerprint = row.task_fingerprint; persisted.guidance_lineage_ref = row.lineage_ref;
+    persisted.guidance_direction_id = row.direction_identity; persisted.guidance_dose_identity = row.dose_identity;
+    persisted.guidance_progress = row.progress;
+    common_flydelta_search_decision disposition;
+    CHECK(common_flydelta_decide_search_disposition(persisted, disposition, error));
+    common_flydelta_lifecycle_event_context event;
+    event.event_id = event.idempotency_key = "progress:event"; event.source_id = "contract";
+    event.scope.namespace_id = "namespace"; event.scope.session_id = "session";
+    event.content_hash = "hash:progress"; event.created_at = "2026-10-27T00:00:00Z";
+    common_learning_in_memory_lifecycle_store journal;
+    CHECK(common_flydelta_append_search_lifecycle(journal, event, persisted, disposition, nullptr, error));
+    CHECK(common_flydelta_append_search_lifecycle(journal, event, persisted, disposition, nullptr, error));
+    const auto saved = journal.list(error);
+    CHECK(error.empty() && saved.size() == 1);
+    common_learning_lifecycle_record reloaded;
+    CHECK(common_learning_lifecycle_from_json(common_learning_lifecycle_to_json(saved.front()), reloaded, error));
+    CHECK(common_flydelta_outcome_guidance_observation_from_json(reloaded.payload_json, decoded, error));
+    CHECK(decoded.progress && common_flydelta_progress_evidence_classify(*decoded.progress) == transition::improved);
+    CHECK(decoded.outcome == common_flydelta_counterfactual_outcome::unknown);
+    auto holdout = row; holdout.stable_observation_id = "holdout:1"; holdout.fixture_group_id = "holdout";
+    common_flydelta_outcome_guidance_replay_metrics metrics;
+    config = {};
+    CHECK(common_flydelta_outcome_guidance_replay(config, {row, holdout}, {"holdout"}, metrics, error));
+    CHECK(metrics.progress_predictions == 1 && metrics.known_progress_predictions == 1);
+    CHECK(metrics.known_outcomes == 0 && metrics.unknown_outcomes == 1);
+    return 0;
+}
+
 int main() {
+    if (const auto failure = progress_contracts()) return failure;
     std::string error;
     common_outcome_guidance_generalization_config generalization;
     CHECK(!generalization.tool_family_backoff && !generalization.project_history &&

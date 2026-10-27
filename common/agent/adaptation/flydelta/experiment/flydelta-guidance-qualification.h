@@ -53,6 +53,8 @@ struct common_flydelta_guidance_qualification_context {
     common_flydelta_outcome_guidance_context outcome_context;
     std::string policy_revision;
     size_t selection_limit = 0;
+    double progress_reward = 0.25;
+    double harm_penalty = 5.0;
 };
 
 struct common_flydelta_guidance_arm_measurement {
@@ -64,6 +66,7 @@ struct common_flydelta_guidance_arm_measurement {
     double inference_ms = 0.0;
     bool inference_cost_available = false;
     std::string evidence_ref;
+    std::optional<common_flydelta_progress_evidence> progress;
 };
 
 struct common_flydelta_guidance_fixture_evaluation {
@@ -118,6 +121,9 @@ struct common_flydelta_guidance_qualification_result {
     uint64_t revalidate_after_watermark = 0;
     std::string evaluation_fingerprint;
     std::string evaluation_payload_json;
+    size_t baseline_improved = 0, guided_improved = 0, random_improved = 0;
+    size_t baseline_progress_regressed = 0, guided_progress_regressed = 0, random_progress_regressed = 0;
+    size_t baseline_progress_unknown = 0, guided_progress_unknown = 0, random_progress_unknown = 0;
 };
 
 // Returns a stable, duplicate-free union in baseline/guided/random order.

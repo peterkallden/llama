@@ -81,6 +81,29 @@ void common_flydelta_coefficient_trial_set_observation(
     }
 }
 
+bool common_flydelta_coefficient_trial_progress_evidence(
+        const common_flydelta_coefficient_trial & trial,
+        common_flydelta_progress_evidence & evidence, std::string & error) {
+    evidence = {}; error.clear();
+    if (!trial.executed || !trial.host_evaluated || !trial.overlay_applied ||
+            !trial.baseline_observation || !trial.candidate_observation) return false;
+    const auto & before = *trial.baseline_observation;
+    const auto & after = *trial.candidate_observation;
+    if (!before.executed || !after.executed || before.overlay_applied || !after.overlay_applied ||
+            !before.host_evaluated || !after.host_evaluated) return false;
+    evidence.baseline_ref = before.arm_id;
+    evidence.candidate_ref = after.arm_id;
+    evidence.baseline_evidence_ref = before.evidence_ref;
+    evidence.candidate_evidence_ref = after.evidence_ref;
+    evidence.baseline = before.semantic_progress_observation.objective;
+    evidence.candidate = after.semantic_progress_observation.objective;
+    evidence.parent_ref = trial.progress_parent_ref;
+    evidence.parent = trial.progress_parent;
+    // Legacy text projections remain diagnostic; they cannot fabricate goals.
+    if (!evidence.baseline.assessment_known && !evidence.candidate.assessment_known) return false;
+    return common_flydelta_progress_evidence_validate(evidence, error);
+}
+
 bool common_flydelta_coefficient_trial_to_region(
         const common_flydelta_coefficient_trial & source,
         const common_flydelta_low_rank_basis & basis,
@@ -189,7 +212,9 @@ bool common_flydelta_append_coefficient_search_lifecycle(
                     trial.requested_coefficients.empty() ? trial.coefficients : trial.requested_coefficients,
                     basis, config).arm_id;
             }
-            observation.guidance_observation_id = fixture.task_fingerprint + ":" + logical_arm_id;
+            const auto observation_identity = fixture.task_fingerprint + ":" + context.event_id + ":" + logical_arm_id;
+            observation.guidance_observation_id = "sha256:" + hash_sha256_hex(
+                observation_identity.data(), observation_identity.size());
             observation.guidance_fixture_group_id = fixture.guidance_fixture_group_id;
             observation.guidance_scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
                 ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
@@ -222,6 +247,15 @@ bool common_flydelta_append_coefficient_search_lifecycle(
             observation.guidance_overlay_applied = trial.overlay_applied;
             observation.guidance_outcome_known =
                 trial.outcome != common_flydelta_counterfactual_outcome::unknown;
+            const auto physical = common_flydelta_coefficient_detail::guidance_candidate(trial.coefficients, basis, config);
+            observation.guidance_task_fingerprint = fixture.task_fingerprint;
+            observation.guidance_lineage_ref = experimental_artifact_id;
+            observation.guidance_direction_id = physical.direction_identity;
+            observation.guidance_dose_identity = physical.dose_identity;
+            common_flydelta_progress_evidence progress;
+            if (common_flydelta_coefficient_trial_progress_evidence(trial, progress, error)) {
+                observation.guidance_progress = std::move(progress);
+            } else if (!error.empty()) return false;
         }
 
         common_flydelta_search_decision decision;

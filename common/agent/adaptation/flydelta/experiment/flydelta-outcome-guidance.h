@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,9 @@ struct common_flydelta_outcome_guidance_config {
     // Ordinary shadow/off never incur these extra arms.
     bool matched_evaluation = false;
     size_t matched_max_arms = 9;
+    // Partial progress is search utility only. Full success receives no
+    // additional partial reward, and missing coverage receives no reward.
+    double progress_reward = 0.25;
 };
 
 bool common_flydelta_outcome_guidance_config_validate(
@@ -55,6 +59,12 @@ struct common_flydelta_outcome_guidance_context {
     std::string semantic_domain;
     std::string strategy;
     std::string estimator;
+    // Optional local view, isolated from cross-fixture qualification evidence.
+    std::string local_task_fingerprint;
+    std::string local_lineage_ref;
+    std::optional<common_flydelta_progress_assessment> local_parent;
+    std::string local_parent_ref;
+    std::optional<common_flydelta_progress_assessment> progress_baseline;
 };
 
 struct common_flydelta_outcome_guidance_observation {
@@ -76,6 +86,11 @@ struct common_flydelta_outcome_guidance_observation {
     bool verifier_known = false;
     common_flydelta_counterfactual_outcome outcome =
         common_flydelta_counterfactual_outcome::unknown;
+    std::string task_fingerprint;
+    std::string lineage_ref;
+    std::string direction_identity;
+    std::string dose_identity;
+    std::optional<common_flydelta_progress_evidence> progress;
 };
 
 struct common_flydelta_outcome_guidance_candidate {
@@ -86,6 +101,8 @@ struct common_flydelta_outcome_guidance_candidate {
     bool mixed_coefficients = false;
     int diagnostic_margin_sign = 0;
     std::string basis_identity;
+    std::string direction_identity;
+    std::string dose_identity;
 };
 
 struct common_flydelta_outcome_guidance_prediction {
@@ -117,6 +134,19 @@ struct common_flydelta_outcome_guidance_prediction {
     double backoff_categorical_prior_strength = 0.0;
     size_t raw_observations = 0;
     size_t fixture_groups = 0;
+    bool progress_evidence_available = false;
+    bool progress_utility_available = false;
+    double p_progress_known = 0.5;
+    double p_improved_given_progress_known = 0.25;
+    double p_regressed_given_progress_known = 0.25;
+    double p_solved_given_progress_known = 0.25;
+    double p_safe_partial_improved = 0.0;
+    double p_safe_partial_low = 0.0;
+    double p_safe_partial_high = 1.0;
+    double progress_utility = 0.0;
+    double effective_progress_known = 0.0;
+    double effective_progress_unknown = 0.0;
+    size_t local_observations = 0;
 };
 
 struct common_flydelta_outcome_guidance_replay_metrics {
@@ -130,6 +160,10 @@ struct common_flydelta_outcome_guidance_replay_metrics {
     double model_outcome_brier = 0.0;
     double fixed_prior_outcome_brier = 0.0;
     double historical_mean_outcome_brier = 0.0;
+    size_t progress_predictions = 0;
+    size_t known_progress_predictions = 0;
+    double model_progress_coverage_brier = 0.0;
+    double model_progress_brier = 0.0;
 };
 
 struct common_flydelta_outcome_guidance_decision {
@@ -168,6 +202,9 @@ struct common_flydelta_outcome_guidance_request {
     // Whirlpool's initial centre must use posterior ordering specifically;
     // other calls leave this unset and consume the persisted four-slot cursor.
     size_t policy_sequence_start = static_cast<size_t>(-1);
+    std::optional<common_flydelta_progress_assessment> progress_baseline;
+    std::optional<common_flydelta_progress_assessment> progress_parent;
+    std::string progress_parent_ref;
 };
 
 using common_flydelta_outcome_guidance_adviser = std::function<bool(
@@ -180,6 +217,12 @@ common_flydelta_outcome_guidance_candidate common_flydelta_outcome_guidance_laye
         uint32_t layer, uint32_t model_n_layers, double scale);
 std::string common_flydelta_outcome_guidance_pool_fingerprint(
         const std::vector<common_flydelta_outcome_guidance_candidate> & candidates);
+
+// Shared by all daemon consumers; old records remain outcome-only observations.
+bool common_flydelta_outcome_guidance_observation_from_json(const std::string & text,
+        common_flydelta_outcome_guidance_observation & observation, std::string & error);
+std::string common_flydelta_outcome_guidance_progress_prediction_to_json(
+        const common_flydelta_outcome_guidance_prediction & prediction);
 
 // Validated, immutable history and precomputed group-weighted category/backoff
 // aggregates. A job can share this across WHERE, Deep and TFO decisions.

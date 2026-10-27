@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <iomanip>
 #include "hash/hash.h"
 
 namespace common_flydelta_coefficient_detail {
@@ -101,6 +102,20 @@ inline common_flydelta_outcome_guidance_candidate guidance_candidate(
             static_cast<double>(config.guidance_model_layer_count - 1);
     }
     const float n = norm(coefficients);
+    std::ostringstream direction;
+    for (const float value : coefficients) direction << std::hexfloat << (n > 0 && value != 0 ? value / n : 0.0f) << ',';
+    const auto direction_bytes = direction.str();
+    candidate.direction_identity = "sha256:" + hash_sha256_hex(direction_bytes.data(), direction_bytes.size());
+    const auto & policy = config.dose_policy;
+    std::ostringstream dosing;
+    dosing << static_cast<int>(config.experimental_dose_mode) << ':' << std::quoted(config.residual_calibration.reference)
+        << ':' << std::quoted(config.injection_intervention_site) << ':' << std::quoted(config.injection_runtime_layout_revision)
+        << ':' << std::quoted(config.injection_runtime_configuration_fingerprint) << ':' << std::hexfloat << config.max_l2_norm
+        << ':' << config.use_dose_controller << ':' << policy.schema_version << ':' << policy.max_shift_norm
+        << ':' << policy.max_leakage << ':' << policy.target_relative_dose << ':' << policy.target_absolute_fraction
+        << ':' << policy.min_strength << ':' << policy.max_strength << ':' << policy.backoff_safety_factor;
+    const auto dosing_bytes = dosing.str();
+    candidate.dose_identity = "sha256:" + hash_sha256_hex(dosing_bytes.data(), dosing_bytes.size());
     candidate.relative_dose = config.max_l2_norm > 0
         ? std::min(1.0, static_cast<double>(n / config.max_l2_norm)) : 0.0;
     size_t nonzero = 0;

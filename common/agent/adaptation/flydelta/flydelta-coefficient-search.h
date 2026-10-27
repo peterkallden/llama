@@ -282,10 +282,17 @@ struct common_flydelta_coefficient_trial {
     size_t iteration = 0;
     size_t parent_trial_index = static_cast<size_t>(-1);
     std::string mutation_kind;
-    // Original observations retained for presentation, never search authority.
+    // Original host observations retained for presentation and validated progress
+    // projection. They never bypass search admission or lifecycle authority.
     std::optional<common_flydelta_counterfactual_trial> candidate_observation;
     std::optional<common_flydelta_counterfactual_trial> baseline_observation;
+    std::string progress_parent_ref;
+    std::optional<common_flydelta_progress_assessment> progress_parent;
 };
+
+bool common_flydelta_coefficient_trial_progress_evidence(
+        const common_flydelta_coefficient_trial & trial,
+        common_flydelta_progress_evidence & evidence, std::string & error);
 
 struct common_flydelta_coefficient_selection {
     bool selected = false;

@@ -7,6 +7,7 @@
 #include <map>
 #include <list>
 #include <mutex>
+#include <numeric>
 #include <nlohmann/json.hpp>
 #include <random>
 #include <set>
@@ -40,6 +41,7 @@ nlohmann::ordered_json canonical_candidate_pool(
         {"relative_dose", candidate.relative_dose},
         {"mixed_coefficients", candidate.mixed_coefficients},
         {"diagnostic_margin_sign", candidate.diagnostic_margin_sign},
+        {"direction_identity", candidate.direction_identity}, {"dose_identity", candidate.dose_identity},
     });
     return pool;
 }
@@ -114,18 +116,87 @@ counts aggregate(const std::vector<const common_flydelta_outcome_guidance_observ
     return c;
 }
 
+// Each independent fixture contributes at most one unit. Local repetitions
+// remain a single fixture, never independent generalization evidence.
+struct progress_counts {
+    double known = 0.0, unknown = 0.0;
+    std::array<double, 4> categories{}; // improved, unchanged, regressed, solved
+    size_t groups = 0;
+    size_t known_groups = 0;
+    size_t observations = 0;
+};
+struct progress_bucket { progress_counts leaf, backoff; };
+using progress_key = std::tuple<bucket_key, std::string, std::string, std::string, std::string>;
+using progress_backoff_key = std::tuple<std::string, std::string, std::string, std::string, std::string, std::string>;
+
+using progress_label_cache = std::map<const common_flydelta_outcome_guidance_observation *, common_flydelta_progress_transition>;
+
+template<class Predicate>
+progress_counts aggregate_progress(
+        const std::vector<const common_flydelta_outcome_guidance_observation *> & rows,
+        Predicate predicate, const common_flydelta_outcome_guidance_context * local = nullptr,
+        progress_label_cache * labels = nullptr) {
+    using transition = common_flydelta_progress_transition;
+    std::map<std::string, std::vector<transition>> groups;
+    progress_counts counts;
+    for (const auto * row : rows) {
+        if (!row->progress || !predicate(*row)) continue;
+        auto value = transition::unknown;
+        const auto cached = labels ? labels->find(row) : progress_label_cache::iterator{};
+        if (labels && cached != labels->end()) value = cached->second;
+        else {
+            value = common_flydelta_progress_evidence_classify(*row->progress);
+            if (local && local->local_parent) {
+                auto evidence = *row->progress;
+                evidence.parent = local->local_parent;
+                evidence.parent_ref = local->local_parent_ref;
+                value = common_flydelta_progress_evidence_classify(evidence);
+            }
+            if (row->outcome == common_flydelta_counterfactual_outcome::harmed) value = transition::regressed;
+            // Never give an already HELPED arm a second partial-success reward.
+            if (row->outcome == common_flydelta_counterfactual_outcome::helped && value == transition::improved)
+                value = transition::unknown;
+            if (labels) labels->emplace(row, value);
+        }
+        groups[row->fixture_group_id].push_back(value);
+        ++counts.observations;
+    }
+    counts.groups = groups.size();
+    for (const auto & group : groups) {
+        const auto & values = group.second;
+        const auto known = std::count_if(values.begin(), values.end(), [](auto value) { return value != transition::unknown; });
+        counts.known_groups += known > 0;
+        for (const auto value : values) {
+            if (value == transition::unknown) { counts.unknown += 1.0 / values.size(); continue; }
+            counts.known += 1.0 / values.size();
+            const size_t category = value == transition::improved ? 0 : value == transition::unchanged ? 1 :
+                value == transition::regressed ? 2 : 3;
+            counts.categories[category] += 1.0 / known;
+        }
+    }
+    return counts;
+}
+
+std::string progress_signature(const common_flydelta_outcome_guidance_observation & row) {
+    return nlohmann::ordered_json{{"task", row.task_fingerprint}, {"lineage", row.lineage_ref},
+        {"direction", row.direction_identity}, {"dose", row.dose_identity},
+        {"progress", row.progress ? nlohmann::ordered_json::parse(common_flydelta_progress_evidence_to_json(*row.progress))
+            : nlohmann::ordered_json(nullptr)}}.dump();
+}
+
 std::string history_hash(const std::vector<const common_flydelta_outcome_guidance_observation*> & rows) {
     std::vector<const common_flydelta_outcome_guidance_observation*> sorted = rows;
     std::sort(sorted.begin(), sorted.end(), [](const auto * a, const auto * b) {
         return a->stable_observation_id < b->stable_observation_id;
     });
     nlohmann::ordered_json canonical = {
-        {"builder_revision", "flydelta-outcome-projection-v4"},
+        {"builder_revision", "flydelta-outcome-projection-v5"},
         {"observations", nlohmann::ordered_json::array()},
     };
     for (const auto * o : sorted) {
         canonical["observations"].push_back({
             {"id", o->stable_observation_id}, {"fixture_group", o->fixture_group_id},
+            {"progress_signature", progress_signature(*o)},
             {"basis", o->basis_identity}, {"outcome", static_cast<int>(o->outcome)},
             {"outcome_known", o->outcome_known}, {"verifier_known", o->verifier_known},
             {"comparison_completed", o->comparison_completed}, {"overlay_applied", o->overlay_applied},
@@ -156,6 +227,9 @@ struct common_flydelta_outcome_guidance_projection {
     context_key compatibility;
     common_flydelta_outcome_guidance_decision metadata;
     std::map<bucket_key, cached_bucket> buckets;
+    std::map<progress_key, progress_bucket> progress_buckets;
+    std::map<progress_backoff_key, progress_counts> progress_backoffs;
+    std::vector<common_flydelta_outcome_guidance_observation> local_rows;
     std::map<strategy_key, counts> strategies;
     std::map<std::pair<std::string, int>, counts> domains;
     size_t estimated_bytes = 0;
@@ -266,7 +340,8 @@ bool common_flydelta_parse_outcome_guidance_mode(const std::string & value,
 bool common_flydelta_outcome_guidance_config_validate(
         const common_flydelta_outcome_guidance_config & c, std::string & error) {
     error.clear();
-    if (c.schema_version != 1 || !std::isfinite(c.harm_penalty) || c.harm_penalty < 0 ||
+    if (c.schema_version != 1 || !std::isfinite(c.progress_reward) || c.progress_reward < 0 || c.progress_reward > 1 ||
+            !std::isfinite(c.harm_penalty) || c.harm_penalty < 0 ||
             c.min_backoff_groups == 0 || !std::isfinite(c.max_prior_strength) ||
             c.max_prior_strength < 0 || c.max_prior_strength > 4 ||
             c.projection_cache_bytes > 256 * 1024 * 1024 ||
@@ -290,13 +365,15 @@ bool common_flydelta_outcome_guidance_build_projection(
         return false;
     }
     common_flydelta_outcome_guidance_decision d;
-    std::vector<const common_flydelta_outcome_guidance_observation*> rows;
+    std::vector<const common_flydelta_outcome_guidance_observation*> rows, all_rows;
+    std::vector<common_flydelta_outcome_guidance_observation> local_rows;
     d.read_history_rows = history.size();
     std::map<std::string, std::string> signatures;
     std::set<std::string> conflicted;
     auto observation_signature = [](const auto & o) {
         return nlohmann::ordered_json{
             {"fixture_group", o.fixture_group_id}, {"basis", o.basis_identity},
+            {"progress_signature", progress_signature(o)},
             {"scope", o.context.scope_fingerprint}, {"model", o.context.model_profile_fingerprint},
             {"tokenizer", o.context.tokenizer_fingerprint}, {"template", o.context.template_fingerprint},
             {"deployment", o.context.baseline_deployment_fingerprint}, {"verifier", o.context.verifier_revision},
@@ -306,12 +383,18 @@ bool common_flydelta_outcome_guidance_build_projection(
             {"layer", o.relative_layer}, {"dose", o.relative_dose},
             {"mixed", o.mixed_coefficients}, {"margin", o.diagnostic_margin_sign},
             {"completed", o.comparison_completed}, {"overlay", o.overlay_applied},
-            {"outcome_known", o.outcome != common_flydelta_counterfactual_outcome::unknown},
+            {"outcome_known", o.outcome_known},
             {"verifier_known", o.verifier_known},
             {"outcome", static_cast<int>(o.outcome)},
         }.dump();
     };
     for (const auto & o : history) {
+        std::string progress_error;
+        if (o.task_fingerprint.size() > 512 || o.lineage_ref.size() > 2048 ||
+                o.direction_identity.size() > 512 || o.dose_identity.size() > 4096 ||
+                (o.progress && !common_flydelta_progress_evidence_validate(*o.progress, progress_error))) {
+            ++d.rejected_history_rows; continue;
+        }
         if (o.stable_observation_id.empty() || o.fixture_group_id.empty() ||
                 o.context.semantic_domain.empty() || o.context.strategy.empty() || o.context.estimator.empty() ||
                 (o.outcome != common_flydelta_counterfactual_outcome::helped &&
@@ -344,12 +427,16 @@ bool common_flydelta_outcome_guidance_build_projection(
         // entirely so append order cannot choose the winning observation.
         if (!o.comparison_completed || !o.overlay_applied ||
                 hard_key(o.context) != hard_key(context) || o.fixture_group_id.empty()) continue;
-        if (o.fixture_group_id == excluded_fixture_group) continue;
         if (!accepted_ids.insert(o.stable_observation_id).second) continue;
+        all_rows.push_back(&o);
+        if (o.fixture_group_id == excluded_fixture_group) {
+            if (o.progress) local_rows.push_back(o);
+            continue;
+        }
         rows.push_back(&o);
     }
     d.compatible_history_rows = rows.size();
-    d.history_fingerprint = history_hash(rows);
+    d.history_fingerprint = history_hash(all_rows);
     std::map<bucket_key, cached_bucket> bucket_cache;
     for (const auto * row : rows) {
         const auto key = key_for(*row);
@@ -378,6 +465,39 @@ bool common_flydelta_outcome_guidance_build_projection(
     built->compatibility = hard_key(context);
     built->metadata = std::move(d);
     built->buckets = std::move(bucket_cache);
+    built->local_rows = std::move(local_rows);
+    progress_label_cache progress_labels;
+    const auto project_progress = [&](const auto & predicate) {
+        return aggregate_progress(rows, predicate, nullptr, &progress_labels);
+    };
+    // Progress schemas are separate partitions. Goal identifiers from different
+    // objectives are never directly compared or counted as independent trials.
+    for (const auto * row : rows) {
+        if (!row->progress) continue;
+        const auto & objective = row->progress->baseline;
+        const progress_key key{key_for(*row), objective.objective_revision, objective.verifier_ref, row->dose_identity, row->direction_identity};
+        if (built->progress_buckets.count(key)) continue;
+        auto compatible = [&](const auto & other) {
+            return other.progress && other.progress->baseline.objective_revision == objective.objective_revision &&
+                other.progress->baseline.verifier_ref == objective.verifier_ref && other.dose_identity == row->dose_identity;
+        };
+        const progress_backoff_key backoff_key{row->context.semantic_domain, row->context.strategy,
+            row->context.estimator, objective.objective_revision, objective.verifier_ref, row->dose_identity};
+        if (!built->progress_backoffs.count(backoff_key))
+            built->progress_backoffs[backoff_key] = project_progress([&](const auto & other) {
+                return compatible(other) && other.context.semantic_domain == row->context.semantic_domain &&
+                    other.context.strategy == row->context.strategy && other.context.estimator == row->context.estimator;
+            });
+        auto & bucket = built->progress_buckets[key];
+        bucket.leaf = project_progress([&](const auto & other) { return compatible(other) && key_for(other) == key_for(*row) && other.direction_identity == row->direction_identity; });
+        std::set<std::string> leaf_groups;
+        for (const auto * other : rows) if (compatible(*other) && key_for(*other) == key_for(*row) && other->direction_identity == row->direction_identity) leaf_groups.insert(other->fixture_group_id);
+        bucket.backoff = project_progress([&](const auto & other) {
+            return compatible(other) && !leaf_groups.count(other.fixture_group_id) &&
+                other.context.semantic_domain == row->context.semantic_domain && other.context.strategy == row->context.strategy &&
+                other.context.estimator == row->context.estimator;
+        });
+    }
     std::set<std::string> domains;
     std::set<strategy_key> strategies;
     for (const auto * row : rows) {
@@ -411,6 +531,20 @@ bool common_flydelta_outcome_guidance_build_projection(
             std::get<0>(entry.first).capacity() + std::get<1>(entry.first).capacity() + std::get<2>(entry.first).capacity();
     for (const auto & entry : built->domains)
         built->estimated_bytes += sizeof(entry) + 4 * sizeof(void *) + entry.first.first.capacity();
+    for (const auto & entry : built->progress_buckets) {
+        built->estimated_bytes += sizeof(entry) + 4 * sizeof(void *) +
+            std::get<1>(entry.first).capacity() + std::get<2>(entry.first).capacity() + std::get<3>(entry.first).capacity() +
+            std::get<4>(entry.first).capacity();
+        const auto & key = std::get<0>(entry.first);
+        built->estimated_bytes += std::get<0>(key).capacity() + std::get<1>(key).capacity() +
+            std::get<2>(key).capacity() + std::get<8>(key).capacity();
+    }
+    for (const auto & entry : built->progress_backoffs) {
+        built->estimated_bytes += sizeof(entry) + 4 * sizeof(void *);
+        std::apply([&](const auto &... field) { ((built->estimated_bytes += field.capacity()), ...); }, entry.first);
+    }
+    for (const auto & row : built->local_rows)
+        built->estimated_bytes += sizeof(row) + progress_signature(row).size() + row.stable_observation_id.capacity() + row.basis_identity.capacity();
     projection = std::move(built);
     return true;
 }
@@ -483,12 +617,22 @@ bool common_flydelta_outcome_guidance_decide_from_projection(
     d.selection_reasons.clear();
     d.mixed_policy_reasons.clear();
 
+    if ((context.progress_baseline && !common_flydelta_progress_assessment_validate(*context.progress_baseline, error)) ||
+            (context.local_parent && (context.local_parent_ref.empty() || !context.progress_baseline ||
+                !common_flydelta_progress_comparable(*context.progress_baseline, *context.local_parent)))) {
+        if (error.empty()) error = "FlyDelta progress query has an incompatible baseline or parent";
+        return false;
+    }
     std::mt19937_64 rng(config.seed ^ job_seed);
     struct scored { size_t index; double utility; };
     std::vector<scored> sampled;
     std::vector<scored> by_mean;
     const auto & bucket_cache = projection->buckets;
     std::map<bucket_key, double> sampled_by_posterior;
+    std::map<progress_key, progress_counts> local_counts;
+    progress_label_cache local_labels;
+    std::vector<const common_flydelta_outcome_guidance_observation *> local_rows;
+    for (const auto & row : projection->local_rows) local_rows.push_back(&row);
     for (size_t i=0; i<candidates.size(); ++i) {
         const auto exact = key_for(context, candidates[i]);
         const auto cached_it = bucket_cache.find(exact);
@@ -563,6 +707,79 @@ bool common_flydelta_outcome_guidance_decide_from_projection(
                 posterior,{1.0,0.0,-config.harm_penalty},posterior_rng)).first;
         }
         p.sampled_utility=draw->second;
+        if (context.progress_baseline && context.progress_baseline->assessment_known && !candidates[i].dose_identity.empty()) {
+            const auto & objective = *context.progress_baseline;
+            const progress_key progress_partition{exact, objective.objective_revision, objective.verifier_ref,
+                candidates[i].dose_identity, candidates[i].direction_identity};
+            progress_bucket statistics;
+            const auto found = projection->progress_buckets.find(progress_partition);
+            if (found != projection->progress_buckets.end()) statistics = found->second;
+            else {
+                const auto backoff = projection->progress_backoffs.find({context.semantic_domain, context.strategy,
+                    context.estimator, objective.objective_revision, objective.verifier_ref, candidates[i].dose_identity});
+                if (backoff != projection->progress_backoffs.end()) statistics.backoff = backoff->second;
+            }
+            auto local = local_counts.find(progress_partition);
+            if (local == local_counts.end()) {
+                const auto counts = aggregate_progress(local_rows, [&](const auto & row) {
+                    return !context.local_task_fingerprint.empty() && !context.local_lineage_ref.empty() &&
+                        row.task_fingerprint == context.local_task_fingerprint && row.lineage_ref == context.local_lineage_ref &&
+                        row.direction_identity == candidates[i].direction_identity && row.dose_identity == candidates[i].dose_identity &&
+                        key_for(row) == exact && common_flydelta_progress_comparable(row.progress->baseline, objective);
+                }, &context, &local_labels);
+                local = local_counts.emplace(progress_partition, counts).first;
+            }
+            const auto & nearby = local->second;
+            auto progress_leaf = statistics.leaf;
+            progress_leaf.known += nearby.known; progress_leaf.unknown += nearby.unknown;
+            progress_leaf.observations += nearby.observations;
+            for (size_t category = 0; category < 4; ++category) progress_leaf.categories[category] += nearby.categories[category];
+            const auto & backoff = statistics.backoff;
+            const double progress_prior = backoff.groups >= config.min_backoff_groups
+                ? config.max_prior_strength : 0.0;
+            p.progress_evidence_available = progress_leaf.observations > 0 || progress_prior > 0;
+            if (p.progress_evidence_available) {
+                const double total = backoff.known + backoff.unknown;
+                const double category_total = std::accumulate(backoff.categories.begin(), backoff.categories.end(), 0.0);
+                std::vector<double> means(4, 0.25);
+                if (category_total > 0) for (size_t category = 0; category < 4; ++category)
+                    means[category] = backoff.categories[category] / category_total;
+                common_outcome_guidance_posterior progress_posterior;
+                if (!common_outcome_guidance_make_posterior(progress_leaf.known, progress_leaf.unknown,
+                        total > 0 ? backoff.known / total : 0.5,
+                        std::vector<double>(progress_leaf.categories.begin(), progress_leaf.categories.end()), means,
+                        progress_prior, backoff.known_groups >= config.min_backoff_groups ? progress_prior : 0.0, progress_posterior)) {
+                    error = "FlyDelta progress posterior inputs are invalid"; return false;
+                }
+                p.p_progress_known = progress_posterior.p_known;
+                p.p_improved_given_progress_known = progress_posterior.category_probabilities[0];
+                p.p_regressed_given_progress_known = progress_posterior.category_probabilities[2];
+                p.p_solved_given_progress_known = progress_posterior.category_probabilities[3];
+                p.p_safe_partial_improved = p.p_progress_known * p.p_improved_given_progress_known;
+                p.p_safe_partial_low = progress_posterior.p_known_low * progress_posterior.category_lows[0];
+                p.p_safe_partial_high = progress_posterior.p_known_high * progress_posterior.category_highs[0];
+                // Full outcomes retain their existing harm cost. Partial
+                // regressions receive no reward and remain explicit diagnostics.
+                p.progress_utility_available = progress_leaf.known > 0 ||
+                    (progress_prior > 0 && backoff.known_groups >= config.min_backoff_groups);
+                p.progress_utility = p.progress_utility_available ? config.progress_reward * p.p_safe_partial_improved : 0.0;
+                p.expected_utility += p.progress_utility;
+                p.effective_progress_known = progress_leaf.known;
+                p.effective_progress_unknown = progress_leaf.unknown;
+                p.local_observations = nearby.observations;
+                const auto progress_identity = nlohmann::ordered_json{{"outcome_posterior", p.posterior_identity},
+                    {"partition", progress_partition}, {"task", context.local_task_fingerprint},
+                    {"lineage", context.local_lineage_ref}, {"history", d.history_fingerprint},
+                    {"parent", context.local_parent ? nlohmann::ordered_json::parse(
+                        common_flydelta_progress_assessment_to_json(*context.local_parent)) : nlohmann::ordered_json(nullptr)}}.dump();
+                const auto fingerprint = hash_sha256_hex(progress_identity.data(), progress_identity.size());
+                p.posterior_identity = "sha256:" + fingerprint;
+                std::mt19937_64 progress_rng(config.seed ^ job_seed ^ std::stoull(fingerprint.substr(0, 16), nullptr, 16));
+                if (p.progress_utility_available)
+                    p.sampled_utility += common_outcome_guidance_sample_expected_utility(progress_posterior,
+                        {config.progress_reward, 0.0, 0.0, 0.0}, progress_rng);
+            }
+        }
         d.predictions.push_back(p);
         by_mean.push_back({i, p.expected_utility});
         sampled.push_back({i,p.sampled_utility});
@@ -663,6 +880,7 @@ bool common_flydelta_outcome_guidance_replay(
                 row.context.semantic_domain, row.context.strategy, row.context.estimator}},
             {"rank", row.rank}, {"layer", row.relative_layer}, {"dose", row.relative_dose},
             {"basis", row.basis_identity}, {"outcome", static_cast<int>(row.outcome)},
+            {"progress_signature", progress_signature(row)},
             {"outcome_known", row.outcome_known}, {"verifier_known", row.verifier_known},
             {"margin_sign", row.diagnostic_margin_sign},
             {"completed", row.comparison_completed}, {"overlay", row.overlay_applied},
@@ -691,15 +909,36 @@ bool common_flydelta_outcome_guidance_replay(
             candidate.mixed_coefficients = observed.mixed_coefficients;
             candidate.diagnostic_margin_sign = observed.diagnostic_margin_sign;
             candidate.basis_identity = observed.basis_identity;
+            candidate.direction_identity = observed.direction_identity;
+            candidate.dose_identity = observed.dose_identity;
+            auto scoring_context = observed.context;
+            if (observed.progress) {
+                scoring_context.progress_baseline = observed.progress->baseline;
+                scoring_context.local_parent = observed.progress->parent;
+                scoring_context.local_parent_ref = observed.progress->parent_ref;
+            }
             common_flydelta_outcome_guidance_decision decision;
             if (!common_flydelta_outcome_guidance_build_decision(
-                    scoring_config, observed.context, available, {candidate}, 1,
+                    scoring_config, scoring_context, available, {candidate}, 1,
                     replay_seed++, decision, error)) return false;
             if (decision.predictions.size() != 1) {
                 error = "FlyDelta outcome replay did not produce a prediction";
                 return false;
             }
             const auto & prediction = decision.predictions.front();
+            if (observed.progress) {
+                const auto progress = common_flydelta_progress_evidence_classify(*observed.progress);
+                const bool known = progress != common_flydelta_progress_transition::unknown;
+                metrics.model_progress_coverage_brier += std::pow(prediction.p_progress_known - (known ? 1.0 : 0.0), 2);
+                ++metrics.progress_predictions;
+                if (known) {
+                    const bool improved = progress == common_flydelta_progress_transition::improved &&
+                        observed.outcome != common_flydelta_counterfactual_outcome::helped &&
+                        observed.outcome != common_flydelta_counterfactual_outcome::harmed;
+                    metrics.model_progress_brier += std::pow(prediction.p_improved_given_progress_known - (improved ? 1.0 : 0.0), 2);
+                    ++metrics.known_progress_predictions;
+                }
+            }
             const bool outcome_known = observed.outcome != common_flydelta_counterfactual_outcome::unknown;
             const double known_target = outcome_known ? 1.0 : 0.0;
             model_known_brier += std::pow(prediction.p_known - known_target, 2);
@@ -758,6 +997,8 @@ bool common_flydelta_outcome_guidance_replay(
         }
         metrics.model_verifiability_ece = calibration_error;
     }
+    if (metrics.progress_predictions) metrics.model_progress_coverage_brier /= metrics.progress_predictions;
+    if (metrics.known_progress_predictions) metrics.model_progress_brier /= metrics.known_progress_predictions;
     if (metrics.known_outcomes > 0) {
         const double n = static_cast<double>(metrics.known_outcomes);
         metrics.model_outcome_brier = model_outcome_brier/n;
@@ -806,7 +1047,7 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
     json payload = {
         {"record_type", "outcome_guidance_decision"},
         {"schema_version", 4}, {"job_id", job_id}, {"seed", seed},
-        {"sampling_revision", "posterior-category-sampling-v2"},
+        {"sampling_revision", "outcome-and-progress-sampling-v3"},
         {"phase_id", phase_id}, {"decision_sequence", decision_sequence},
         {"stage", decision.stage}, {"round", decision.round},
         {"decision_id", decision.decision_id},
@@ -839,6 +1080,10 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         {"fallback_reason", decision.fallback_reason},
         {"predictions", json::array()},
     };
+    payload["progress_query"] = {{"task_fingerprint", context.local_task_fingerprint},
+        {"lineage_ref", context.local_lineage_ref}, {"parent_ref", context.local_parent_ref},
+        {"baseline", context.progress_baseline ? json::parse(common_flydelta_progress_assessment_to_json(*context.progress_baseline)) : json(nullptr)},
+        {"parent", context.local_parent ? json::parse(common_flydelta_progress_assessment_to_json(*context.local_parent)) : json(nullptr)}};
     for (size_t pos = 0; pos < decision.selected_order.size(); ++pos) {
         const size_t candidate_index = decision.selected_order[pos];
         if (candidate_index >= candidates.size()) {
@@ -850,7 +1095,8 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
             {"reason", decision.selection_reasons[pos]},
         });
     }
-    for (const auto & p : decision.predictions) payload["predictions"].push_back({
+    for (const auto & p : decision.predictions) {
+        json prediction = {
         {"arm_id", p.arm_id}, {"level", p.level}, {"p_known", p.p_known},
         {"posterior_identity",p.posterior_identity},{"sampled_utility",p.sampled_utility},
         {"p_known_interval_95_approx", {p.p_known_low, p.p_known_high}},
@@ -866,7 +1112,11 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         {"effective_unknown_observations", p.effective_unknown_observations},
         {"backoff_fixture_groups", p.backoff_fixture_groups},
         {"backoff_prior_strength", p.backoff_prior_strength},
-    });
+        };
+        prediction["progress"] = json::parse(common_flydelta_outcome_guidance_progress_prediction_to_json(p));
+        payload["predictions"].push_back(std::move(prediction));
+    }
+
     common_learning_lifecycle_record record;
     record.event_id = event_context.event_id;
     record.subject_id = job_id;
@@ -881,4 +1131,75 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
     record.created_at = event_context.created_at;
     record.payload_json = payload.dump();
     return store.append(record, error);
+}
+
+bool common_flydelta_outcome_guidance_observation_from_json(const std::string & text,
+        common_flydelta_outcome_guidance_observation & o, std::string & error) {
+    o = {}; error.clear();
+    if (text.size() > 5U * 1024U * 1024U) { error = "FlyDelta guidance observation exceeds its byte bound"; return false; }
+    try {
+        const auto row = nlohmann::ordered_json::parse(text);
+        const auto & g = row.at("outcome_guidance");
+        const int schema = g.value("schema_version", 0);
+        if (!g.is_object() || (schema != 1 && schema != 2)) { error = "Unsupported FlyDelta guidance observation"; return false; }
+        o.stable_observation_id = g.value("observation_id", "");
+        o.fixture_group_id = g.value("fixture_group_id", "");
+        o.context.scope_fingerprint = g.value("scope_fingerprint", "");
+        o.context.model_profile_fingerprint = g.value("model_profile_fingerprint", "");
+        o.context.tokenizer_fingerprint = g.value("tokenizer_fingerprint", "");
+        o.context.template_fingerprint = g.value("template_fingerprint", "");
+        o.context.baseline_deployment_fingerprint = g.value("baseline_deployment_fingerprint", "");
+        o.context.verifier_revision = g.value("verifier_revision", "");
+        o.context.ruleset_revision = g.value("ruleset_revision", "");
+        o.context.action_contract_fingerprint = g.value("action_contract_fingerprint", "");
+        o.context.semantic_domain = g.value("domain", "");
+        o.context.strategy = g.value("strategy", "");
+        o.context.estimator = g.value("estimator", "");
+        o.basis_identity = g.value("basis_id", "");
+        o.rank = g.value("rank", size_t{0});
+        o.relative_layer = g.value("relative_layer", 0.0);
+        o.relative_dose = g.value("relative_dose", 0.0);
+        o.mixed_coefficients = g.value("mixed_coefficients", false);
+        o.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
+        o.comparison_completed = g.value("comparison_completed", false);
+        o.overlay_applied = g.value("overlay_applied", false);
+        o.verifier_known = row.value("verifier_known", false);
+        const auto outcome = row.value("outcome", std::string("unknown"));
+        if (outcome == "helped") o.outcome = common_flydelta_counterfactual_outcome::helped;
+        else if (outcome == "neutral") o.outcome = common_flydelta_counterfactual_outcome::neutral;
+        else if (outcome == "harmed") o.outcome = common_flydelta_counterfactual_outcome::harmed;
+        else if (outcome != "unknown") { error = "Invalid FlyDelta guidance outcome"; return false; }
+        o.outcome_known = g.value("outcome_known", o.outcome != common_flydelta_counterfactual_outcome::unknown);
+        if (schema == 2) {
+            o.task_fingerprint = g.value("task_fingerprint", "");
+            o.lineage_ref = g.value("lineage_ref", "");
+            o.direction_identity = g.value("direction_identity", "");
+            o.dose_identity = g.value("dose_identity", "");
+            if (g.contains("progress")) {
+                o.progress.emplace();
+                if (!common_flydelta_progress_evidence_from_json(g.at("progress").dump(), *o.progress, error)) return false;
+            }
+        }
+        if (o.stable_observation_id.empty() || o.outcome_known !=
+                (o.outcome != common_flydelta_counterfactual_outcome::unknown)) {
+            error = "Inconsistent FlyDelta guidance observation identity or outcome"; return false;
+        }
+    } catch (const std::exception & exception) {
+        error = std::string("Malformed FlyDelta guidance observation: ") + exception.what();
+        o = {}; return false;
+    }
+    return true;
+}
+
+std::string common_flydelta_outcome_guidance_progress_prediction_to_json(
+        const common_flydelta_outcome_guidance_prediction & p) {
+    return nlohmann::ordered_json{{"evidence_available", p.progress_evidence_available},
+        {"utility_available", p.progress_utility_available},
+        {"p_known", p.p_progress_known}, {"p_improved_given_known", p.p_improved_given_progress_known},
+        {"p_regressed_given_known", p.p_regressed_given_progress_known}, {"p_solved_given_known", p.p_solved_given_progress_known},
+        {"p_safe_partial_improved", p.p_safe_partial_improved},
+        {"safe_partial_interval_product_bounds", {p.p_safe_partial_low, p.p_safe_partial_high}},
+        {"utility", p.progress_utility}, {"effective_known", p.effective_progress_known},
+        {"effective_unknown", p.effective_progress_unknown}, {"local_observations", p.local_observations},
+        {"authority", "search_only"}}.dump();
 }

@@ -231,6 +231,17 @@ bool common_flydelta_run_deep_search_batched(
         std::string guidance_error;
         common_flydelta_outcome_guidance_request request;
         request.stage = "deep_full_generation_frontier";
+        request.progress_baseline = baseline.semantic_progress_observation.objective;
+        if (config.resume_anchor) {
+            if (config.anchor_observation.objective.assessment_known && !config.anchor_ref.empty()) {
+                request.progress_parent = config.anchor_observation.objective;
+                request.progress_parent_ref = config.anchor_ref;
+            } else {
+                // Legacy anchors retain outcome guidance without inventing a
+                // generic parent assessment for partial-progress prediction.
+                request.progress_baseline.reset();
+            }
+        }
         request.candidates = guidance_candidates;
         request.selection_limit = top_k;
         request.decision_id = "deep-full-generation-frontier";
@@ -335,6 +346,10 @@ bool common_flydelta_run_deep_search_batched(
         trial.margin_comparison.candidate = margin;
         common_flydelta_coefficient_trial_set_observation(trial, baseline, candidate);
         if (!common_flydelta_coefficient_detail::update_dose_metrics(result.basis, coefficient_config, trial, error)) return false;
+        if (config.resume_anchor) {
+            trial.progress_parent = config.anchor_observation.objective;
+            trial.progress_parent_ref = config.anchor_ref;
+        }
         trial.geometry_available = geometry_available;
         if (geometry_available &&
                 !common_flydelta_representation_diagnostics_validate(geometry, error)) {
@@ -356,9 +371,14 @@ bool common_flydelta_run_deep_search_batched(
         if (result.matched_evaluation_reason == "pending_full_verification") {
             comparable_union = comparable_union && candidate.executed && candidate.host_evaluated &&
                 candidate.overlay_applied && !candidate.evidence_ref.empty();
-            result.matched_evaluation.union_arm_results.push_back({forecast.arm_id,
+            common_flydelta_guidance_arm_measurement measurement{forecast.arm_id,
                 full_trial.outcome, candidate.attributed_inference_ms, candidate.inference_cost_available,
-                candidate.evidence_ref});
+                candidate.evidence_ref};
+            common_flydelta_progress_evidence progress_evidence;
+            if (common_flydelta_coefficient_trial_progress_evidence(full_trial, progress_evidence, error)) {
+                measurement.progress = std::move(progress_evidence);
+            } else if (!error.empty()) return false;
+            result.matched_evaluation.union_arm_results.push_back(std::move(measurement));
         }
     }
     // Return exactly the selected K arms, in policy order. Qualification-only

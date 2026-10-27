@@ -98,6 +98,7 @@
           "mode": "shadow",
           "seed": 5065521830640243777,
           "harm_penalty": 5.0,
+          "progress_reward": 0.25,
           "min_backoff_groups": 8,
           "max_prior_strength": 4.0,
           "matched_evaluation": false,

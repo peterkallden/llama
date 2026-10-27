@@ -234,6 +234,51 @@ int main() {
         common_flydelta_guidance_qualification_status::insufficient_evidence);
     CHECK(interrupted.list_scope_with_watermark("ns", "project", "session", records, watermark, error));
     CHECK(records.size() == 2);
+    // UNKNOWN full outcomes can still supply paired, declared-goal progress.
+    auto partial_cohort = cohort(true);
+    for (auto & fixture : partial_cohort) {
+        for (auto & arm : fixture.union_arm_results) {
+            arm.outcome = common_flydelta_counterfactual_outcome::unknown;
+            if (arm.arm_id != "guide") continue;
+            common_flydelta_progress_evidence e;
+            e.baseline_ref = fixture.fixture_group_id + ":baseline";
+            e.candidate_ref = fixture.fixture_group_id + ":candidate";
+            e.baseline_evidence_ref = fixture.baseline_evidence_ref;
+            e.candidate_evidence_ref = arm.evidence_ref;
+            e.baseline.objective_id = fixture.fixture_group_id;
+            e.baseline.objective_revision = "goals:v1"; e.baseline.verifier_ref = "verifier:v1";
+            e.baseline.assessment_known = e.baseline.regression_known = true;
+            e.baseline.satisfied_goals = {"A"}; e.baseline.remaining_goals = {"B", "C"};
+            e.candidate = e.baseline;
+            e.candidate.satisfied_goals = {"A", "B"}; e.candidate.remaining_goals = {"C"};
+            arm.progress = std::move(e);
+        }
+    }
+    CHECK(common_flydelta_guidance_qualify_deep_selection(context(), partial_cohort, 0, result, error));
+    CHECK(result.status == common_flydelta_guidance_qualification_status::qualified);
+    CHECK(result.guided_improved == 24 && result.guided_helped == 0 && result.guided_unknown == 24);
+    auto helped_cohort = partial_cohort;
+    for (auto & fixture : helped_cohort) fixture.union_arm_results[1].outcome = common_flydelta_counterfactual_outcome::helped;
+    CHECK(common_flydelta_guidance_qualify_deep_selection(context(), helped_cohort, 0, result, error));
+    CHECK(result.guided_helped == 24 && result.guided_improved == 0 && result.guided_utility_per_selected_arm == 1.0);
+    auto wrong_reference = partial_cohort;
+    wrong_reference.front().union_arm_results[1].progress->candidate_evidence_ref = "unrelated:evidence";
+    CHECK(!common_flydelta_guidance_qualify_deep_selection(context(), wrong_reference, 0, result, error));
+    auto missing_coverage = partial_cohort;
+    for (auto & fixture : missing_coverage) fixture.union_arm_results[1].progress->candidate.regression_known = false;
+    CHECK(common_flydelta_guidance_qualify_deep_selection(context(), missing_coverage, 0, result, error));
+    CHECK(result.status != common_flydelta_guidance_qualification_status::qualified && result.guided_improved == 0);
+    auto regressed = partial_cohort;
+    regressed.front().union_arm_results[1].progress->candidate.has_regression = true;
+    CHECK(common_flydelta_guidance_qualify_deep_selection(context(), regressed, 0, result, error));
+    CHECK(result.status != common_flydelta_guidance_qualification_status::qualified && result.guided_progress_regressed == 1);
+    auto partial_context = context(); partial_context.progress_reward = 0;
+    CHECK(common_flydelta_guidance_qualify_deep_selection(partial_context, partial_cohort, 0, result, error));
+    CHECK(result.status != common_flydelta_guidance_qualification_status::qualified);
+    auto reward_config = common_flydelta_outcome_guidance_config{};
+    const auto previous_policy = common_flydelta_guidance_qualification_policy_revision(reward_config);
+    reward_config.progress_reward = 0;
+    CHECK(previous_policy != common_flydelta_guidance_qualification_policy_revision(reward_config));
     std::cout << "Deep selection qualification contracts passed\n";
     return 0;
 }

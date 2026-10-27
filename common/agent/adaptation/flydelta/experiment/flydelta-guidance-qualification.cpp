@@ -44,6 +44,7 @@ json qualification_context_json(const common_flydelta_guidance_qualification_con
         {"capability", common_flydelta_guidance_capability_name(c.capability)},
         {"policy_revision", c.policy_revision},
         {"selection_limit", c.selection_limit},
+        {"progress_reward", c.progress_reward}, {"harm_penalty", c.harm_penalty},
         {"authorized_scope", {
             {"memory_scope", static_cast<int>(c.authorized_scope.memory_scope)},
             {"plan_scope", static_cast<int>(c.authorized_scope.plan_scope)},
@@ -68,6 +69,8 @@ bool qualification_context_from_json(
     c = {};
     c.policy_revision = j.value("policy_revision", std::string());
     c.selection_limit = j.value("selection_limit", size_t{0});
+    c.progress_reward = j.value("progress_reward", 0.25);
+    c.harm_penalty = j.value("harm_penalty", kHarmPenalty);
     const int memory_scope = scope.value("memory_scope", -1);
     const int plan_scope = scope.value("plan_scope", -1);
     if (memory_scope < 0 || memory_scope > 3 || plan_scope < 0 || plan_scope > 3) return false;
@@ -93,7 +96,8 @@ bool qualification_context_from_json(
 
 bool context_valid(const common_flydelta_guidance_qualification_context & c) {
     const auto & x = c.outcome_context;
-    return c.schema_version == 1 &&
+    return c.schema_version == 1 && std::isfinite(c.progress_reward) && c.progress_reward >= 0 && c.progress_reward <= 1 &&
+        std::isfinite(c.harm_penalty) && c.harm_penalty >= 0 &&
         c.decision_point == common_flydelta_guidance_decision_point::deep_full_generation_selection &&
         c.capability == common_flydelta_guidance_capability::select_budgeted_subset &&
         c.selection_limit > 0 && c.selection_limit <= 16 &&
@@ -120,10 +124,13 @@ json fixture_json(const common_flydelta_guidance_fixture_evaluation & f) {
     json arms = json::array();
     auto ordered = f.union_arm_results;
     std::sort(ordered.begin(), ordered.end(), [](const auto & a, const auto & b) { return a.arm_id < b.arm_id; });
-    for (const auto & arm : ordered) arms.push_back({{"arm_id", arm.arm_id},
-        {"outcome", common_flydelta_counterfactual_outcome_name(arm.outcome)},
-        {"inference_ms", arm.inference_ms}, {"inference_cost_available", arm.inference_cost_available},
-        {"evidence_ref", arm.evidence_ref}});
+    for (const auto & arm : ordered) {
+        json value = {{"arm_id", arm.arm_id}, {"outcome", common_flydelta_counterfactual_outcome_name(arm.outcome)},
+            {"inference_ms", arm.inference_ms}, {"inference_cost_available", arm.inference_cost_available},
+            {"evidence_ref", arm.evidence_ref}};
+        if (arm.progress) value["progress"] = json::parse(common_flydelta_progress_evidence_to_json(*arm.progress));
+        arms.push_back(std::move(value));
+    }
     return {{"fixture_group_id", f.fixture_group_id}, {"evaluation_id", f.evaluation_id},
         {"history_fingerprint", f.history_fingerprint}, {"candidate_pool_fingerprint", f.candidate_pool_fingerprint},
         {"baseline_selection", f.baseline_selection}, {"guided_selection", f.guided_selection},
@@ -161,6 +168,11 @@ bool fixture_from_json(const json & j, common_flydelta_guidance_fixture_evaluati
         arm.inference_ms = a.at("inference_ms").get<double>();
         arm.inference_cost_available = a.value("inference_cost_available", false);
         arm.evidence_ref = a.value("evidence_ref", std::string());
+        if (a.contains("progress")) {
+            arm.progress.emplace();
+            std::string error;
+            if (!common_flydelta_progress_evidence_from_json(a.at("progress").dump(), *arm.progress, error)) return false;
+        }
         f.union_arm_results.push_back(std::move(arm));
     }
     return true;
@@ -188,6 +200,15 @@ bool parse_result(const json & j, common_flydelta_guidance_qualification_result 
     r.baseline_unknown = j.value("baseline_unknown", size_t{0});
     r.guided_unknown = j.value("guided_unknown", size_t{0});
     r.random_unknown = j.value("random_unknown", size_t{0});
+    r.baseline_improved = j.value("baseline_improved", size_t{0});
+    r.guided_improved = j.value("guided_improved", size_t{0});
+    r.random_improved = j.value("random_improved", size_t{0});
+    r.baseline_progress_regressed = j.value("baseline_progress_regressed", size_t{0});
+    r.guided_progress_regressed = j.value("guided_progress_regressed", size_t{0});
+    r.random_progress_regressed = j.value("random_progress_regressed", size_t{0});
+    r.baseline_progress_unknown = j.value("baseline_progress_unknown", size_t{0});
+    r.guided_progress_unknown = j.value("guided_progress_unknown", size_t{0});
+    r.random_progress_unknown = j.value("random_progress_unknown", size_t{0});
     r.inference_costs_available = j.value("inference_costs_available", false);
     r.baseline_selected_arms = j.value("baseline_selected_arms", size_t{0});
     r.guided_selected_arms = j.value("guided_selected_arms", size_t{0});
@@ -264,12 +285,14 @@ struct policy_summary {
     size_t helped = 0;
     size_t harmed = 0;
     size_t unknown = 0;
+    size_t improved = 0, progress_regressed = 0, progress_unknown = 0;
     bool costs_available = true;
 };
 
 bool evaluate_selection(const std::vector<std::string> & selection,
         const std::map<std::string, common_flydelta_guidance_arm_measurement> & arms,
-        policy_summary & summary, std::string & error) {
+        policy_summary & summary, std::string & error,
+        const common_flydelta_guidance_qualification_context & context) {
     summary = {};
     if (selection.empty()) { error = "qualification selection must not be empty"; return false; }
     std::set<std::string> unique;
@@ -283,7 +306,27 @@ bool evaluate_selection(const std::vector<std::string> & selection,
         if (!std::isfinite(arm.inference_ms) || arm.inference_ms < 0.0) {
             error = "qualification arm inference cost is invalid"; return false;
         }
-        summary.utility_sum += utility(arm.outcome);
+        summary.utility_sum += arm.outcome == common_flydelta_counterfactual_outcome::harmed
+            ? -context.harm_penalty : utility(arm.outcome);
+        auto progress = common_flydelta_progress_transition::unknown;
+        if (arm.progress) {
+            if (!common_flydelta_progress_evidence_validate(*arm.progress, error) ||
+                    arm.progress->candidate_evidence_ref != arm.evidence_ref) {
+                if (error.empty()) error = "Qualification progress references a different candidate observation";
+                return false;
+            }
+            progress = common_flydelta_progress_evidence_classify(*arm.progress);
+        }
+        const bool improved = progress == common_flydelta_progress_transition::improved &&
+            arm.outcome != common_flydelta_counterfactual_outcome::helped &&
+            arm.outcome != common_flydelta_counterfactual_outcome::harmed;
+        summary.improved += improved;
+        summary.progress_regressed += progress == common_flydelta_progress_transition::regressed;
+        summary.progress_unknown += progress == common_flydelta_progress_transition::unknown;
+        if (improved) summary.utility_sum += context.progress_reward;
+        if (progress == common_flydelta_progress_transition::regressed &&
+                arm.outcome != common_flydelta_counterfactual_outcome::harmed)
+            summary.utility_sum -= context.harm_penalty;
         summary.cost_sum += arm.inference_ms;
         ++summary.arms;
         summary.helped += arm.outcome == common_flydelta_counterfactual_outcome::helped;
@@ -300,6 +343,10 @@ json result_json(const common_flydelta_guidance_qualification_result & r) {
         {"context", qualification_context_json(r.context)},
         {"status", common_flydelta_guidance_qualification_status_name(r.status)},
         {"fixture_groups", r.fixture_groups}, {"minimum_fixture_groups", r.minimum_fixture_groups},
+        {"baseline_improved", r.baseline_improved}, {"guided_improved", r.guided_improved}, {"random_improved", r.random_improved},
+        {"baseline_progress_regressed", r.baseline_progress_regressed}, {"guided_progress_regressed", r.guided_progress_regressed},
+        {"random_progress_regressed", r.random_progress_regressed}, {"baseline_progress_unknown", r.baseline_progress_unknown},
+        {"guided_progress_unknown", r.guided_progress_unknown}, {"random_progress_unknown", r.random_progress_unknown},
         {"baseline_helped", r.baseline_helped}, {"guided_helped", r.guided_helped},
         {"baseline_harmed", r.baseline_harmed}, {"guided_harmed", r.guided_harmed},
         {"random_helped", r.random_helped}, {"random_harmed", r.random_harmed},
@@ -320,8 +367,8 @@ json result_json(const common_flydelta_guidance_qualification_result & r) {
         {"revalidate_after_watermark", r.revalidate_after_watermark},
         {"evaluation_fingerprint", r.evaluation_fingerprint},
         {"evaluation_payload_json", r.evaluation_payload_json},
-        {"qualification_method", "paired_fixture_normal_95_approx_v1"},
-        {"harm_penalty", kHarmPenalty},
+        {"qualification_method", "paired_fixture_progress_normal_95_approx_v2"},
+        {"harm_penalty", r.context.harm_penalty}, {"progress_reward", r.context.progress_reward},
     };
 }
 
@@ -367,9 +414,10 @@ std::string common_flydelta_outcome_guidance_scope_fingerprint(
 std::string common_flydelta_guidance_qualification_policy_revision(
         const common_flydelta_outcome_guidance_config & config) {
     const json policy = {
-        {"algorithm", "deep-full-generation-mixed-selection-v2"},
-        {"projection_builder_revision", "flydelta-outcome-projection-v4"},
+        {"algorithm", "deep-full-generation-mixed-progress-selection-v3"},
+        {"projection_builder_revision", "flydelta-outcome-projection-v5"},
         {"seed", config.seed}, {"harm_penalty", config.harm_penalty},
+        {"progress_reward", config.progress_reward}, {"progress_contract", "paired-goal-transitions-v1"},
         {"min_backoff_groups", config.min_backoff_groups},
         {"max_prior_strength", config.max_prior_strength},
         {"selection_schedule", "two-ordinary-one-posterior-one-uniform-v1"},
@@ -500,9 +548,9 @@ bool common_flydelta_guidance_qualify_deep_selection(
             return false;
         }
         policy_summary baseline, guided, random;
-        if (!evaluate_selection(fixture.baseline_selection, arms, baseline, error) ||
-                !evaluate_selection(fixture.guided_selection, arms, guided, error) ||
-                !evaluate_selection(fixture.random_ablation_selection, arms, random, error)) return false;
+        if (!evaluate_selection(fixture.baseline_selection, arms, baseline, error, context) ||
+                !evaluate_selection(fixture.guided_selection, arms, guided, error, context) ||
+                !evaluate_selection(fixture.random_ablation_selection, arms, random, error, context)) return false;
         const double b = baseline.utility_sum / baseline.arms;
         const double g = guided.utility_sum / guided.arms;
         paired_differences.push_back(g - b);
@@ -512,6 +560,15 @@ bool common_flydelta_guidance_qualify_deep_selection(
         baseline_total_arms += baseline.arms;
         guided_total_arms += guided.arms;
         random_total_arms += random.arms;
+        result.baseline_improved += baseline.improved;
+        result.guided_improved += guided.improved;
+        result.random_improved += random.improved;
+        result.baseline_progress_regressed += baseline.progress_regressed;
+        result.guided_progress_regressed += guided.progress_regressed;
+        result.random_progress_regressed += random.progress_regressed;
+        result.baseline_progress_unknown += baseline.progress_unknown;
+        result.guided_progress_unknown += guided.progress_unknown;
+        result.random_progress_unknown += random.progress_unknown;
         result.baseline_helped += baseline.helped;
         result.guided_helped += guided.helped;
         result.baseline_harmed += baseline.harmed;
@@ -554,8 +611,10 @@ bool common_flydelta_guidance_qualify_deep_selection(
     } else {
         const double baseline_harm_rate = static_cast<double>(result.baseline_harmed) / result.baseline_selected_arms;
         const double guided_harm_rate = static_cast<double>(result.guided_harmed) / result.guided_selected_arms;
+        const double baseline_regression_rate = static_cast<double>(result.baseline_progress_regressed) / result.baseline_selected_arms;
+        const double guided_regression_rate = static_cast<double>(result.guided_progress_regressed) / result.guided_selected_arms;
         result.status = result.guided_minus_baseline_lower_95_approx > 0.0 &&
-                guided_harm_rate <= baseline_harm_rate
+                guided_harm_rate <= baseline_harm_rate && guided_regression_rate <= baseline_regression_rate
             ? common_flydelta_guidance_qualification_status::qualified
             : common_flydelta_guidance_qualification_status::paused;
     }

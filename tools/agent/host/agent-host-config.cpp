@@ -756,6 +756,7 @@ bool parse_agent_host_config_json(
                             mode, config.adaptation_flydelta_outcome_guidance.mode, error)) return false;
                     read_optional(guidance, "seed", config.adaptation_flydelta_outcome_guidance.seed);
                     read_optional(guidance, "harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty);
+                    read_optional(guidance, "progress_reward", config.adaptation_flydelta_outcome_guidance.progress_reward);
                     read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
                     read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
                     if (guidance.contains("matched_evaluation") && !guidance["matched_evaluation"].is_boolean()) {
@@ -1801,6 +1802,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                             config.adaptation_flydelta_outcome_guidance.mode)},
                         {"seed", config.adaptation_flydelta_outcome_guidance.seed},
                         {"harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty},
+                        {"progress_reward", config.adaptation_flydelta_outcome_guidance.progress_reward},
                         {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
                         {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
                         {"matched_evaluation", config.adaptation_flydelta_outcome_guidance.matched_evaluation},

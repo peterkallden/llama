@@ -378,6 +378,55 @@ int main() {
     CHECK(matched_result.matched_evaluation_reason == "matched_union_arm_budget_exceeded");
     CHECK(matched_result.coefficient_trials.size() == batched_result.coefficient_trials.size());
 
+    // Two host-verified goal advances remain UNKNOWN at the full-task level.
+    // Resume preserves the first intervention and carries its parent assessment.
+    size_t progress_wave = 1, progress_arm = 0;
+    const common_flydelta_coefficient_search_runner generic_progress =
+        [&](const common_flydelta_experiment_fixture &, const common_flydelta_low_rank_basis &,
+                const std::vector<float> &, bool overlay, common_flydelta_counterfactual_trial & trial,
+                common_flydelta_decision_margin & margin, common_flydelta_representation_diagnostics &,
+                bool & geometry_available, std::string &) {
+            trial = {}; margin = {}; geometry_available = false;
+            trial.executed = trial.host_evaluated = trial.verifier_known = true;
+            trial.overlay_applied = overlay;
+            trial.arm_id = overlay ? "progress-arm:" + std::to_string(++progress_arm) : "baseline-arm";
+            trial.evidence_ref = "evidence:" + trial.arm_id;
+            auto & observation = trial.semantic_progress_observation;
+            observation.available = true; observation.regression_coverage_complete = true;
+            auto & objective = observation.objective;
+            objective.objective_id = "feature"; objective.objective_revision = "goals:v1";
+            objective.verifier_ref = "oracle:v1";
+            objective.assessment_known = objective.regression_known = true;
+            objective.satisfied_goals = !overlay ? std::vector<std::string>{"A"} : progress_wave == 1
+                ? std::vector<std::string>{"A", "B"} : std::vector<std::string>{"A", "B", "C"};
+            objective.remaining_goals = !overlay ? std::vector<std::string>{"B", "C", "D"} : progress_wave == 1
+                ? std::vector<std::string>{"C", "D"} : std::vector<std::string>{"D"};
+            return true;
+        };
+    auto generic_config = config;
+    common_flydelta_deep_search_result first_wave, second_wave;
+    CHECK(common_flydelta_run_deep_search(fixture(), generic_config, input,
+        diagnostic_partial, generic_progress, first_wave, error));
+    CHECK(first_wave.provisional_selection.selected && !first_wave.coefficient_selection.selected);
+    const auto first_anchor = first_wave.coefficient_trials.at(first_wave.provisional_selection.trial_index);
+    generic_config.resume_anchor = true;
+    generic_config.anchor_ref = "resource:anchor:1";
+    generic_config.anchor_basis = first_wave.basis;
+    generic_config.anchor_observation = first_anchor.semantic_progress_observation;
+    generic_config.coefficients.anchor_basis_identity = common_flydelta_coefficient_basis_identity(first_wave.basis);
+    generic_config.coefficients.anchor_coefficients = first_anchor.coefficients;
+    progress_wave = 2;
+    CHECK(common_flydelta_run_deep_search(fixture(), generic_config, input,
+        diagnostic_partial, generic_progress, second_wave, error));
+    CHECK(second_wave.provisional_selection.selected && !second_wave.coefficient_selection.selected);
+    const auto & second_anchor = second_wave.coefficient_trials.at(second_wave.provisional_selection.trial_index);
+    common_flydelta_progress_evidence paired_progress;
+    CHECK(common_flydelta_coefficient_trial_progress_evidence(second_anchor, paired_progress, error));
+    CHECK(paired_progress.parent && paired_progress.parent_ref == generic_config.anchor_ref);
+    CHECK(paired_progress.parent->satisfied_goals == first_anchor.semantic_progress_observation.objective.satisfied_goals);
+    CHECK(common_flydelta_progress_evidence_classify(paired_progress) == common_flydelta_progress_transition::improved);
+    CHECK(second_anchor.outcome == common_flydelta_counterfactual_outcome::unknown);
+
     common_learning_in_memory_lifecycle_store lifecycle;
     common_flydelta_lifecycle_event_context context;
     context.event_id = "event:deep-search";

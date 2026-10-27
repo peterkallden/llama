@@ -129,6 +129,11 @@ bool common_flydelta_search_observation_validate(
             observation.guidance_relative_layer < 0.0 || observation.guidance_relative_layer > 1.0 ||
             observation.guidance_relative_dose < 0.0 || observation.guidance_relative_dose > 1.0 ||
             observation.guidance_margin_sign < -1 || observation.guidance_margin_sign > 1 ||
+            observation.guidance_task_fingerprint.size() > 512 || observation.guidance_lineage_ref.size() > 2048 ||
+            observation.guidance_direction_id.size() > 512 || observation.guidance_dose_identity.size() > 4096 ||
+            (observation.guidance_progress && (observation.guidance_observation_id.empty() ||
+                !observation.guidance_comparison_completed || !observation.guidance_overlay_applied ||
+                !common_flydelta_progress_evidence_validate(*observation.guidance_progress, error))) ||
             (observation.sequence_margin_available &&
                 (!observation.sequence_margin.available ||
                  !common_flydelta_margin_comparison_validate(observation.sequence_margin, error)))) {
@@ -335,6 +340,18 @@ bool common_flydelta_append_search_lifecycle(
             {"overlay_applied", observation.guidance_overlay_applied},
             {"outcome_known", observation.guidance_outcome_known},
         };
+    }
+    if (payload.contains("outcome_guidance")) {
+        auto & guidance = payload["outcome_guidance"];
+        guidance["schema_version"] = 2;
+        guidance["task_fingerprint"] = observation.guidance_task_fingerprint;
+        guidance["lineage_ref"] = observation.guidance_lineage_ref;
+        guidance["direction_identity"] = observation.guidance_direction_id;
+        guidance["dose_identity"] = observation.guidance_dose_identity;
+        if (observation.guidance_progress) {
+            if (!common_flydelta_progress_evidence_validate(*observation.guidance_progress, error)) return false;
+            guidance["progress"] = json::parse(common_flydelta_progress_evidence_to_json(*observation.guidance_progress));
+        }
     }
     if (observation.diagnostics_available) {
         payload["diagnostics"] = {

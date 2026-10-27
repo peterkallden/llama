@@ -22,6 +22,7 @@ struct common_flydelta_deep_search_config {
     bool resume_anchor = false;
     common_flydelta_low_rank_basis anchor_basis;
     common_flydelta_semantic_progress_observation anchor_observation;
+    std::string anchor_ref;
 };
 
 struct common_flydelta_deep_search_direction {

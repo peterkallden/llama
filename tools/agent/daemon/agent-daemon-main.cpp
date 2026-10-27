@@ -403,6 +403,7 @@ int main(int argc, char ** argv) {
             candidate.adaptation_flydelta_outcome_guidance.mode != options.adaptation_flydelta_outcome_guidance.mode ||
             candidate.adaptation_flydelta_outcome_guidance.seed != options.adaptation_flydelta_outcome_guidance.seed ||
             candidate.adaptation_flydelta_outcome_guidance.harm_penalty != options.adaptation_flydelta_outcome_guidance.harm_penalty ||
+            candidate.adaptation_flydelta_outcome_guidance.progress_reward != options.adaptation_flydelta_outcome_guidance.progress_reward ||
             candidate.adaptation_flydelta_outcome_guidance.min_backoff_groups != options.adaptation_flydelta_outcome_guidance.min_backoff_groups ||
             candidate.adaptation_flydelta_outcome_guidance.max_prior_strength != options.adaptation_flydelta_outcome_guidance.max_prior_strength ||
             candidate.adaptation_flydelta_outcome_guidance.projection_cache_bytes != options.adaptation_flydelta_outcome_guidance.projection_cache_bytes ||
