@@ -188,6 +188,14 @@ int main() {
     CHECK(common_flydelta_coefficient_basis_identity(resumed_result.basis) ==
         resumed_config.coefficients.anchor_basis_identity);
     CHECK(!resumed_result.provisional_selection.selected);
+    // A restored experimental basis is a search input, not learning evidence.
+    // Resume must not require its direction descriptors to be HELPED.
+    auto restored_input = input;
+    for (auto & direction : restored_input) direction.direction.experimental_only = true;
+    CHECK(common_flydelta_run_deep_search(
+        fixture(), resumed_config, restored_input, diagnostic_partial, full_partial, resumed_result, error));
+    CHECK(common_flydelta_coefficient_basis_identity(resumed_result.basis) ==
+        resumed_config.coefficients.anchor_basis_identity);
     resumed_config.coefficients.anchor_basis_identity = "wrong-basis";
     CHECK(!common_flydelta_run_deep_search(
         fixture(), resumed_config, input, diagnostic_partial, full_partial, resumed_result, error));

@@ -469,6 +469,69 @@ bool common_flydelta_experiment_queue_recover(
     return true;
 }
 
+bool common_flydelta_experiment_queue_job_state(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_queue_limits & limits,
+        common_flydelta_experiment_queue_state & state,
+        std::string & error) {
+    error.clear();
+    const auto owner = common_flydelta_acquire_queue_owner(queue_root, error);
+    if (!owner || !ensure_directories(queue_root, error)) return false;
+    std::lock_guard<std::recursive_mutex> guard(owner->writes);
+    const auto key = queue_key(job.id);
+    if (!unique_queue_state(queue_root, key, error)) return false;
+    std::error_code ec;
+    for (const auto candidate : {common_flydelta_experiment_queue_state::pending,
+            common_flydelta_experiment_queue_state::running,
+            common_flydelta_experiment_queue_state::succeeded,
+            common_flydelta_experiment_queue_state::failed,
+            common_flydelta_experiment_queue_state::cancelled}) {
+        const auto directory = queue_root / state_directory(candidate) / key;
+        if (!std::filesystem::exists(directory, ec)) {
+            if (ec) { error = "cannot inspect FlyDelta queue state"; return false; }
+            continue;
+        }
+        std::string text;
+        common_flydelta_experiment_job stored;
+        if (!regular_file_within_bound(directory / "job.json", limits.max_job_bytes, "FlyDelta job", error) ||
+                !read_text(directory / "job.json", text, error) ||
+                !common_flydelta_experiment_job_from_json(text, stored, error)) return false;
+        if (common_flydelta_experiment_job_to_json(stored) != common_flydelta_experiment_job_to_json(job)) {
+            error = "FlyDelta queue job identity differs"; return false;
+        }
+        const bool terminal_directory = candidate != common_flydelta_experiment_queue_state::pending &&
+            candidate != common_flydelta_experiment_queue_state::running;
+        const bool has_terminal_record = std::filesystem::exists(directory / "state.json", ec);
+        if (ec) { error = "cannot inspect FlyDelta terminal record"; return false; }
+        if (terminal_directory || has_terminal_record) {
+            if (!regular_file_within_bound(directory / "state.json", limits.max_summary_bytes + 2048,
+                    "FlyDelta terminal state", error) || !read_text(directory / "state.json", text, error)) return false;
+            const auto terminal = json::parse(text, nullptr, false);
+            if (!terminal.is_object() || !terminal.contains("job_id") ||
+                    !terminal.at("job_id").is_string() || terminal.at("job_id") != job.id ||
+                    !terminal.contains("state") || !terminal.at("state").is_string()) {
+                error = "FlyDelta terminal state does not match its job"; return false;
+            }
+            const auto status = terminal.at("state").get<std::string>();
+            auto terminal_state = common_flydelta_experiment_queue_state::succeeded;
+            if (status == "succeeded") terminal_state = common_flydelta_experiment_queue_state::succeeded;
+            else if (status == "failed") terminal_state = common_flydelta_experiment_queue_state::failed;
+            else if (status == "cancelled") terminal_state = common_flydelta_experiment_queue_state::cancelled;
+            else { error = "FlyDelta terminal state is invalid"; return false; }
+            if (terminal_directory && terminal_state != candidate) {
+                error = "FlyDelta terminal directory conflicts with its record"; return false;
+            }
+            state = terminal_state;
+            return true;
+        }
+        state = candidate;
+        return true;
+    }
+    error = "FlyDelta queue job has no authoritative state";
+    return false;
+}
+
 bool common_flydelta_experiment_queue_acknowledge_recovered_result(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_job & job,

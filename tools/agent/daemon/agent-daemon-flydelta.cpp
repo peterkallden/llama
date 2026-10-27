@@ -543,8 +543,11 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
         next.progress_available = false;
         next.best_progress = {};
         next.best_experimental_candidate_ref.clear();
+        next.best_progress_trial_available = false;
+        next.best_progress_trial_index = 0;
     }
-    for (const auto & trial : next.completed_trials) {
+    for (size_t index = 0; index < next.completed_trials.size(); ++index) {
+        const auto & trial = next.completed_trials[index];
         if (!trial.progress_available || !common_flydelta_semantic_progress_is_safe_anchor(trial.progress)) {
             continue;
         }
@@ -553,6 +556,18 @@ bool daemon_flydelta_run_bootstrap_zoom_slice(
             next.progress_available = true;
             next.best_progress = trial.progress;
             next.best_experimental_candidate_ref = job.seed.candidate_ref;
+            next.best_progress_trial_available = true;
+            next.best_progress_trial_index = index;
+        } else if (!next.best_progress_trial_available &&
+                trial.progress.candidate_score == next.best_progress.candidate_score &&
+                trial.progress.baseline_score == next.best_progress.baseline_score &&
+                trial.progress.outcome == next.best_progress.outcome &&
+                trial.progress.improved_dimensions == next.best_progress.improved_dimensions &&
+                trial.progress.residual_dimensions == next.best_progress.residual_dimensions) {
+            // Reconcile older states only when their recorded progress matches
+            // an actually persisted trial; never infer an arm from its score.
+            next.best_progress_trial_available = true;
+            next.best_progress_trial_index = index;
         }
     }
     if (next.progress_available) ++next.progress_iteration;
@@ -1889,71 +1904,109 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     std::vector<common_flydelta_direction_candidate> candidates;
     const size_t max_rank = plan.phase == common_flydelta_experiment_phase::shallow_controls
         ? 2 : 4;
-    if (!daemon_flydelta_resolve_evidence_direction_candidates(
-            provider, job, layer_index, 2, candidates, error)) return false;
-    if (candidates.size() > max_rank) candidates.resize(max_rank);
-
-    // Existing post-Bootstrap directions are already HELPED and learning-
-    // eligible evidence. Use the semantic resolver as an admission filter so
-    // only directions from the same concept/behavior/surface/Oracle revision
-    // can enter the ordinary low-rank basis. This does not admit experimental
-    // concept candidates and does not change the existing search budget.
-    common_flydelta_semantic_basis_query basis_query;
-    basis_query.source = job.seed.source;
-    basis_query.concept_key = job.seed.teaching_key.empty()
-        ? job.seed.behavior_key : job.seed.teaching_key;
-    basis_query.behavior_key = job.seed.behavior_key;
-    basis_query.model_profile_fingerprint = job.seed.model_profile_fingerprint;
-    basis_query.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
-    basis_query.template_fingerprint = job.seed.template_fingerprint;
-    basis_query.capture_layout_revision = provider->capture_layout_revision;
-    basis_query.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
-    basis_query.oracle_ref = job.seed.verifier_ref;
-    basis_query.oracle_revision = job.seed.verifier_ref;
-    basis_query.max_rank = max_rank;
-    std::vector<common_flydelta_semantic_direction_candidate> semantic_candidates;
-    semantic_candidates.reserve(candidates.size());
-    for (const auto & candidate : candidates) {
-        common_flydelta_synthesis_candidate_descriptor identity;
-        identity.candidate_ref = candidate.extraction_id;
-        identity.concept_key = basis_query.concept_key;
-        identity.behavior_key = basis_query.behavior_key;
-        identity.source_ref = job.seed.evidence_ref;
-        identity.oracle_ref = basis_query.oracle_ref;
-        identity.oracle_revision = basis_query.oracle_revision;
-        identity.source = basis_query.source;
-        identity.model_profile_fingerprint = basis_query.model_profile_fingerprint;
-        identity.tokenizer_fingerprint = basis_query.tokenizer_fingerprint;
-        identity.template_fingerprint = basis_query.template_fingerprint;
-        identity.capture_layout_revision = basis_query.capture_layout_revision;
-        identity.scope_fingerprint = basis_query.scope_fingerprint;
-        identity.host_verified = true;
-        identity.experimental_only = false;
-        common_flydelta_synthesis_candidate_descriptor descriptor;
-        if (!common_flydelta_synthesis_candidate_descriptor_from_direction(
-                    candidate, identity, descriptor, error)) return false;
-        semantic_candidates.push_back({candidate, std::move(descriptor)});
-    }
     common_flydelta_low_rank_basis basis;
-    std::vector<size_t> selected_candidate_indices;
-    if (!common_flydelta_resolve_semantic_basis(
-                basis_query, semantic_candidates, basis,
-                selected_candidate_indices, error)) return false;
-    std::vector<common_flydelta_direction_candidate> resolved_candidates;
-    resolved_candidates.reserve(selected_candidate_indices.size());
-    for (const size_t index : selected_candidate_indices) {
-        resolved_candidates.push_back(candidates[index]);
+    json resume_anchor;
+    if (!plan.search_anchor_ref.empty()) {
+        if (plan.phase != common_flydelta_experiment_phase::deep_controls ||
+                !daemon_flydelta_read_json_bounded(*provider, plan.search_anchor_ref,
+                    16U * 1024U * 1024U, resume_anchor, error)) {
+            if (error.empty()) error = "FlyDelta search anchor requires the Deep continuation phase";
+            return false;
+        }
+        try {
+            if (resume_anchor.at("kind") != "flydelta_search_anchor" || resume_anchor.at("schema_version") != 1) {
+                error = "FlyDelta search anchor kind or version is invalid"; return false;
+            }
+            basis.layer_index = resume_anchor.at("layer_index").get<int32_t>();
+            basis.dimension = resume_anchor.at("dimension").get<size_t>();
+            basis.vectors = resume_anchor.at("basis_vectors").get<std::vector<std::vector<float>>>();
+            if (basis.layer_index != layer_index || basis.dimension != provider->model_n_embd ||
+                    !common_flydelta_low_rank_basis_validate(basis, max_rank, error) ||
+                    resume_anchor.at("basis_fingerprint") != common_flydelta_coefficient_basis_identity(basis)) {
+                if (error.empty()) error = "FlyDelta search anchor basis is incompatible";
+                return false;
+            }
+            for (const auto & values : basis.vectors) {
+                common_flydelta_direction_candidate candidate;
+                candidate.kind = common_flydelta_direction_kind::raw_repair;
+                candidate.layer_index = basis.layer_index;
+                candidate.values = values;
+                candidate.origin = "persisted_experimental_anchor";
+                candidate.extraction_id = plan.search_anchor_ref;
+                candidate.source_samples = candidate.retained_samples = 1;
+                // This is restored basis material, not a new alignment measurement.
+                candidate.median_alignment = 0.0f;
+                candidate.experimental_only = true;
+                if (!common_flydelta_direction_candidate_validate(candidate, basis.dimension, error)) return false;
+                candidates.push_back(std::move(candidate));
+            }
+        } catch (const std::exception & exception) {
+            error = std::string("FlyDelta search anchor basis is malformed: ") + exception.what();
+            return false;
+        }
+    } else {
+        if (!daemon_flydelta_resolve_evidence_direction_candidates(
+                provider, job, layer_index, 2, candidates, error)) return false;
+        if (candidates.size() > max_rank) candidates.resize(max_rank);
+
+        // Existing post-Bootstrap directions are already HELPED and learning-
+        // eligible evidence. Use the semantic resolver as an admission filter so
+        // only directions from the same concept/behavior/surface/Oracle revision
+        // can enter the ordinary low-rank basis. This does not admit experimental
+        // concept candidates and does not change the existing search budget.
+        common_flydelta_semantic_basis_query basis_query;
+        basis_query.source = job.seed.source;
+        basis_query.concept_key = job.seed.teaching_key.empty()
+            ? job.seed.behavior_key : job.seed.teaching_key;
+        basis_query.behavior_key = job.seed.behavior_key;
+        basis_query.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+        basis_query.tokenizer_fingerprint = job.seed.tokenizer_fingerprint;
+        basis_query.template_fingerprint = job.seed.template_fingerprint;
+        basis_query.capture_layout_revision = provider->capture_layout_revision;
+        basis_query.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
+        basis_query.oracle_ref = job.seed.verifier_ref;
+        basis_query.oracle_revision = job.seed.verifier_ref;
+        basis_query.max_rank = max_rank;
+        std::vector<common_flydelta_semantic_direction_candidate> semantic_candidates;
+        semantic_candidates.reserve(candidates.size());
+        for (const auto & candidate : candidates) {
+            common_flydelta_synthesis_candidate_descriptor identity;
+            identity.candidate_ref = candidate.extraction_id;
+            identity.concept_key = basis_query.concept_key;
+            identity.behavior_key = basis_query.behavior_key;
+            identity.source_ref = job.seed.evidence_ref;
+            identity.oracle_ref = basis_query.oracle_ref;
+            identity.oracle_revision = basis_query.oracle_revision;
+            identity.source = basis_query.source;
+            identity.model_profile_fingerprint = basis_query.model_profile_fingerprint;
+            identity.tokenizer_fingerprint = basis_query.tokenizer_fingerprint;
+            identity.template_fingerprint = basis_query.template_fingerprint;
+            identity.capture_layout_revision = basis_query.capture_layout_revision;
+            identity.scope_fingerprint = basis_query.scope_fingerprint;
+            identity.host_verified = true;
+            identity.experimental_only = false;
+            common_flydelta_synthesis_candidate_descriptor descriptor;
+            if (!common_flydelta_synthesis_candidate_descriptor_from_direction(
+                        candidate, identity, descriptor, error)) return false;
+            semantic_candidates.push_back({candidate, std::move(descriptor)});
+        }
+        std::vector<size_t> selected_candidate_indices;
+        if (!common_flydelta_resolve_semantic_basis(
+                    basis_query, semantic_candidates, basis,
+                    selected_candidate_indices, error)) return false;
+        std::vector<common_flydelta_direction_candidate> resolved_candidates;
+        resolved_candidates.reserve(selected_candidate_indices.size());
+        for (const size_t index : selected_candidate_indices) {
+            resolved_candidates.push_back(candidates[index]);
+        }
+        candidates = std::move(resolved_candidates);
     }
-    candidates = std::move(resolved_candidates);
 
     common_flydelta_coefficient_search_config coefficient_config;
-    json resume_anchor;
     std::string effective_dose_mode = provider->dose_mode;
     std::string effective_calibration_ref = provider->dose_calibration_ref;
     std::string calibration_fingerprint;
     if (!plan.search_anchor_ref.empty()) {
-        if (!daemon_flydelta_read_json_bounded(*provider, plan.search_anchor_ref,
-                16U * 1024U * 1024U, resume_anchor, error)) return false;
         try {
             effective_dose_mode = resume_anchor.at("dose_mode").get<std::string>();
             effective_calibration_ref = resume_anchor.at("calibration_ref").get<std::string>();
@@ -1961,6 +2014,13 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             error = std::string("FlyDelta anchor dose identity is malformed: ") + exception.what();
             return false;
         }
+    }
+    coefficient_config.strategy = plan.run_tfo_lite
+        ? common_flydelta_coefficient_search_strategy::tfo_lite
+        : common_flydelta_coefficient_search_strategy::coordinate;
+    if (effective_dose_mode == "direction_dose" && plan.run_tfo_lite) {
+        error = "FlyDelta TFO-lite does not yet support direction_dose";
+        return false;
     }
     if (effective_dose_mode == "direction_dose") {
         coefficient_config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
@@ -1973,14 +2033,6 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     }
     coefficient_config.max_candidates = plan.budget.max_coefficient_trials == 0
         ? 16 : std::min<size_t>(16, plan.budget.max_coefficient_trials);
-    coefficient_config.strategy = plan.run_tfo_lite
-        ? common_flydelta_coefficient_search_strategy::tfo_lite
-        : common_flydelta_coefficient_search_strategy::coordinate;
-    if (coefficient_config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::direction_dose &&
-            coefficient_config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
-        error = "FlyDelta TFO-lite does not yet support direction_dose";
-        return false;
-    }
     // Proposal waves may contain up to the resident parallel capacity. The
     // paired diagnostic runner reserves one physical slot for its baseline
     // and partitions candidates accordingly below.
@@ -2784,8 +2836,17 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     size_t provisional_trial_index = static_cast<size_t>(-1);
     if (plan.phase == common_flydelta_experiment_phase::deep_controls) {
         common_flydelta_deep_search_config deep_config;
-        deep_config.max_rank = std::min<size_t>(max_rank, 4);
         deep_config.max_directions = std::min<size_t>(candidates.size(), 4);
+        deep_config.max_rank = std::min(max_rank, deep_config.max_directions);
+        if (!resume_anchor.is_null()) {
+            try {
+                deep_config.max_rank = resume_anchor.at("search_policy").at("max_rank").get<size_t>();
+                deep_config.max_directions = resume_anchor.at("search_policy").at("max_directions").get<size_t>();
+            } catch (const std::exception & exception) {
+                error = std::string("FlyDelta search anchor policy is malformed: ") + exception.what();
+                return false;
+            }
+        }
         deep_config.full_generation_top_k = plan.budget.full_generation_top_k == 0
             ? 3 : std::min<size_t>(3, plan.budget.full_generation_top_k);
         deep_config.coefficients = coefficient_config;
@@ -2859,7 +2920,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         for (const auto & candidate : candidates) {
             common_flydelta_deep_search_direction value;
             value.direction = candidate;
-            value.decision_score_available = true;
+            value.decision_score_available = resume_anchor.is_null();
             value.decision_score = candidate.median_alignment;
             deep_directions.push_back(std::move(value));
         }

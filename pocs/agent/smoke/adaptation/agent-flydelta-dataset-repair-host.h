@@ -139,8 +139,18 @@ public:
         const common_agent_request & runtime_request = runtime_request_;
         bool defaults_applied = false;
         nlohmann::ordered_json runtime_normalized;
+        const auto * definition = catalog_.find_definition(name);
+        if (!definition || !registry_.contains(name)) {
+            error = "dataset repair tool is not registered: " + name;
+            return false;
+        }
+        auto resolved_arguments = arguments;
+        const auto schema = nlohmann::ordered_json::parse(
+            common_tool_model_input_schema(*definition), nullptr, false);
+        if (!common_agent_resolve_tool_dataset_handles(
+                runtime_request.available_datasets, schema, resolved_arguments, error)) return false;
         if (!common_agent_runtime_apply_safe_tool_defaults_to_json(
-                runtime_request, name, arguments, runtime_normalized,
+                runtime_request, name, resolved_arguments, runtime_normalized,
                 defaults_applied, error)) return false;
         std::string normalized_text;
         if (!registry_.normalize_and_validate(

@@ -736,6 +736,28 @@ common_agent_dataset_inventory_resolution common_agent_resolve_dataset_inventory
     return common_agent_dataset_inventory_resolution::resolved;
 }
 
+bool common_agent_resolve_tool_dataset_handles(
+        const std::vector<common_agent_dataset_descriptor> & datasets,
+        const nlohmann::ordered_json & schema,
+        nlohmann::ordered_json & arguments,
+        std::string & error) {
+    error.clear();
+    if (!arguments.is_object()) return true;
+    const auto properties = schema.is_object() ? schema.value("properties", nlohmann::ordered_json::object())
+                                               : nlohmann::ordered_json::object();
+    if (!properties.is_object()) return true;
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (!it.value().is_object() || it.value().value("x-agent-type", std::string()) != "dataset_ref" ||
+                !arguments.contains(it.key()) || !arguments[it.key()].is_string()) continue;
+        std::string resolved;
+        const auto resolution = common_agent_resolve_dataset_inventory_reference(
+            datasets, arguments[it.key()].get<std::string>(), resolved, error);
+        if (resolution == common_agent_dataset_inventory_resolution::invalid) return false;
+        if (resolution == common_agent_dataset_inventory_resolution::resolved) arguments[it.key()] = resolved;
+    }
+    return true;
+}
+
 bool normalize_common_agent_dataset_tool_arguments(
         const std::string & tool_name,
         nlohmann::ordered_json & arguments,

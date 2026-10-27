@@ -82,6 +82,15 @@ bool common_flydelta_experiment_queue_complete(
         const common_flydelta_experiment_queue_limits & limits,
         std::string & error);
 
+// Inspect the unique queue state and verify the stored job envelope before
+// recovery performs any follow-up writes.
+bool common_flydelta_experiment_queue_job_state(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_job & job,
+        const common_flydelta_experiment_queue_limits & limits,
+        common_flydelta_experiment_queue_state & state,
+        std::string & error);
+
 // A verified, journaled worker result may precede its queue acknowledgement.
 // Reconcile it without executing the evaluator again. Missing/mismatched jobs
 // are errors; a matching already terminal acknowledgement is idempotent.

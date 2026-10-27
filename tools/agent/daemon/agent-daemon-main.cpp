@@ -1044,6 +1044,11 @@ int main(int argc, char ** argv) {
                 *lifecycle_store, job, parent, schedule_error) &&
                 (!schedule_effects || schedule_effects(parent, report, schedule_error));
         };
+    flydelta_worker_config.acknowledge_completed_report =
+        [lifecycle_store](const auto & job, std::string & ack_error) {
+            if (!lifecycle_store) { ack_error = "FlyDelta worker acknowledgement requires a lifecycle store"; return false; }
+            return common_flydelta_acknowledge_worker_commit(*lifecycle_store, job, ack_error);
+        };
     // The binding has been frozen before commit; never resolve it again
     // between durable intent and enqueue (including after a restart).
     flydelta_worker_config.bind_teaching_material_group = {};

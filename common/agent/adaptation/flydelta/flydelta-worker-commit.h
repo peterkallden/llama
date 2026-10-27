@@ -14,6 +14,11 @@ bool common_flydelta_resolve_worker_commit_parent(const common_learning_lifecycl
         const common_flydelta_experiment_job & job,
         common_flydelta_experiment_job & parent, std::string & error);
 
+// Acknowledge only after the caller has durably applied host effects, queue
+// completion and any follow-up scheduling. Repeated acknowledgements are safe.
+bool common_flydelta_acknowledge_worker_commit(common_learning_lifecycle_store & store,
+        const common_flydelta_experiment_job & job, std::string & error);
+
 bool common_flydelta_recover_worker_commits(common_learning_lifecycle_store & store,
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & limits,

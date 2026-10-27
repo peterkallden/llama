@@ -243,6 +243,20 @@ int main() {
     CHECK(common_flydelta_recover_worker_commits(restored_commits, commit_root, {}, persist_saved, schedule_saved, error));
     CHECK(persisted == 1 && scheduled == 1);
     CHECK(std::filesystem::exists(commit_root / "succeeded" / committing.queue_key));
+    // Normal completion writes the same idempotent acknowledgement; startup
+    // must not replay effects that already completed before the restart.
+    const auto normal_root = root / "normal-commit";
+    common_learning_in_memory_lifecycle_store normal_commits;
+    CHECK(common_flydelta_experiment_queue_enqueue(normal_root, pipeline_claimed.job, {}, error));
+    common_flydelta_claimed_experiment_job normal_claimed;
+    CHECK(common_flydelta_experiment_queue_claim_next(normal_root, {}, normal_claimed, error));
+    CHECK(common_flydelta_append_worker_commit_intent(normal_commits, normal_claimed.job, saved_report, error));
+    CHECK(common_flydelta_experiment_queue_complete(normal_root, normal_claimed,
+        common_flydelta_experiment_queue_state::succeeded, saved_report.safe_summary, {}, error));
+    CHECK(common_flydelta_acknowledge_worker_commit(normal_commits, normal_claimed.job, error));
+    CHECK(common_flydelta_acknowledge_worker_commit(normal_commits, normal_claimed.job, error));
+    CHECK(common_flydelta_recover_worker_commits(normal_commits, normal_root, {}, persist_saved, schedule_saved, error));
+    CHECK(persisted == 1 && scheduled == 1);
     auto long_parent = pipeline_claimed.job;
     long_parent.id.assign(500, 'x');
     CHECK(common_flydelta_collect_next_action_job(root / "long-lineage", {}, long_parent,
@@ -253,6 +267,45 @@ int main() {
     invalid_intent.session_id = "other-session";
     CHECK(wrong_scope.append(invalid_intent, error));
     CHECK(!common_flydelta_recover_anchor_continuations(wrong_scope, root / "invalid-recovery", {}, error));
+
+    // Terminal cancellation wins over an older continuation intent. A failed
+    // parent requires reconciliation and must not leave a new pending job.
+    for (const auto terminal : {common_flydelta_experiment_queue_state::cancelled,
+            common_flydelta_experiment_queue_state::failed}) {
+        const auto terminal_root = root / common_flydelta_experiment_queue_state_name(terminal);
+        CHECK(common_flydelta_experiment_queue_enqueue(terminal_root, pipeline_claimed.job, {}, error));
+        common_flydelta_claimed_experiment_job terminal_claimed;
+        CHECK(common_flydelta_experiment_queue_claim_next(terminal_root, {}, terminal_claimed, error));
+        CHECK(common_flydelta_experiment_queue_complete(terminal_root, terminal_claimed,
+            terminal, "terminal parent", {}, error));
+        const bool recovered_terminal = common_flydelta_recover_anchor_continuations(
+            reopened, terminal_root, {}, error);
+        CHECK(recovered_terminal == (terminal == common_flydelta_experiment_queue_state::cancelled));
+        common_flydelta_claimed_experiment_job unexpected;
+        CHECK(common_flydelta_experiment_queue_claim_next(terminal_root, {}, unexpected, error));
+        CHECK(unexpected.queue_key.empty());
+    }
+    // Simulate a crash after the terminal record is durable but before the
+    // running directory is moved to the terminal queue.
+    const auto interrupted_root = root / "interrupted-cancellation";
+    CHECK(common_flydelta_experiment_queue_enqueue(interrupted_root, pipeline_claimed.job, {}, error));
+    common_flydelta_claimed_experiment_job interrupted;
+    CHECK(common_flydelta_experiment_queue_claim_next(interrupted_root, {}, interrupted, error));
+    common_learning_in_memory_lifecycle_store interrupted_commits;
+    CHECK(common_flydelta_append_worker_commit_intent(interrupted_commits, interrupted.job, saved_report, error));
+    {
+        std::ofstream state(interrupted_root / "running" / interrupted.queue_key / "state.json");
+        state << json{{"job_id", interrupted.job.id}, {"state", "cancelled"},
+            {"safe_summary", "cancelled"}}.dump();
+        CHECK(state.good());
+    }
+    CHECK(common_flydelta_recover_worker_commits(interrupted_commits, interrupted_root, {},
+        persist_saved, schedule_saved, error));
+    CHECK(common_flydelta_recover_anchor_continuations(reopened, interrupted_root, {}, error));
+    CHECK(persisted == 1 && scheduled == 1);
+    common_flydelta_claimed_experiment_job unexpected_interrupted;
+    CHECK(common_flydelta_experiment_queue_claim_next(interrupted_root, {}, unexpected_interrupted, error));
+    CHECK(unexpected_interrupted.queue_key.empty());
 
     value.enabled = false;
     CHECK(common_flydelta_collect_experiment_job(root, {}, value, result, error));

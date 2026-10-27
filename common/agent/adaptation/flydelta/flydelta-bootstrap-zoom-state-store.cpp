@@ -233,6 +233,8 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"progress_available", state.progress_available},
         {"best_progress", progress_json(state.best_progress)},
         {"best_experimental_candidate_ref", state.best_experimental_candidate_ref},
+        {"best_progress_trial_available", state.best_progress_trial_available},
+        {"best_progress_trial_index", state.best_progress_trial_index},
         {"progress_iteration", state.progress_iteration},
         {"local_layers", state.local_layers},
         {"completed_trials", json::array()},
@@ -314,6 +316,8 @@ bool state_from_json(const std::string & text,
         }
         state.best_experimental_candidate_ref = value.value(
             "best_experimental_candidate_ref", "");
+        state.best_progress_trial_available = value.value("best_progress_trial_available", false);
+        state.best_progress_trial_index = value.value("best_progress_trial_index", size_t{0});
         state.progress_iteration = value.value("progress_iteration", 0U);
         state.local_layers = value.value("local_layers", std::vector<uint32_t>{});
         for (const auto & item : value.value("completed_trials", json::array())) {

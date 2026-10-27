@@ -14,6 +14,7 @@
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
 #include "agent/adaptation/flydelta/flydelta-worker.h"
 #include "agent/adaptation/learning-transaction.h"
+#include "agent/input-resources.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "tools/agent/host/agent-host-config.h"
@@ -534,17 +535,10 @@ int main(int argc, char ** argv) {
         std::cerr << "no scenarios enabled by agent learning policy\n";
         return 2;
     }
-    contract += "\nAvailable datasets (host-registered):\n";
     if (!host.select_model_tools(described_tools, error)) {
         host.close(); std::cerr << error << '\n'; return 1;
     }
-    for (const auto & dataset : host.available_datasets()) {
-        contract += dataset.ref.uri + "\n";
-        for (const auto & column : dataset.columns) {
-            contract += "  " + column.name + " (" +
-                common_agent_dataset_column_type_name(column.type) + ")\n";
-        }
-    }
+    contract += common_agent_render_dataset_inventory(host.available_datasets(), 8192, true);
 
     std::shared_ptr<common_agent_server_context_host> server_host;
     std::unique_ptr<common_agent_inference> inference;
@@ -1009,6 +1003,7 @@ int main(int argc, char ** argv) {
     size_t deep_search_executed = 0;
     size_t deep_diagnostic_trials = 0;
     size_t deep_full_generation_trials = 0;
+    size_t deep_verified_overlay_trials = 0;
     size_t direction_candidates = 0;
     bool bootstrap_overlay_evaluated = false;
     const auto worker_root = std::filesystem::temp_directory_path() /
@@ -1185,7 +1180,8 @@ int main(int argc, char ** argv) {
         // only the model-facing smoke path.
         const bool guidance_smoke_requested = !value.outcome_guidance_mode.empty() &&
             value.production_where;
-        if ((value.force_deep && entry.second.size() >= 2 && directions.size() >= 2) ||
+        const size_t required_directions = value.dose_comparison ? 1 : 2;
+        if ((value.force_deep && entry.second.size() >= 2 && directions.size() >= required_directions) ||
                 (guidance_smoke_requested && !entry.second.empty() && !directions.empty())) {
             const auto aggregation_snapshot_for_deep = aggregation.snapshot();
             const bool guidance_only_smoke = guidance_smoke_requested &&
@@ -2027,6 +2023,9 @@ int main(int argc, char ** argv) {
                     if (trial.mutation_kind == "full_generation_top_arm") {
                         ++deep_group_full_generation_trials;
                         ++deep_full_generation_trials;
+                        if (trial.executed && trial.host_evaluated && trial.overlay_applied) {
+                            ++deep_verified_overlay_trials;
+                        }
                     }
                 }
                 const size_t deep_group_diagnostic_trials =
@@ -2142,7 +2141,7 @@ int main(int argc, char ** argv) {
         // expensive model calls without contributing to the rank measurement.
         // Groups without two compatible directions cannot support comparison.
         if (value.low_rank_rank_sweep || value.dose_comparison) {
-            if (entry.second.size() < 2 || directions.size() < 2) {
+            if (entry.second.size() < 2 || directions.size() < required_directions) {
                 std::cout << "flydelta_low_rank_rank_sweep_skipped group=" << entry.first
                           << " reason=insufficient_compatible_directions"
                           << " observations=" << entry.second.size()
@@ -3051,6 +3050,7 @@ int main(int argc, char ** argv) {
               << " direction_candidates=" << direction_candidates
               << " forced_deep_searches=" << deep_search_executed
               << " forced_deep_full_generation_trials=" << deep_full_generation_trials
+              << " verified_overlay_trials=" << deep_verified_overlay_trials
               << " forced_tfo_lite=" << (value.force_tfo_lite ? "yes" : "no")
               << " bootstrap_overlay_evaluated=" << (bootstrap_overlay_evaluated ? "yes" : "no")
               << " deep_search_executed=" << (deep_search_executed != 0 ? "yes" : "no")
@@ -3064,6 +3064,10 @@ int main(int argc, char ** argv) {
     if (remove_learning_ledger) {
         std::error_code ledger_remove_error;
         std::filesystem::remove(learning_ledger_path, ledger_remove_error);
+    }
+    if (value.dose_comparison && deep_verified_overlay_trials == 0) {
+        std::cerr << "dose comparison incomplete: no full-generation arm was applied and host evaluated\n";
+        return 1;
     }
     return 0;
 }

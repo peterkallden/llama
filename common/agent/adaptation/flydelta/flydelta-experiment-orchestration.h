@@ -399,12 +399,14 @@ struct common_flydelta_bootstrap_zoom_state {
     float evidence_rank = 1.0f;
     std::string surface_origin = "bootstrap_rank1";
     std::string parent_surface_ref;
-    // Reference-only iterative semantic progress. These fields never grant
-    // evidence or activation authority; they let the next bounded slice
-    // continue from the best experimental candidate and its residual.
+    // Progress is diagnostic search state, not evidence or activation
+    // authority. The direction reference alone does not identify an arm;
+    // the optional trial index identifies its complete persisted profile.
     bool progress_available = false;
     common_flydelta_semantic_progress best_progress;
     std::string best_experimental_candidate_ref;
+    bool best_progress_trial_available = false;
+    size_t best_progress_trial_index = 0;
     size_t progress_iteration = 0;
     std::vector<uint32_t> local_layers;
     // The best safe experimental arm so far. This is persisted with resume

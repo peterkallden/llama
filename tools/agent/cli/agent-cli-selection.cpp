@@ -139,21 +139,8 @@ bool resolve_workflow_dataset_handles(
         const common_chat_tool & tool,
         json & arguments,
         std::string & error) {
-    error.clear();
-    if (!arguments.is_object()) return true;
     const auto schema = json::parse(tool.parameters, nullptr, false);
-    const auto properties = schema.is_object() ? schema.value("properties", json::object()) : json::object();
-    if (!properties.is_object()) return true;
-    for (auto it = properties.begin(); it != properties.end(); ++it) {
-        if (!it.value().is_object() || it.value().value("x-agent-type", std::string()) != "dataset_ref" ||
-                !arguments.contains(it.key()) || !arguments[it.key()].is_string()) continue;
-        std::string resolved;
-        const auto resolution = common_agent_resolve_dataset_inventory_reference(
-            request.available_datasets, arguments[it.key()].get<std::string>(), resolved, error);
-        if (resolution == common_agent_dataset_inventory_resolution::invalid) return false;
-        if (resolution == common_agent_dataset_inventory_resolution::resolved) arguments[it.key()] = resolved;
-    }
-    return true;
+    return common_agent_resolve_tool_dataset_handles(request.available_datasets, schema, arguments, error);
 }
 
 json workflow_action_schema(

@@ -311,6 +311,14 @@ bool common_flydelta_recover_anchor_continuations(
                 error = "FlyDelta anchor continuation scope differs from its journal record";
                 return false;
             }
+            common_flydelta_experiment_queue_state parent_state;
+            if (!common_flydelta_experiment_queue_job_state(
+                    queue_root, parent, queue_limits, parent_state, error)) return false;
+            if (parent_state == common_flydelta_experiment_queue_state::cancelled) continue;
+            if (parent_state == common_flydelta_experiment_queue_state::failed) {
+                error = "FlyDelta anchor parent failed; automatic recovery requires reconciliation";
+                return false;
+            }
             common_flydelta_experiment_collection_result result;
             if (!common_flydelta_collect_next_action_job(queue_root, queue_limits, parent,
                     common_flydelta_next_action::run_deep_controls,

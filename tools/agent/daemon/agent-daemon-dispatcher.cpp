@@ -728,29 +728,41 @@ void common_agent_daemon_dispatcher::flydelta_worker_loop() {
             });
         if (!error.empty()) std::fprintf(stderr, "FlyDelta worker failed or awaits result recovery: %s\n", error.c_str());
 
+        bool follow_up_complete = true;
         if (error.empty() &&
                 report.state == common_flydelta_experiment_queue_state::succeeded &&
                 report.has_next_action &&
                 report.next_action != common_flydelta_next_action::stop &&
-                report.next_action != common_flydelta_next_action::retain &&
-                flydelta_config.schedule_next_action) {
+                report.next_action != common_flydelta_next_action::retain) {
             std::string schedule_error;
             common_flydelta_experiment_job scheduled_parent = report.completed_job;
             const bool frozen_anchor_binding = report.has_experiment_plan &&
                 report.experiment_plan.search_anchor_pending;
-            if (!frozen_anchor_binding && flydelta_config.bind_teaching_material_group &&
+            if (!flydelta_config.schedule_next_action) {
+                follow_up_complete = false;
+                std::fprintf(stderr, "FlyDelta next-action scheduling is unavailable\n");
+            } else if (!frozen_anchor_binding && flydelta_config.bind_teaching_material_group &&
                     !flydelta_config.bind_teaching_material_group(
                         scheduled_parent, schedule_error)) {
+                follow_up_complete = false;
                 std::fprintf(stderr, "FlyDelta teaching-material binding failed: %s\n",
                     schedule_error.c_str());
             } else if (!flydelta_config.schedule_next_action(
                     scheduled_parent, report, schedule_error)) {
+                follow_up_complete = false;
                 // The current bounded slice remains successfully completed.
                 // Scheduling is a host concern and is reported separately so
                 // a transient queue/resource issue cannot rewrite FlyDelta
                 // search evidence as an evaluator failure.
                 std::fprintf(stderr, "FlyDelta next-action scheduling failed: %s\n",
                     schedule_error.c_str());
+            }
+        }
+        if (error.empty() && report.state == common_flydelta_experiment_queue_state::succeeded &&
+                follow_up_complete && flydelta_config.acknowledge_completed_report) {
+            std::string ack_error;
+            if (!flydelta_config.acknowledge_completed_report(report.completed_job, ack_error)) {
+                std::fprintf(stderr, "FlyDelta worker acknowledgement failed: %s\n", ack_error.c_str());
             }
         }
 

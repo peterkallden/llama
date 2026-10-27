@@ -47,6 +47,8 @@ struct common_agent_daemon_flydelta_worker_config {
             const common_flydelta_experiment_job &,
             const common_flydelta_experiment_worker_report &,
             std::string &)> persist_completed_report;
+    // Called only after queue completion and successful follow-up scheduling.
+    std::function<bool(const common_flydelta_experiment_job &, std::string &)> acknowledge_completed_report;
     std::chrono::milliseconds poll_interval{250};
 };
 

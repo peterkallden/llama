@@ -84,6 +84,22 @@ bool common_flydelta_resolve_worker_commit_parent(const common_learning_lifecycl
     return false;
 }
 
+bool common_flydelta_acknowledge_worker_commit(common_learning_lifecycle_store & store,
+        const common_flydelta_experiment_job & job, std::string & error) {
+    common_flydelta_experiment_job parent;
+    if (!common_flydelta_resolve_worker_commit_parent(store, job, parent, error)) return false;
+    const auto records = store.list(error);
+    if (!error.empty()) return false;
+    const auto identity = "flydelta://worker-commit/" + digest(job.id);
+    for (const auto & record : records) {
+        if (record.event_id != identity) continue;
+        return store.append(make_record(job, {{"kind", "flydelta_worker_commit_ack"},
+                {"intent_hash", record.content_hash}}, ":ack"), error);
+    }
+    error = "FlyDelta worker commit acknowledgement has no durable intent";
+    return false;
+}
+
 bool common_flydelta_recover_worker_commits(common_learning_lifecycle_store & store,
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & limits,
@@ -127,6 +143,13 @@ bool common_flydelta_recover_worker_commits(common_learning_lifecycle_store & st
                     record.session_id != job.seed.scope.session_id) {
                 error = "FlyDelta worker commit identity or scope differs"; return false;
             }
+            common_flydelta_experiment_queue_state queue_state;
+            if (!common_flydelta_experiment_queue_job_state(queue_root, job, limits, queue_state, error)) return false;
+            if (queue_state == common_flydelta_experiment_queue_state::cancelled) continue;
+            if (queue_state == common_flydelta_experiment_queue_state::failed) {
+                error = "FlyDelta worker commit refers to a failed queue job";
+                return false;
+            }
             common_flydelta_experiment_worker_report report;
             report.job_id = job.id;
             report.completed_job = job;
@@ -166,8 +189,7 @@ bool common_flydelta_recover_worker_commits(common_learning_lifecycle_store & st
             if (report.has_next_action && report.next_action != common_flydelta_next_action::stop &&
                     report.next_action != common_flydelta_next_action::retain &&
                     (!schedule || !schedule(job, report, error))) return false;
-            if (!store.append(make_record(job, {{"kind", "flydelta_worker_commit_ack"},
-                    {"intent_hash", record.content_hash}}, ":ack"), error)) return false;
+            if (!common_flydelta_acknowledge_worker_commit(store, job, error)) return false;
         } catch (const std::exception & exception) {
             error = std::string("FlyDelta worker commit recovery failed: ") + exception.what();
             return false;

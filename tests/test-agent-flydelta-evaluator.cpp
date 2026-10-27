@@ -590,7 +590,18 @@ int main() {
     selected_trial.margin_delta = 0.2f;
     selected_trial.diagnostics_available = true;
     selected_trial.diagnostics = {1, 25, 0.8f, 0.2f, 0.1f, 0.2f};
+    selected_trial.progress_available = true;
+    selected_trial.progress.comparable = true;
+    selected_trial.progress.regression_known = true;
+    selected_trial.progress.outcome = common_flydelta_semantic_progress_outcome::improved;
+    selected_trial.progress.candidate_score = 1;
+    selected_trial.progress.improved_dimensions = {"operation"};
     persisted_state.completed_trials = {selected_trial};
+    persisted_state.progress_available = true;
+    persisted_state.best_progress = selected_trial.progress;
+    persisted_state.best_experimental_candidate_ref = pipeline.seed.candidate_ref;
+    persisted_state.best_progress_trial_available = true;
+    persisted_state.best_progress_trial_index = 0;
     CHECK(common_flydelta_select_bootstrap_zoom_trial(
         persisted_state.completed_trials, persisted_state.selection, error));
     std::string lifecycle_ref;
@@ -607,6 +618,14 @@ int main() {
         resolved_state.completed_trials.size() == 1 &&
         resolved_state.completed_trials.front().candidate.layer_indices ==
             std::vector<uint32_t>({24, 25}));
+    CHECK(resolved_state.best_progress_trial_available && resolved_state.best_progress_trial_index == 0 &&
+        resolved_state.completed_trials[resolved_state.best_progress_trial_index].candidate.layer_weights ==
+            selected_arm.layer_weights &&
+        resolved_state.completed_trials[resolved_state.best_progress_trial_index].candidate.total_scale ==
+            selected_arm.total_scale);
+    auto inconsistent_progress = persisted_state;
+    inconsistent_progress.best_progress_trial_index = 1;
+    CHECK(!common_flydelta_bootstrap_zoom_state_validate(inconsistent_progress, error));
 
     // A post-Bootstrap augmentation state uses the same opaque search-state
     // transport, but its typed state remains separately validated and

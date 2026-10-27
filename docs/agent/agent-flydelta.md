@@ -815,7 +815,8 @@ fixture. Capture collection and selection of a representative, independent
 dataset remain an explicit host/operator responsibility; the attestation is
 not an inference from tensor values or a model claim.
 
-A missing or incompatible record fails before search. Smoke calibration does
+A missing or incompatible record fails before the coefficient search that uses
+it; earlier Bootstrap searches do not require this calibration. Smoke calibration does
 not establish production calibration. The runtime fingerprint includes context,
 batching, cache precision and configured offload/cvec settings. It is a
 configuration identity, not proof of an actual GPU device or bitwise-equivalent
@@ -836,8 +837,10 @@ three crash replays/starts per job by default. This outer bound covers phases
 before the detailed coefficient ledger; it does not claim to measure their
 individual inference rows or tokens. Exhaustion produces a terminal failed
 job instead of another automatic restart.
-The current TFO-lite path does not implement this dosing mode and returns an
-explicit error. Configuration and runtime behavior require verification.
+The current TFO-lite path does not implement this dosing mode. It reports the
+unsupported combination before calibration loading or coefficient inference;
+it does not silently select a different algorithm or dose mode. Configuration
+and runtime behavior require verification.
 
 ### Queue ownership and crash reconciliation
 
@@ -861,9 +864,21 @@ retains the exact job envelope, frozen scheduling parent, host counterfactual
 and evaluation results, trace and next-action references. It is written before
 host report effects and before the queue's terminal acknowledgement. Recovery
 invokes the same idempotent host callbacks rather than rerunning inference.
+Normal completion records the same final commit acknowledgement after any
+follow-up has been scheduled. Recovery inspects the parent's durable queue
+state before replay or enqueue: cancellation prevents automatic continuation,
+and a failed parent requires reconciliation. A terminal record written before
+its queue directory was moved is included in that check.
 Checkpoint and continuation intent share one orchestration journal record.
 The checkpoint resource itself is published and read-verified first; an
 unpublished resource is an orphan, not a committed continuation.
+
+BootstrapZoom persists the full bounded trial profiles independently of the
+Deep anchor. A progress trial index identifies the recorded experimental arm;
+the direction reference alone does not identify its layer weights and scale.
+This index is diagnostic and does not change Bootstrap's selection order,
+authorize promotion, or establish that progress without complete regression
+coverage is safe. Older states without the index remain readable.
 
 | Durable state at interruption | Reconciliation |
 | --- | --- |

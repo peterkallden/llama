@@ -89,6 +89,22 @@ int main(int argc, char ** argv) {
     const json aggregate_arguments = {{"dataset", host.available_datasets().front().ref.uri},
         {"group_by", json::array({"region"})},
         {"measures", json::array({{{"function", "sum"}, {"column", "amount"}, {"as", "total_amount"}}})}};
+    auto handle_arguments = aggregate_arguments;
+    handle_arguments["dataset"] = "d1";
+    json normalized_handle, normalized_uri;
+    common_tool_execution_result handle_result, uri_result;
+    if (!host.normalize_call("data.aggregate", handle_arguments, normalized_handle, error) ||
+            !host.normalize_call("data.aggregate", aggregate_arguments, normalized_uri, error) ||
+            normalized_handle != normalized_uri ||
+            !host.execute_call("data.aggregate", handle_arguments, handle_result, error) ||
+            !host.execute_call("data.aggregate", aggregate_arguments, uri_result, error) ||
+            json::parse(handle_result.output) != json::parse(uri_result.output)) {
+        host.close(); std::cerr << "dataset handle and URI did not resolve to the same authorized call: " << error << '\n'; return 1;
+    }
+    handle_arguments["dataset"] = "d2";
+    if (host.normalize_call("data.aggregate", handle_arguments, normalized_handle, error)) {
+        host.close(); std::cerr << "unavailable dataset handle was accepted\n"; return 1;
+    }
     const auto aggregate_call = host.render_model_call("data.aggregate", aggregate_arguments, error);
     if (!host.parse_model_call(aggregate_call, parsed_flat_call, error) ||
             json::parse(parsed_flat_call.arguments_json) != aggregate_arguments) {

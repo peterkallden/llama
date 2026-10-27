@@ -220,6 +220,24 @@ bool common_flydelta_bootstrap_zoom_state_validate(
     for (const auto & trial : state.completed_trials) {
         if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
     }
+    if (state.best_progress_trial_available &&
+            (!state.progress_available || state.best_progress_trial_index >= state.completed_trials.size() ||
+             !state.completed_trials[state.best_progress_trial_index].progress_available ||
+             !common_flydelta_semantic_progress_is_safe_anchor(
+                 state.completed_trials[state.best_progress_trial_index].progress) ||
+             state.completed_trials[state.best_progress_trial_index].progress.candidate_score !=
+                 state.best_progress.candidate_score ||
+             state.completed_trials[state.best_progress_trial_index].progress.baseline_score !=
+                 state.best_progress.baseline_score ||
+             state.completed_trials[state.best_progress_trial_index].progress.outcome !=
+                 state.best_progress.outcome ||
+             state.completed_trials[state.best_progress_trial_index].progress.improved_dimensions !=
+                 state.best_progress.improved_dimensions ||
+             state.completed_trials[state.best_progress_trial_index].progress.residual_dimensions !=
+                 state.best_progress.residual_dimensions)) {
+        error = "FlyDelta BootstrapZoom progress trial is inconsistent";
+        return false;
+    }
     for (const auto & trial : state.surface_trials) {
         if (!common_flydelta_bootstrap_zoom_trial_validate(trial, error)) return false;
     }

@@ -212,6 +212,14 @@ common_agent_dataset_inventory_resolution common_agent_resolve_dataset_inventory
         std::string & resolved,
         std::string & error);
 
+// Resolve dataset handles only in fields declared as dataset references by
+// the tool schema. Authorization remains the responsibility of the host.
+bool common_agent_resolve_tool_dataset_handles(
+        const std::vector<common_agent_dataset_descriptor> & datasets,
+        const nlohmann::ordered_json & schema,
+        nlohmann::ordered_json & arguments,
+        std::string & error);
+
 // Parse bounded filter expressions into the existing conjunction-only store
 // format. Same-field equality OR groups become membership predicates; general
 // disjunctions are rejected. AND has higher precedence than OR.
