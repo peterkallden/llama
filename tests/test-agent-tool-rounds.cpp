@@ -267,7 +267,9 @@ int main() {
     common_registered_tool tool;
     tool.name = "lookup";
     tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
-    tool.handler = [](const std::string & input) {
+    size_t lookup_calls = 0;
+    tool.handler = [&lookup_calls](const std::string & input) {
+        ++lookup_calls;
         return common_tool_execution_result::success(input.find("second") == std::string::npos ? "first result" : "second result");
     };
     assert(registry.register_tool(std::move(tool), error));
@@ -293,6 +295,7 @@ int main() {
     assert(result.response == "observations=2");
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
+    assert(common_plan_tool_execution_closed(*plan));
 
     // A choice accepted from a host-bounded candidate list is persisted as
     // structured evidence only after the following tool action succeeds.
@@ -527,22 +530,21 @@ int main() {
     reopening_reflector reopening;
     common_agent_runtime closed_runtime(closed_store, p, e, reopening, &tool_runtime);
     common_agent_request closed_request;
-    closed_request.prompt = "two rounds with a closed tool phase";
+    closed_request.prompt = "two rounds with an active plan";
     closed_request.max_iterations = 2;
     closed_request.max_reflection_rounds = 2;
     closed_request.max_tool_batches = 2;
+    const size_t calls_before_replan = lookup_calls;
     const auto closed_result = closed_runtime.run(closed_request);
     assert(!closed_result.error.empty());
     assert(closed_result.response.empty());
     auto closed_plan = closed_store.get("two-rounds", error);
-    assert(closed_plan && closed_plan->steps.size() == 3);
-    bool saw_closed_guard = false;
-    for (const auto & trace : closed_result.trace) {
-        saw_closed_guard = saw_closed_guard ||
-            (trace.stage == common_runtime_trace_stage::reflection &&
-             trace.detail.find("tool execution closed") != std::string::npos);
-    }
-    assert(saw_closed_guard);
+    assert(closed_plan && closed_plan->status == common_plan_status::active);
+    assert(!common_plan_tool_execution_closed(*closed_plan));
+    assert(closed_plan->steps.size() == 4);
+    assert(closed_plan->steps.back().id == "rediscovery");
+    assert(closed_plan->steps.back().status != common_plan_step_status::completed);
+    assert(lookup_calls == calls_before_replan + 2);
 
     class repair_planner final : public common_planner {
     public:
@@ -679,7 +681,10 @@ int main() {
     auto retry_repair_plan_result = retry_repair_store.get("repair-retryable-validation", error);
     assert(retry_repair_plan_result && retry_repair_plan_result->status == common_plan_status::completed);
     assert(retry_repair_plan_result->steps[0].status == common_plan_step_status::completed);
-    assert(retry_repair_plan_result->observations.size() == 2);
+    assert(std::count_if(retry_repair_plan_result->observations.begin(),
+        retry_repair_plan_result->observations.end(), [](const auto & observation) {
+            return observation.source == "lookup";
+        }) == 2);
     // The failed attempt is repaired before the first user-facing draft.
     // Without the runtime repair gate this case would draft once while the
     // failed step is unresolved and once again after the retry.
@@ -729,7 +734,13 @@ int main() {
     wrong_identity_request.max_tool_batches = 1;
     const auto wrong_identity_result = wrong_identity_runtime.run(wrong_identity_request);
     assert(!wrong_identity_result.error.empty());
-    assert(wrong_identity_result.error.find("unrepaired failed tool step") != std::string::npos);
+    assert(wrong_identity_result.response.empty());
+    const auto wrong_identity_saved = wrong_identity_store.get("repair-wrong-identity", error);
+    assert(wrong_identity_saved);
+    assert(std::any_of(wrong_identity_saved->steps.begin(), wrong_identity_saved->steps.end(),
+        [](const auto & step) { return step.id == "repair" && step.status == common_plan_step_status::failed; }));
+    assert(std::none_of(wrong_identity_saved->steps.begin(), wrong_identity_saved->steps.end(),
+        [](const auto & step) { return step.id == "not-the-failed-step"; }));
 
     common_registered_tool write_tool;
     write_tool.name = "write_tool";
@@ -857,9 +868,13 @@ int main() {
     dependency_request.max_tool_batches = 3;
     const auto dependency_result = dependency_runtime.run(dependency_request);
     assert(dependency_result.error.empty());
-    assert(dependency_result.response == "observations=3");
+    assert(!dependency_result.response.empty());
     auto dependency_plan_result = dependency_store.get("dependency-repair", error);
     assert(dependency_plan_result && dependency_plan_result->status == common_plan_status::completed);
+    assert(std::count_if(dependency_plan_result->observations.begin(),
+        dependency_plan_result->observations.end(), [](const auto & observation) {
+            return observation.source == "lookup";
+        }) == 3);
     assert(dependency_plan_result->steps[0].status == common_plan_step_status::completed);
     assert(dependency_plan_result->steps[1].status == common_plan_step_status::completed);
     assert(dependency_plan_result->steps[2].status == common_plan_step_status::completed);

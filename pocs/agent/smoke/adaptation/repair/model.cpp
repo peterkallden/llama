@@ -925,7 +925,8 @@ int main(int argc, char ** argv) {
         server_config.context_key.load_key.fit_params = true;
         server_config.context_key.n_parallel = 2;
         server_config.context_key.n_sequences = 2;
-        server_config.context_key.n_ctx = 2048;
+        // Preserve the initial 2048-token budget for each concurrent arm.
+        server_config.context_key.n_ctx = 4096;
         server_config.context_key.n_threads = value.n_threads;
         server_config.verbosity = LOG_LEVEL_WARN;
         server_config.per_sequence_cvec_batch = true;

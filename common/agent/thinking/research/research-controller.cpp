@@ -235,6 +235,21 @@ common_agent_research_action schedule_next_gap(
             break;
         }
     }
+    if (task.preferred_tools != std::vector<std::string>{"resource.read"}) {
+        for (const auto & source : workspace.sources) {
+            const bool attempted = std::any_of(workspace.tasks.begin(), workspace.tasks.end(), [&](const auto & prior) {
+                return prior.gap_id == selected->gap_id && prior.instruction == source.memory_id &&
+                    std::find(prior.preferred_tools.begin(), prior.preferred_tools.end(), "memory.get") != prior.preferred_tools.end();
+            });
+            if (source.kind == common_agent_research_source_kind::memory &&
+                    source.role == "memory_context" && !source.memory_id.empty() &&
+                    !attempted && !source_used_for_gap(workspace, *selected, source.source_id)) {
+                task.instruction = source.memory_id;
+                task.preferred_tools = {"memory.get"};
+                break;
+            }
+        }
+    }
     if (!common_agent_research_add_task(workspace, task, error)) return complete_action(common_agent_research_stop_reason::budget_exhausted);
     if (!common_agent_research_transition_task(
             workspace, task.task_id, common_agent_research_task_status::active, error) ||
@@ -278,6 +293,10 @@ bool common_agent_research_assess_materialized_evidence(
             const auto source = std::find_if(workspace.sources.begin(), workspace.sources.end(),
                 [&](const auto & item) { return item.source_id == evidence->source_id; });
             if (source == workspace.sources.end()) continue;
+            // Retrieval of a scoped memory is context, not independent proof
+            // of its claims. A later supported assessment may add evidence.
+            if (source->kind == common_agent_research_source_kind::memory &&
+                    evidence->relation == common_agent_research_evidence_relation::inconclusive) continue;
             const auto identity = source->content_hash.empty()
                 ? (source->resource_ref ? source->resource_ref->uri : source->origin + ":" + source->title)
                 : source->content_hash;

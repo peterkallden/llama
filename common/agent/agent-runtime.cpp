@@ -3193,6 +3193,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if ((operation.kind != common_plan_operation_kind::add_step &&
                     operation.kind != common_plan_operation_kind::replace_step) ||
                     !operation.step || !operation.step->tool_call) continue;
+            // A valid replacement is a complete call. Merging it with a
+            // rejected call can reintroduce fields the model removed.
+            std::string replacement_error;
+            const common_agent_tool_call replacement{
+                operation.step->tool_call->name, operation.step->tool_call->arguments_json};
+            if (tools && tools->validate(replacement, replacement_error)) continue;
             std::string merge_error;
             if (merge_reflection_tool_repair_arguments(plan, operation, merge_error)) {
                 append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
@@ -3286,33 +3292,35 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     plan.id, applied_step_id);
             }
         }
-        if (!applied_reflection_work_step_ids.empty() && active_final_step_id) {
-            for (const auto & work_step_id : applied_reflection_work_step_ids) {
-                bool already_dependency = false;
-                for (const auto & step : plan.steps) {
-                    if (step.id == *active_final_step_id) {
-                        already_dependency = std::find(step.depends_on.begin(), step.depends_on.end(), work_step_id) != step.depends_on.end();
-                        break;
+        if (!applied_reflection_work_step_ids.empty()) {
+            if (active_final_step_id) {
+                for (const auto & work_step_id : applied_reflection_work_step_ids) {
+                    bool already_dependency = false;
+                    for (const auto & step : plan.steps) {
+                        if (step.id == *active_final_step_id) {
+                            already_dependency = std::find(step.depends_on.begin(), step.depends_on.end(), work_step_id) != step.depends_on.end();
+                            break;
+                        }
                     }
+                    if (already_dependency) continue;
+                    common_plan_operation dependency;
+                    dependency.kind = common_plan_operation_kind::add_dependency;
+                    dependency.plan_id = plan.id;
+                    dependency.expected_version = plan.version;
+                    dependency.step_id = *active_final_step_id;
+                    dependency.target_id = work_step_id;
+                    dependency.reason_summary = "final answer waits for reflection repair";
+                    if (!store.apply(dependency, plan, error)) {
+                        result.error = error;
+                        return result;
+                    }
+                    append_event(result, request, {common_agent_event_type::plan_updated,
+                        "final answer dependency added for reflection repair", {}, plan.id});
+                    append_trace(result, common_runtime_trace_stage::plan,
+                        common_runtime_trace_kind::updated,
+                        "final answer dependency added for reflection repair", plan.id,
+                        *active_final_step_id, {}, work_step_id);
                 }
-                if (already_dependency) continue;
-                common_plan_operation dependency;
-                dependency.kind = common_plan_operation_kind::add_dependency;
-                dependency.plan_id = plan.id;
-                dependency.expected_version = plan.version;
-                dependency.step_id = *active_final_step_id;
-                dependency.target_id = work_step_id;
-                dependency.reason_summary = "final answer waits for reflection repair";
-                if (!store.apply(dependency, plan, error)) {
-                    result.error = error;
-                    return result;
-                }
-                append_event(result, request, {common_agent_event_type::plan_updated,
-                    "final answer dependency added for reflection repair", {}, plan.id});
-                append_trace(result, common_runtime_trace_stage::plan,
-                    common_runtime_trace_kind::updated,
-                    "final answer dependency added for reflection repair", plan.id,
-                    *active_final_step_id, {}, work_step_id);
             }
             const auto activation = activate_next_ready_step();
             if (activation != activation_outcome::runnable) {

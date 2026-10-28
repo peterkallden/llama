@@ -479,11 +479,19 @@ bool maybe_select_agent_route(
     selected_route = *chosen;
     route_selected = true;
 
+    auto rejected_routes = nlohmann::ordered_json::array();
+    for (const auto & rejection : catalog.rejections) {
+        if (rejected_routes.size() == 32) break;
+        rejected_routes.push_back({{"blueprint", rejection.blueprint_logical_id},
+            {"workflow", rejection.workflow_ref}, {"reason", rejection.reason}});
+    }
     const auto detail = nlohmann::ordered_json{
         {"context_fingerprint", catalog.context_fingerprint},
         {"catalog_fingerprint", catalog.catalog_fingerprint},
         {"candidate_count", catalog.candidates.size()},
         {"rejected_count", catalog.rejections.size()},
+        {"rejected_routes", std::move(rejected_routes)},
+        {"unavailable_optional_steps", selected_route.unavailable_optional_steps},
         {"selected_route_id", selected_route.id},
         {"selection_mode", selection_mode},
         {"confidence", confidence},

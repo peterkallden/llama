@@ -131,6 +131,19 @@ bool common_agent_research_runtime_adapter::execute(
             // see the same name as planning and model-facing tool catalogs.
         } else if (tools.has_execution_envelope()) {
             // Never invoke an unresolved legacy alias outside the active route.
+            if (!executed_failure) {
+                last_failure_code = "tool.unavailable";
+                last_failure_summary = "Research tool is unavailable or outside the active policy: " + tool_name;
+                last_failure_retryable = tool_name == "memory.get";
+            }
+            continue;
+        }
+        if (!tools.is_available(resolved_tool_name)) {
+            if (!executed_failure) {
+                last_failure_code = "tool.unavailable";
+                last_failure_summary = "Research tool is unavailable or outside the active policy: " + resolved_tool_name;
+                last_failure_retryable = resolved_tool_name == "memory.get";
+            }
             continue;
         }
         common_agent_tool_call call;
@@ -187,7 +200,9 @@ bool common_agent_research_runtime_adapter::execute(
             evidence.source_location = result.resource_refs.empty()
                 ? action.instruction
                 : result.resource_refs.front().uri;
-            evidence.relation = common_agent_research_evidence_relation::supports;
+            evidence.relation = resolved_tool_name == "memory.get"
+                ? common_agent_research_evidence_relation::inconclusive
+                : common_agent_research_evidence_relation::supports;
             evidence.origin = resolved_tool_name == "resource.read"
                 ? common_agent_research_evidence_origin::direct_source
                 : common_agent_research_evidence_origin::normalized_tool_result;
@@ -197,7 +212,7 @@ bool common_agent_research_runtime_adapter::execute(
                 evidence.directly_observed = true;
             }
             evidence.relevance = 0.75;
-            evidence.confidence = 0.9;
+            evidence.confidence = resolved_tool_name == "memory.get" ? 0.0 : 0.9;
             if (!common_agent_research_record_evidence(workspace, evidence, error)) return false;
             const auto gap = std::find_if(workspace.gaps.begin(), workspace.gaps.end(),
                 [&](const auto & candidate) { return candidate.gap_id == action.gap_id; });
@@ -209,7 +224,13 @@ bool common_agent_research_runtime_adapter::execute(
             event.assessment_summary = event.gap_sufficiently_answered
                 ? "bounded resource evidence addresses the gap criterion"
                 : "resource evidence did not address the gap criterion";
-            if (assessor && gap != workspace.gaps.end()) {
+            if (resolved_tool_name == "memory.get") {
+                event.gap_sufficiently_answered = false;
+                event.gap_confidence = 0.0;
+                event.assessment_summary = "Scoped memory was retrieved as context; its claims require independent assessment.";
+                event.assessment = {common_agent_research_assessment_status::insufficient, 0.0,
+                    event.assessment_summary};
+            } else if (assessor && gap != workspace.gaps.end()) {
                 event.assessment = assessor->assess(*gap, evidence);
                 event.gap_sufficiently_answered =
                     event.assessment.status != common_agent_research_assessment_status::insufficient &&

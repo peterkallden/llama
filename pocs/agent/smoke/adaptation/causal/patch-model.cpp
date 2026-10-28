@@ -1,6 +1,7 @@
 #include "agent/agent-residual-patch.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "tools/agent/openapi/agent-openapi-catalog.h"
 #include "tools/agent/runtime/agent-runtime-host.h"
@@ -47,6 +48,18 @@ constexpr causal_fixture kSchemaFixture = {
     R"({"dataset":"dataset://local/sales"})",
     R"({"dataset":"dataset://local/sales"})",
     "For dataset://local/sales, describe the available fields and their types before analysis.",
+};
+
+// An earlier dataset-repair trace showed a schema request without its
+// dataset binding, followed by a host-corrected call. The planner must still
+// produce an actual matching pair in this run; no outcome is fabricated.
+constexpr causal_fixture kSchemaArgumentFixture = {
+    "schema-argument-repair",
+    "dataset.schema",
+    "dataset.schema",
+    R"({"dataset":"dataset://local/sales"})",
+    R"({})",
+    "Describe the available fields and their types in dataset://local/sales before analysis.",
 };
 
 // Keep the earlier experiment selectable so its historical result remains
@@ -103,7 +116,7 @@ constexpr causal_fixture kOpenAlexKnownIdFixture = {
 
 struct options {
     std::string model;
-    std::string fixture = kSchemaFixture.id;
+    std::string fixture = kSchemaArgumentFixture.id;
     std::string openalex_spec;
     int threads = 3;
     int gpu_layers = 99;
@@ -140,6 +153,7 @@ bool parse_options(int argc, char ** argv, options & out) {
 }
 
 const causal_fixture * fixture_for(const options & value) {
+    if (value.fixture == kSchemaArgumentFixture.id) return &kSchemaArgumentFixture;
     if (value.fixture == kSchemaFixture.id) return &kSchemaFixture;
     if (value.fixture == kOverviewFixture.id) return &kOverviewFixture;
     if (value.fixture == kExplicitRepairPairFixture.id) return &kExplicitRepairPairFixture;
@@ -358,9 +372,17 @@ public:
     std::vector<planner_generation_observation> observations;
 };
 
-std::string planner_tool(const common_agent_generation_result & result) {
-    if (!common_agent_generation_succeeded(result)) return {};
-    const auto parsed = json::parse(result.content, nullptr, false);
+json planner_candidate(const common_agent_generation_result & result, const std::vector<common_chat_tool> & tools) {
+    if (!common_agent_generation_succeeded(result)) return json();
+    auto parsed = json::parse(result.content, nullptr, false);
+    if (!parsed.is_discarded()) return parsed;
+    std::string canonical, error;
+    if (!common_parse_compact_dsl_plan(result.content, tools, canonical, error)) return json();
+    return json::parse(canonical, nullptr, false);
+}
+
+std::string planner_tool(const common_agent_generation_result & result, const std::vector<common_chat_tool> & tools) {
+    const auto parsed = planner_candidate(result, tools);
     if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("steps") ||
             !parsed["steps"].is_array()) return {};
     for (const auto & step : parsed["steps"]) {
@@ -371,9 +393,8 @@ std::string planner_tool(const common_agent_generation_result & result) {
     return {};
 }
 
-std::string planner_arguments(const common_agent_generation_result & result) {
-    if (!common_agent_generation_succeeded(result)) return {};
-    const auto parsed = json::parse(result.content, nullptr, false);
+std::string planner_arguments(const common_agent_generation_result & result, const std::vector<common_chat_tool> & tools) {
+    const auto parsed = planner_candidate(result, tools);
     if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("steps") ||
             !parsed["steps"].is_array()) return {};
     for (const auto & step : parsed["steps"]) {
@@ -389,6 +410,8 @@ struct planner_counterfactual {
     planner_generation_observation baseline;
     planner_generation_observation repair;
     common_agent_generation_request diagnostic_context;
+    std::string missing_pair_stage;
+    json observed_candidates = json::array();
 };
 
 bool run_planner_observations(
@@ -478,6 +501,14 @@ bool run_planner_counterfactual(
     std::vector<planner_generation_observation> observations;
     if (!run_planner_observations(delegate, value, fixture, tools, capture, patch,
             observations, error)) return false;
+    const auto record_candidates = [&](const auto & values, const char * stage) {
+        for (const auto & observation : values) {
+            out.observed_candidates.push_back({{"stage", stage},
+                {"tool", planner_tool(observation.result, tools)},
+                {"arguments", planner_arguments(observation.result, tools)}});
+        }
+    };
+    record_candidates(observations, "baseline");
 
     if (fixture.repair_task != nullptr) {
         const auto find_observation = [&](
@@ -485,8 +516,8 @@ bool run_planner_counterfactual(
                 const char * expected_tool, const char * expected_arguments,
                 planner_generation_observation & selected) {
             for (const auto & observation : values) {
-                if (planner_tool(observation.result) == expected_tool &&
-                        same_json(planner_arguments(observation.result), expected_arguments)) {
+                if (planner_tool(observation.result, tools) == expected_tool &&
+                        same_json(planner_arguments(observation.result, tools), expected_arguments)) {
                     selected = observation;
                     return true;
                 }
@@ -496,6 +527,8 @@ bool run_planner_counterfactual(
         planner_generation_observation baseline;
         if (!find_observation(observations, fixture.failed_tool,
                 fixture.failed_arguments, baseline)) {
+            out.missing_pair_stage = "baseline";
+            error = "matching baseline was not observed";
             std::cerr << "planner explicit-pair baseline was not emitted\n";
             return false;
         }
@@ -504,9 +537,12 @@ bool run_planner_counterfactual(
         std::vector<planner_generation_observation> repair_observations;
         if (!run_planner_observations(delegate, value, repair_fixture, tools, capture, patch,
                 repair_observations, error)) return false;
+        record_candidates(repair_observations, "repair");
         planner_generation_observation repair;
         if (!find_observation(repair_observations, fixture.expected_tool,
                 fixture.expected_arguments, repair)) {
+            out.missing_pair_stage = "repair";
+            error = "matching repair was not observed after baseline";
             std::cerr << "planner explicit-pair repair was not emitted\n";
             return false;
         }
@@ -523,8 +559,8 @@ bool run_planner_counterfactual(
     size_t repair_index = observations.size();
     for (size_t index = 0; index < observations.size(); ++index) {
         const auto & observation = observations[index];
-        const std::string tool = planner_tool(observation.result);
-        const std::string arguments = planner_arguments(observation.result);
+        const std::string tool = planner_tool(observation.result, tools);
+        const std::string arguments = planner_arguments(observation.result, tools);
         const bool rejected_baseline = tool == fixture.failed_tool &&
             (std::string(fixture.failed_tool) != std::string(fixture.expected_tool) ||
                 same_json(arguments, fixture.failed_arguments));
@@ -539,13 +575,16 @@ bool run_planner_counterfactual(
         }
     }
     if (baseline_index == observations.size() || repair_index == observations.size()) {
+        out.missing_pair_stage = baseline_index == observations.size() ? "baseline" : "repair";
+        error = baseline_index == observations.size()
+            ? "matching baseline was not observed" : "matching repair was not observed after baseline";
         std::cerr << "planner observations=" << observations.size()
                   << " planner_error=" << (error.empty() ? "<none>" : error) << '\n';
         for (const auto & observation : observations) {
-            std::cout << "planner_candidate tool=" << (planner_tool(observation.result).empty()
-                ? "<none>" : planner_tool(observation.result))
-                << " args=" << (planner_arguments(observation.result).empty()
-                    ? "<none>" : planner_arguments(observation.result)) << '\n';
+            std::cout << "planner_candidate tool=" << (planner_tool(observation.result, tools).empty()
+                ? "<none>" : planner_tool(observation.result, tools))
+                << " args=" << (planner_arguments(observation.result, tools).empty()
+                    ? "<none>" : planner_arguments(observation.result, tools)) << '\n';
         }
         return false;
     }
@@ -565,12 +604,16 @@ int main(int argc, char ** argv) {
     if (!parse_options(argc, argv, value)) {
         std::cerr << "usage: " << argv[0]
                   << " --model MODEL [--threads N] [--n-gpu-layers N]"
-                  << " [--fixture schema-selection|overview-selection|explicit-repair-pair|openalex-known-id]"
+                  << " [--fixture schema-argument-repair|schema-selection|overview-selection|explicit-repair-pair|openalex-known-id]"
                   << " [--openalex-spec PATH]"
                   << " [--layer N|--all-layers] [--full-matrix] [--capture-only]\n";
         return 2;
     }
-    if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) return 77;
+    if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
+        std::cout << "model_smoke_event " << json({{"version", 1},
+            {"kind", "configuration_error"}, {"reason", "model file unavailable"}}).dump() << '\n';
+        return 77;
+    }
     const causal_fixture * fixture = fixture_for(value);
     if (fixture == nullptr) {
         std::cerr << "unknown causal fixture: " << value.fixture << '\n';
@@ -586,6 +629,7 @@ int main(int argc, char ** argv) {
         common_tool_bootstrap_result bootstrap;
         if (!catalog.bootstrap("analysis", bootstrap, error)) { std::cerr << error << '\n'; return 1; }
         for (const char * name : {fixture->expected_tool, fixture->failed_tool}) {
+            if (std::any_of(tools.begin(), tools.end(), [&](const auto & tool) { return tool.name == name; })) continue;
             const auto * definition = catalog.find_definition(name);
             if (!definition) { std::cerr << "missing tool " << name << '\n'; return 1; }
             const auto schema = common_tool_model_input_schema(*definition);
@@ -619,21 +663,32 @@ int main(int argc, char ** argv) {
     planner_counterfactual counterfactual;
     if (!run_planner_counterfactual(*inference, value, *fixture, tools, capture, {},
             counterfactual, error)) {
+        if (counterfactual.missing_pair_stage.empty()) {
+            std::cerr << "causal patch planner execution failed: " << error << '\n';
+            return 1;
+        }
+        const json event = {{"version", 1}, {"kind", "precondition_not_observed"},
+            {"fixture", fixture->id}, {"missing_stage", counterfactual.missing_pair_stage},
+            {"reason", error}, {"expected_baseline_tool", fixture->failed_tool},
+            {"expected_repair_tool", fixture->expected_tool},
+            {"observed_candidates", counterfactual.observed_candidates},
+            {"repair_arm_executed", false}, {"learning_credit", false}, {"promotion", false}};
+        std::cout << "model_smoke_event " << event.dump() << '\n';
         std::cout << "fixture_not_counterfactual"
                   << " fixture=" << fixture->id
                   << " expected_baseline_tool=" << fixture->failed_tool
                   << " expected_repair_tool=" << fixture->expected_tool
-                  << " baseline_tool=<planner-did-not-emit-rejected-call>"
-                  << " repair_tool=<not_run>"
+                  << " pair_status=not_observed"
+                  << " reason=" << (error.empty() ? "no matching planner pair" : error)
                   << " learning_credit=no promotion=no\n";
         return 77;
     }
     const common_agent_generation_result & baseline = counterfactual.baseline.result;
     const common_agent_generation_result & repair = counterfactual.repair.result;
-    const std::string baseline_selected_tool = planner_tool(baseline);
-    const std::string repair_selected_tool = planner_tool(repair);
-    const std::string baseline_selected_arguments = planner_arguments(baseline);
-    const std::string repair_selected_arguments = planner_arguments(repair);
+    const std::string baseline_selected_tool = planner_tool(baseline, tools);
+    const std::string repair_selected_tool = planner_tool(repair, tools);
+    const std::string baseline_selected_arguments = planner_arguments(baseline, tools);
+    const std::string repair_selected_arguments = planner_arguments(repair, tools);
     if (!baseline.flydelta_capture || !repair.flydelta_capture ||
             !baseline.flydelta_capture->captured || !repair.flydelta_capture->captured) {
         std::cerr << "causal patch smoke could not capture baseline/repair states\n";
@@ -850,8 +905,8 @@ int main(int argc, char ** argv) {
                 *inference, value, *fixture, tools, capture, arm.patch, observations, planner_error);
             size_t valid_index = observations.size();
             for (size_t observation_index = 0; observation_index < observations.size(); ++observation_index) {
-                if (planner_tool(observations[observation_index].result) == fixture->expected_tool &&
-                        same_json(planner_arguments(observations[observation_index].result),
+                if (planner_tool(observations[observation_index].result, tools) == fixture->expected_tool &&
+                        same_json(planner_arguments(observations[observation_index].result, tools),
                             fixture->expected_arguments)) {
                     valid_index = observation_index;
                     break;
@@ -860,8 +915,8 @@ int main(int argc, char ** argv) {
             const bool candidate_passed = valid_index < observations.size();
             const common_agent_generation_result * result = candidate_passed
                 ? &observations[valid_index].result : nullptr;
-            const std::string selected = result == nullptr ? std::string{} : planner_tool(*result);
-            const std::string selected_args = result == nullptr ? std::string{} : planner_arguments(*result);
+            const std::string selected = result == nullptr ? std::string{} : planner_tool(*result, tools);
+            const std::string selected_args = result == nullptr ? std::string{} : planner_arguments(*result, tools);
             bool patch_attempted = false;
             bool patch_applied = false;
             std::string patch_failure_reason;

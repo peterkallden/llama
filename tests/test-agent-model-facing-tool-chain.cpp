@@ -65,7 +65,8 @@ int main() {
     assert(has_tool(openapi_route, "openapi.get"));
     assert(has_tool(openapi_route, "web.fetch"));
     assert(!has_tool(openapi_route, "web.search"));
-    assert(!has_tool(openapi_route, "memory.search"));
+    assert(has_tool(openapi_route, "memory.search"));
+    assert(!has_tool(openapi_route, "memory.get")); // Not in the authorized catalog.
 
     common_tool_definition dataset_inspect;
     dataset_inspect.name = "dataset.inspect";

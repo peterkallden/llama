@@ -85,10 +85,8 @@ bool daemon_flydelta_persist_teaching_relation(
     request.metadata.content_summary =
         "Durable host-verified teaching relation for concept capture and synthesis.";
     request.metadata.processing_cache_key = identity;
-    request.lineage.parent_uri = relation.evidence_ref;
-    request.lineage.chunk_count = 1;
-    request.lineage.chunk_index = 0;
-    request.lineage.derivation = "host-teaching-relation";
+    // The serialized evidence_ref is semantic provenance, not a byte range
+    // in a parent resource. Keep lineage unset until a real range is known.
     agent_resource_descriptor descriptor;
     if (!resources->put_text(request, descriptor, error) || descriptor.uri.empty()) {
         if (error.empty()) error = "FlyDelta teaching relation resource has no URI";

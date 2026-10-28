@@ -16,15 +16,21 @@ using json = nlohmann::ordered_json;
 
 class vertical_tool_runtime final : public common_agent_tool_runtime {
 public:
+    explicit vertical_tool_runtime(common_memory_store & store) : memories(store) {}
+    common_memory_store & memories;
+    common_memory_query memory_scope;
     mutable int resource_reads = 0;
     mutable int memory_gets = 0;
 
     bool is_read_only(const std::string &) const override { return true; }
     bool is_policy_gated(const std::string &) const override { return false; }
+    bool is_available(const std::string & name) const override {
+        return name == "resource.read" || name == "memory.get";
+    }
 
     bool validate(const common_agent_tool_call & call, std::string & error) const override {
         if (call.name != "resource.read" && call.name != "memory.get") {
-            error = "vertical smoke only exposes resource.read and memory.get";
+            error = "vertical smoke only exposes resource.read and memory.get; requested: " + call.name;
             return false;
         }
         const auto arguments = json::parse(call.arguments_json, nullptr, false);
@@ -52,9 +58,15 @@ public:
                 {common_runtime_resource_ref{uri, "user-reference", "vertical smoke input", "text/plain", 64,
                     common_runtime_resource_scope::turn, {}}});
         }
+        std::string error;
+        const auto record = memories.get(arguments.value("id", ""), error);
+        if (!record || !common_memory_scope_matches(*record, memory_scope)) {
+            return common_tool_execution_result::failure("tool.memory_get.unavailable",
+                "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
+        }
         ++memory_gets;
         return common_tool_execution_result::success(
-            "Memory record confirms the bounded research criterion.",
+            record->summary,
             "memory evidence");
     }
 };
@@ -187,7 +199,9 @@ int main() {
         vertical_planner planner;
         vertical_executor executor;
         vertical_reflector reflector;
-        vertical_tool_runtime tools;
+        common_memory_in_memory_store memory_store;
+        if (!memory_store.open("", callback_error)) return false;
+        vertical_tool_runtime tools(memory_store);
         common_agent_runtime runtime(plan_store, planner, executor, reflector, &tools);
 
         common_agent_request request;
@@ -199,8 +213,10 @@ int main() {
         request.max_iterations = 8;
         request.max_reflection_rounds = 2;
         request.max_tool_batches = 16;
-        request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::deliberate);
-        request.deliberation_policy.requested_mode = common_agent_thinking_request::deliberate;
+        // The vertical contract below explicitly requires research evidence.
+        // Escalation from another mode is covered by separate runtime smokes.
+        request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::research);
+        request.deliberation_policy.requested_mode = common_agent_thinking_request::research;
         request.deliberation_policy.allow_escalation = true;
         request.deliberation_policy.max_research_iterations = 16;
         request.deliberation_policy.max_tool_rounds = 16;
@@ -215,8 +231,19 @@ int main() {
             "primary_source", true});
         common_memory_hit memory;
         memory.memory.id = "vertical-memory-1";
+        memory.memory.namespace_id = request.namespace_id;
+        memory.memory.session_id = request.session_id;
         memory.memory.summary = "A bounded memory reference for the vertical smoke.";
         memory.memory.confidence = 0.95f;
+        if (!memory_store.put(memory.memory, callback_error)) return false;
+        tools.memory_scope.namespace_id = request.namespace_id;
+        tools.memory_scope.session_id = request.session_id;
+        tools.memory_scope.session_id = "another-session";
+        if (tools.execute({"memory.get", R"({"id":"vertical-memory-1"})"}).ok) {
+            callback_error = "vertical smoke allowed memory from another session";
+            return false;
+        }
+        tools.memory_scope.session_id = request.session_id;
         memory.final_score = 0.95f;
         request.memories.push_back(memory);
 

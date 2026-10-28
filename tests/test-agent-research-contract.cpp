@@ -343,7 +343,13 @@ int main() {
         "resource.read") == memory_action.preferred_tools.end());
     assert(std::find(memory_action.preferred_tools.begin(), memory_action.preferred_tools.end(),
         "memory.get") == memory_action.preferred_tools.end());
-    assert(memory_action.instruction == factory_workspace.gaps.front().question);
+    factory_workspace.tasks.clear();
+    factory_workspace.gaps.front().status = common_agent_research_gap_status::open;
+    factory_workspace.sources.back().role = "memory_context";
+    const auto scoped_memory_action = factory_controller.begin(factory_workspace, factory_error);
+    assert(std::find(scoped_memory_action.preferred_tools.begin(), scoped_memory_action.preferred_tools.end(),
+        "memory.get") != scoped_memory_action.preferred_tools.end());
+    assert(scoped_memory_action.instruction == factory_workspace.sources.back().memory_id);
 
     common_agent_research_workspace workspace;
     workspace.workspace_id = "research-1";

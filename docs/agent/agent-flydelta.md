@@ -4390,6 +4390,32 @@ agent workers and two FlyDelta workers. The CTest entry skips when no model is
 supplied and has a longer timeout because it covers the complete capture →
 synthesis → grafted-search chain.
 
+The model fixture uses a natural grouped-sum request and exposes the same
+dataset tools to the baseline, conditioned and control prompts. The
+conditioned prompt provides task guidance; it does not force a tool-call
+schema or exact response. Host-approved teaching relations in this smoke are
+test fixtures, not evidence that a user taught a production model. A passing
+process status establishes the exercised integration checks, not a behavioral
+improvement. Inspect the full-generation arm records and host assessments.
+
+The causal-patch model smoke defaults to a dataset-schema argument-repair
+scenario. It requires an actually observed rejected baseline and matching
+repair before evaluating an intervention. If the pair is absent, it emits a
+versioned `model_smoke_event` with the missing stage, observed candidates and
+`repair_arm_executed=false`; it exits with CTest's skip code 77. A planner
+execution failure is a failure, not a missing-pair observation. The opt-in
+`scripts/agent-model-test-profile.py` records structured events as
+`inconclusive_precondition`, missing-model diagnostics as
+`configuration_error`, and an otherwise unexplained skip as
+`skipped_unclassified`. An inconclusive result is not a passed patch test.
+
+In the 2026-10-28 Qwen2.5-1.5B GPU smoke, the grouped-sum baseline and the
+generated intervention arms returned the same correct aggregation. The
+causal-patch run did not observe its required baseline/repair pair. These
+results do not establish improved model behavior or a causal-patch failure.
+The structured event and updated profile classification were added after that
+run and have not yet been exercised by a rebuilt model smoke.
+
 The grafted BootstrapZoom slice may safely retain no arm: when diagnostics
 reject every bounded probe, the worker records `no_useful_utility` and stops
 the branch without fabricating a candidate, learning credit or promotion.

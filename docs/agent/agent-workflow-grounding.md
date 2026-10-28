@@ -291,3 +291,21 @@ ccache, with sandbox elevation, for a grouped build and deterministic contracts.
 Then run the model-free smoke and the two model scenarios serially, with tracing
 and FlyDelta workers disabled. Daemon/UI and context-dependent model validation
 remain outstanding until those production paths are explicitly exercised.
+
+### Scoped memory and unavailable workflow steps
+
+Family expansion retains `memory.get` and `memory.search` only when they are
+already present in the host-authorized tool catalog; family selection does not
+grant access. Research can retrieve a scoped memory as context, but retrieval
+alone is inconclusive evidence and does not satisfy a research gap. If a
+research tool is absent from the active execution envelope or unavailable,
+the runner reports `tool.unavailable` rather than invoking it outside policy.
+The route-selection trace includes bounded rejected-route details and optional
+steps that are unavailable or excluded by policy.
+
+Reflection repair keeps a valid replacement call intact; incomplete repairs
+may still use the existing argument-merge path. Work added by reflection must
+become runnable before the runtime continues, including when no final-answer
+step is present. These source changes have been compiled in the Vulkan/Cozo
+build, but the complete affected runtime test suite has not been re-run for
+this documentation update.

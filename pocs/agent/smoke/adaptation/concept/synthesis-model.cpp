@@ -132,7 +132,7 @@ void configure_model_catalog(daemon_options & options, const smoke_args & args) 
     options.adaptation_flydelta_model_profile_fingerprint = "profile:" + options.model_profile;
 }
 
-ordered_json model_facing_dataset_tools(bool aggregate_only = false, bool describe_only = false) {
+ordered_json model_facing_dataset_tools() {
     ordered_json tools = ordered_json::array({
         {
             {"type", "function"},
@@ -151,37 +151,7 @@ ordered_json model_facing_dataset_tools(bool aggregate_only = false, bool descri
             }}
         }
     });
-    if (aggregate_only) tools.erase(tools.begin() + 1);
-    if (describe_only) tools.erase(tools.begin());
     return tools;
-}
-
-ordered_json model_facing_grouped_aggregate_output_schema() {
-    return ordered_json{
-        {"type", "object"},
-        {"additionalProperties", false},
-        {"required", {"name", "arguments"}},
-        {"properties", {
-            {"name", {{"type", "string"}, {"enum", {"data.aggregate"}}}},
-            {"arguments", {
-                {"type", "object"},
-                {"additionalProperties", false},
-                {"required", {"dataset", "group_by", "measures"}},
-                {"properties", {
-                    {"dataset", {{"type", "string"}}},
-                    {"group_by", {{"type", "array"}, {"items", {{"type", "string"}}}}},
-                    {"measures", {{"type", "array"}, {"minItems", 1}, {"items", {
-                        {"type", "object"},
-                        {"required", {"function", "column"}},
-                        {"properties", {
-                            {"function", {{"type", "string"}, {"enum", {"sum"}}}},
-                            {"column", {{"type", "string"}}}
-                        }}
-                    }}}}
-                }}
-            }}
-        }}
-    };
 }
 
 common_agent_scope smoke_scope() {
@@ -469,8 +439,8 @@ int main(int argc, char ** argv) {
     if (!put_json_resource(
             *runtime.resource_store, scope, "concept-synthesis-baseline.json",
             ordered_json{{"prompt",
-                "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. For this baseline attempt, deliberately inspect the dataset instead of computing the grouped total. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
-                 {"tools", model_facing_dataset_tools(false, true)},
+                "For dataset://local/sales, show the total amount for each region."},
+                 {"tools", model_facing_dataset_tools()},
                  {"tool_choice", "required"},
                  {"n_predict", 64}}, baseline_ref, error)) {
         return fail("baseline resource: " + error);
@@ -551,11 +521,10 @@ int main(int argc, char ** argv) {
                 *runtime.resource_store, scope,
                 "concept-synthesis-conditioned-" + std::to_string(index) + ".json",
                 ordered_json{{"prompt", index == 0
-                    ? "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. Use the host-required grouped aggregation call. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."
-                     : "You are a dataset tool-calling agent. The user asks: compute total amount grouped by region for dataset://local/sales. The available tools are data.aggregate and statistics.describe. The required operation is grouped aggregation: sum amount grouped by region. Return exactly this one JSON object and no prose: {\"name\":\"data.aggregate\",\"arguments\":{\"dataset\":\"dataset://local/sales\",\"group_by\":[\"region\"],\"measures\":[{\"function\":\"sum\",\"column\":\"amount\"}]}}."},
-                     {"tools", model_facing_dataset_tools(true, false)},
+                    ? "For dataset://local/sales, compute the sum of amount grouped by region. Use data.aggregate with group_by region and a sum measure for amount."
+                     : "Calculate total amount per region in dataset://local/sales. For this grouped total, use data.aggregate and sum the amount field for each region."},
+                     {"tools", model_facing_dataset_tools()},
                      {"tool_choice", "required"},
-                     {"json_schema", model_facing_grouped_aggregate_output_schema()},
                      {"n_predict", 64}}, conditioned_ref, error)) {
             return fail("conditioned resource: " + error);
         }
@@ -563,8 +532,8 @@ int main(int argc, char ** argv) {
         if (!put_json_resource(
                 *runtime.resource_store, scope,
                 "concept-synthesis-control-" + std::to_string(index) + ".json",
-                ordered_json{{"prompt", "You are a dataset tool-calling agent. Acknowledge the request without selecting the requested grouped aggregation. Return exactly this one JSON object and no prose: {\"name\":\"statistics.describe\",\"arguments\":{\"dataset\":\"dataset://local/sales\"}}."},
-                     {"tools", model_facing_dataset_tools(false, true)},
+                ordered_json{{"prompt", "Describe the distribution of the amount column in dataset://local/sales."},
+                     {"tools", model_facing_dataset_tools()},
                      {"tool_choice", "required"},
                      {"n_predict", 32}}, control_ref, error)) {
             return fail("control resource: " + error);

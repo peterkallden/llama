@@ -142,6 +142,17 @@ std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
     auto result = common_filter_tools_by_families(tools, family_ids);
     const std::set<std::string> selected(family_ids.begin(), family_ids.end());
 
+    // Scoped memory reads are shared host capabilities, not an authorization
+    // grant: only tools already present in the host-authorized catalog qualify.
+    for (const auto * name : {"memory.get", "memory.search"}) {
+        const auto found = std::find_if(tools.begin(), tools.end(),
+            [&](const common_chat_tool & tool) { return tool.name == name; });
+        if (found != tools.end() && std::none_of(result.begin(), result.end(),
+                [&](const common_chat_tool & tool) { return tool.name == name; })) {
+            result.push_back(*found);
+        }
+    }
+
     // Dynamic OpenAPI admission consumes a host-owned resource produced by
     // web.fetch. Expose that exact prerequisite instead of the whole web
     // family, which also includes search.

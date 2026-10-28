@@ -436,10 +436,11 @@ bool daemon_flydelta_put_json_resource(
     request.created_at = std::time(nullptr);
     request.metadata.purpose = purpose;
     request.metadata.content_summary = "Opaque FlyDelta material for bounded worker resume.";
-    request.lineage.parent_uri = parent_uri;
-    request.lineage.chunk_count = 1;
-    request.lineage.chunk_index = 0;
-    request.lineage.derivation = purpose;
+    // This reference identifies the generating arm or material, not a byte
+    // range in a parent resource.
+    request.metadata.source_provider = "flydelta";
+    request.metadata.source_operation = purpose;
+    request.metadata.source_request_json = json{{"source_ref", parent_uri}}.dump();
     agent_resource_descriptor descriptor;
     if (!provider->resources->put_text(request, descriptor, error) || descriptor.uri.empty()) {
         if (error.empty()) error = "FlyDelta resource store returned no URI";
@@ -728,10 +729,9 @@ bool daemon_flydelta_register_composed_directions(
         request.metadata.content_summary =
             "Durable normalized composed FlyDelta direction for a resumed bounded slice.";
         request.metadata.processing_cache_key = reference;
-        request.lineage.parent_uri = parent_ref;
-        request.lineage.chunk_count = 1;
-        request.lineage.chunk_index = 0;
-        request.lineage.derivation = derivation;
+        request.metadata.source_provider = "flydelta";
+        request.metadata.source_operation = derivation;
+        request.metadata.source_request_json = json{{"source_ref", parent_ref}}.dump();
         agent_resource_descriptor descriptor;
         if (!provider->resources->put_text(request, descriptor, error)) return false;
         if (descriptor.uri.empty()) {

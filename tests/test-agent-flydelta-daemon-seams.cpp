@@ -30,6 +30,18 @@ int main() {
     provider->capture_layout_revision = "layer-input:v1";
     provider->authority.namespace_id = "seams";
     provider->authority.session_id = "test";
+    common_flydelta_teaching_relation relation;
+    relation.id = "teaching://seams/relation";
+    relation.teaching_key = "teaching:seams";
+    relation.behavior_key = "behavior:seams";
+    relation.evidence_ref = "evidence://seams/semantic-reference";
+    common_flydelta_teaching_relation persisted_relation;
+    CHECK(daemon_flydelta_persist_teaching_relation(
+        &resources, provider->authority, relation, persisted_relation, error));
+    std::string relation_text;
+    CHECK(resources.read_text(persisted_relation.id, provider->authority,
+        1024 * 1024, relation_text, error));
+    CHECK(flydelta_json::parse(relation_text).value("evidence_ref", "") == relation.evidence_ref);
     provider->oracle_registry = common_flydelta_make_default_oracle_registry();
     common_agent_scope job_scope;
     job_scope.namespace_id = "seams";

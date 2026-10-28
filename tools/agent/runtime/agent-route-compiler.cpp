@@ -535,6 +535,13 @@ bool compile_agent_route_catalog(
             route.resolved_optional_capabilities = std::move(resolved_optional_capabilities);
             route.procedure_refs = blueprint->procedure_refs;
             route.resolved_tools = std::move(resolved_tools);
+            for (const auto & transition : definition.transitions) {
+                if (transition.kind == common_plan_workflow_transition_kind::tool &&
+                        transition.optional_availability &&
+                        std::find(route.resolved_tools.begin(), route.resolved_tools.end(), transition.tool_name) == route.resolved_tools.end()) {
+                    route.unavailable_optional_steps.push_back(transition.id + ": " + transition.tool_name + " unavailable or excluded by policy");
+                }
+            }
             route.id = route_id(route);
             workflow_routes.push_back(std::move(route));
         }

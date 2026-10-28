@@ -40,6 +40,30 @@ def trace_observed(path):
             "flydelta_model_exchange ", "flydelta_trace ", "flydelta_daemon_arm ")) for line in output)
 
 
+def smoke_events(path):
+    """Read versioned smoke diagnostics without interpreting arbitrary log text."""
+    events = []
+    with path.open(errors="replace") as output:
+        for line in output:
+            if not line.startswith("model_smoke_event "):
+                continue
+            try:
+                event = json.loads(line[len("model_smoke_event "):])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("version") == 1:
+                events.append(event)
+    return events
+
+
+def skipped_status(events):
+    if any(event.get("kind") == "precondition_not_observed" for event in events):
+        return "inconclusive_precondition"
+    if any(event.get("kind") == "configuration_error" for event in events):
+        return "configuration_error"
+    return "skipped_unclassified"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=pathlib.Path, required=True)
@@ -97,6 +121,9 @@ def main():
                     stop.set()
                     monitor.join()
             result["trace_observed"] = trace_observed(log)
+            events = smoke_events(log)
+            if events:
+                result["smoke_events"] = events
             if sample_path.is_file() and sample_path.stat().st_size:
                 result["gpu_placement"] = "nvidia_process_observed"
                 result["gpu_samples"] = str(sample_path)
@@ -106,7 +133,7 @@ def main():
                 (layers == "0" or result["gpu_placement"] == "nvidia_process_observed")
                 else "incomplete_trace" if return_code == 0 and not result["trace_observed"] else
                 "incomplete_gpu_evidence" if return_code == 0 else
-                "configuration_error" if return_code == 77 else "failed")
+                skipped_status(events) if return_code == 77 else "failed")
         results.append(result)
         (args.output / "model-profile.json").write_text(json.dumps({"model": str(args.model.resolve()),
             "visible_devices": environment.get("GGML_VK_VISIBLE_DEVICES"),
