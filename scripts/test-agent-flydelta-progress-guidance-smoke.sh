@@ -195,7 +195,7 @@ if [[ -n "$model" ]]; then
 fi
 
 if [[ -n "$model" ]]; then
-    printf '%s\n' '{"event":"coverage_limit","checkpoint":"separate_queue_contract","resume":"in_memory_deep_search_if_anchor","bayesian_history":"in_memory_trial_evidence","exact_original_baseline_identity":"not_verified","dose_comparison":"not_run","adviser_controls_search":"conditional","independent_regression_controls":"one_fixture","daemon_queue":"not_run","guidance_qualification":"not_run_direct_smoke"}' >> "$trace"
+    printf '%s\n' '{"event":"coverage_limit","checkpoint":"separate_queue_contract","resume":"in_memory_deep_search_if_anchor","bayesian_history":"in_memory_trial_evidence","exact_original_baseline_identity":"reused_when_two_waves_run","dose_comparison":"not_run","adviser_controls_search":"conditional","independent_regression_controls":"one_fixture","daemon_queue":"not_run","guidance_qualification":"not_run_direct_smoke"}' >> "$trace"
 else
     printf '%s\n' '{"event":"coverage_limit","checkpoint":"separate_queue_contract","resume":"in_memory_deep_search","bayesian_history":"in_memory_trial_evidence","exact_original_baseline_identity":"not_verified","real_model":"not_run","dose_comparison":"not_run","adviser_controls_search":false,"independent_regression_controls":"not_run"}' >> "$trace"
 fi

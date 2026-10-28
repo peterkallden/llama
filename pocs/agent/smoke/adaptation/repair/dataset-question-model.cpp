@@ -1667,7 +1667,7 @@ int main(int argc, char ** argv) {
                 trial.overlay_applied = generated_result.flydelta_runtime.applied;
                 trial.intervention_count = apply_overlay ? basis.vectors.size() : 0;
                 trial.evidence_ref = apply_overlay
-                    ? "evidence:flydelta-deep-overlay" : "evidence:flydelta-deep-baseline";
+                    ? "evidence:flydelta-deep:" + trial.arm_id : "evidence:flydelta-deep-baseline";
                 trial.expected_decision_summary = deep_case.expected_tool + " " +
                     deep_case.canonical_arguments.dump();
                 trial.observed_decision_summary = preview(generated_result);
@@ -1964,7 +1964,7 @@ int main(int argc, char ** argv) {
                         trial.quality = trial.passed ? 1.0f : 0.0f;
                         trial.overlay_applied = generated_result.flydelta_runtime.applied;
                         trial.intervention_count = basis.vectors.size();
-                        trial.evidence_ref = "evidence:flydelta-deep-overlay";
+                        trial.evidence_ref = "evidence:flydelta-deep:" + arm_trace_id;
                         trial.expected_decision_summary = deep_case.expected_tool + " " +
                             deep_case.canonical_arguments.dump();
                         trial.observed_decision_summary = preview(generated_result);
@@ -2179,12 +2179,14 @@ int main(int argc, char ** argv) {
                 common_flydelta_outcome_guidance_config adviser_config;
                 common_flydelta_outcome_guidance_context context;
                 std::vector<common_flydelta_outcome_guidance_observation> history;
-                size_t policy_cursor = 0;
+                std::map<int, size_t> policy_cursor_by_phase;
+                std::map<std::string, size_t> persisted_policy_start;
                 struct smoke_decision {
                     size_t wave = 0;
                     std::vector<std::string> selected;
                     std::vector<std::string> reasons;
                     bool posterior = false;
+                    bool posterior_with_history = false;
                     bool changed_set = false;
                     bool changed_order = false;
                     bool shadow = true;
@@ -2219,8 +2221,15 @@ int main(int argc, char ** argv) {
                         request_context.progress_baseline = request.progress_baseline;
                         request_context.local_parent = request.progress_parent;
                         request_context.local_parent_ref = request.progress_parent_ref;
+                        const int phase = request.phase_id;
+                        const std::string policy_key = std::to_string(progress_wave) + ":" +
+                            std::to_string(phase) + ":" + request.stage + ":" + std::to_string(request.round) + ":" +
+                            request.decision_id + ":" + common_flydelta_outcome_guidance_pool_fingerprint(request.candidates);
+                        const auto previous = persisted_policy_start.find(policy_key);
+                        const std::optional<size_t> replay = previous == persisted_policy_start.end()
+                            ? std::nullopt : std::optional<size_t>(previous->second);
                         const size_t start = common_flydelta_guidance_policy_start(
-                            0, policy_cursor, request.policy_sequence_start);
+                            0, policy_cursor_by_phase[phase], request.policy_sequence_start, replay);
                         if (!common_flydelta_outcome_guidance_build_decision(adviser_config, request_context,
                                 history, request.candidates, request.selection_limit,
                                 0x50524f4752455353ULL + progress_wave, decision, adviser_error,
@@ -2229,7 +2238,10 @@ int main(int argc, char ** argv) {
                         decision.stage = request.stage;
                         decision.decision_id = request.decision_id;
                         const size_t limit = std::min(request.selection_limit, decision.selected_order.size());
-                        policy_cursor += limit;
+                        if (!replay) {
+                            persisted_policy_start[policy_key] = start;
+                            policy_cursor_by_phase[phase] += limit;
+                        }
                         ordered_json selected = ordered_json::array();
                         smoke_decision record;
                         record.wave = progress_wave;
@@ -2243,26 +2255,60 @@ int main(int argc, char ** argv) {
                             const auto & reason = decision.selection_reasons[i];
                             record.selected.push_back(request.candidates[index].arm_id);
                             record.reasons.push_back(reason);
-                            record.posterior |= reason == "posterior_sample" || reason == "posterior_mean";
+                            const bool posterior_slot = reason == "posterior_sample" || reason == "posterior_mean";
+                            record.posterior |= posterior_slot;
+                            const bool history_used = index < decision.predictions.size() &&
+                                (decision.predictions[index].effective_known_observations > 0 ||
+                                 decision.predictions[index].effective_progress_known > 0 ||
+                                 decision.predictions[index].backoff_categorical_prior_strength > 0);
+                            record.posterior_with_history |= posterior_slot && history_used;
                             record.changed_order |= index != decision.original_order.at(i);
                             selected.push_back({{"position", i}, {"arm_id", request.candidates[index].arm_id},
-                                {"basis_identity", request.candidates[index].basis_identity}, {"reason", reason}});
+                                {"basis_identity", request.candidates[index].basis_identity}, {"reason", reason},
+                                {"verified_history_available", history_used}});
                         }
                         record.changed_set = original != actual;
                         if (request.stage == "deep_full_generation_frontier") decisions.push_back(record);
                         std::cout << "flydelta_progress_adviser " << ordered_json({
                             {"wave", progress_wave}, {"stage", request.stage},
                             {"effective_mode", common_flydelta_outcome_guidance_mode_name(guidance_mode)},
-                            {"policy_sequence_start", start}, {"policy_cursor_after", policy_cursor},
+                            {"policy_sequence_start", start}, {"policy_cursor_after", policy_cursor_by_phase[phase]},
+                            {"replayed_decision", replay.has_value()},
                             {"history_rows", history.size()}, {"compatible_history_rows", decision.compatible_history_rows},
                             {"posterior_computed", !decision.predictions.empty()}, {"posterior_position_selected", record.posterior},
+                            {"posterior_position_with_verified_history", record.posterior_with_history},
                             {"selection_set_changed", record.changed_set}, {"selection_order_changed", record.changed_order},
                             {"selected", selected}, {"fallback_reason", decision.fallback_reason},
                             {"authority", "controlled_smoke_experiment"}}).dump() << std::endl;
                         return true;
                     };
+                common_flydelta_counterfactual_trial frozen_baseline;
+                common_flydelta_decision_margin frozen_margin;
+                common_flydelta_representation_diagnostics frozen_geometry;
+                bool frozen_geometry_available = false, baseline_frozen = false;
+                std::string frozen_basis_identity;
+                const common_flydelta_coefficient_search_runner full_runner =
+                    [&](const auto & f, const auto & basis, const auto & coefficients, bool overlay,
+                            auto & trial, auto & margin, auto & geometry, bool & available, std::string & e) {
+                        if (progress_smoke && !overlay && baseline_frozen) {
+                            if (common_flydelta_coefficient_basis_identity(basis) != frozen_basis_identity) {
+                                e = "Cannot reuse the baseline with a different basis"; return false;
+                            }
+                            trial = frozen_baseline; margin = frozen_margin; geometry = frozen_geometry;
+                            available = frozen_geometry_available;
+                            std::cout << "flydelta_progress_baseline_reused " << trial.evidence_ref << std::endl;
+                            return true;
+                        }
+                        if (!deep_full_runner(f, basis, coefficients, overlay, trial, margin, geometry, available, e)) return false;
+                        if (progress_smoke && !overlay) {
+                            frozen_baseline = trial; frozen_margin = margin; frozen_geometry = geometry;
+                            frozen_geometry_available = available; baseline_frozen = true;
+                            frozen_basis_identity = common_flydelta_coefficient_basis_identity(basis);
+                        }
+                        return true;
+                    };
                 if (!common_flydelta_run_deep_search_batched(deep_fixture, rank_config, deep_directions,
-                        deep_diagnostic_runner, deep_diagnostic_batch_runner, deep_full_runner,
+                        deep_diagnostic_runner, deep_diagnostic_batch_runner, full_runner,
                         deep_full_batch_runner, deep_result, error, progress_smoke ? adviser : common_flydelta_outcome_guidance_adviser{})) {
                     host.close(); std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n'; return 1;
                 }
@@ -2272,6 +2318,7 @@ int main(int argc, char ** argv) {
                         auto candidate_config = wave_config.coefficients;
                         candidate_config.guidance_basis_identity = common_flydelta_coefficient_detail::guidance_basis_identity(wave_result.basis);
                         candidate_config.guidance_layer_index = wave_result.basis.layer_index;
+                        if (!wave_result.matched_evaluation_complete) return;
                         for (const auto & measured : wave_result.matched_evaluation.union_arm_results) {
                             for (const auto & trial : wave_result.coefficient_trials) {
                                 if (trial.mutation_kind == "full_generation_top_arm" || !trial.executed || !trial.overlay_applied) continue;
@@ -2279,7 +2326,7 @@ int main(int argc, char ** argv) {
                                     trial.coefficients, wave_result.basis, candidate_config, &trial.margin_comparison);
                                 if (candidate.arm_id != measured.arm_id || measured.evidence_ref.empty()) continue;
                                 common_flydelta_outcome_guidance_observation observed;
-                                observed.stable_observation_id = measured.evidence_ref;
+                                observed.stable_observation_id = measured.arm_id;
                                 observed.fixture_group_id = deep_fixture.guidance_fixture_group_id;
                                 observed.context = context;
                                 observed.basis_identity = candidate.basis_identity;
@@ -2289,7 +2336,9 @@ int main(int argc, char ** argv) {
                                 observed.relative_dose = candidate.relative_dose;
                                 observed.mixed_coefficients = candidate.mixed_coefficients;
                                 observed.diagnostic_margin_sign = candidate.diagnostic_margin_sign;
-                                observed.comparison_completed = observed.overlay_applied = observed.verifier_known = true;
+                                observed.comparison_completed = observed.overlay_applied = true;
+                                observed.verifier_known = measured.outcome != common_flydelta_counterfactual_outcome::unknown ||
+                                    (measured.progress && measured.progress->candidate.assessment_known);
                                 observed.outcome = measured.outcome;
                                 observed.outcome_known = measured.outcome != common_flydelta_counterfactual_outcome::unknown;
                                 observed.task_fingerprint = context.local_task_fingerprint;
@@ -2334,13 +2383,17 @@ int main(int argc, char ** argv) {
                     progress_wave = 2;
                     std::cout << "flydelta_progress_wave " << (has_anchor ? "anchor_resume" : "baseline_continuation") << std::endl;
                     if (!common_flydelta_run_deep_search_batched(deep_fixture, resumed, deep_directions,
-                            deep_diagnostic_runner, deep_diagnostic_batch_runner, deep_full_runner,
+                            deep_diagnostic_runner, deep_diagnostic_batch_runner, full_runner,
                             deep_full_batch_runner, continued, error, adviser)) {
                         host.close(); std::cerr << "continued Deep search failed: " << error << '\n'; return 1;
                     }
+                    const auto waves_elapsed_ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - deep_started).count();
                     for (const auto * wave_result : {&deep_result, &continued}) {
                         const auto & matched = wave_result->matched_evaluation;
-                        double total_ms = matched.baseline_inference_ms, ordinary_ms = matched.baseline_inference_ms;
+                        const bool baseline_reused = wave_result == &continued;
+                        double total_ms = baseline_reused ? 0.0 : matched.baseline_inference_ms;
+                        double ordinary_ms = matched.baseline_inference_ms;
                         double guided_ms = matched.baseline_inference_ms, random_ms = matched.baseline_inference_ms;
                         bool cost_available = matched.baseline_cost_available;
                         for (const auto & measurement : matched.union_arm_results) {
@@ -2356,11 +2409,14 @@ int main(int argc, char ** argv) {
                             {"random_selection", matched.random_ablation_selection}, {"unique_arms", matched.union_arm_results.size()},
                             {"inference_ms_equal_share_estimate", total_ms}, {"ordinary_ms_equal_share_estimate", ordinary_ms},
                             {"guided_ms_equal_share_estimate", guided_ms}, {"random_ms_equal_share_estimate", random_ms},
-                            {"cost_available", cost_available}}).dump() << std::endl;
+                            {"cost_available", cost_available}, {"baseline_reused", baseline_reused},
+                            {"cost_scope", "full_generation_union_equal_share_excludes_diagnostics"}}).dump() << std::endl;
                     }
-                    bool all_selected_executed = true, posterior_executed = false, frontier_seen = false;
+                    bool all_selected_executed = true, posterior_executed = false;
+                    bool first_frontier_seen = false, second_frontier_seen = false;
                     for (const auto & record : decisions) {
-                        frontier_seen = true;
+                        first_frontier_seen |= record.wave == 1;
+                        second_frontier_seen |= record.wave == 2;
                         const auto & result = record.wave == 1 ? deep_result : continued;
                         for (size_t i = 0; i < record.selected.size(); ++i) {
                             const auto it = std::find_if(result.coefficient_trials.begin(), result.coefficient_trials.end(), [&](const auto & trial) {
@@ -2378,17 +2434,21 @@ int main(int argc, char ** argv) {
                                 item["executed_strength"] = it->executed_strength; item["evidence_ref"] = it->evidence_ref;
                                 item["remaining_goals"] = it->semantic_progress_observation.objective.remaining_goals;
                                 item["satisfied_goals"] = it->semantic_progress_observation.objective.satisfied_goals;
+                                item["improved_goals"] = it->semantic_progress.improved_dimensions;
+                                item["regressed_goals"] = it->semantic_progress.regressed_dimensions;
                             }
                             std::cout << "flydelta_progress_continuation " << item.dump() << std::endl;
                         }
                     }
                     std::cout << "flydelta_model_progress_guidance " << ordered_json({
-                        {"status", frontier_seen && all_selected_executed ? "waves_executed" : "incomplete_selection_execution"},
+                        {"status", first_frontier_seen && second_frontier_seen && all_selected_executed ? "waves_executed" : "incomplete_selection_execution"},
                         {"mode", common_flydelta_outcome_guidance_mode_name(guidance_mode)},
                         {"anchor_found", has_anchor},
                         {"continued_improved", continued.provisional_selection.selected},
                         {"continued_solved", continued.coefficient_selection.selected}, {"history_rows", history.size()},
-                        {"selection_executed", frontier_seen && all_selected_executed},
+                        {"selection_executed", first_frontier_seen && second_frontier_seen && all_selected_executed},
+                        {"first_frontier_seen", first_frontier_seen}, {"second_frontier_seen", second_frontier_seen},
+                        {"waves_wall_ms", waves_elapsed_ms},
                         {"posterior_position_executed", posterior_executed},
                         {"adviser_controls_search", posterior_executed},
                         {"authority", "controlled_smoke_experiment"}, {"learning_credit_granted", false}}).dump() << std::endl;

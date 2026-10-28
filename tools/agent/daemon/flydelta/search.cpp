@@ -535,8 +535,10 @@ bool daemon_flydelta_run_search_pipeline(
                 whirlpool_policy_origin, policy_cursor_before, request.policy_sequence_start);
             const auto persisted_policy = whirlpool_persisted_policy->find(event_id);
             if (persisted_policy != whirlpool_persisted_policy->end()) {
-                policy_start = persisted_policy->second.first;
                 policy_cursor_before = persisted_policy->second.second;
+                policy_start = common_flydelta_guidance_policy_start(
+                    whirlpool_policy_origin, policy_cursor_before, request.policy_sequence_start,
+                    persisted_policy->second.first);
             }
             if (!history_failure.empty()) adviser_error = history_failure;
             const auto started = std::chrono::steady_clock::now();
@@ -1367,7 +1369,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             if (request.policy_sequence_start < 4) {
                 policy_sequence_start = request.policy_sequence_start;
             } else if (persisted_policy_start != persisted_guidance_policy_start_by_pool->end()) {
-                policy_sequence_start = persisted_policy_start->second;
+                policy_sequence_start = common_flydelta_guidance_policy_start(
+                    policy_origin, policy_cursor_before, request.policy_sequence_start, persisted_policy_start->second);
                 const auto persisted_cursor =
                     persisted_guidance_policy_cursor_before_by_pool->find(sequence_key);
                 if (persisted_cursor != persisted_guidance_policy_cursor_before_by_pool->end()) {

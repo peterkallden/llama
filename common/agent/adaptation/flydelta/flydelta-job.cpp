@@ -208,7 +208,7 @@ std::string common_flydelta_experiment_job_to_json(
         {"decay", job.decay},
         {"code_revision", job.code_revision},
     };
-    if (job.kind == common_flydelta_experiment_job_kind::search_pipeline && job.whirlpool_global_probes_per_round)
+    if (job.whirlpool_global_probes_per_round)
         value["whirlpool_global_probes_per_round"] = job.whirlpool_global_probes_per_round;
     return value.dump();
 }

@@ -96,6 +96,13 @@ static int progress_contracts() {
     CHECK(decision.predictions[0].effective_unknown_observations > 0);
     CHECK(decision.predictions[0].effective_progress_known > 0);
     CHECK(decision.selected_order == decision.original_order); // shadow cannot execute its recommendation
+    config.mode = common_flydelta_outcome_guidance_mode::experimental;
+    common_flydelta_outcome_guidance_decision changed;
+    CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row, negative},
+        {reverse, a}, 1, 7, changed, error, common_flydelta_outcome_guidance_policy::posterior_mean, 2));
+    CHECK(changed.selection_reasons.front() == "posterior_mean");
+    CHECK(changed.original_order.front() == 0 && changed.selected_order.front() == 1);
+    config.mode = common_flydelta_outcome_guidance_mode::shadow;
     const auto original = decision;
     CHECK(common_flydelta_outcome_guidance_build_decision(config, c, {row, row, negative}, {a, reverse}, 2, 7, decision, error));
     CHECK(decision.predictions[0].p_safe_partial_improved == original.predictions[0].p_safe_partial_improved);

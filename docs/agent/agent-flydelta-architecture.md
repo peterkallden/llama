@@ -254,8 +254,8 @@ Guidance smoke traces report the effective mode, policy slot and reason for
 each selected arm, actual execution, and whether the selected set or only its
 order changed. An experimental prediction is not proof that a posterior slot
 selected an executed arm. The model-backed experiment runs a cold first wave
-and freezes verified observations for the next wave; it resumes an anchor only
-when the existing host progress contract accepts one. Matched-union cost is
+and freezes verified observations and the original baseline for the next wave;
+it resumes an anchor only when the existing host progress contract accepts one. Matched-union cost is
 reported as an equal-share batch estimate when measurements are available.
 The experiment does not grant production qualification, learning credit or
 activation. Report solved outcomes, verified partial progress, regressions and
