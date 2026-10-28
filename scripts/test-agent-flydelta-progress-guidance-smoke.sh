@@ -143,6 +143,9 @@ if [[ -n "$model" ]]; then
                         printf '%s\n' '{"event":"model_end","status":"incomplete_continuation_trace","device":"gpu","fit":"auto"}' >> "$trace"
                         status=1
                     fi
+                elif grep -q '^flydelta_model_progress_guidance .*"status":"incomplete_selection_execution"' "$model_log"; then
+                    printf '%s\n' '{"event":"model_end","status":"inconclusive_incomplete_waves","device":"gpu","fit":"auto"}' >> "$trace"
+                    [[ $status -eq 0 ]] && status=2
                 else
                     printf '%s\n' '{"event":"model_end","status":"inconclusive_no_posterior_execution","device":"gpu","fit":"auto"}' >> "$trace"
                     [[ $status -eq 0 ]] && status=2
@@ -180,6 +183,9 @@ if [[ -n "$model" ]]; then
                         printf '%s\n' '{"event":"model_end","status":"incomplete_continuation_trace","device":"cpu"}' >> "$trace"
                         status=1
                     fi
+                elif grep -q '^flydelta_model_progress_guidance .*"status":"incomplete_selection_execution"' "$model_log"; then
+                    printf '%s\n' '{"event":"model_end","status":"inconclusive_incomplete_waves","device":"cpu"}' >> "$trace"
+                    [[ $status -eq 0 ]] && status=2
                 else
                     printf '%s\n' '{"event":"model_end","status":"inconclusive_no_posterior_execution","device":"cpu"}' >> "$trace"
                     [[ $status -eq 0 ]] && status=2

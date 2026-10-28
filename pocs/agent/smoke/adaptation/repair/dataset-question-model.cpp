@@ -2413,10 +2413,14 @@ int main(int argc, char ** argv) {
                             {"cost_scope", "full_generation_union_equal_share_excludes_diagnostics"}}).dump() << std::endl;
                     }
                     bool all_selected_executed = true, posterior_executed = false;
+                    bool selected_set_changed = false, selection_order_changed = false;
+                    bool posterior_with_changed_set = false;
                     bool first_frontier_seen = false, second_frontier_seen = false;
                     for (const auto & record : decisions) {
                         first_frontier_seen |= record.wave == 1;
                         second_frontier_seen |= record.wave == 2;
+                        selected_set_changed |= record.changed_set;
+                        selection_order_changed |= record.changed_order;
                         const auto & result = record.wave == 1 ? deep_result : continued;
                         for (size_t i = 0; i < record.selected.size(); ++i) {
                             const auto it = std::find_if(result.coefficient_trials.begin(), result.coefficient_trials.end(), [&](const auto & trial) {
@@ -2426,7 +2430,9 @@ int main(int argc, char ** argv) {
                             const bool executed = it != result.coefficient_trials.end();
                             all_selected_executed &= executed;
                             const bool posterior = record.reasons[i] == "posterior_sample" || record.reasons[i] == "posterior_mean";
-                            posterior_executed |= executed && posterior && !record.shadow && record.fallback.empty();
+                            const bool executed_posterior = executed && posterior && !record.shadow && record.fallback.empty();
+                            posterior_executed |= executed_posterior;
+                            posterior_with_changed_set |= executed_posterior && record.changed_set;
                             ordered_json item = {{"wave", record.wave}, {"guidance_arm_id", record.selected[i]},
                                 {"reason", record.reasons[i]}, {"executed", executed}};
                             if (executed) {
@@ -2450,6 +2456,8 @@ int main(int argc, char ** argv) {
                         {"first_frontier_seen", first_frontier_seen}, {"second_frontier_seen", second_frontier_seen},
                         {"waves_wall_ms", waves_elapsed_ms},
                         {"posterior_position_executed", posterior_executed},
+                        {"selection_set_changed", selected_set_changed}, {"selection_order_changed", selection_order_changed},
+                        {"posterior_with_changed_set", posterior_with_changed_set},
                         {"adviser_controls_search", posterior_executed},
                         {"authority", "controlled_smoke_experiment"}, {"learning_credit_granted", false}}).dump() << std::endl;
                     progress_wave = 1;
