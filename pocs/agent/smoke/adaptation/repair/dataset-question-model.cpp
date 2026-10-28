@@ -9,6 +9,9 @@
 #include "agent/adaptation/flydelta/flydelta-alpha-response-search.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
+#include "agent/adaptation/flydelta/flydelta-progress.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-outcome-guidance.h"
+#include "agent/adaptation/flydelta/experiment/flydelta-coefficient-execution-internal.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/adaptation/flydelta/flydelta-search-pipeline.h"
 #include "agent/adaptation/flydelta/flydelta-experiment.h"
@@ -60,6 +63,7 @@ struct options {
     bool production_bindings = false;
     bool production_where = false;
     bool adaptive_alpha_search = false;
+    bool require_gpu = false;
     int n_predict = 512;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -67,6 +71,7 @@ struct options {
     int n_ctx_per_sequence = 6144;
     std::string backend = "server";
     std::string outcome_guidance_mode;
+    std::string progress_guidance_smoke_mode;
     std::string scenario_id;
     std::string behavior_key;
     size_t max_scenarios = 0;
@@ -80,6 +85,7 @@ struct host_verdict {
     bool executable = false;
     bool tool_matches = false;
     bool normalized_call_matches = false;
+    ordered_json normalized_arguments = ordered_json::object();
 };
 
 bool parse_args(int argc, char ** argv, options & value) {
@@ -132,6 +138,10 @@ bool parse_args(int argc, char ** argv, options & value) {
         }
         else if (argument == "--disable-factorized-cvec-batch") value.disable_factorized_cvec_batch = true;
         else if (argument == "--adaptive-alpha-search") value.adaptive_alpha_search = true;
+        else if (argument == "--require-gpu") {
+            value.require_gpu = true;
+            value.n_gpu_layers = -1;
+        }
         else if (argument == "--production-bindings") value.production_bindings = true;
         else if (argument == "--production-where") { value.production_where = value.production_bindings = value.force_deep = true; }
         else if (argument == "--outcome-guidance-mode") {
@@ -143,6 +153,24 @@ bool parse_args(int argc, char ** argv, options & value) {
             }
             value.outcome_guidance_mode = v;
             value.production_bindings = value.production_where = value.force_deep = true;
+        }
+        else if (argument == "--progress-guidance-smoke") {
+            const auto v = next("--progress-guidance-smoke"); if (!v) return false;
+            common_flydelta_outcome_guidance_mode parsed;
+            std::string mode_error;
+            if (!common_flydelta_parse_outcome_guidance_mode(v, parsed, mode_error) ||
+                    parsed == common_flydelta_outcome_guidance_mode::off) {
+                std::cerr << (mode_error.empty()
+                    ? "progress guidance smoke requires shadow or experimental mode"
+                    : mode_error) << '\n';
+                return false;
+            }
+            value.progress_guidance_smoke_mode = v;
+            // This is smoke-local: use the common fit path to place as much
+            // as possible on an available device, while allowing CPU-only
+            // execution when no accelerator is visible.
+            value.n_gpu_layers = -1;
+            value.force_deep = true;
         }
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
@@ -357,6 +385,7 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         return verdict;
     }
     verdict.selected_tool = parsed["name"].get<std::string>();
+    verdict.tool_matches = verdict.selected_tool == expected_tool;
     ordered_json normalized_arguments;
     std::string normalize_error;
     if (!host.normalize_call(verdict.selected_tool, parsed["arguments"], normalized_arguments, normalize_error)) {
@@ -364,6 +393,7 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         return verdict;
     }
     verdict.schema_valid = true;
+    verdict.normalized_arguments = normalized_arguments;
     common_tool_execution_result execution;
     std::string error;
     if (!host.execute_call(verdict.selected_tool, parsed["arguments"], execution, error)) {
@@ -371,7 +401,6 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
         return verdict;
     }
     verdict.executable = true;
-    verdict.tool_matches = verdict.selected_tool == expected_tool;
     if (verdict.selected_tool != expected_tool) {
         // A different executable read-only tool can still be semantically
         // useful. This fixture has no equivalence oracle, so it remains
@@ -403,6 +432,50 @@ host_verdict verify_model_call(const common_agent_generation_result & result,
             ? "host executed the expected tool and result matched the oracle"
             : "host executed the expected canonical normalized call";
     return verdict;
+}
+
+common_flydelta_semantic_progress_observation make_progress_observation(
+        const common_agent_generation_result & generated,
+        const host_verdict & verdict,
+        const std::string & objective_id,
+        const std::string & expected_tool,
+        const ordered_json & expected_arguments) {
+    common_flydelta_semantic_progress_observation observation;
+    if (!common_agent_generation_succeeded(generated) ||
+            generated.stop_reason == common_agent_generation_stop_reason::limit) return observation;
+
+    auto & objective = observation.objective;
+    objective.objective_id = objective_id;
+    objective.objective_revision = "dataset-question-objective:v2";
+    objective.verifier_ref = "host:dataset-question-call-verifier:v2";
+    objective.assessment_known = true;
+    // This fixture verifies the requested call, not independent regression controls.
+    objective.regression_known = false;
+
+    const auto record = [&](const std::string & goal, const bool satisfied) {
+        (satisfied ? objective.satisfied_goals : objective.remaining_goals).push_back(goal);
+    };
+    record("tool:" + expected_tool, verdict.tool_matches);
+    record("contract:validated_arguments", verdict.schema_valid && verdict.tool_matches);
+    for (auto it = expected_arguments.begin(); it != expected_arguments.end(); ++it) {
+        const bool matched = verdict.tool_matches && verdict.schema_valid &&
+            verdict.normalized_arguments.contains(it.key()) &&
+            verdict.normalized_arguments.at(it.key()) == it.value();
+        record("argument:" + it.key(), matched);
+    }
+    objective.target_completed = verdict.value == host_verdict::kind::passed;
+    observation.available = true;
+    observation.contract_valid = verdict.schema_valid;
+    observation.regression_coverage_complete = false;
+    observation.operation = expected_tool;
+    observation.operation_state = verdict.tool_matches
+        ? common_flydelta_semantic_progress_field_state::matched
+        : common_flydelta_semantic_progress_field_state::mismatch;
+    observation.contract_state = verdict.schema_valid
+        ? common_flydelta_semantic_progress_field_state::matched
+        : common_flydelta_semantic_progress_field_state::mismatch;
+    observation.score = static_cast<int>(objective.satisfied_goals.size());
+    return observation;
 }
 
 common_learning_transaction transaction(const std::string & id, const std::string & turn_id,
@@ -466,8 +539,9 @@ int main(int argc, char ** argv) {
                   << " [--max-scenarios N]"
                   << " [--learning-ledger JSONL]"
                   << " [--outcome-guidance-mode off|shadow|experimental]"
+                  << " [--progress-guidance-smoke shadow|experimental]"
                   << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep|--dose-comparison] [--adaptive-alpha-search]"
-                  << " [--threads N] [--n-gpu-layers N] [--n-parallel N]"
+                  << " [--threads N] [--n-gpu-layers N] [--require-gpu] [--n-parallel N]"
                   << " [--n-ctx-per-sequence N]\n";
         return 2;
     }
@@ -561,6 +635,7 @@ int main(int argc, char ** argv) {
         // replay suite's full compact tool contracts need more room.
         server_config.context_key.n_ctx = value.n_parallel * value.n_ctx_per_sequence;
         server_config.context_key.n_threads = value.n_threads;
+        if (value.require_gpu) server_config.verbosity = LOG_LEVEL_INFO;
         server_config.per_sequence_cvec_batch = true;
         server_config.per_sequence_factorized_cvec_batch =
             (value.low_rank_rank_sweep || value.dose_comparison) && !value.disable_factorized_cvec_batch;
@@ -572,6 +647,11 @@ int main(int argc, char ** argv) {
             std::cerr << "could not start server backend: " << error << '\n';
             return 1;
         }
+        const int configured_gpu_layers = server_host->params().n_gpu_layers;
+        std::cerr << "flydelta_smoke_device {\"requested_gpu_layers\":" << value.n_gpu_layers
+                  << ",\"configured_gpu_layers\":" << configured_gpu_layers
+                  << ",\"fit_params\":true,\"gpu_required\":"
+                  << (value.require_gpu ? "true" : "false") << "}\n";
         common_agent_inference_session session;
         if (!server_host->build_inference_session(session, error) || !session.inference) {
             host.close();
@@ -648,6 +728,7 @@ int main(int argc, char ** argv) {
 
     std::map<std::string, std::vector<common_flydelta_contrast_sample>> samples_by_behavior;
     std::map<std::string, bootstrap_case> bootstrap_cases_by_delta;
+    std::map<std::string, common_agent_generation_result> progress_control_baselines;
     std::map<std::string, std::vector<common_flydelta_behavior_delta>> deltas_by_case;
     std::map<std::string, common_flydelta_hidden_state_capture> dose_calibration_captures;
     size_t passed = 0, unresolved = 0, failures = 0, repaired = 0, synthetic_repairs = 0,
@@ -690,6 +771,9 @@ int main(int argc, char ** argv) {
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
+        if (!value.progress_guidance_smoke_mode.empty() && generated) {
+            progress_control_baselines[id] = failed_result;
+        }
         std::cout << "flydelta_host_verdict " << ordered_json({{"id", id}, {"phase", "baseline"},
             {"outcome_source", "original_model_generation"},
             {"selected_tool", failed_verdict.selected_tool}, {"diagnostic", failed_verdict.diagnostic},
@@ -1201,6 +1285,16 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             const auto deep_case = deep_case_it->second;
+            std::optional<bootstrap_case> progress_control_case;
+            if (!value.progress_guidance_smoke_mode.empty()) {
+                for (const auto & item : bootstrap_cases_by_delta) {
+                    if (item.second.id != deep_case.id &&
+                            progress_control_baselines.count(item.second.id)) {
+                        progress_control_case = item.second;
+                        break;
+                    }
+                }
+            }
             const auto deep_case_deltas_it = deltas_by_case.find(deep_case.id);
             if (deep_case_deltas_it == deltas_by_case.end() || deep_case_deltas_it->second.empty()) {
                 std::cerr << "forced Deep sample has no per-layer model captures: "
@@ -1466,6 +1560,61 @@ int main(int argc, char ** argv) {
                 request = make_request(value, contract, deep_case.question, capture, activation_ptr);
                 return true;
             };
+            // One separately prompted fixture is the declared control for this
+            // smoke. Unknown parsing or generation stays unknown, never safe.
+            // This is bounded fixture evidence, not broad regression coverage.
+            auto apply_progress_control = [&](const common_flydelta_low_rank_basis & basis,
+                    const std::vector<float> & coefficients, bool apply_overlay,
+                    common_flydelta_semantic_progress_observation & observation,
+                    std::string & control_error) {
+                if (value.progress_guidance_smoke_mode.empty() || !progress_control_case) return true;
+                const auto & control = *progress_control_case;
+                const auto & baseline_result = progress_control_baselines.at(control.id);
+                const auto before = verify_model_call(baseline_result, control.expected_tool,
+                    control.canonical_arguments, control.verification_mode, &control.canonical_execution, host);
+                auto after = before;
+                bool observed = common_agent_generation_succeeded(baseline_result) &&
+                    baseline_result.stop_reason != common_agent_generation_stop_reason::limit;
+                if (apply_overlay) {
+                    common_agent_generation_request request;
+                    if (!prepare_deep_arm(basis, coefficients, true, false, request, control_error)) return false;
+                    request.messages = make_request(value, contract, control.question, {}).messages;
+                    request.flydelta_capture.reset();
+                    common_agent_generation_result result;
+                    const bool generated = inference->generate(request, result);
+                    trace_model_exchange("progress_control", control.id + ":" +
+                        deep_arm_trace_id(deep_case.id, basis.layer_index, coefficients, true), request, result);
+                    observed = observed && generated && common_agent_generation_succeeded(result) &&
+                        result.stop_reason != common_agent_generation_stop_reason::limit && result.flydelta_runtime.applied;
+                    if (observed) after = verify_model_call(result, control.expected_tool,
+                        control.canonical_arguments, control.verification_mode, &control.canonical_execution, host);
+                }
+                const auto goals = [&](const host_verdict & verdict) {
+                    std::set<std::string> result;
+                    if (verdict.tool_matches) result.insert("tool");
+                    if (verdict.schema_valid && verdict.tool_matches) result.insert("contract");
+                    for (auto it = control.canonical_arguments.begin(); it != control.canonical_arguments.end(); ++it) {
+                        if (verdict.tool_matches && verdict.schema_valid &&
+                                verdict.normalized_arguments.contains(it.key()) &&
+                                verdict.normalized_arguments.at(it.key()) == it.value()) result.insert("argument:" + it.key());
+                    }
+                    return result;
+                };
+                const auto before_goals = goals(before), after_goals = goals(after);
+                const bool known = observed && before.schema_valid && before.tool_matches && after.schema_valid;
+                const bool regressed = known && (!std::includes(after_goals.begin(), after_goals.end(),
+                    before_goals.begin(), before_goals.end()) ||
+                    (before.value == host_verdict::kind::passed && after.value != host_verdict::kind::passed));
+                observation.objective.regression_known = known;
+                observation.objective.has_regression = regressed;
+                observation.regression_coverage_complete = known;
+                std::cout << "flydelta_progress_control " << ordered_json({
+                    {"control_id", control.id}, {"scope", "one_independent_fixture"},
+                    {"overlay_applied", apply_overlay}, {"known", known}, {"regressed", regressed},
+                    {"baseline_goals", before_goals}, {"candidate_goals", after_goals}}).dump() << std::endl;
+                return true;
+            };
+            size_t progress_wave = 1;
             auto run_deep_arm = [&](const common_flydelta_low_rank_basis & basis,
                     const std::vector<float> & coefficients, bool apply_overlay, bool full_execution,
                     common_flydelta_counterfactual_trial & trial,
@@ -1495,7 +1644,8 @@ int main(int argc, char ** argv) {
                 if (!full_execution) generation_request.options.n_predict = 0;
                 generated_result = {};
                 const bool generated = inference->generate(generation_request, generated_result);
-                trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                trace_model_exchange(progress_wave == 2 ? (full_execution ? "resume_full" : "resume_diagnostic") :
+                    (full_execution ? "deep_full" : "deep_diagnostic"),
                     deep_arm_trace_id(deep_case.id, basis.layer_index, coefficients, full_execution),
                     generation_request, generated_result);
                 if (generated && apply_overlay && !generated_result.flydelta_runtime.applied) {
@@ -1524,6 +1674,13 @@ int main(int argc, char ** argv) {
                 trial.verifier_reason = full_execution
                     ? (generated ? verdict.diagnostic : generated_result.error_message)
                     : "diagnostic_only_host_verifier_not_run";
+                if (full_execution && generated) {
+                    trial.semantic_progress_observation = make_progress_observation(
+                        generated_result, verdict, deep_fixture.task_fingerprint,
+                        deep_case.expected_tool, deep_case.canonical_arguments);
+                    if (!apply_progress_control(basis, coefficients, apply_overlay,
+                            trial.semantic_progress_observation, runner_error)) return false;
+                }
                 margin = {};
                 deep_margin_error.clear();
                 if (!deep_case.failed_tool.empty() || !deep_case.failed_continuation.empty()) {
@@ -1790,7 +1947,8 @@ int main(int argc, char ** argv) {
                         const auto & generated_result = generated_results[index];
                         const std::string arm_trace_id = deep_arm_trace_id(deep_case.id,
                             basis.layer_index, coefficients[index], full_execution);
-                        trace_model_exchange(full_execution ? "deep_full" : "deep_diagnostic",
+                        trace_model_exchange(progress_wave == 2 ? (full_execution ? "resume_full" : "resume_diagnostic") :
+                            (full_execution ? "deep_full" : "deep_diagnostic"),
                             arm_trace_id,
                             generation_requests[index], generated_result);
                         const auto verdict = full_execution ? verify_model_call(generated_result,
@@ -1813,6 +1971,13 @@ int main(int argc, char ** argv) {
                         trial.verifier_reason = full_execution
                             ? (trial.executed ? verdict.diagnostic : generated_result.error_message)
                             : "diagnostic_only_host_verifier_not_run";
+                        if (full_execution && trial.executed) {
+                            trial.semantic_progress_observation = make_progress_observation(
+                                generated_result, verdict, deep_fixture.task_fingerprint,
+                                deep_case.expected_tool, deep_case.canonical_arguments);
+                            if (!apply_progress_control(basis, coefficients[index], true,
+                                    trial.semantic_progress_observation, runner_error)) return false;
+                        }
                         common_flydelta_decision_margin margin;
                         const auto & scored = score_results.choices[index];
                         margin.available = scored.available;
@@ -2017,6 +2182,194 @@ int main(int argc, char ** argv) {
                     std::cerr << "forced Deep search failed for " << entry.first << ": " << error << '\n';
                     return 1;
                 }
+                if (!value.progress_guidance_smoke_mode.empty()) {
+                    common_flydelta_outcome_guidance_mode guidance_mode;
+                    if (!common_flydelta_parse_outcome_guidance_mode(
+                            value.progress_guidance_smoke_mode, guidance_mode, error)) {
+                        host.close(); std::cerr << error << '\n'; return 1;
+                    }
+                    if (deep_result.coefficient_selection.selected || !deep_result.provisional_selection.selected) {
+                        std::cout << "flydelta_model_progress_guidance " << ordered_json({
+                            {"status", deep_result.coefficient_selection.selected
+                                ? "solved_without_anchor" : "inconclusive_no_verified_anchor"},
+                            {"mode", common_flydelta_outcome_guidance_mode_name(guidance_mode)},
+                            {"control_id", progress_control_case ? progress_control_case->id : ""},
+                            {"control_scope", "one_independent_fixture"},
+                            {"adviser_controls_search", false}, {"learning_credit_granted", false}}).dump() << std::endl;
+                    } else {
+                        const auto & anchor = deep_result.coefficient_trials.at(
+                            deep_result.provisional_selection.trial_index);
+                        common_flydelta_progress_evidence progress;
+                        if (!common_flydelta_coefficient_trial_progress_evidence(anchor, progress, error) ||
+                                common_flydelta_progress_evidence_classify(progress) !=
+                                    common_flydelta_progress_transition::improved) {
+                            host.close(); std::cerr << "selected anchor lacks verified partial progress: " << error << '\n'; return 1;
+                        }
+                        auto resumed = rank_config;
+                        resumed.resume_anchor = true;
+                        resumed.anchor_basis = deep_result.basis;
+                        resumed.anchor_observation = anchor.semantic_progress_observation;
+                        resumed.anchor_ref = "smoke:verified-anchor:" + anchor.arm_id;
+                        resumed.coefficients.anchor_basis_identity =
+                            common_flydelta_coefficient_basis_identity(deep_result.basis);
+                        resumed.coefficients.anchor_coefficients = anchor.coefficients;
+                        for (const auto & trial : deep_result.coefficient_trials) {
+                            if (trial.executed && trial.overlay_applied && !trial.coefficients.empty())
+                                resumed.coefficients.evaluated_coefficients.push_back(trial.coefficients);
+                        }
+                        std::vector<float> physical;
+                        if (!common_flydelta_reconstruct_intervention(resumed.anchor_basis,
+                                resumed.coefficients.anchor_basis_identity,
+                                resumed.coefficients.anchor_coefficients, physical, error)) {
+                            host.close(); std::cerr << "anchor reconstruction failed: " << error << '\n'; return 1;
+                        }
+                        const auto physical_json = ordered_json(physical).dump();
+                        common_flydelta_outcome_guidance_context context;
+                        context.scope_fingerprint = "scope:flydelta-model-progress-smoke";
+                        context.model_profile_fingerprint = capture->model_profile_fingerprint;
+                        context.tokenizer_fingerprint = deep_fixture.tokenizer_fingerprint;
+                        context.template_fingerprint = deep_fixture.template_fingerprint;
+                        context.baseline_deployment_fingerprint = "baseline:" + capture->model_profile_fingerprint;
+                        context.verifier_revision = "host:dataset-question-call-verifier:v2";
+                        context.semantic_domain = "dataset-tool-call";
+                        context.strategy = "deep";
+                        context.estimator = "host-objective-goals:v1";
+                        context.local_task_fingerprint = deep_fixture.task_fingerprint;
+                        context.local_lineage_ref = deep_case.id + ":deep-wave";
+                        context.progress_baseline = progress.baseline;
+                        context.local_parent = anchor.semantic_progress_observation.objective;
+                        context.local_parent_ref = resumed.anchor_ref;
+                        auto candidate_config = resumed.coefficients;
+                        candidate_config.guidance_basis_identity =
+                            common_flydelta_coefficient_detail::guidance_basis_identity(resumed.anchor_basis);
+                        candidate_config.guidance_layer_index = resumed.anchor_basis.layer_index;
+                        const auto anchor_candidate = common_flydelta_coefficient_detail::guidance_candidate(
+                            anchor.coefficients, resumed.anchor_basis, candidate_config, &anchor.margin_comparison);
+                        common_flydelta_outcome_guidance_observation observed;
+                        observed.stable_observation_id = anchor.arm_id;
+                        observed.fixture_group_id = "model-wave:" + deep_case.id;
+                        observed.basis_identity = anchor_candidate.basis_identity;
+                        observed.context = context;
+                        observed.rank = anchor_candidate.rank;
+                        observed.relative_layer = anchor_candidate.relative_layer;
+                        observed.relative_dose = anchor_candidate.relative_dose;
+                        observed.mixed_coefficients = anchor_candidate.mixed_coefficients;
+                        observed.diagnostic_margin_sign = anchor_candidate.diagnostic_margin_sign;
+                        observed.comparison_completed = anchor.executed && anchor.host_evaluated;
+                        observed.overlay_applied = anchor.overlay_applied;
+                        observed.outcome = anchor.outcome;
+                        observed.outcome_known = anchor.outcome != common_flydelta_counterfactual_outcome::unknown;
+                        observed.verifier_known = anchor.verifier_known;
+                        observed.task_fingerprint = context.local_task_fingerprint;
+                        observed.lineage_ref = context.local_lineage_ref;
+                        observed.direction_identity = anchor_candidate.direction_identity;
+                        observed.dose_identity = anchor_candidate.dose_identity;
+                        observed.progress = progress;
+                        const std::vector<common_flydelta_outcome_guidance_observation> history{observed};
+                        common_flydelta_outcome_guidance_config adviser_config;
+                        adviser_config.mode = guidance_mode;
+                        bool frontier_called = false;
+                        bool frontier_shadow = true;
+                        std::string frontier_fallback;
+                        std::vector<std::string> selected_ids;
+                        const common_flydelta_outcome_guidance_adviser adviser =
+                            [&](const common_flydelta_outcome_guidance_request & request,
+                                    common_flydelta_outcome_guidance_decision & decision,
+                                    std::string & adviser_error) {
+                                auto request_context = context;
+                                request_context.progress_baseline = request.progress_baseline;
+                                request_context.local_parent = request.progress_parent;
+                                request_context.local_parent_ref = request.progress_parent_ref;
+                                if (!common_flydelta_outcome_guidance_build_decision(adviser_config,
+                                        request_context, history, request.candidates, request.selection_limit,
+                                        0x50524f4752455353ULL, decision, adviser_error)) return false;
+                                decision.shadow_mode = guidance_mode == common_flydelta_outcome_guidance_mode::shadow;
+                                decision.stage = request.stage;
+                                decision.decision_id = request.decision_id;
+                                if (request.stage == "deep_full_generation_frontier") {
+                                    frontier_called = true;
+                                    frontier_shadow = decision.shadow_mode;
+                                    frontier_fallback = decision.fallback_reason;
+                                    selected_ids.clear();
+                                    for (size_t i = 0; i < std::min(request.selection_limit, decision.selected_order.size()); ++i) {
+                                        const auto index = decision.selected_order[i];
+                                        if (index >= request.candidates.size()) return false;
+                                        selected_ids.push_back(request.candidates[index].arm_id);
+                                    }
+                                }
+                                std::cout << "flydelta_progress_adviser " << ordered_json({
+                                    {"stage", request.stage}, {"mode", common_flydelta_outcome_guidance_mode_name(guidance_mode)},
+                                    {"anchor_ref", resumed.anchor_ref}, {"history_rows", history.size()},
+                                    {"original_order", decision.original_order}, {"selected_order", decision.selected_order},
+                                    {"fallback_reason", decision.fallback_reason}}).dump() << std::endl;
+                                return true;
+                            };
+                        std::cout << "flydelta_progress_anchor " << ordered_json({
+                            {"anchor_ref", resumed.anchor_ref}, {"arm_id", anchor.arm_id},
+                            {"basis_fingerprint", resumed.coefficients.anchor_basis_identity},
+                            {"coefficients", anchor.coefficients},
+                            {"intervention_fingerprint", hash_sha256_hex(physical_json.data(), physical_json.size())},
+                            {"baseline_goals", progress.baseline.satisfied_goals},
+                            {"anchor_goals", progress.candidate.satisfied_goals},
+                            {"remaining_goals", progress.candidate.remaining_goals},
+                            {"control_id", progress_control_case ? progress_control_case->id : ""},
+                            {"control_scope", "one_independent_fixture"},
+                            {"persistence", "in_memory_smoke"}}).dump() << std::endl;
+                        common_flydelta_deep_search_result continued;
+                        progress_wave = 2;
+                        std::cout << "flydelta_progress_wave resumed_start" << std::endl;
+                        if (!common_flydelta_run_deep_search_batched(deep_fixture, resumed, deep_directions,
+                                deep_diagnostic_runner, deep_diagnostic_batch_runner, deep_full_runner,
+                                deep_full_batch_runner, continued, error, adviser)) {
+                            host.close(); std::cerr << "continued Deep search failed: " << error << '\n'; return 1;
+                        }
+                        progress_wave = 1;
+                        std::vector<std::string> executed_ids;
+                        for (const auto & trial : continued.coefficient_trials) {
+                            if (trial.mutation_kind == "full_generation_top_arm" && trial.executed &&
+                                    trial.host_evaluated && trial.overlay_applied) {
+                                executed_ids.push_back(trial.guidance_arm_id);
+                                common_flydelta_progress_evidence comparison;
+                                std::string comparison_error;
+                                ordered_json record = {{"arm_id", trial.arm_id},
+                                    {"guidance_arm_id", trial.guidance_arm_id}, {"coefficients", trial.coefficients},
+                                    {"verifier_reason", trial.verifier_reason}, {"evidence_ref", trial.evidence_ref}};
+                                if (common_flydelta_coefficient_trial_progress_evidence(trial, comparison, comparison_error)) {
+                                    record["transition"] = common_flydelta_progress_transition_name(
+                                        common_flydelta_progress_evidence_classify(comparison));
+                                    record["baseline_ref"] = comparison.baseline_ref;
+                                    record["parent_ref"] = comparison.parent_ref;
+                                    record["baseline_goals"] = comparison.baseline.satisfied_goals;
+                                    record["parent_goals"] = comparison.parent ? comparison.parent->satisfied_goals : std::vector<std::string>{};
+                                    record["candidate_goals"] = comparison.candidate.satisfied_goals;
+                                    record["remaining_goals"] = comparison.candidate.remaining_goals;
+                                } else {
+                                    record["transition"] = "unavailable";
+                                    record["error"] = comparison_error;
+                                }
+                                std::cout << "flydelta_progress_continuation " << record.dump() << std::endl;
+                            }
+                        }
+                        const bool selection_executed = frontier_called && !selected_ids.empty() &&
+                            std::all_of(selected_ids.begin(), selected_ids.end(), [&](const auto & id) {
+                                return std::find(executed_ids.begin(), executed_ids.end(), id) != executed_ids.end();
+                            });
+                        std::cout << "flydelta_model_progress_guidance " << ordered_json({
+                            {"status", !selection_executed ? "incomplete_selection_execution" :
+                                frontier_shadow ? "continued_shadow" :
+                                !frontier_fallback.empty() ? "continued_with_fallback" : "continued"},
+                            {"mode", common_flydelta_outcome_guidance_mode_name(guidance_mode)},
+                            {"anchor_ref", resumed.anchor_ref}, {"selected_ids", selected_ids},
+                            {"executed_ids", executed_ids}, {"selection_executed", selection_executed},
+                            {"adviser_controls_search", selection_executed && !frontier_shadow && frontier_fallback.empty()},
+                            {"frontier_fallback", frontier_fallback},
+                            {"parent_ref", resumed.anchor_ref}, {"learning_credit_granted", false},
+                            {"checkpoint", "in_memory_smoke"}}).dump() << std::endl;
+                        if (!selection_executed) {
+                            host.close(); std::cerr << "adviser-selected continuation was not executed" << '\n'; return 1;
+                        }
+                    }
+                }
                 ++deep_search_executed;
                 size_t deep_group_full_generation_trials = 0;
                 for (const auto & trial : deep_result.coefficient_trials) {
@@ -2147,6 +2500,10 @@ int main(int argc, char ** argv) {
                 }
             }
         }
+
+        // The progress smoke has already run its bounded Deep wave(s).
+        // Do not add the unrelated legacy region search to this scenario.
+        if (!value.progress_guidance_smoke_mode.empty() && deep_search_executed > 0) continue;
 
         // The rank smoke is intentionally scoped to the Deep rank comparison.
         // Running the ordinary Whirlpool region pipeline as well repeats

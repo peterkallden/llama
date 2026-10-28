@@ -472,6 +472,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-flydelta-coefficient-search.cpp
         test-agent-flydelta-residual-dose.cpp
         test-agent-flydelta-deep-search.cpp
+        test-agent-flydelta-progress-anchor-adviser.cpp
         test-agent-flydelta-outcome-guidance.cpp
         test-agent-flydelta-guidance-qualification.cpp
         test-agent-flydelta-artifact-lifecycle.cpp
