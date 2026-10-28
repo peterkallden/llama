@@ -293,6 +293,7 @@ int main() {
         common_agent_dataset_descriptor dataset;
         dataset.ref.uri = "dataset://selected/orders";
         dataset.ref.name = "orders";
+        dataset.ref.column_count = 1;
         common_agent_dataset_column column;
         column.name = "amount";
         dataset.columns = {column};
@@ -302,22 +303,22 @@ int main() {
         std::string error;
         planner_prompt_inference unbound;
         unbound.replies = {"open! analysis.inspect"};
-        select_llama_cli_workflow_action(unbound, config, request, {inspect}, {}, {},
+        const auto unbound_result = select_llama_cli_workflow_action(unbound, config, request, {inspect}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty(), "unbound dataset fixture failed: " + error);
-        for (const auto & message : unbound.requests.front().messages) {
-            require(message.content.find("Known source columns") == std::string::npos,
-                "dataset name in user text or sole inventory item became a binding");
-        }
+        require(unbound_result.action && unbound_result.action->arguments_json.find("dataset") == std::string::npos,
+            "dataset name in user text or sole inventory item became a binding");
         planner_prompt_inference bound;
         bound.replies = {"open! analysis.inspect"};
-        select_llama_cli_workflow_action(bound, config, request, {inspect},
+        const auto bound_result = select_llama_cli_workflow_action(bound, config, request, {inspect},
             {{inspect.name, R"({"dataset":"dataset://selected/orders"})", "host", false}}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty(), "explicit dataset binding fixture failed: " + error);
+        require(bound_result.action && bound_result.action->arguments_json.find("dataset://selected/orders") != std::string::npos,
+            "explicit dataset binding was not applied to the selected action");
         bool known_columns = false;
         for (const auto & message : bound.requests.front().messages) {
-            known_columns = known_columns || message.content.find("Known source columns for orders: amount") != std::string::npos;
+            known_columns = known_columns || message.content.find("columns=[\"amount\"]") != std::string::npos;
         }
         require(known_columns, "explicit dataset binding lost its column context");
     }
