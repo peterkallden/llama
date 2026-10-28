@@ -24,6 +24,7 @@ struct common_flydelta_whirlpool_search_config {
     float total_scale = 0.02f;
     size_t max_rounds = 2;
     size_t probes_per_round = 4;
+    size_t global_probes_per_round = 1;
     size_t max_trials = 8;
     uint32_t initial_radius = 2;
     float shrink_factor = 0.5f;
@@ -49,6 +50,7 @@ struct common_flydelta_whirlpool_round_trace {
     uint32_t centre_before = 0;
     uint32_t radius_before = 0;
     std::vector<uint32_t> probed_layers;
+    std::vector<uint32_t> global_probed_layers;
     uint32_t best_probe_layer = 0;
     float best_probe_score = 0.0f;
     uint32_t centre_after = 0;
@@ -65,6 +67,7 @@ struct common_flydelta_whirlpool_round_trace {
 struct common_flydelta_whirlpool_trace {
     int schema_version = 1;
     size_t model_evaluations = 0;
+    std::string proposal_policy = "local-global-unique-v1";
     size_t best_trial_index = static_cast<size_t>(-1);
     float best_search_score = 0.0f;
     uint32_t final_centre = 0;

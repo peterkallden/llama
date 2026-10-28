@@ -653,8 +653,10 @@ bool daemon_flydelta_run_search_pipeline(
             return true;
         };
     }
+    auto frozen_pipeline = config;
+    frozen_pipeline.whirlpool_global_probes_per_round = job.whirlpool_global_probes_per_round;
     if (!common_flydelta_run_search_pipeline_batched(
-            fixture, config, {input}, runner, batch_runner, result, error,
+            fixture, frozen_pipeline, {input}, runner, batch_runner, result, error,
             whirlpool_adviser)) return false;
 
     // Whirlpool/region search ranks compact diagnostic observations first.

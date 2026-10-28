@@ -37,6 +37,7 @@ struct common_flydelta_search_pipeline_config {
     bool use_whirlpool_search = true;
     size_t whirlpool_max_rounds = 2;
     size_t whirlpool_probes_per_round = 4;
+    size_t whirlpool_global_probes_per_round = 1;
     size_t whirlpool_max_trials = 8;
     uint32_t whirlpool_initial_radius = 2;
     float whirlpool_shrink_factor = 0.5f;

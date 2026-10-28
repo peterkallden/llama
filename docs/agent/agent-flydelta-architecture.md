@@ -247,3 +247,23 @@ after explicit authorization, is compilation, the focused outcome/Deep/lifecycle
 qualification CTests, restart/retry coverage through daemon paths, and traced
 model comparisons at equal inference budgets. No quality or compute improvement
 is claimed by the source implementation alone.
+
+### Guidance experiments and Whirlpool proposal policy
+
+Guidance smoke traces report the effective mode, policy slot and reason for
+each selected arm, actual execution, and whether the selected set or only its
+order changed. An experimental prediction is not proof that a posterior slot
+selected an executed arm. The model-backed experiment runs a cold first wave
+and freezes verified observations for the next wave; it resumes an anchor only
+when the existing host progress contract accepts one. Matched-union cost is
+reported as an equal-share batch estimate when measurements are available.
+The experiment does not grant production qualification, learning credit or
+activation. Report solved outcomes, verified partial progress, regressions and
+physical inference costs separately.
+
+New search jobs freeze `whirlpool_global_probes_per_round` in their existing
+job envelope. The default is one previously unvisited allowed layer outside the
+local radius, reserved from the same round budget. Missing fields in legacy
+envelopes preserve the original local-only policy and serialized identity.
+The trace records the proposal-policy revision and global layers. This source
+change and its new checks have not yet been compiled or executed.

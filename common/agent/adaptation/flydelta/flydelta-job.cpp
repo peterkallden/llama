@@ -67,7 +67,8 @@ bool common_flydelta_experiment_job_validate(
                 !bounded(job.causal_diagnostic_manifest_ref)) ||
             max_references == 0 || !common_flydelta_experiment_seed_validate(job.seed, error) ||
             !std::isfinite(job.learning_rate) || job.learning_rate <= 0.0f ||
-            !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f) {
+            !std::isfinite(job.decay) || job.decay < 0.0f || job.decay > 1.0f ||
+            job.whirlpool_global_probes_per_round > 8) {
         if (error.empty()) error = "FlyDelta experiment job identity or parameters are invalid";
         return false;
     }
@@ -149,7 +150,7 @@ bool common_flydelta_experiment_job_validate(
 
 std::string common_flydelta_experiment_job_to_json(
         const common_flydelta_experiment_job & job) {
-    return json{
+    json value = {
         {"schema_version", job.schema_version},
         {"id", job.id},
         {"kind", common_flydelta_experiment_job_kind_name(job.kind)},
@@ -206,7 +207,10 @@ std::string common_flydelta_experiment_job_to_json(
         {"learning_rate", job.learning_rate},
         {"decay", job.decay},
         {"code_revision", job.code_revision},
-    }.dump();
+    };
+    if (job.kind == common_flydelta_experiment_job_kind::search_pipeline && job.whirlpool_global_probes_per_round)
+        value["whirlpool_global_probes_per_round"] = job.whirlpool_global_probes_per_round;
+    return value.dump();
 }
 
 bool common_flydelta_experiment_job_from_json(
@@ -280,6 +284,7 @@ bool common_flydelta_experiment_job_from_json(
         job.learning_rate = value.value("learning_rate", 0.0f);
         job.decay = value.value("decay", 0.0f);
         job.code_revision = value.value("code_revision", "");
+        job.whirlpool_global_probes_per_round = value.value("whirlpool_global_probes_per_round", size_t{0});
     } catch (const std::exception & exception) {
         error = std::string("invalid FlyDelta experiment job JSON: ") + exception.what();
         return false;

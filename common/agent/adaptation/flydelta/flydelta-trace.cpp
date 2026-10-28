@@ -396,6 +396,7 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
                 {"round", round.round}, {"centre_before", round.centre_before},
                 {"radius_before", round.radius_before},
                 {"probed_layers", round.probed_layers},
+                {"global_probed_layers", round.global_probed_layers},
                 {"guidance_decision_id", round.guidance_decision_id},
                 {"guidance_original_layers", round.guidance_original_layers},
                 {"guidance_posterior_layers", round.guidance_posterior_layers},
@@ -412,6 +413,7 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         whirlpool.push_back({
             {"schema_version", value.schema_version},
             {"model_evaluations", value.model_evaluations},
+            {"proposal_policy", value.proposal_policy},
             {"best_trial_index", value.best_trial_index},
             {"best_search_score", value.best_search_score},
             {"final_centre", value.final_centre},

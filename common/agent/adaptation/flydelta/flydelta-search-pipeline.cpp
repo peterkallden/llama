@@ -129,7 +129,7 @@ bool common_flydelta_search_pipeline_config_validate(
             config.region_max_stalled_scales > config.scale.max_geometric_trials ||
             (config.use_whirlpool_search && (config.whirlpool_max_rounds == 0 ||
                 config.whirlpool_max_rounds > 16 || config.whirlpool_probes_per_round < 2 ||
-                config.whirlpool_probes_per_round > 8 || config.whirlpool_max_trials == 0 ||
+                config.whirlpool_probes_per_round > 8 || config.whirlpool_global_probes_per_round > 8 || config.whirlpool_max_trials == 0 ||
                 config.whirlpool_max_trials > 64 || config.whirlpool_initial_radius == 0 ||
                 !std::isfinite(config.whirlpool_shrink_factor) ||
                 config.whirlpool_shrink_factor <= 0.0f ||
@@ -242,6 +242,7 @@ bool common_flydelta_run_search_pipeline_batched(
                 whirlpool_config.total_scale = config.scale.initial_scale;
                 whirlpool_config.max_rounds = config.whirlpool_max_rounds;
                 whirlpool_config.probes_per_round = config.whirlpool_probes_per_round;
+                whirlpool_config.global_probes_per_round = config.whirlpool_global_probes_per_round;
                 whirlpool_config.max_trials = config.whirlpool_max_trials;
                 whirlpool_config.initial_radius = config.whirlpool_initial_radius;
                 whirlpool_config.shrink_factor = config.whirlpool_shrink_factor;

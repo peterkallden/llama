@@ -82,6 +82,16 @@ int main() {
     common_flydelta_experiment_job pipeline_parsed;
     CHECK(common_flydelta_experiment_job_from_json(pipeline_text, pipeline_parsed, error));
     CHECK(pipeline_parsed.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_parsed.whirlpool_global_probes_per_round == 1);
+    auto legacy_job = job;
+    legacy_job.whirlpool_global_probes_per_round = 0;
+    const auto legacy_text = common_flydelta_experiment_job_to_json(legacy_job);
+    CHECK(legacy_text.find("whirlpool_global_probes_per_round") == std::string::npos);
+    common_flydelta_experiment_job legacy_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(legacy_text, legacy_parsed, error));
+    CHECK(legacy_parsed.whirlpool_global_probes_per_round == 0);
+    CHECK(common_flydelta_experiment_job_to_json(legacy_parsed) == legacy_text);
+
     CHECK(pipeline_parsed.capture_manifest_ids == job.capture_manifest_ids);
     CHECK(pipeline_parsed.behavior_delta_ids == job.behavior_delta_ids);
     CHECK(pipeline_parsed.bootstrap_zoom_state_ref == job.bootstrap_zoom_state_ref);

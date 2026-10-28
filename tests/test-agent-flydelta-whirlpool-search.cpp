@@ -21,6 +21,7 @@ static common_flydelta_experiment_fixture fixture() {
 int main() {
     common_flydelta_whirlpool_search_config config;
     config.available_layers = {1, 2, 3, 4, 5, 6, 7};
+    config.global_probes_per_round = 0;
     config.seed_layers = {2, 5};
     config.layer_diagnostics = {
         {1, 0.2f, 0.01f, 0.1f, 0.0f},
@@ -141,6 +142,58 @@ int main() {
     CHECK(trace.model_evaluations == trials.size() + 1);
     CHECK(common_flydelta_whirlpool_trace_validate(
         trace, batch_config, trials.size(), error));
+
+    auto global_config = batch_config;
+    global_config.global_probes_per_round = 1;
+    std::vector<common_flydelta_intervention_region_trial> global_trials;
+    common_flydelta_intervention_region_selection global_selection;
+    common_flydelta_whirlpool_trace global_trace;
+    CHECK(common_flydelta_run_whirlpool_search_batched(fixture(), global_config,
+        batch_baseline_runner, batch_runner, global_trials, global_selection, global_trace, error));
+    CHECK(global_trace.proposal_policy == "local-global-unique-v1");
+    CHECK(global_trace.rounds.size() == 1);
+    CHECK(global_trace.rounds.front().global_probed_layers.size() == 1);
+    const auto global_layer = global_trace.rounds.front().global_probed_layers.front();
+    CHECK(global_layer + global_config.initial_radius < global_trace.rounds.front().centre_before ||
+        global_layer > global_trace.rounds.front().centre_before + global_config.initial_radius);
+    CHECK(std::count(global_trace.rounds.front().probed_layers.begin(),
+        global_trace.rounds.front().probed_layers.end(), global_layer) == 1);
+    CHECK(global_trials.size() <= global_config.max_trials);
+    std::vector<common_flydelta_intervention_region_trial> replay_trials;
+    common_flydelta_intervention_region_selection replay_selection;
+    common_flydelta_whirlpool_trace replay_trace;
+    CHECK(common_flydelta_run_whirlpool_search_batched(fixture(), global_config,
+        batch_baseline_runner, batch_runner, replay_trials, replay_selection, replay_trace, error));
+    CHECK(replay_trace.rounds.front().probed_layers == global_trace.rounds.front().probed_layers);
+    CHECK(replay_trace.rounds.front().global_probed_layers == global_trace.rounds.front().global_probed_layers);
+
+    auto multi_config = global_config;
+    multi_config.max_rounds = 2;
+    multi_config.max_trials = 8;
+    std::vector<common_flydelta_intervention_region_trial> multi_trials;
+    common_flydelta_intervention_region_selection multi_selection;
+    common_flydelta_whirlpool_trace multi_trace;
+    CHECK(common_flydelta_run_whirlpool_search_batched(fixture(), multi_config,
+        batch_baseline_runner, batch_runner, multi_trials, multi_selection, multi_trace, error));
+    std::vector<uint32_t> seen_layers;
+    for (const auto & round : multi_trace.rounds) {
+        for (const auto layer : round.probed_layers) {
+            CHECK(std::find(seen_layers.begin(), seen_layers.end(), layer) == seen_layers.end());
+            seen_layers.push_back(layer);
+        }
+        for (const auto layer : round.global_probed_layers) {
+            CHECK(std::count(round.probed_layers.begin(), round.probed_layers.end(), layer) == 1);
+        }
+    }
+    CHECK(multi_trials.size() <= multi_config.max_trials);
+    auto exhausted_config = global_config;
+    exhausted_config.initial_radius = 100;
+    std::vector<common_flydelta_intervention_region_trial> exhausted_trials;
+    common_flydelta_intervention_region_selection exhausted_selection;
+    common_flydelta_whirlpool_trace exhausted_trace;
+    CHECK(common_flydelta_run_whirlpool_search_batched(fixture(), exhausted_config,
+        batch_baseline_runner, batch_runner, exhausted_trials, exhausted_selection, exhausted_trace, error));
+    CHECK(exhausted_trace.rounds.front().global_probed_layers.empty());
 
     common_flydelta_whirlpool_search_config guided_config = batch_config;
     guided_config.layer_diagnostics.clear();

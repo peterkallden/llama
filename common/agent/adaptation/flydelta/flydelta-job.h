@@ -65,6 +65,8 @@ struct common_flydelta_experiment_job {
     float learning_rate = 0.1f;
     float decay = 1.0f;
     std::string code_revision;
+    // Frozen per-job proposal policy. Missing in legacy jobs means local only.
+    size_t whirlpool_global_probes_per_round = 1;
 };
 
 bool common_flydelta_experiment_job_validate(

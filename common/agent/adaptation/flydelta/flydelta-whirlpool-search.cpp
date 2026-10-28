@@ -121,7 +121,7 @@ bool common_flydelta_whirlpool_search_config_validate(
             std::adjacent_find(config.available_layers.begin(), config.available_layers.end()) !=
                 config.available_layers.end() || config.max_rounds == 0 ||
             config.max_rounds > 16 || config.probes_per_round < 2 ||
-            config.probes_per_round > 8 || config.max_trials == 0 || config.max_trials > 64 ||
+            config.probes_per_round > 8 || config.global_probes_per_round > 8 || config.max_trials == 0 || config.max_trials > 64 ||
             config.initial_radius == 0 || !std::isfinite(config.total_scale) ||
             config.total_scale <= 0.0f || config.total_scale > 1.0f ||
             !std::isfinite(config.shrink_factor) || config.shrink_factor <= 0.0f ||
@@ -229,6 +229,7 @@ bool common_flydelta_run_whirlpool_search_batched(
         return false;
     }
     trace.model_evaluations = 1;
+    trace.proposal_policy = config.global_probes_per_round ? "local-global-unique-v1" : "local-only-v1";
     const uint32_t guidance_model_layers = fixture.model_n_layers > 1
         ? fixture.model_n_layers : config.available_layers.back() + 1;
 
@@ -311,17 +312,45 @@ bool common_flydelta_run_whirlpool_search_batched(
         round_trace.radius_before = radius;
         const auto proposed_layers = probes(centre, radius, config.available_layers,
             config.available_layers.size());
+        const size_t round_limit = std::min(config.probes_per_round,
+            config.max_trials - trials.size());
+        std::vector<uint32_t> global_layers;
+        if (config.global_probes_per_round && round_limit > 1) {
+            std::vector<uint32_t> remaining;
+            for (const auto layer : config.available_layers) {
+                const uint64_t distance = layer > centre ? uint64_t(layer) - centre : uint64_t(centre) - layer;
+                if (distance > radius && !contains(visited, layer)) remaining.push_back(layer);
+            }
+            uint64_t seed = 1469598103934665603ULL;
+            for (const unsigned char ch : fixture.task_fingerprint) seed = (seed ^ ch) * 1099511628211ULL;
+            for (const unsigned char ch : fixture.model_profile_fingerprint) seed = (seed ^ ch) * 1099511628211ULL;
+            for (const auto layer : config.available_layers) seed = (seed ^ layer) * 1099511628211ULL;
+            seed = (seed ^ round) * 1099511628211ULL;
+            const size_t count = std::min({config.global_probes_per_round, round_limit - 1, remaining.size()});
+            for (size_t n = 0; n < count; ++n) {
+                seed = (seed ^ (n + 1)) * 1099511628211ULL;
+                const size_t index = static_cast<size_t>(seed % remaining.size());
+                global_layers.push_back(remaining[index]);
+                remaining.erase(remaining.begin() + index);
+            }
+        }
+        const size_t local_limit = round_limit - global_layers.size();
         std::vector<common_flydelta_outcome_guidance_candidate> guidance_candidates;
         for (const uint32_t layer : proposed_layers) {
             if (contains(visited, layer)) continue;
             guidance_candidates.push_back(common_flydelta_outcome_guidance_layer_candidate(
                 layer, guidance_model_layers, config.total_scale));
         }
-        const size_t round_limit = std::min(config.probes_per_round,
-            config.max_trials - trials.size());
-        // Legacy truncates before removing visited layers. Keep that exact
-        // evaluation budget/order in off, shadow and every fallback path.
-        auto round_probes = probes(centre, radius, config.available_layers, round_limit);
+        // Preserve legacy truncation exactly when global exploration is disabled.
+        auto round_probes = probes(centre, radius, config.available_layers, local_limit);
+        if (config.global_probes_per_round) {
+            round_probes.erase(std::remove_if(round_probes.begin(), round_probes.end(),
+                [&](uint32_t layer) { return contains(visited, layer); }), round_probes.end());
+            for (const auto layer : proposed_layers) {
+                if (round_probes.size() >= local_limit) break;
+                if (!contains(visited, layer) && !contains(round_probes, layer)) round_probes.push_back(layer);
+            }
+        }
         if (adviser && !guidance_candidates.empty()) {
             common_flydelta_outcome_guidance_request request;
             request.stage = "whirlpool_probe";
@@ -329,7 +358,7 @@ bool common_flydelta_run_whirlpool_search_batched(
             request.round = round;
             request.decision_id = "whirlpool:probe:" + std::to_string(round);
             request.candidates = guidance_candidates;
-            request.selection_limit = std::min(round_limit, guidance_candidates.size());
+            request.selection_limit = std::min(local_limit, guidance_candidates.size());
             common_flydelta_outcome_guidance_decision decision;
             std::string guidance_error;
             if (adviser(request, decision, guidance_error)) {
@@ -361,7 +390,9 @@ bool common_flydelta_run_whirlpool_search_batched(
                     ? "adviser_unavailable" : guidance_error;
             }
         }
-        if (round_probes.size() > round_limit) round_probes.resize(round_limit);
+        if (round_probes.size() > local_limit) round_probes.resize(local_limit);
+        for (const auto layer : global_layers) round_probes.push_back(layer);
+        round_trace.global_probed_layers = global_layers;
         std::vector<common_flydelta_intervention_region_candidate> candidates;
         for (const uint32_t layer : round_probes) {
             if (contains(visited, layer) || trials.size() + candidates.size() >= config.max_trials) continue;
