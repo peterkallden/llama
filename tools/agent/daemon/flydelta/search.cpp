@@ -531,9 +531,8 @@ bool daemon_flydelta_run_search_pipeline(
             const std::string event_id = stable_id + ":" + candidate_fingerprint + ":limit:" +
                 std::to_string(request.selection_limit);
             size_t policy_cursor_before = *whirlpool_policy_cursor;
-            size_t policy_start = request.policy_sequence_start < 4
-                ? request.policy_sequence_start
-                : (static_cast<size_t>(whirlpool_policy_origin) + policy_cursor_before) % 4;
+            size_t policy_start = common_flydelta_guidance_policy_start(
+                whirlpool_policy_origin, policy_cursor_before, request.policy_sequence_start);
             const auto persisted_policy = whirlpool_persisted_policy->find(event_id);
             if (persisted_policy != whirlpool_persisted_policy->end()) {
                 policy_start = persisted_policy->second.first;
@@ -1359,8 +1358,8 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             }
             policy_origin ^= static_cast<uint64_t>(decision_phase_id);
             size_t policy_cursor_before = (*next_guidance_policy_cursor_by_phase)[phase_id];
-            size_t policy_sequence_start = static_cast<size_t>(
-                (policy_origin + policy_cursor_before) % 4);
+            size_t policy_sequence_start = common_flydelta_guidance_policy_start(
+                policy_origin, policy_cursor_before, request.policy_sequence_start);
             const auto persisted_policy_start =
                 persisted_guidance_policy_start_by_pool->find(sequence_key);
             if (request.policy_sequence_start < 4) {

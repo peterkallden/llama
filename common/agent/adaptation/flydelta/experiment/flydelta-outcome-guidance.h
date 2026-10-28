@@ -212,6 +212,16 @@ using common_flydelta_outcome_guidance_adviser = std::function<bool(
         common_flydelta_outcome_guidance_decision & decision,
         std::string & error)>;
 
+// Select the four-slot policy position without changing cursor ownership.
+// Callers persist the returned position before advancing their cursor.
+inline size_t common_flydelta_guidance_policy_start(
+        uint64_t origin, size_t cursor, size_t requested,
+        std::optional<size_t> persisted = std::nullopt) {
+    if (persisted && *persisted < 4) return *persisted;
+    if (requested < 4) return requested;
+    return static_cast<size_t>((origin + cursor) % 4);
+}
+
 // Shared by proposal projection, outcome projection and durable decisions.
 common_flydelta_outcome_guidance_candidate common_flydelta_outcome_guidance_layer_candidate(
         uint32_t layer, uint32_t model_n_layers, double scale);

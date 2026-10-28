@@ -190,6 +190,12 @@ static int progress_contracts() {
 }
 
 int main() {
+    CHECK(common_flydelta_guidance_policy_start(0, 0, size_t(-1)) == 0);
+    CHECK(common_flydelta_guidance_policy_start(0, 2, size_t(-1)) == 2);
+    CHECK(common_flydelta_guidance_policy_start(0, 4, size_t(-1)) == 0);
+    CHECK(common_flydelta_guidance_policy_start(0, 2, size_t(-1), 1) == 1);
+    CHECK(common_flydelta_guidance_policy_start(0, 0, 3) == 3);
+
     if (const auto failure = progress_contracts()) return failure;
     std::string error;
     common_outcome_guidance_generalization_config generalization;
