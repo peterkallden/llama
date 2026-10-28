@@ -445,6 +445,24 @@ int main() {
         CHECK(std::fabs(trial.applied_intervention_norm /
             calibration.median_norm - trial.applied_residual_fraction) < 1e-6f);
     }
+    auto capped_config = calibrated_config;
+    capped_config.max_l2_norm = 0.01f;
+    capped_config.residual_fraction_candidates = {0.1f};
+    CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, capped_config, batch_baseline_runner,
+        calibrated_batch_runner, batch_trials_result, batch_selection, error));
+    CHECK(!batch_trials_result.empty());
+    bool saw_clipped_proposal = false;
+    for (const auto & trial : batch_trials_result) {
+        CHECK(trial.proposal_norm_limit_known);
+        if (trial.proposal_norm_limited) {
+            saw_clipped_proposal = true;
+            CHECK(trial.proposed_intervention_norm < trial.requested_intervention_norm);
+        }
+        CHECK(std::fabs(trial.proposed_intervention_norm - trial.applied_intervention_norm) < 1e-6f);
+        CHECK(!trial.dose_safety_limited);
+    }
+    CHECK(saw_clipped_proposal);
     calibrated_config.residual_calibration.layer_index = basis.layer_index + 1;
     const size_t before_invalid = coefficient_batch_calls;
     CHECK(!common_flydelta_run_low_rank_coefficient_search_batched(

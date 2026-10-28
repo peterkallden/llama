@@ -5,6 +5,8 @@
 #include "agent/runtime-json-contracts.h"
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/catalog/tool-catalog.h"
+#include "agent/tooling/catalog/model-projection.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/registry/tool-registry.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
@@ -180,6 +182,25 @@ public:
         }
         error.clear();
         return true;
+    }
+
+    std::string render_projected_model_contract(const std::string & name, std::string & error) const {
+        const auto * definition = catalog_.find_definition(name);
+        if (!definition) { error = "unknown model contract: " + name; return {}; }
+        auto schema = nlohmann::ordered_json::parse(common_tool_model_input_schema(*definition));
+        if (!common_agent_project_dataset_model_schema(schema, runtime_request_.available_datasets,
+                nlohmann::ordered_json::object(), error)) return {};
+        // Match the production selector: examples must satisfy the final
+        // host-projected schema rather than advertise unbound aliases.
+        auto examples = nlohmann::ordered_json::array();
+        for (const auto & example : schema.value("x-agent-examples", nlohmann::ordered_json::array())) {
+            std::string normalized, example_error;
+            if (common_schema_normalize_and_validate_object(example.dump(), schema.dump(), normalized, example_error))
+                examples.push_back(example);
+        }
+        schema["x-agent-examples"] = std::move(examples);
+        return common_render_compact_tool_description(definition->name, definition->description,
+            schema.dump(), common_tool_model_result_schema(*definition), error);
     }
 
     bool parse_model_call(const std::string & text, common_agent_tool_call & call,

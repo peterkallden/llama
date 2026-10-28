@@ -391,7 +391,9 @@ int main() {
     const auto mixed = mixed_runtime.run(mixed_request);
     assert(mixed.error.empty() && mixed.response == "draft");
     const auto mixed_plan = mixed_store.get("mixed-initial", error);
-    assert(mixed_plan && mixed_plan->steps.size() == 1 && mixed_plan->steps.front().id == "lookup");
+    assert(mixed_plan && mixed_plan->steps.size() == 2 && mixed_plan->steps.front().id == "lookup");
+    assert(common_plan_step_effective_mode(mixed_plan->steps.back()) == common_plan_step_mode::final_response);
+    assert(mixed_plan->steps.front().status == common_plan_step_status::completed);
     assert(mixed_plan->observations.size() == 1 && mixed_plan->observations.front().summary == "current status");
 
     common_plan_in_memory_store objective_store;

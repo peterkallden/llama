@@ -68,7 +68,7 @@ if LLAMA_AGENT_RESIDENT_TRACE="${LLAMA_AGENT_RESIDENT_TRACE:-1}" \
             --max-scenarios "$max_scenarios" \
             --low-rank-rank-sweep "${rank_args[@]}" --n-predict "${LLAMA_AGENT_N_PREDICT:-512}" \
             --threads "${LLAMA_AGENT_THREADS:-3}" \
-            --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}"; then
+            --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:--1}"; then
     rank_exit=0
 else
     rank_exit=$?
@@ -115,7 +115,7 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
 agent_smoke_run_logged "$cvec_log" "$cvec_bin" \
     --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
     --threads "${LLAMA_AGENT_THREADS:-3}" \
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" \
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:--1}" \
     --n-parallel "$n_parallel" --n-ctx-per-sequence "$n_ctx_per_sequence" \
     --arm-count "$cvec_arm_count" --warmup-count "$cvec_warmup_count" \
     --repeat-count "$cvec_repeat_count" --factorized
@@ -131,7 +131,7 @@ LLAMA_AGENT_TIMEOUT_SECONDS="${LLAMA_AGENT_TIMEOUT_SECONDS:-1800}" \
 agent_smoke_run_logged "$sparse_log" "$cvec_bin" \
     --model "$model" --n-predict "${LLAMA_AGENT_CVEC_N_PREDICT:-8}" \
     --threads "${LLAMA_AGENT_THREADS:-3}" \
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-99}" \
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:--1}" \
     --n-parallel "$n_parallel" --n-ctx-per-sequence "$n_ctx_per_sequence" \
     --arm-count "$cvec_arm_count" --warmup-count "$cvec_warmup_count" \
     --repeat-count "$cvec_repeat_count"

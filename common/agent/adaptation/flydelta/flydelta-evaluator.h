@@ -292,6 +292,7 @@ struct common_flydelta_evaluator_result {
     std::string search_state_ref;
     bool has_next_action = false;
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    bool utility_gate_evaluated = false;
     common_flydelta_utility_gate_decision utility_decision;
     std::string next_action_reason;
     bool has_representation_augmentation_state = false;

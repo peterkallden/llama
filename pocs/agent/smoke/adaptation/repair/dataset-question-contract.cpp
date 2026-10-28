@@ -69,6 +69,11 @@ int main(int argc, char ** argv) {
     if (!host.select_model_tools({"data.query", "data.filter", "data.aggregate"}, error)) {
         host.close(); std::cerr << error << '\n'; return 1;
     }
+    const auto projected = host.render_projected_model_contract("data.aggregate", error);
+    if (!error.empty() || projected.find("d1") == std::string::npos ||
+            projected.find("$orders.dataset") != std::string::npos) {
+        host.close(); std::cerr << "projected dataset contract is inconsistent: " << error << '\n'; return 1;
+    }
     const std::string flat_call = "open! data.query\ndataset: dataset://local/sales\nselect: order_id, region\nlimit: 4";
     common_agent_tool_call parsed_flat_call;
     if (!host.parse_model_call(flat_call, parsed_flat_call, error) ||

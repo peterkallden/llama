@@ -244,7 +244,8 @@ class reopening_reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state & plan, const std::string &, std::string & error) override {
         error.clear();
-        assert(plan.observations.size() == 2);
+        assert(std::count_if(plan.observations.begin(), plan.observations.end(),
+            [](const auto & observation) { return observation.source == "lookup"; }) == 2);
         common_reflection_result result;
         result.decision = common_reflection_decision::replan;
         common_plan_operation add;
@@ -531,8 +532,8 @@ int main() {
     closed_request.max_reflection_rounds = 2;
     closed_request.max_tool_batches = 2;
     const auto closed_result = closed_runtime.run(closed_request);
-    assert(closed_result.error.empty());
-    assert(closed_result.response == "observations=2");
+    assert(!closed_result.error.empty());
+    assert(closed_result.response.empty());
     auto closed_plan = closed_store.get("two-rounds", error);
     assert(closed_plan && closed_plan->steps.size() == 3);
     bool saw_closed_guard = false;

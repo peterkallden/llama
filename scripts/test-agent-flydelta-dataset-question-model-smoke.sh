@@ -51,7 +51,7 @@ args=(
     --suite "$suite"
     --threads "${LLAMA_AGENT_THREADS:-3}"
     --n-predict "${LLAMA_AGENT_N_PREDICT:-96}"
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-0}"
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:--1}"
 )
 if [[ "${LLAMA_AGENT_STRICT:-0}" == 1 ]]; then
     args+=(--strict)

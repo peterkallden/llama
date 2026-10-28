@@ -57,6 +57,9 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     arm.requested_coefficients = trial.requested_coefficients;
     arm.intervention_norms_available = trial.intervention_norms_available;
     arm.requested_intervention_norm = trial.requested_intervention_norm;
+    arm.proposed_intervention_norm = trial.proposed_intervention_norm;
+    arm.proposal_norm_limit_known = trial.proposal_norm_limit_known;
+    arm.proposal_norm_limited = trial.proposal_norm_limited;
     arm.applied_intervention_norm = trial.applied_intervention_norm;
     arm.requested_residual_fraction = trial.requested_residual_fraction;
     arm.applied_residual_fraction = trial.applied_residual_fraction;
@@ -171,11 +174,17 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
         trace.physical_rows_unresolved = result.search_pipeline_results.back().physical_rows_unresolved;
     }
     if (result.has_experiment_plan) {
+        trace.persisted_experiment_phase = common_flydelta_experiment_phase_name(result.experiment_plan.phase);
+        trace.persisted_orthogonal_search_requested = result.experiment_plan.run_orthogonal_search;
+        trace.persisted_tfo_lite_requested = result.experiment_plan.run_tfo_lite;
         trace.search_anchor_ref = result.experiment_plan.search_anchor_ref;
         trace.search_anchor_round = result.experiment_plan.search_anchor_round;
         trace.bootstrap_refinement = common_flydelta_bootstrap_refinement_kind_name(
             result.experiment_plan.bootstrap_refinement);
     }
+    trace.bootstrap_zoom_callback_completed = result.has_bootstrap_zoom_state;
+    trace.augmentation_callback_completed = result.has_representation_augmentation_state;
+    trace.utility_gate_evaluated = result.utility_gate_evaluated;
     if (result.has_bootstrap_zoom_state &&
             result.bootstrap_zoom_state.alpha_response_available) {
         trace.alpha_response_available = true;
@@ -279,6 +288,9 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"requested_coefficients", arm.requested_coefficients},
         {"intervention_norms_available", arm.intervention_norms_available},
         {"requested_intervention_norm", arm.requested_intervention_norm},
+        {"proposed_intervention_norm", arm.proposed_intervention_norm},
+        {"proposal_norm_limit_known", arm.proposal_norm_limit_known},
+        {"proposal_norm_limited", arm.proposal_norm_limited},
         {"applied_intervention_norm", arm.applied_intervention_norm},
         {"requested_residual_fraction", arm.requested_residual_fraction},
         {"applied_residual_fraction", arm.applied_residual_fraction},
@@ -346,7 +358,7 @@ bool common_flydelta_trace_validate(
             trace.next_action_reason.size() > 512 || trace.graft_direction_ref.size() > 512 ||
             trace.graft_direction_refs.size() > 8 ||
             trace.arms.size() > 256 ||
-            trace.whirlpool.size() > 32 || trace.bootstrap_refinement.size() > 64 ||
+            trace.whirlpool.size() > 32 || trace.bootstrap_refinement.size() > 64 || trace.persisted_experiment_phase.size() > 64 ||
             !finite(trace.alpha_last_scale) || !finite(trace.alpha_utility_slope) ||
             !finite(trace.alpha_best_margin_delta_normalized)) {
         error = "FlyDelta trace exceeds its bounds";
@@ -449,6 +461,12 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"tfo_lite_allowed", trace.tfo_lite_allowed},
         {"search_status", trace.search_status},
         {"bootstrap_refinement", trace.bootstrap_refinement},
+        {"persisted_experiment_phase", trace.persisted_experiment_phase},
+        {"persisted_orthogonal_search_requested", trace.persisted_orthogonal_search_requested},
+        {"persisted_tfo_lite_requested", trace.persisted_tfo_lite_requested},
+        {"bootstrap_zoom_callback_completed", trace.bootstrap_zoom_callback_completed},
+        {"augmentation_callback_completed", trace.augmentation_callback_completed},
+        {"utility_gate_evaluated", trace.utility_gate_evaluated},
         {"alpha_response_available", trace.alpha_response_available},
         {"alpha_response_status", common_flydelta_alpha_response_status_name(
             trace.alpha_response_status)},

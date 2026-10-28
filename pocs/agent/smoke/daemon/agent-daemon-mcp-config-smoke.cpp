@@ -203,7 +203,7 @@ bool check_prediction_mcp(const daemon_options & base_options, std::string & err
             };
             const auto first = call(json::parse(parsed.arguments_json));
             require(first["predictions"].size() == 1 && first["unresolved_refs"].empty(),
-                "prediction MCP did not resolve the current-session observation after runtime move");
+                "prediction MCP did not resolve the current-session observation after runtime move: " + first.dump());
             const auto ref = first["predictions"][0]["observation_ref"];
             require(call(json{{"family", "flydelta"}, {"candidate_refs", json::array({ref})}})
                 ["predictions"] == first["predictions"], "prediction reference retry changed the prediction");

@@ -974,6 +974,7 @@ bool common_flydelta_evaluate_job(
                 result.experiment_plan = std::move(orchestration.plan);
                 result.has_next_action = true;
                 result.next_action = orchestration.next_action;
+                result.utility_gate_evaluated = true;
                 result.utility_decision = orchestration.utility;
                 result.next_action_reason = std::move(orchestration.reason);
 

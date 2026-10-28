@@ -219,7 +219,7 @@ int main() {
     for (const auto & event : denied_result.events) {
         denied = denied || event.type == common_agent_event_type::thinking_escalation_denied;
     }
-    if (!denied_result.error.empty() || denied_result.response != "deliberate-answer" ||
+    if (denied_result.error.empty() || !denied_result.response.empty() ||
             denied_reflector.calls != 1 || !denied) {
         std::fprintf(stderr, "late escalation denial smoke failed: %s\n", denied_result.error.c_str());
         return 1;

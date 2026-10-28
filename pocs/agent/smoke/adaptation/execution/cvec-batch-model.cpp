@@ -277,6 +277,8 @@ int main(int argc, char ** argv) {
         request.purpose = common_agent_generation_purpose::conversation;
         request.options.n_predict = n_predict;
         request.options.n_threads = n_threads;
+        request.options.generation_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
+        request.trace_id = "flydelta-cvec-batch:" + arm.arm_id;
         request.messages = {
             {"system", "Reply with exactly PASS."},
             {"user", "Run the isolated FlyDelta arm."},

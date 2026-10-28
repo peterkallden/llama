@@ -64,6 +64,9 @@ bool run_arm(
     request.purpose = common_agent_generation_purpose::conversation;
     request.options.n_predict = n_predict;
     request.options.n_threads = n_threads;
+    request.options.generation_trace = std::getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr;
+    static size_t trace_sequence = 0;
+    request.trace_id = "flydelta-model-ab:" + std::to_string(trace_sequence++);
     request.messages = {
         {"system", "Reply with exactly the single word PASS."},
         {"user", "Run the requested check."},

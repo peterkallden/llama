@@ -95,6 +95,10 @@ struct common_flydelta_intervention_region_trial {
     std::vector<float> requested_coefficients;
     bool intervention_norms_available = false;
     float requested_intervention_norm = 0.0f;
+    // Composed norm after proposal bounds, before DoseController retries.
+    float proposed_intervention_norm = 0.0f;
+    bool proposal_norm_limit_known = false;
+    bool proposal_norm_limited = false;
     float applied_intervention_norm = 0.0f;
     float requested_residual_fraction = 0.0f;
     float applied_residual_fraction = 0.0f;

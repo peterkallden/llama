@@ -3015,10 +3015,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 return result;
             }
         }
-        if (!review_accepted && reflection_review_count >= request.max_reflection_rounds) {
-            stop_unverified_response("response rejected; no review budget remains for a repaired answer");
-            break;
-        }
         const bool tool_execution_closed = common_plan_tool_execution_closed(plan);
         if (tool_execution_closed) {
             bool attempted_reopen = reflection.decision == common_reflection_decision::replan;
@@ -3077,6 +3073,13 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         if (reflection_escalation.continue_turn) continue;
+        // Resolve a host-authorized escalation before applying the previous
+        // mode's review budget. The escalation handler supplies its own bounded
+        // policy; ordinary repairs still consume the remaining review budget.
+        if (!review_accepted && reflection_review_count >= request.max_reflection_rounds) {
+            stop_unverified_response("response rejected; no review budget remains for a repaired answer");
+            break;
+        }
         if (reflection.learning_hint) {
             const auto & hint = *reflection.learning_hint;
             common_plan_operation observed;

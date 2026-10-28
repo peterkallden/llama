@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <cstdlib>
 #include <nlohmann/json.hpp>
+#include "hash/hash.h"
 #include <thread>
 #include <iterator>
 #include <utility>
@@ -110,6 +111,20 @@ void generation_trace_prompt(
         std::fprintf(stderr, "[message %zu role=%s]\n%s\n", index, message.role.c_str(), message.content.c_str());
     }
     std::fprintf(stderr, "[rendered prompt]\n%s\nagent generation trace prompt: end\n", prepared.prompt.c_str());
+    nlohmann::ordered_json messages = nlohmann::ordered_json::array();
+    for (const auto & message : request.messages)
+        messages.push_back({{"role", message.role}, {"content", message.content}});
+    const auto record = nlohmann::ordered_json{
+        {"trace_id", request.trace_id.value_or("")}, {"messages", messages},
+        {"purpose", common_agent_generation_purpose_name(request.purpose)},
+        {"n_predict", request.options.n_predict}, {"rendered_prompt", prepared.prompt},
+        {"rendered_prompt_fingerprint", "sha256:" + hash_sha256_hex(prepared.prompt.data(), prepared.prompt.size())}};
+    try {
+        std::fprintf(stderr, "agent_generation_prompt %s\n", record.dump().c_str());
+    } catch (const nlohmann::json::exception &) {
+        // Invalid UTF-8 must not make diagnostic tracing fail inference.
+        std::fprintf(stderr, "agent_generation_prompt_error invalid_utf8\n");
+    }
     std::fflush(stderr);
 }
 

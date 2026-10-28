@@ -1,7 +1,9 @@
 # Residual-normalized coefficient experiments
 
-Status: implemented for opt-in experiments; not compiled or executed during this change.
-Production defaults, host verdicts, promotion rules and legacy persistence field meanings are unchanged.
+Status: host configuration defaults to `direction_dose`; `raw_coefficients` remains
+available as an explicit alternative. Model experiments must be evaluated separately
+from deployment and learning decisions. This document does not assert that the
+latest working-tree changes have been compiled or tested.
 
 ## Quantities and provenance
 
@@ -55,9 +57,10 @@ frontier. Geometry does not grant HELPED or activation authority.
 Contract tests cover median calibration, invalid provenance, actual basis norms,
 zero/non-finite inputs, clipping, duplicate/cancelling directions, deterministic
 proposals, budget bounds, shared batch execution, refinement and rejection before
-model execution. Checks remain active with NDEBUG. They have not been run.
+model execution. Checks remain active with NDEBUG. Use the recorded test results
+for the revision under evaluation; the presence of a test is not proof it passed.
 
-After explicit authorization to run model tests, use
+For model tests, use
 `scripts/test-agent-flydelta-dose-paired-model-smoke.sh` for raw versus
 direction-dose, or `scripts/test-agent-flydelta-dose-comparison-model-smoke.sh`
 for raw, normalized and direction-dose. Both use the same runner and the dedicated
@@ -126,3 +129,48 @@ The shared runner, strict response pairing and new contract cases have not been
 compiled or executed. The interrupted experiment predates this refactor and is not
 validation of these changes. Do not launch a build, CTest or smoke until the user
 explicitly authorizes verification.
+
+## Execution evidence and comparison identity
+
+Dose traces distinguish the requested residual-relative intervention norm,
+`proposed_intervention_norm` after the coefficient bound, and the applied norm
+following DoseController decisions. `proposal_norm_limit_known` indicates whether
+the pre-bound request was retained; it is unknown for legacy raw coefficient
+proposals and anchor-centered proposals whose original request was not retained.
+`proposal_norm_limited` does not imply `dose_safety_limited`. Coefficient norms, residual fractions and the legacy
+behavior-relative displacement retain their separate units.
+
+New run manifests use `flydelta-dose-run.v2`. Each measured group emits an effective
+execution context: model identity (including quantization via its content hash),
+tokenizer/template identities, capture layout/site, actual context and parallel
+sequence counts, cache types, greedy sampling/seed, response and search budgets,
+and verifier revision. Explicit generation tracing also emits JSON records with
+logical messages, the final rendered prompt and its content fingerprint. These
+records use the existing trace opt-in; they are not enabled for ordinary requests.
+
+The smoke's tokenizer and template labels are fixture labels, not independent
+hashes of the actual tokenizer or template. The model-file fingerprint binds the
+embedded tokenizer, while the rendered-prompt fingerprint identifies the concrete
+expanded template output for each compared request.
+
+The comparison reader preserves legacy records and their full outputs. It reports
+an unmatched comparison when effective contexts, rendered prompts or calibration
+measurements are missing or differ. Scope-local fixture resource names alone do
+not invalidate matching. Requested doses/candidate choices may differ by policy.
+The smoke repeats unsteered generations three times by default in dose mode
+(`--baseline-repeats`), while the production generation path stays greedy. The
+logged seed is therefore provenance, not a source of random sampling. Repeats can
+measure execution variability but do not estimate stochastic decoding quality.
+
+Use `agent-flydelta-dose-summary.py TRACE.log --trace` to summarize observed
+phase execution and retain all recorded model exchanges and adviser decisions.
+A completed phase callback or explicit executed arm can establish phase coverage;
+the persisted plan may describe a later slice. Evidence-depth labels, requested
+phases and next-action proposals do not by themselves establish execution. An absent phase remains
+unobserved in that trace. A second baseline wave is not an anchor resume.
+
+For opt-in model CTest validation, `scripts/agent-model-test-profile.py` discovers
+the existing registered model tests, requires an explicit model, runs serially,
+uses automatic GPU fitting and retains individual logs plus a JSON status file.
+A missing executable or exit code 77 is a configuration error in this profile;
+ordinary model-free/synthetic tests retain their existing skip semantics.

@@ -255,6 +255,7 @@ bool common_flydelta_experiment_worker_run_once(
     report.selected_candidate = result.selected_candidate;
     report.has_next_action = result.has_next_action;
     report.next_action = result.next_action;
+    report.utility_gate_evaluated = result.utility_gate_evaluated;
     report.utility_decision = result.utility_decision;
     report.next_action_reason = std::move(result.next_action_reason);
     report.graft_direction_ref = std::move(result.graft_direction_ref);
@@ -314,6 +315,7 @@ bool common_flydelta_worker_result_from_evaluator(
     target.search_state_ref = source.search_state_ref;
     target.has_next_action = source.has_next_action;
     target.next_action = source.next_action;
+    target.utility_gate_evaluated = source.utility_gate_evaluated;
     target.utility_decision = source.utility_decision;
     target.next_action_reason = source.next_action_reason;
     target.has_representation_augmentation_state =

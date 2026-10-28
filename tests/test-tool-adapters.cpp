@@ -324,7 +324,16 @@ public:
         if (operation == "data.aggregate") { result = R"({"rows":[{"group":"all","count":2}]})"; return true; }
         if (operation == "data.join") { result = R"({"rows":[{"id":"1","name":"alpha"}]})"; return true; }
         if (operation == "data.transform") { result = R"({"dataset":"dataset://derived/1"})"; return true; }
-        if (operation == "statistics.describe") { result = R"({"columns":[{"name":"value","count":2,"mean":1.5}]})"; return true; }
+        if (operation == "statistics.describe") {
+            const auto request = nlohmann::json::parse(request_json);
+            result = nlohmann::json{{"dataset", request.at("dataset")},
+                {"selected_columns", request.value("columns", nlohmann::json::array({"value"}))},
+                {"columns", nlohmann::json::array({{{"name", "value"}, {"count", 2}, {"null_count", 0},
+                    {"min", 1}, {"max", 2}, {"mean", 1.5}, {"stddev", 0.5}}})},
+                {"groups", nlohmann::json::array()}, {"group_by", request.value("group_by", nlohmann::json::array())},
+                {"scanned_rows", 2}, {"scan_truncated", false}}.dump();
+            return true;
+        }
         if (operation == "statistics.outliers") { result = R"({"columns":[]})"; return true; }
         if (operation == "statistics.value_counts") { result = R"({"column":"region","values":[{"value":"north","count":2}]})"; return true; }
         error = "unexpected data operation";

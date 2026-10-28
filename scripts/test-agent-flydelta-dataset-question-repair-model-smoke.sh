@@ -74,7 +74,7 @@ args=(
     --suite "$suite"
     --threads "${LLAMA_AGENT_THREADS:-3}"
     --n-predict "${LLAMA_AGENT_N_PREDICT:-128}"
-    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:-0}"
+    --n-gpu-layers "${LLAMA_AGENT_GPU_LAYERS:--1}"
     --n-parallel "$n_parallel"
     --n-ctx-per-sequence "$n_ctx_per_sequence"
 )

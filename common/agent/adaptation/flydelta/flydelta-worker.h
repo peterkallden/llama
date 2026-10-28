@@ -71,6 +71,10 @@ struct common_flydelta_trace_arm {
     std::vector<float> requested_coefficients;
     bool intervention_norms_available = false;
     float requested_intervention_norm = 0.0f;
+    // Composed norm after proposal bounds, before DoseController retries.
+    float proposed_intervention_norm = 0.0f;
+    bool proposal_norm_limit_known = false;
+    bool proposal_norm_limited = false;
     float applied_intervention_norm = 0.0f;
     float requested_residual_fraction = 0.0f;
     float applied_residual_fraction = 0.0f;
@@ -100,6 +104,13 @@ struct common_flydelta_trace {
     bool tfo_lite_allowed = false;
     std::string search_status = "candidate_available";
     std::string bootstrap_refinement;
+    // The persisted orchestration plan may describe a subsequent slice.
+    std::string persisted_experiment_phase;
+    bool persisted_orthogonal_search_requested = false;
+    bool persisted_tfo_lite_requested = false;
+    bool bootstrap_zoom_callback_completed = false;
+    bool augmentation_callback_completed = false;
+    bool utility_gate_evaluated = false;
     bool alpha_response_available = false;
     common_flydelta_alpha_response_status alpha_response_status =
         common_flydelta_alpha_response_status::inconclusive;
@@ -164,6 +175,7 @@ struct common_flydelta_experiment_worker_result {
     std::string search_state_ref;
     bool has_next_action = false;
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    bool utility_gate_evaluated = false;
     common_flydelta_utility_gate_decision utility_decision;
     std::string next_action_reason;
     bool has_representation_augmentation_state = false;
@@ -214,6 +226,7 @@ struct common_flydelta_experiment_worker_report {
     std::string search_state_ref;
     bool has_next_action = false;
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
+    bool utility_gate_evaluated = false;
     common_flydelta_utility_gate_decision utility_decision;
     std::string next_action_reason;
     std::string graft_direction_ref;

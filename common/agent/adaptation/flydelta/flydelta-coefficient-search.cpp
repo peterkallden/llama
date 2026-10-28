@@ -118,6 +118,9 @@ bool common_flydelta_coefficient_trial_to_region(
     target.requested_coefficients = source.requested_coefficients;
     target.intervention_norms_available = source.intervention_norms_available;
     target.requested_intervention_norm = source.requested_intervention_norm;
+    target.proposed_intervention_norm = source.proposed_intervention_norm;
+    target.proposal_norm_limit_known = source.proposal_norm_limit_known;
+    target.proposal_norm_limited = source.proposal_norm_limited;
     target.applied_intervention_norm = source.applied_intervention_norm;
     target.requested_residual_fraction = source.requested_residual_fraction;
     target.applied_residual_fraction = source.applied_residual_fraction;

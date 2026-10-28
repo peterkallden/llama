@@ -261,6 +261,9 @@ bool common_flydelta_coefficient_detail::update_dose_metrics(
         common_flydelta_coefficient_trial & trial, std::string & error) {
     trial.intervention_norms_available = false;
     trial.requested_intervention_norm = 0;
+    trial.proposed_intervention_norm = 0;
+    trial.proposal_norm_limit_known = false;
+    trial.proposal_norm_limited = false;
     trial.applied_intervention_norm = 0;
     trial.applied_residual_fraction = 0;
     const bool calibrated = config.experimental_dose_mode !=
@@ -270,6 +273,7 @@ bool common_flydelta_coefficient_detail::update_dose_metrics(
     if (!common_flydelta_intervention_norm(basis, trial.requested_coefficients, requested, error) ||
             (trial.overlay_applied && !common_flydelta_intervention_norm(
                 basis, trial.coefficients, applied, error))) return false;
+    trial.proposed_intervention_norm = requested;
     if (calibrated) {
         const auto & calibration = config.residual_calibration;
         if (calibration.reference.empty() || !std::isfinite(calibration.median_norm) ||
@@ -284,6 +288,10 @@ bool common_flydelta_coefficient_detail::update_dose_metrics(
     if (!std::isfinite(requested) || !std::isfinite(trial.applied_residual_fraction)) {
         error = "FlyDelta trial dose metadata overflow"; return false;
     }
+    // Anchor proposals retain the bounded fraction, not the original request.
+    trial.proposal_norm_limit_known = calibrated && config.anchor_coefficients.empty();
+    trial.proposal_norm_limited = trial.proposal_norm_limit_known && trial.proposed_intervention_norm +
+        1e-6f * std::max(1.0f, requested) < requested;
     trial.requested_intervention_norm = requested;
     trial.applied_intervention_norm = applied;
     trial.intervention_norms_available = true;

@@ -1606,7 +1606,7 @@ if (BUILD_TESTING)
     if (TARGET llama-agent-flydelta-repair-model-smoke)
         add_test(NAME llama-agent-flydelta-repair-model-ctest
             COMMAND $<TARGET_FILE:llama-agent-flydelta-repair-model-smoke>
-                --n-gpu-layers 99)
+                --n-gpu-layers -1)
         set_property(TEST llama-agent-flydelta-repair-model-ctest PROPERTY LABELS agent-adaptation)
         set_tests_properties(llama-agent-flydelta-repair-model-ctest PROPERTIES
             SKIP_RETURN_CODE 77 TIMEOUT 900)
@@ -1641,7 +1641,7 @@ if (BUILD_TESTING)
         add_test(NAME llama-agent-flydelta-dataset-question-repair-model-ctest
             COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-repair-model-smoke>
                 --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
-                --n-gpu-layers 99)
+                --n-gpu-layers -1)
         set_property(TEST llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTY LABELS agent-adaptation)
         set_tests_properties(llama-agent-flydelta-dataset-question-repair-model-ctest PROPERTIES
             SKIP_RETURN_CODE 77 TIMEOUT 1800)
@@ -1650,7 +1650,7 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-flydelta-dataset-question-model-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-dataset-question-model-smoke>
             --suite ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json
-            --n-gpu-layers 99)
+            --n-gpu-layers -1)
     set_property(TEST llama-agent-flydelta-dataset-question-model-ctest PROPERTY LABELS agent-adaptation)
     set_tests_properties(llama-agent-flydelta-dataset-question-model-ctest PROPERTIES
         SKIP_RETURN_CODE 77 TIMEOUT 1800)

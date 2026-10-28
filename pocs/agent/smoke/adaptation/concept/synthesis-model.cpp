@@ -37,7 +37,7 @@ struct smoke_args {
     std::string model_path;
     int threads = 4;
     int n_predict = 64;
-    int n_gpu_layers = 99;
+    int n_gpu_layers = -1;
 };
 
 int fail(const std::string & message) {
@@ -90,7 +90,7 @@ bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) 
         error = "a model is required through --model or LLAMA_AGENT_MODEL";
         return false;
     }
-    if (args.threads < 1 || args.n_predict < 1 || args.n_gpu_layers < 0) {
+    if (args.threads < 1 || args.n_predict < 1 || args.n_gpu_layers < -1) {
         error = "threads, n-predict and n-gpu-layers have invalid values";
         return false;
     }

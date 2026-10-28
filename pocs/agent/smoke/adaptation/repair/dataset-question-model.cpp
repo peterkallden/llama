@@ -64,6 +64,7 @@ struct options {
     bool production_where = false;
     bool adaptive_alpha_search = false;
     bool require_gpu = false;
+    int baseline_repeats = 3;
     int n_predict = 512;
     int n_threads = 3;
     int n_gpu_layers = 0;
@@ -175,6 +176,7 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--n-predict") { const auto v = next("--n-predict"); if (!v) return false; value.n_predict = std::stoi(v); }
         else if (argument == "--threads") { const auto v = next("--threads"); if (!v) return false; value.n_threads = std::stoi(v); }
         else if (argument == "--n-parallel") { const auto v = next("--n-parallel"); if (!v) return false; value.n_parallel = std::stoi(v); }
+        else if (argument == "--baseline-repeats") { const auto v = next("--baseline-repeats"); if (!v) return false; value.baseline_repeats = std::stoi(v); }
         else if (argument == "--n-ctx-per-sequence") { const auto v = next("--n-ctx-per-sequence"); if (!v) return false; value.n_ctx_per_sequence = std::stoi(v); }
         else if (argument == "--n-gpu-layers") { const auto v = next("--n-gpu-layers"); if (!v) return false; value.n_gpu_layers = std::stoi(v); }
         else if (argument == "--backend") { const auto v = next("--backend"); if (!v) return false; value.backend = v; }
@@ -303,6 +305,8 @@ void trace_model_exchange(const std::string & phase, const std::string & id,
             : phase.rfind("replay_forced_", 0) == 0 ? "synthetic_replay_capture"
             : "flydelta_arm_execution"},
         {"messages", messages}, {"n_predict", request.options.n_predict},
+        {"capture_requested", request.flydelta_capture && request.flydelta_capture->enabled},
+        {"capture_observed", result.flydelta_capture && result.flydelta_capture->captured},
         {"budget", {{"phase", phase}, {"token_limit", request.options.n_predict},
             {"decoded_tokens", result.decoded_tokens},
             {"exhausted", request.options.n_predict > 0 && result.stop_reason == common_agent_generation_stop_reason::limit},
@@ -555,6 +559,7 @@ int main(int argc, char ** argv) {
     }
     if (value.suite.empty() || !std::filesystem::is_regular_file(value.suite) ||
             value.n_threads <= 0 || value.n_threads > 3 || value.n_predict <= 0 ||
+            value.baseline_repeats < 1 || value.baseline_repeats > 16 ||
             value.n_parallel <= 0 || value.n_parallel > 16 || value.n_ctx_per_sequence <= 0 ||
             static_cast<int64_t>(value.n_parallel) * value.n_ctx_per_sequence >
                 std::numeric_limits<int32_t>::max()) return 2;
@@ -599,8 +604,7 @@ int main(int argc, char ** argv) {
         if (std::find(described_tools.begin(), described_tools.end(), expected) != described_tools.end()) continue;
         described_tools.push_back(expected);
         std::string compact_error;
-        const auto description = common_render_compact_tool_description(definition->name, definition->description,
-            common_tool_model_input_schema(*definition), common_tool_model_result_schema(*definition), compact_error);
+        const auto description = host.render_projected_model_contract(expected, compact_error);
         if (!compact_error.empty()) { host.close(); std::cerr << compact_error << '\n'; return 1; }
         contract += "- " + description + "\n";
     }
@@ -768,6 +772,15 @@ int main(int argc, char ** argv) {
         const auto failed_request = make_request(value, contract, scenario.value("question", ""), capture);
         const bool generated = inference->generate(failed_request, failed_result);
         trace_model_exchange("baseline", id, failed_request, failed_result);
+        if (value.dose_comparison) {
+            for (int repeat = 1; repeat < value.baseline_repeats; ++repeat) {
+                auto repeated_request = failed_request;
+                repeated_request.trace_id = id + "/unsteered-repeat/" + std::to_string(repeat);
+                common_agent_generation_result repeated_result;
+                inference->generate(repeated_request, repeated_result);
+                trace_model_exchange("baseline_repeat", *repeated_request.trace_id, repeated_request, repeated_result);
+            }
+        }
         const auto failed_verdict = verify_model_call(
             failed_result, expected, canonical_repair["arguments"], verification_mode,
             &canonical_execution, host);
@@ -2172,6 +2185,27 @@ int main(int argc, char ** argv) {
                             {"learning_credit_granted", false}}).dump() << std::endl;
                     }
                 }
+                if (value.dose_comparison) {
+                    const auto & params = server_host->params();
+                    std::cout << "flydelta_dose_context " << ordered_json{
+                        {"schema_version", 1}, {"scenario", deep_case.id},
+                        {"model_fingerprint", capture->model_profile_fingerprint},
+                        {"tokenizer_fingerprint", deep_fixture.tokenizer_fingerprint},
+                        {"template_fingerprint", deep_fixture.template_fingerprint},
+                        {"capture_layout", capture->capture_layout_revision},
+                        {"intervention_site", "layer-input:additive-cvec:v1"},
+                        {"actual_n_ctx", llama_n_ctx(server_host->server().get_llama_context())},
+                        {"n_parallel", params.n_parallel}, {"n_gpu_layers", params.n_gpu_layers},
+                        {"cache_type_k", static_cast<int>(params.cache_type_k)},
+                        {"cache_type_v", static_cast<int>(params.cache_type_v)},
+                        {"temperature", 0}, {"seed", params.sampling.seed},
+                        {"sampling", "greedy; seed does not introduce random sampling"},
+                        {"n_predict", value.n_predict}, {"baseline_repeats", value.baseline_repeats},
+                        {"candidate_budget", rank_config.coefficients.max_candidates},
+                        {"full_generation_budget", rank_config.full_generation_top_k},
+                        {"verifier_revision", "dataset-question-verifier:v1"},
+                        {"verification_mode", deep_case.verification_mode}}.dump() << std::endl;
+                }
                 common_flydelta_deep_search_result deep_result;
                 const auto deep_started = std::chrono::steady_clock::now();
                 const bool progress_smoke = !value.progress_guidance_smoke_mode.empty();
@@ -2550,10 +2584,18 @@ int main(int argc, char ** argv) {
                         {"requested_residual_fraction", trial.requested_residual_fraction},
                         {"applied_residual_fraction", trial.applied_residual_fraction},
                         {"requested_intervention_norm", trial.requested_intervention_norm},
+                        {"proposed_intervention_norm", trial.proposed_intervention_norm},
+                        {"proposal_norm_limit_known", trial.proposal_norm_limit_known},
+                        {"proposal_norm_limited", trial.proposal_norm_limit_known ? ordered_json(trial.proposal_norm_limited) : ordered_json(nullptr)},
+                        {"dose_action", trial.dose_evaluated ? common_flydelta_dose_action_name(trial.dose_action) : "not_evaluated"},
+                        {"execution_class", full_generation ? "full" : "diagnostic"},
+                        {"search_phase", "deep"}, {"forced_deep", value.force_deep},
+                        {"guidance_arm_id", trial.guidance_arm_id},
                         {"applied_intervention_norm", trial.applied_intervention_norm},
                         {"behavior_delta_relative_displacement", trial.relative_dose},
                         {"dose_reason", trial.dose_reason},
-                        {"mutation", trial.mutation_kind},
+                        {"mutation", trial.mutation_kind.empty() && dose_experiment == "raw" && !full_generation
+                            ? "raw_coefficient_diagnostic" : trial.mutation_kind},
                         {"executed", trial.executed}, {"host_evaluated", trial.host_evaluated},
                         {"verifier_known", trial.verifier_known},
                         {"verifier_passed", trial.candidate_observation &&
@@ -2572,6 +2614,7 @@ int main(int argc, char ** argv) {
                         {"search_fitness", trial.search_fitness},
                     };
                     if (!trial.intervention_norms_available) {
+                        arm["proposed_intervention_norm"] = nullptr;
                         arm["requested_intervention_norm"] = nullptr;
                         arm["applied_intervention_norm"] = nullptr;
                     }

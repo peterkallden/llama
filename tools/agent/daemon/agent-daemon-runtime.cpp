@@ -916,7 +916,7 @@ common_tool_execution_result daemon_prediction_predict(
                     !payload["outcome_guidance"].is_object()) continue;
             const auto & g = payload["outcome_guidance"];
             if (!g.contains("schema_version") || !g["schema_version"].is_number_integer() ||
-                    g["schema_version"].get<int>() != 1 ||
+                    (g["schema_version"].get<int>() != 1 && g["schema_version"].get<int>() != 2) ||
                     !g.value("comparison_completed", false) || !g.value("overlay_applied", false)) continue;
             if (!g.contains("rank") || (!g["rank"].is_number_unsigned() && !g["rank"].is_number_integer()) ||
                     !g.contains("relative_layer") || !g["relative_layer"].is_number() ||
@@ -929,52 +929,26 @@ common_tool_execution_result daemon_prediction_predict(
             entry.registration_order = record.registration_order;
             entry.source_session = record.session_id;
             auto & o = entry.observation;
-            o.stable_observation_id = g.value("observation_id", std::string{});
-            o.fixture_group_id = g.value("fixture_group_id", std::string{});
-            o.context.scope_fingerprint = g.value("scope_fingerprint", std::string{});
-            // The lifecycle envelope, not payload text, authorizes the
-            // namespace/project/session read. Older payloads do not persist
-            // all scope-policy bits needed to reconstruct their scope hash.
+            std::string observation_error;
+            if (!common_flydelta_outcome_guidance_observation_from_json(
+                    payload.dump(), o, observation_error)) continue;
+            // The lifecycle envelope authorizes the scoped read. Project
+            // backoff only changes the comparison scope, never access rights.
             if (generalization.project_history) {
                 const std::string project_scope_material = json::array({namespace_id, project_id}).dump();
                 o.context.scope_fingerprint = "sha256:" + hash_sha256_hex(
                     project_scope_material.data(), project_scope_material.size());
             }
-            o.context.model_profile_fingerprint = g.value("model_profile_fingerprint", std::string{});
-            o.context.tokenizer_fingerprint = g.value("tokenizer_fingerprint", std::string{});
-            o.context.template_fingerprint = g.value("template_fingerprint", std::string{});
-            o.context.baseline_deployment_fingerprint = g.value("baseline_deployment_fingerprint", std::string{});
-            o.context.verifier_revision = g.value("verifier_revision", std::string{});
-            o.context.ruleset_revision = g.value("ruleset_revision", std::string{});
-            o.context.action_contract_fingerprint = g.value("action_contract_fingerprint", std::string{});
-            o.context.semantic_domain = g.value("domain", std::string{});
-            o.context.strategy = g.value("strategy", std::string{});
-            o.context.estimator = g.value("estimator", std::string{});
-            o.basis_identity = g.value("basis_id", std::string{});
-            o.rank = g.value("rank", size_t{0});
-            o.relative_layer = g.value("relative_layer", 0.0);
-            o.relative_dose = g.value("relative_dose", 0.0);
-            o.mixed_coefficients = g.value("mixed_coefficients", false);
-            o.diagnostic_margin_sign = g.value("diagnostic_margin_sign", 0);
-            o.comparison_completed = g.value("comparison_completed", false);
-            o.overlay_applied = g.value("overlay_applied", false);
             if (o.rank == 0 || o.rank > 16 || !std::isfinite(o.relative_layer) ||
                     !std::isfinite(o.relative_dose) || o.relative_layer < 0.0 || o.relative_layer > 1.0 ||
                     o.relative_dose < 0.0 || o.relative_dose > 1.0 ||
                     o.diagnostic_margin_sign < -1 || o.diagnostic_margin_sign > 1 ||
                     o.stable_observation_id.empty() || o.stable_observation_id.size() > 512) continue;
-            const auto outcome = payload.value("outcome", std::string("unknown"));
-            if (outcome == "helped") o.outcome = common_flydelta_counterfactual_outcome::helped;
-            else if (outcome == "neutral") o.outcome = common_flydelta_counterfactual_outcome::neutral;
-            else if (outcome == "harmed") o.outcome = common_flydelta_counterfactual_outcome::harmed;
-            else if (outcome == "unknown") o.outcome = common_flydelta_counterfactual_outcome::unknown;
-            else continue;
             // Lifecycle rejection is the host's disposition for a verified
             // HARMED candidate, not evidence that the comparison is unusable.
             // Keep it in the posterior while rejecting inconsistent records.
             if ((record.status == common_learning_lifecycle_status::rejected) !=
                     (o.outcome == common_flydelta_counterfactual_outcome::harmed)) continue;
-            o.outcome_known = g.value("outcome_known", false);
             o.verifier_known = payload.value("verifier_known", false);
             if (o.outcome_known != (o.outcome != common_flydelta_counterfactual_outcome::unknown) ||
                     (o.outcome_known && !o.verifier_known) || o.rank == 0 ||
