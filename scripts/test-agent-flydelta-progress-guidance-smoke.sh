@@ -127,19 +127,24 @@ if [[ -n "$model" ]]; then
                         ! grep -q '^flydelta_model_exchange .*"overlay_applied":true' "$model_log"; then
                     printf '%s\n' '{"event":"model_end","status":"incomplete_gpu_or_trace_evidence"}' >> "$trace"
                     status=1
-                elif grep -q '^flydelta_model_progress_guidance .*"status":"continued".*"adviser_controls_search":true' "$model_log"; then
+                elif grep -q '^flydelta_model_progress_guidance .*"status":"waves_executed".*"posterior_position_executed":true' "$model_log"; then
                     if grep -q '^flydelta_progress_control ' "$model_log" &&
-                            grep -q '^flydelta_progress_anchor ' "$model_log" &&
                             grep -q '^flydelta_progress_adviser ' "$model_log" &&
                             grep -q '^flydelta_progress_continuation ' "$model_log" &&
                             grep -q '^flydelta_model_exchange .*"phase":"resume_full"' "$model_log"; then
-                        printf '%s\n' '{"event":"model_end","status":"passed","device":"gpu","fit":"auto","trace":"complete"}' >> "$trace"
+                        if grep -q '^flydelta_model_progress_guidance .*"anchor_found":true.*"continued_improved":true' "$model_log" ||
+                                grep -q '^flydelta_model_progress_guidance .*"anchor_found":true.*"continued_solved":true' "$model_log"; then
+                            printf '%s\n' '{"event":"model_end","status":"passed","device":"gpu","fit":"auto","trace":"complete"}' >> "$trace"
+                        else
+                            printf '%s\n' '{"event":"model_end","status":"inconclusive_anchor_or_further_progress","integration":"posterior_arm_executed","device":"gpu"}' >> "$trace"
+                            [[ $status -eq 0 ]] && status=2
+                        fi
                     else
                         printf '%s\n' '{"event":"model_end","status":"incomplete_continuation_trace","device":"gpu","fit":"auto"}' >> "$trace"
                         status=1
                     fi
                 else
-                    printf '%s\n' '{"event":"model_end","status":"inconclusive_no_continuation","device":"gpu","fit":"auto"}' >> "$trace"
+                    printf '%s\n' '{"event":"model_end","status":"inconclusive_no_posterior_execution","device":"gpu","fit":"auto"}' >> "$trace"
                     [[ $status -eq 0 ]] && status=2
                 fi
             else
@@ -159,19 +164,24 @@ if [[ -n "$model" ]]; then
                         ! grep -q '^flydelta_model_exchange .*"overlay_applied":true' "$model_log"; then
                     printf '%s\n' '{"event":"model_end","status":"incomplete_cpu_or_trace_evidence"}' >> "$trace"
                     status=1
-                elif grep -q '^flydelta_model_progress_guidance .*"status":"continued".*"adviser_controls_search":true' "$model_log"; then
+                elif grep -q '^flydelta_model_progress_guidance .*"status":"waves_executed".*"posterior_position_executed":true' "$model_log"; then
                     if grep -q '^flydelta_progress_control ' "$model_log" &&
-                            grep -q '^flydelta_progress_anchor ' "$model_log" &&
                             grep -q '^flydelta_progress_adviser ' "$model_log" &&
                             grep -q '^flydelta_progress_continuation ' "$model_log" &&
                             grep -q '^flydelta_model_exchange .*"phase":"resume_full"' "$model_log"; then
-                        printf '%s\n' '{"event":"model_end","status":"passed","device":"cpu","trace":"complete"}' >> "$trace"
+                        if grep -q '^flydelta_model_progress_guidance .*"anchor_found":true.*"continued_improved":true' "$model_log" ||
+                                grep -q '^flydelta_model_progress_guidance .*"anchor_found":true.*"continued_solved":true' "$model_log"; then
+                            printf '%s\n' '{"event":"model_end","status":"passed","device":"cpu","trace":"complete"}' >> "$trace"
+                        else
+                            printf '%s\n' '{"event":"model_end","status":"inconclusive_anchor_or_further_progress","integration":"posterior_arm_executed","device":"cpu"}' >> "$trace"
+                            [[ $status -eq 0 ]] && status=2
+                        fi
                     else
                         printf '%s\n' '{"event":"model_end","status":"incomplete_continuation_trace","device":"cpu"}' >> "$trace"
                         status=1
                     fi
                 else
-                    printf '%s\n' '{"event":"model_end","status":"inconclusive_no_continuation","device":"cpu"}' >> "$trace"
+                    printf '%s\n' '{"event":"model_end","status":"inconclusive_no_posterior_execution","device":"cpu"}' >> "$trace"
                     [[ $status -eq 0 ]] && status=2
                 fi
             else

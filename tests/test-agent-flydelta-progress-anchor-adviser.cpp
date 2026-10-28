@@ -128,6 +128,7 @@ int main() {
     common_flydelta_outcome_guidance_config guidance;
     guidance.mode = common_flydelta_outcome_guidance_mode::experimental;
     bool frontier = false, matching_parent = false, experimental_applied = false, known_progress = false;
+    bool posterior_selected = false;
     std::vector<std::string> selected;
     const common_flydelta_outcome_guidance_adviser adviser =
         [&](const auto & request, auto & decision, std::string & e) {
@@ -136,10 +137,15 @@ int main() {
             current.local_parent = request.progress_parent;
             current.local_parent_ref = request.progress_parent_ref;
             if (!common_flydelta_outcome_guidance_build_decision(guidance, current, {observed},
-                    request.candidates, request.selection_limit, 7, decision, e)) return false;
+                    request.candidates, request.selection_limit, 7, decision, e,
+                    common_flydelta_outcome_guidance_policy::posterior_sampling,
+                    common_flydelta_guidance_policy_start(0, 2, request.policy_sequence_start))) return false;
             decision.shadow_mode = guidance.mode == common_flydelta_outcome_guidance_mode::shadow;
             if (request.stage == "deep_full_generation_frontier") {
                 frontier = true;
+                posterior_selected = std::find(decision.selection_reasons.begin(),
+                    decision.selection_reasons.begin() + request.selection_limit, "posterior_sample") !=
+                    decision.selection_reasons.begin() + request.selection_limit;
                 matching_parent = request.progress_parent && request.progress_parent_ref == config.anchor_ref;
                 experimental_applied = !decision.shadow_mode && decision.fallback_reason.empty();
                 known_progress = std::any_of(decision.predictions.begin(), decision.predictions.end(),
@@ -156,6 +162,7 @@ int main() {
     CHECK(frontier);
     CHECK(matching_parent);
     CHECK(experimental_applied);
+    CHECK(posterior_selected);
     CHECK(known_progress);
     CHECK(!selected.empty());
     CHECK(continued.provisional_selection.selected);
