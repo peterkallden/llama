@@ -138,6 +138,29 @@ class DoseSummaryContracts(unittest.TestCase):
         path.write_text(path.read_text().replace("basis-1", "basis-2"))
         self.assertEqual(summary.build_report(self.root)["status"], "incomplete")
 
+    def test_changed_baseline_is_not_a_matched_comparison(self):
+        path = self.root / "normalized/low-rank-rank-sweep.log"
+        path.write_text(path.read_text().replace('"content": "before"', '"content": "different"'))
+        self.assertEqual(summary.build_report(self.root)["comparability"], "unmatched")
+
+    def test_legacy_raw_diagnostic_with_empty_mutation_is_preserved(self):
+        path = self.root / "raw/low-rank-rank-sweep.log"
+        records = path.read_text().splitlines()
+        full = next(json.loads(line.split(" ", 1)[1]) for line in records
+                    if line.startswith("flydelta_low_rank_arm "))
+        diagnostic = {**full, "mutation": "", "host_evaluated": False,
+                      "arm_id": "diagnostic:1"}
+        path.write_text("\n".join(records + ["flydelta_low_rank_arm " + json.dumps(diagnostic)]) + "\n")
+        condition = summary.build_report(self.root)["conditions"]["raw"]
+        self.assertEqual(condition["status"], "complete")
+        self.assertEqual(condition["full_arms"], 1)
+        self.assertEqual(condition["arms"][-1]["mutation"], "raw_coefficient_diagnostic")
+
+    def test_empty_mutation_on_host_evaluated_arm_is_invalid(self):
+        path = self.root / "raw/low-rank-rank-sweep.log"
+        path.write_text(path.read_text().replace('"mutation": "full_generation_top_arm"', '"mutation": ""'))
+        self.assertEqual(summary.build_report(self.root)["conditions"]["raw"]["status"], "incomplete")
+
     def test_calibration_overlap_is_rejected(self):
         path = self.root / "normalized/low-rank-rank-sweep.log"
         path.write_text(path.read_text().replace('"source_scenarios": ["scenario-2"]',

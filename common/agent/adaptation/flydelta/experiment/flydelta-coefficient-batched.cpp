@@ -566,6 +566,8 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         if (config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::raw_coefficients) {
             trial.requested_residual_fraction = requested_fractions.at(arm_index + 1);
             trial.mutation_kind = arm_index < coarse_arm_count ? "calibrated_direction" : "dose_refinement";
+        } else {
+            trial.mutation_kind = "raw_coefficient_diagnostic";
         }
         trial.dose_evaluated = arm.dose_evaluated;
         trial.dose_safety_limited = arm.dose_safety_limited;

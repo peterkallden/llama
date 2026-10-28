@@ -86,9 +86,15 @@ def read_condition(root, mode):
                 arm = json.loads(line.split(" ", 1)[1])
                 if not isinstance(arm, dict):
                     raise ValueError("arm must be an object")
-                for field in ("fixture_id", "evaluation_scenario_id", "basis_identity", "mutation", "outcome"):
+                for field in ("fixture_id", "evaluation_scenario_id", "basis_identity", "outcome"):
                     if not isinstance(arm.get(field), str) or not arm[field]:
                         raise ValueError(f"arm {field} must be a nonempty string")
+                mutation = arm.get("mutation")
+                if mutation == "" and mode == "raw" and arm.get("host_evaluated") is False:
+                    # Older raw diagnostic records did not carry a mutation label.
+                    arm["mutation"] = "raw_coefficient_diagnostic"
+                elif not isinstance(mutation, str) or not mutation:
+                    raise ValueError("arm mutation must be a nonempty string")
                 for field in ("requested_rank", "layer"):
                     if type(arm.get(field)) is not int or arm[field] < 0:
                         raise ValueError(f"arm {field} must be a nonnegative integer")
@@ -163,6 +169,8 @@ def read_condition(root, mode):
                 "outcome": arm["outcome"], "verifier_known": arm["verifier_known"],
                 "verifier_reason": arm.get("verifier_reason"), "semantic_progress": arm.get("semantic_progress"),
                 "objective_assessment": arm.get("objective_assessment"),
+                "text_changed": (candidate[0]["content"] != baseline[0]["content"]
+                                 if len(candidate) == 1 and len(baseline) == 1 else None),
                 "dose": {key: arm.get(key) for key in ("requested_coefficients", "coefficients", "dose_safety_limited", "calibration_ref", "requested_coefficient_norm",
                     "executed_coefficient_norm", "requested_residual_fraction", "applied_residual_fraction",
                     "requested_intervention_norm", "applied_intervention_norm", "dose_reason")}, "issues": errors}
@@ -214,6 +222,7 @@ def build_report(root, modes=MODES):
         issues.append("fixture/rank/layer/basis sets differ or are absent between conditions")
     # Compare actual unsteered prompts across conditions as well as within each pair.
     prompts = {}
+    baseline_responses = {}
     for mode, condition in conditions.items():
         for pair in condition["response_pairs"]:
             if pair["baseline"] is not None:
@@ -223,6 +232,11 @@ def build_report(root, modes=MODES):
                     comparable = False
                     issues.append(f"baseline prompt differs across conditions for {key}")
                 prompts[key] = messages
+                response = pair["baseline"]["content"]
+                if key in baseline_responses and baseline_responses[key] != response:
+                    comparable = False
+                    issues.append(f"baseline response differs across conditions for {key}")
+                baseline_responses[key] = response
     if any(condition["status"] != "complete" for condition in conditions.values()):
         issues.append("one or more conditions are incomplete")
     return {"schema": "flydelta-dose-comparison.v1", "production_decision": "pending",
