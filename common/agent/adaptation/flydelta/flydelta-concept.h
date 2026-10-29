@@ -88,6 +88,25 @@ bool common_flydelta_concept_build_config_validate(
         const common_flydelta_concept_build_config & config,
         std::string & error);
 
+// Representation diagnostics only. A usable layer is eligible for WHERE
+// experiments; it is not a host-verified behavioral improvement.
+struct common_flydelta_concept_layer_assessment {
+    int32_t layer_index = -1;
+    size_t trajectories = 0;
+    float median_signal_norm = 0.0f;
+    float median_alignment = 0.0f;
+    bool usable = false;
+    std::string reason;
+};
+
+bool common_flydelta_assess_concept_layer(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_build_config & config,
+        const std::vector<common_flydelta_concept_trajectory> & trajectories,
+        float minimum_alignment,
+        common_flydelta_concept_layer_assessment & assessment,
+        std::string & error);
+
 enum class common_flydelta_concept_candidate_kind {
     raw_mean,
     trimmed_mean,

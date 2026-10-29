@@ -18,6 +18,7 @@
 #include <ctime>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -38,6 +39,7 @@ struct smoke_args {
     int threads = 4;
     int n_predict = 64;
     int n_gpu_layers = -1;
+    std::vector<uint32_t> localization_layers;
 };
 
 int fail(const std::string & message) {
@@ -72,10 +74,34 @@ bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) 
             std::string text;
             if (!next("--n-gpu-layers", text)) return false;
             args.n_gpu_layers = std::stoi(text);
+        } else if (value == "--localization-layers") {
+            std::string text;
+            if (!next("--localization-layers", text)) return false;
+            std::istringstream stream(text);
+            std::string part;
+            try {
+                while (std::getline(stream, part, ',')) {
+                    size_t consumed = 0;
+                    const auto layer = std::stoul(part, &consumed);
+                    if (consumed != part.size() || layer == 0 || layer > UINT32_MAX) {
+                        error = "localization layers must be positive comma-separated integers";
+                        return false;
+                    }
+                    args.localization_layers.push_back(static_cast<uint32_t>(layer));
+                }
+            } catch (const std::exception &) {
+                error = "localization layers must be positive comma-separated integers";
+                return false;
+            }
+            if (args.localization_layers.size() < 2 || args.localization_layers.size() > 8 ||
+                    text.empty() || text.back() == ',') {
+                error = "localization requires two to eight layers";
+                return false;
+            }
         } else if (value == "--help" || value == "-h") {
             std::cout << "usage: " << argv[0]
                       << " --model PATH [--config PATH] [--threads N]"
-                      << " [--n-predict N] [--n-gpu-layers N]\n";
+                      << " [--n-predict N] [--n-gpu-layers N] [--localization-layers L1,L2,...]\n";
             std::exit(0);
         } else {
             error = "unknown argument: " + value;
@@ -92,6 +118,12 @@ bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) 
     }
     if (args.threads < 1 || args.n_predict < 1 || args.n_gpu_layers < -1) {
         error = "threads, n-predict and n-gpu-layers have invalid values";
+        return false;
+    }
+    auto unique_layers = args.localization_layers;
+    std::sort(unique_layers.begin(), unique_layers.end());
+    if (std::adjacent_find(unique_layers.begin(), unique_layers.end()) != unique_layers.end()) {
+        error = "localization layers must be unique";
         return false;
     }
     return true;
@@ -305,6 +337,9 @@ void print_search_summary(
                 {"radius_before", round.radius_before},
                 {"radius_after", round.radius_after},
                 {"probed_layers", round.probed_layers},
+                {"global_probed_layers", round.global_probed_layers},
+                {"guidance_selected_layers", round.guidance_selected_layers},
+                {"guidance_fallback_reason", round.guidance_fallback_reason},
                 {"best_probe_layer", round.best_probe_layer},
                 {"best_probe_score", round.best_probe_score},
             });
@@ -325,6 +360,13 @@ void print_search_summary(
             {"layers", arm.layer_indices},
             {"requested_scale", arm.requested_scale},
             {"executed_scale", arm.executed_scale},
+            {"dose_evaluated", arm.dose_evaluated},
+            {"dose_action", arm.dose_action},
+            {"dose_safety_limited", arm.dose_safety_limited},
+            {"dose_reason", arm.dose_reason},
+            {"execution_class", arm.execution_class},
+            {"frontier_selection_reason", arm.frontier_selection_reason},
+            {"evidence_ref", arm.evidence_ref},
             {"margin_available", arm.margin_available},
             {"margin_delta_total", arm.margin_delta_total},
             {"margin_delta_normalized", arm.margin_delta_normalized},
@@ -421,6 +463,9 @@ int main(int argc, char ** argv) {
     const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model));
     const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model));
     if (n_embd == 0 || n_layers < 3) return fail("resident model dimensions are incompatible");
+    for (const auto layer : args.localization_layers) {
+        if (layer >= n_layers) return fail("localization layer is outside the resident model");
+    }
 
     common_flydelta_evaluator_config evaluator_config;
     common_flydelta_evaluator_callbacks callbacks;
@@ -734,6 +779,97 @@ int main(int argc, char ** argv) {
                 (index == 0 ? "concept-graft-control-residualized" :
                     "concept-graft-positive-prototype"));
         graft_reports.push_back(std::move(graft_report));
+    }
+
+    if (!args.localization_layers.empty()) {
+        if (!callbacks.run_concept_localization_synthesis ||
+                !callbacks.persist_experimental_layer_family_for_job) {
+            return fail("production evaluator does not provide localization callbacks");
+        }
+        const auto & parent = graft_reports.front();
+        common_flydelta_concept_localization_request challenge;
+        challenge.capture_set_ref = "flydelta://smoke/localization/" + suffix;
+        challenge.origin_state_ref = parent.bootstrap_zoom_state_ref;
+        if (challenge.origin_state_ref.empty()) return fail("localization requires a persisted Bootstrap origin");
+        challenge.origin_direction_ref = parent.completed_job.seed.candidate_ref;
+        challenge.layers = args.localization_layers;
+        challenge.max_capture_model_calls = group.relation_refs.size() * challenge.layers.size() * 3;
+        if (!common_flydelta_collect_concept_localization_job(queue_root, {}, parent.completed_job,
+                challenge, collection_result, error) ||
+                collection_result != common_flydelta_experiment_collection_result::enqueued) {
+            return fail("localization capture queue: " + error);
+        }
+        common_flydelta_experiment_worker_report local_capture;
+        if (!common_flydelta_experiment_worker_run_evaluator_once(queue_root, {}, evaluator_config,
+                callbacks, local_capture, error) ||
+                !report_succeeded(local_capture, common_flydelta_experiment_job_kind::concept_capture, error)) {
+            return fail("localization capture: " + error);
+        }
+        std::cout << "flydelta_concept_localization_capture=" << ordered_json{
+            {"layers", challenge.layers}, {"capture_budget", challenge.max_capture_model_calls},
+            {"trajectory_refs", local_capture.concept_trajectory_refs},
+            {"origin_state_ref", challenge.origin_state_ref}, {"trace", ordered_json::parse(local_capture.trace_json)},
+        }.dump() << '\n';
+        if (!common_flydelta_collect_next_action_job(queue_root, {}, local_capture.completed_job,
+                common_flydelta_next_action::run_concept_synthesis, {}, {}, {}, {}, collection_result, error) ||
+                collection_result != common_flydelta_experiment_collection_result::enqueued) {
+            return fail("localization synthesis queue: " + error);
+        }
+        common_flydelta_experiment_worker_report local_synthesis;
+        if (!common_flydelta_experiment_worker_run_evaluator_once(queue_root, {}, evaluator_config,
+                callbacks, local_synthesis, error) ||
+                !report_succeeded(local_synthesis, common_flydelta_experiment_job_kind::concept_synthesis, error)) {
+            return fail("localization synthesis: " + error);
+        }
+        agent_resource_read_authority localization_authority;
+        localization_authority.namespace_id = scope.namespace_id;
+        localization_authority.project_id = scope.project_id;
+        localization_authority.session_id = scope.session_id;
+        localization_authority.turn_id = scope.turn_id;
+        localization_authority.now = static_cast<int64_t>(std::time(nullptr));
+        std::string scan_json;
+        if (!runtime.resource_store->read_text(local_synthesis.concept_localization_assessment_ref,
+                localization_authority, 4U * 1024U * 1024U, scan_json, error)) {
+            return fail("localization scan readback: " + error);
+        }
+        ordered_json family_manifests = ordered_json::array();
+        for (const auto & family_ref : local_synthesis.graft_direction_refs) {
+            std::string family_json;
+            if (!runtime.resource_store->read_text(family_ref, localization_authority,
+                    16U * 1024U * 1024U, family_json, error)) {
+                return fail("localization family readback: " + error);
+            }
+            const auto family = ordered_json::parse(family_json, nullptr, false);
+            if (!family.is_object() || !family.contains("localization")) {
+                return fail("localization family manifest is missing");
+            }
+            family_manifests.push_back({{"reference", family_ref}, {"localization", family.at("localization")}});
+        }
+        const auto scan = ordered_json::parse(scan_json, nullptr, false);
+        if (!scan.is_object()) return fail("localization scan manifest is malformed");
+        std::cout << "flydelta_concept_localization_synthesis=" << ordered_json{
+            {"assessment_ref", local_synthesis.concept_localization_assessment_ref},
+            {"assessment", scan}, {"family_manifests", family_manifests},
+            {"candidate_count", local_synthesis.concept_candidates.size()},
+            {"layer_family_refs", local_synthesis.graft_direction_refs},
+            {"next_action", common_flydelta_next_action_name(local_synthesis.next_action)},
+            {"trace", ordered_json::parse(local_synthesis.trace_json)},
+        }.dump() << '\n';
+        for (const auto & family_ref : local_synthesis.graft_direction_refs) {
+            if (!common_flydelta_collect_next_action_job(queue_root, {}, local_synthesis.completed_job,
+                    common_flydelta_next_action::run_bootstrap, {}, {}, {}, family_ref, collection_result, error) ||
+                    collection_result != common_flydelta_experiment_collection_result::enqueued) {
+                return fail("localization WHERE queue: " + error);
+            }
+            common_flydelta_experiment_worker_report local_search;
+            if (!common_flydelta_experiment_worker_run_evaluator_once(queue_root, {}, evaluator_config,
+                    callbacks, local_search, error) ||
+                    !report_succeeded(local_search, common_flydelta_experiment_job_kind::search_pipeline, error)) {
+                return fail("localization WHERE search: " + error);
+            }
+            print_search_summary(local_search, "concept-localization-whirlpool");
+            std::cout << "flydelta_concept_localization_search_trace=" << local_search.trace_json << '\n';
+        }
     }
 
     std::cout << "flydelta_concept_synthesis_model_smoke=completed"

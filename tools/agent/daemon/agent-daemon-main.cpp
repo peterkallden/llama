@@ -734,7 +734,7 @@ int main(int argc, char ** argv) {
                     group, family_available, reuse_error)) return false;
             if (!family_available) return true;
             common_flydelta_teaching_material_group ready_group;
-            if (!material_runtime->store().resolve_ready_group(
+            if (!material_runtime->resolve_ready_group(
                     group.group_ref, ready_group, reuse_error)) return false;
             if (!ready_group.trajectory_material_ready) return true;
 
@@ -894,7 +894,7 @@ int main(int argc, char ** argv) {
                 return true;
             }
             common_flydelta_teaching_material_group material_group;
-            if (!material_runtime || !material_runtime->store().resolve_ready_group(
+            if (!material_runtime || !material_runtime->resolve_ready_group(
                     job.teaching_material_group_ref, material_group, persist_error)) {
                 if (persist_error.empty()) {
                     // A not-ready group is a normal non-admission outcome;

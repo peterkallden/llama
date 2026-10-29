@@ -640,6 +640,8 @@ int main() {
     persisted_state.anchor_layer = 24;
     persisted_state.selected_scale = 0.1f;
     persisted_state.local_layers = {23, 24, 25};
+    persisted_state.where_origin_ref = "state:inherited-origin";
+    persisted_state.where_status = "challenged_unverified";
     common_flydelta_bootstrap_zoom_candidate selected_arm;
     selected_arm.phase = common_flydelta_bootstrap_zoom_phase::profile_zoom;
     selected_arm.layer_indices = {24, 25};
@@ -676,6 +678,8 @@ int main() {
         lifecycle_ref, resolved_state, error));
     CHECK(resolved_state.state_ref == lifecycle_ref);
     CHECK(resolved_state.anchor_layer == 24);
+    CHECK(resolved_state.where_origin_ref == "state:inherited-origin" &&
+        resolved_state.where_status == "challenged_unverified");
     CHECK(resolved_state.local_layers == std::vector<uint32_t>({23, 24, 25}));
     CHECK(resolved_state.selection.selected &&
         resolved_state.completed_trials.size() == 1 &&

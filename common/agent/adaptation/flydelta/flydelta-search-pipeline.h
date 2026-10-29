@@ -135,6 +135,12 @@ bool common_flydelta_selected_candidate_descriptor_validate(
         const common_flydelta_selected_candidate_descriptor & descriptor,
         std::string & error);
 
+struct common_flydelta_frontier_position {
+    size_t direction_index = 0;
+    size_t trial_index = 0;
+    std::string reason;
+};
+
 struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;
@@ -152,6 +158,12 @@ struct common_flydelta_search_pipeline_result {
     bool alpha_response_available = false;
     common_flydelta_alpha_response_selection alpha_response;
 };
+
+// Choose the bounded full-generation frontier. Global exploration is only
+// eligible when the diagnostic observation is safe and promising.
+std::vector<common_flydelta_frontier_position> common_flydelta_select_region_frontier(
+        const common_flydelta_search_pipeline_result & result, size_t limit);
+
 
 bool common_flydelta_search_pipeline_config_validate(
         const common_flydelta_search_pipeline_config & config,

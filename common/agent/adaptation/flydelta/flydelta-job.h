@@ -27,6 +27,21 @@ bool common_flydelta_experiment_job_kind_from_name(
         const std::string & value,
         common_flydelta_experiment_job_kind & kind);
 
+// Explicit host-authorized challenge. Empty layers retain ordinary local
+// grafting. The origin is a prior; it is never reused as the new search state.
+struct common_flydelta_concept_localization_request {
+    std::string capture_set_ref;
+    std::string origin_state_ref;
+    std::string origin_direction_ref;
+    std::vector<uint32_t> layers;
+    size_t max_capture_model_calls = 0;
+    float minimum_alignment = 0.3f;
+};
+
+bool common_flydelta_concept_localization_request_validate(
+        const common_flydelta_concept_localization_request & request,
+        std::string & error);
+
 // Queue payload for offline FlyDelta work. It contains references and bounds,
 // never prompts, tool output, activation buffers or credentials.
 struct common_flydelta_experiment_job {
@@ -51,6 +66,7 @@ struct common_flydelta_experiment_job {
     std::string representation_augmentation_state_ref;
     // Host-owned, reference-only group of compatible TeachingRelations.
     std::string teaching_material_group_ref;
+    common_flydelta_concept_localization_request concept_localization;
     // Evaluation jobs carry only candidate/suite references and bounded
     // limits. The suite and candidate artifact are resolved by the host.
     std::string evaluation_candidate_id;
@@ -68,6 +84,11 @@ struct common_flydelta_experiment_job {
     // Frozen per-job proposal policy. Missing in legacy jobs means local only.
     size_t whirlpool_global_probes_per_round = 1;
 };
+
+// Stable across capture/synthesis/search follow-ups; changing any immutable
+// teaching, objective or execution binding isolates the material index.
+std::string common_flydelta_concept_localization_material_key(
+        const common_flydelta_experiment_job & job);
 
 bool common_flydelta_experiment_job_validate(
         const common_flydelta_experiment_job & job,

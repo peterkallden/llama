@@ -375,6 +375,50 @@ int main() {
     CHECK(pipeline_refined.job.search_state_ref ==
         "flydelta://state/search/resume");
 
+    auto localization_parent = pipeline_claimed.job;
+    localization_parent.teaching_material_group_ref = "material:localization";
+    common_flydelta_concept_localization_request localization;
+    localization.capture_set_ref = "challenge:localization";
+    localization.origin_state_ref = "state:origin";
+    localization.origin_direction_ref = localization_parent.seed.candidate_ref;
+    localization.layers = {2, 4, 8};
+    localization.max_capture_model_calls = 18;
+    const auto localization_root = root / "localization";
+    CHECK(common_flydelta_collect_concept_localization_job(localization_root, {}, localization_parent,
+        localization, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    CHECK(common_flydelta_collect_concept_localization_job(localization_root, {}, localization_parent,
+        localization, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::already_present);
+    common_flydelta_claimed_experiment_job localization_capture;
+    CHECK(common_flydelta_experiment_queue_claim_next(localization_root, {}, localization_capture, error));
+    CHECK(localization_capture.job.kind == common_flydelta_experiment_job_kind::concept_capture);
+    CHECK(localization_capture.job.bootstrap_zoom_state_ref.empty() && localization_capture.job.search_state_ref.empty());
+    CHECK(localization_capture.job.concept_localization.origin_state_ref == localization.origin_state_ref);
+    CHECK(localization_capture.job.capture_manifest_ids == localization_parent.capture_manifest_ids);
+    CHECK(common_flydelta_collect_next_action_job(localization_root, {}, localization_capture.job,
+        common_flydelta_next_action::run_concept_synthesis, {}, {}, {}, {}, result, error));
+    common_flydelta_claimed_experiment_job localization_synthesis;
+    CHECK(common_flydelta_experiment_queue_claim_next(localization_root, {}, localization_synthesis, error));
+    CHECK(localization_synthesis.job.kind == common_flydelta_experiment_job_kind::concept_synthesis);
+    CHECK(common_flydelta_collect_next_action_job(localization_root, {}, localization_synthesis.job,
+        common_flydelta_next_action::run_bootstrap, "state:old", "state:old-search", {}, "direction:layer-family", result, error));
+    common_flydelta_claimed_experiment_job localization_search;
+    CHECK(common_flydelta_experiment_queue_claim_next(localization_root, {}, localization_search, error));
+    CHECK(localization_search.job.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(localization_search.job.bootstrap_zoom_state_ref.empty() && localization_search.job.search_state_ref.empty());
+    CHECK(localization_search.job.seed.baseline_ref == localization_parent.seed.baseline_ref);
+    CHECK(localization_search.job.seed.candidate_ref == "direction:layer-family");
+    CHECK(localization_search.job.concept_localization.layers == localization.layers);
+    CHECK(common_flydelta_concept_localization_material_key(localization_capture.job) ==
+        common_flydelta_concept_localization_material_key(localization_search.job));
+    // The next HOW-MUCH slice resumes the new state rather than restarting WHERE.
+    CHECK(common_flydelta_collect_next_action_job(localization_root, {}, localization_search.job,
+        common_flydelta_next_action::run_bootstrap, "state:relocalized", {}, {}, {}, result, error));
+    common_flydelta_claimed_experiment_job localized_resume;
+    CHECK(common_flydelta_experiment_queue_claim_next(localization_root, {}, localized_resume, error));
+    CHECK(localized_resume.job.bootstrap_zoom_state_ref == "state:relocalized");
+
     std::filesystem::remove_all(root, ignored);
     return 0;
 }

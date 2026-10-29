@@ -1,8 +1,10 @@
 #include "agent-daemon-flydelta-internal.h"
 
 #include "agent/agent-residual-patch.h"
+#include "agent/adaptation/flydelta/flydelta-search-budget.h"
 
 #include <iterator>
+#include <iostream>
 
 namespace agent_daemon_flydelta_internal {
 
@@ -33,9 +35,11 @@ bool daemon_flydelta_uses_forced_context_capture(
 
 } // namespace
 
-bool daemon_flydelta_run_concept_capture(
+static bool daemon_flydelta_run_concept_capture_at_layer(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
+        int32_t requested_layer,
+        const std::string & requested_relation,
         std::vector<std::string> & trajectory_refs,
         std::string & error) {
     error.clear();
@@ -47,7 +51,7 @@ bool daemon_flydelta_run_concept_capture(
         return false;
     }
     common_flydelta_teaching_material_group group;
-    if (!provider->teaching_material_runtime->store().resolve_relation_set(
+    if (!provider->teaching_material_runtime->resolve_relation_set(
             job.teaching_material_group_ref, group, error)) return false;
     if (!group.relation_set_ready || group.relation_refs.size() < group.minimum_relations) {
         error = "FlyDelta concept capture requires a relation-ready teaching material group";
@@ -56,22 +60,41 @@ bool daemon_flydelta_run_concept_capture(
 
     daemon_flydelta_concept_target target;
     if (!daemon_flydelta_resolve_concept_target(provider, job, target, error)) return false;
+    const bool challenge = !job.concept_localization.layers.empty();
+    if (challenge) target.layer_index = requested_layer;
 
     std::vector<daemon_flydelta_concept_relation_material> materials;
     materials.reserve(group.relation_refs.size());
     for (const auto & relation_ref : group.relation_refs) {
+        if (!requested_relation.empty() && relation_ref != requested_relation) continue;
+        if (challenge) {
+            const auto saved = std::find_if(group.layer_trajectories.begin(), group.layer_trajectories.end(),
+                [&](const auto & entry) {
+                    return entry.layer_index == requested_layer && entry.relation_ref == relation_ref &&
+                        entry.capture_set_ref == common_flydelta_concept_localization_material_key(job);
+                });
+            if (saved != group.layer_trajectories.end()) {
+                trajectory_refs.push_back(saved->trajectory_ref);
+                continue;
+            }
+        }
         daemon_flydelta_concept_relation_material material;
         if (!daemon_flydelta_parse_teaching_relation(*provider, relation_ref, material, error)) {
             return false;
         }
+        material.relation_resource_ref = relation_ref;
         if (material.relation.behavior_key != group.behavior_key ||
                 material.relation.teaching_key != group.teaching_key ||
-                material.relation.control_ref.empty()) {
+                material.relation.control_ref.empty() || !material.relation.host_approved ||
+                (challenge && (material.relation.scope.namespace_id != job.seed.scope.namespace_id ||
+                    material.relation.scope.project_id != job.seed.scope.project_id ||
+                    material.relation.scope.session_id != job.seed.scope.session_id))) {
             error = "FlyDelta concept relation is incompatible with its material group";
             return false;
         }
         common_flydelta_concept_capture_plan plan;
-        const std::string plan_identity = job.id + "\n" + relation_ref;
+        const std::string plan_identity = job.id + "\n" + relation_ref +
+            (challenge ? "\nlayer:" + std::to_string(target.layer_index) : std::string{});
         plan.id = "flydelta://concept-plan/" +
             hash_sha256_hex(plan_identity.data(), plan_identity.size()).substr(0, 32);
         plan.group_ref = job.teaching_material_group_ref;
@@ -87,11 +110,17 @@ bool daemon_flydelta_run_concept_capture(
         material.parent_surface_ref = target.parent_surface_ref;
         material.parent_surface_revision = target.parent_surface_revision;
         material.parent_evidence_rank = target.parent_evidence_rank;
+        material.capture_set_ref = common_flydelta_concept_localization_material_key(job);
+        if (challenge) material.capture_identity = group.identity;
         materials.push_back(std::move(material));
     }
 
+    if (materials.empty()) return !trajectory_refs.empty();
     common_flydelta_arm_batch_request batch;
-    batch.batch_id = job.id + ":concept-capture";
+    batch.batch_id = job.id + ":concept-capture" +
+        (challenge ? ":layer:" + std::to_string(requested_layer) + ":relation:" +
+            hash_sha256_hex(requested_relation.data(), requested_relation.size()).substr(0, 24)
+            : std::string{});
     batch.wave_id = "concept-capture";
     struct capture_binding {
         size_t material_index = 0;
@@ -134,7 +163,9 @@ bool daemon_flydelta_run_concept_capture(
             arm.max_generated_tokens = std::max<size_t>(
                 64U, provider->n_predict > 0 ? provider->n_predict : 64U);
             const std::string identity = job.id + "\n" + material.relation.id + "\n" +
-                std::to_string(side) + "\n" + contexts[side];
+                std::to_string(side) + "\n" + contexts[side] +
+                (challenge ? "\nlayer:" + std::to_string(material.layer_index) +
+                    "\nrelation:" + material.relation_resource_ref : std::string{});
             arm.arm_id = "flydelta://concept-arm/" +
                 hash_sha256_hex(identity.data(), identity.size()).substr(0, 32);
             if (!common_flydelta_arm_request_validate(arm, error)) return false;
@@ -148,8 +179,47 @@ bool daemon_flydelta_run_concept_capture(
     }
 
     common_flydelta_arm_batch_result batch_result;
-    if (!daemon_flydelta_execute_batch(provider, batch, batch_result, error) ||
-            batch_result.arms.size() != batch.arms.size()) {
+    std::string attempt_ref;
+    common_flydelta_search_consumption consumption;
+    if (challenge) {
+        if (!provider->lifecycle_store) {
+            error = "FlyDelta localization capture requires a durable execution journal";
+            return false;
+        }
+        std::vector<std::string> logical_ids;
+        for (const auto & arm : batch.arms) logical_ids.push_back(arm.arm_id);
+        if (!common_flydelta_begin_search_execution(*provider->lifecycle_store, job, 0,
+                job.concept_localization.max_capture_model_calls, logical_ids, batch.batch_id,
+                3, attempt_ref, consumption, error)) return false;
+    }
+    const bool executed = daemon_flydelta_execute_batch(provider, batch, batch_result, error);
+    if (challenge) {
+        size_t completed = 0;
+        for (const auto & arm : batch_result.arms) if (arm.executed) ++completed;
+        std::string journal_error;
+        if (!common_flydelta_finish_search_execution(*provider->lifecycle_store, job,
+                attempt_ref, completed, executed, journal_error)) {
+            error = journal_error;
+            return false;
+        }
+        if (!common_flydelta_load_search_consumption(*provider->lifecycle_store, job, 0,
+                job.concept_localization.max_capture_model_calls, consumption, journal_error)) {
+            error = journal_error;
+            return false;
+        }
+        if (provider->host && provider->host->config().agent_trace) {
+            std::clog << "[flydelta] concept_localization_capture " << json{
+                {"job_id", job.id}, {"capture_set_ref", job.concept_localization.capture_set_ref},
+                {"layer_index", requested_layer}, {"relation_ref", requested_relation},
+                {"attempt_ref", attempt_ref}, {"logical_used", consumption.logical_used},
+                {"logical_limit", job.concept_localization.max_capture_model_calls},
+                {"physical_rows_started", consumption.physical_rows_started},
+                {"physical_rows_completed", consumption.physical_rows_completed},
+                {"physical_rows_unresolved", consumption.physical_rows_unresolved},
+            }.dump() << '\n';
+        }
+    }
+    if (!executed || batch_result.arms.size() != batch.arms.size()) {
         if (error.empty()) error = "FlyDelta concept capture batch returned incomplete arms";
         return false;
     }
@@ -204,9 +274,73 @@ bool daemon_flydelta_run_concept_capture(
                 baseline_result.verifier_violation_kind,
                 baseline_result.verifier_violation_dimensions,
                 trajectory_ref, error)) return false;
+        if (challenge && !provider->teaching_material_runtime->observe_layer_trajectory(
+                job.teaching_material_group_ref, material.layer_index, material.relation_resource_ref,
+                trajectory_ref, error, material.capture_set_ref)) return false;
         trajectory_refs.push_back(std::move(trajectory_ref));
     }
     return !trajectory_refs.empty();
+}
+
+bool daemon_flydelta_run_concept_capture(
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<std::string> & trajectory_refs, std::string & error) {
+    trajectory_refs.clear();
+    if (!common_flydelta_concept_localization_request_validate(job.concept_localization, error)) return false;
+    if (job.concept_localization.layers.empty()) {
+        return daemon_flydelta_run_concept_capture_at_layer(provider, job, 0, {}, trajectory_refs, error);
+    }
+    provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
+    if (!provider || !provider->teaching_material_runtime) {
+        error = "FlyDelta localization requires a teaching-material runtime";
+        return false;
+    }
+    common_flydelta_teaching_material_group group;
+    if (!provider->teaching_material_runtime->resolve_relation_set(
+            job.teaching_material_group_ref, group, error)) return false;
+    if (!group.relation_set_ready || group.relation_refs.size() > 64 ||
+            group.compatibility_key != common_flydelta_teaching_material_compatibility_key(
+                provider->teaching_material_runtime->identity()) ||
+            group.identity.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+            group.identity.tokenizer_fingerprint != job.seed.tokenizer_fingerprint ||
+            group.identity.template_fingerprint != job.seed.template_fingerprint ||
+            group.identity.execution_context_fingerprint != job.seed.execution_context_fingerprint ||
+            group.identity.capture_layout_revision != provider->capture_layout_revision ||
+            group.relation_refs.size() * job.concept_localization.layers.size() * 3 >
+                job.concept_localization.max_capture_model_calls) {
+        error = "FlyDelta localization material is incompatible or exceeds its capture budget";
+        return false;
+    }
+    std::set<std::string> relation_ids;
+    for (const auto & ref : group.relation_refs) {
+        daemon_flydelta_concept_relation_material material;
+        if (!daemon_flydelta_parse_teaching_relation(*provider, ref, material, error)) return false;
+        if (!material.relation.host_approved || material.relation.teaching_key != group.teaching_key ||
+                material.relation.behavior_key != group.behavior_key ||
+                material.relation.scope.namespace_id != job.seed.scope.namespace_id ||
+                material.relation.scope.project_id != job.seed.scope.project_id ||
+                material.relation.scope.session_id != job.seed.scope.session_id ||
+                !relation_ids.insert(material.relation.id).second) {
+            error = "FlyDelta localization requires distinct approved relations in its job scope";
+            return false;
+        }
+    }
+    for (const auto layer : job.concept_localization.layers) {
+        if (layer >= provider->model_n_layers) {
+            error = "FlyDelta localization layer is outside the model";
+            return false;
+        }
+    }
+    for (const auto layer : job.concept_localization.layers) {
+        for (const auto & relation_ref : group.relation_refs) {
+            std::vector<std::string> refs;
+            if (!daemon_flydelta_run_concept_capture_at_layer(provider, job,
+                    static_cast<int32_t>(layer), relation_ref, refs, error)) return false;
+            trajectory_refs.insert(trajectory_refs.end(), refs.begin(), refs.end());
+        }
+    }
+    return true;
 }
 
 } // namespace agent_daemon_flydelta_internal

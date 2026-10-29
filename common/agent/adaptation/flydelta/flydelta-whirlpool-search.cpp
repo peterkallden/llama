@@ -175,7 +175,6 @@ bool common_flydelta_whirlpool_trace_validate(
         if (round.round >= config.max_rounds || round.centre_before == 0 ||
                 round.radius_before == 0 || round.probed_layers.empty() ||
                 round.probed_layers.size() > config.probes_per_round ||
-                round.best_probe_layer == 0 ||
                 !std::isfinite(round.best_probe_score) || round.centre_after == 0 ||
                 round.radius_after == 0) {
             error = "FlyDelta Whirlpool round trace is invalid";
@@ -301,7 +300,7 @@ bool common_flydelta_run_whirlpool_search_batched(
     uint32_t radius = config.initial_radius;
     std::vector<uint32_t> visited;
     float best_objective = -std::numeric_limits<float>::infinity();
-    size_t best_trial = 0;
+    size_t best_trial = static_cast<size_t>(-1);
     std::unordered_map<uint32_t, common_flydelta_dose_state> dose_states;
 
     for (size_t round = 0; round < config.max_rounds && trials.size() < config.max_trials;
@@ -371,6 +370,8 @@ bool common_flydelta_run_whirlpool_search_batched(
                     request.candidates, decision.mixed_policy_order);
                 round_trace.guidance_selected_layers = layers_for_order(
                     request.candidates, decision.selected_order);
+                if (round_trace.guidance_selected_layers.size() > request.selection_limit)
+                    round_trace.guidance_selected_layers.resize(request.selection_limit);
                 round_trace.guidance_history_fingerprint = decision.history_fingerprint;
                 round_trace.guidance_fallback_reason = decision.fallback_reason;
                 if (!decision.shadow_mode && decision.fallback_reason.empty() &&
@@ -392,12 +393,12 @@ bool common_flydelta_run_whirlpool_search_batched(
         }
         if (round_probes.size() > local_limit) round_probes.resize(local_limit);
         for (const auto layer : global_layers) round_probes.push_back(layer);
-        round_trace.global_probed_layers = global_layers;
         std::vector<common_flydelta_intervention_region_candidate> candidates;
         for (const uint32_t layer : round_probes) {
             if (contains(visited, layer) || trials.size() + candidates.size() >= config.max_trials) continue;
             visited.push_back(layer);
             round_trace.probed_layers.push_back(layer);
+            if (contains(global_layers, layer)) round_trace.global_probed_layers.push_back(layer);
             common_flydelta_intervention_region_candidate candidate;
             candidate.layer_indices = {layer};
             candidate.anchor_layer_index = layer;
@@ -406,9 +407,6 @@ bool common_flydelta_run_whirlpool_search_batched(
             candidate.source = common_flydelta_layer_search_candidate_source::diagnostic_singleton;
 
             candidates.push_back(std::move(candidate));
-        }
-        if (!round_trace.guidance_decision_id.empty()) {
-            round_trace.guidance_selected_layers = round_trace.probed_layers;
         }
 
         std::vector<common_flydelta_counterfactual_trial> batch_trials;
@@ -538,7 +536,8 @@ bool common_flydelta_run_whirlpool_search_batched(
             region_trial.geometry_available = geometry_available;
             region_trial.geometry = geometry;
             region_trial.safe_to_continue = safe_geometry(
-                geometry, geometry_available, config);
+                geometry, geometry_available, config) &&
+                (!region_trial.dose_evaluated || region_trial.dose_action == common_flydelta_dose_action::accept);
             region_trial.promising = region_trial.outcome ==
                 common_flydelta_counterfactual_outcome::helped ||
                 (region_trial.safe_to_continue && geometry_available && geometry.progress > 0.0f) ||
@@ -549,11 +548,13 @@ bool common_flydelta_run_whirlpool_search_batched(
             region_trial.evidence_ref = counterfactual.evidence_ref;
             trials.push_back(std::move(region_trial));
             const auto & stored = trials.back();
-            if (stored.search_score > best_objective) {
+            // WHERE navigation uses the diagnostic objective. Admission for
+            // continuation remains a separate host decision.
+            if (stored.executed && stored.search_score > best_objective) {
                 best_objective = stored.search_score;
                 best_trial = trials.size() - 1;
             }
-            if (stored.search_score > round_best) {
+            if (stored.executed && stored.search_score > round_best) {
                 round_best = stored.search_score;
                 round_centre = candidate.anchor_layer_index;
                 found_round_candidate = true;
@@ -574,7 +575,7 @@ bool common_flydelta_run_whirlpool_search_batched(
         round_trace.radius_after = radius;
         if (!round_trace.probed_layers.empty()) trace.rounds.push_back(std::move(round_trace));
         if (radius == 1 && round + 1 >= config.max_rounds) break;
-        if (best_trial >= trials.size()) break;
+
     }
 
     float best_helped_score = -std::numeric_limits<float>::infinity();
@@ -592,7 +593,7 @@ bool common_flydelta_run_whirlpool_search_batched(
         }
     }
     trace.best_trial_index = best_trial;
-    trace.best_search_score = best_objective;
+    trace.best_search_score = best_trial == static_cast<size_t>(-1) ? 0.0f : best_objective;
     trace.final_centre = centre;
     trace.final_radius = radius;
     if (!common_flydelta_whirlpool_trace_validate(trace, config, trials.size(), error)) {

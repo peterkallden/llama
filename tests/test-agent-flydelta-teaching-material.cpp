@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <memory>
+#include <thread>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -75,12 +76,38 @@ int main() {
     CHECK(store.resolve_ready_group("flydelta://teaching-material/missing", resolved, error));
     CHECK(!resolved.trajectory_material_ready);
 
+    // Layer-local readiness must count distinct authorized relations, never
+    // combine trajectories from different layers or alter the legacy group.
+    CHECK(store.observe_layer_trajectory(group.group_ref, 12, "relation:1", "trajectory://12-1", material_identity, error));
+    CHECK(store.observe_layer_trajectory(group.group_ref, 12, "relation:1", "trajectory://12-1", material_identity, error));
+    CHECK(store.observe_layer_trajectory(group.group_ref, 13, "relation:2", "trajectory://13-2", material_identity, error));
+    CHECK(store.resolve_layer_group(group.group_ref, 12, resolved, error));
+    CHECK(!resolved.trajectory_material_ready);
+    CHECK(!store.observe_layer_trajectory(group.group_ref, 12, "relation:1", "trajectory://conflict", material_identity, error));
+    CHECK(!store.observe_layer_trajectory(group.group_ref, 12, "relation:missing", "trajectory://missing", material_identity, error));
+    CHECK(!store.observe_layer_trajectory(group.group_ref, 13, "relation:1", "trajectory://12-1", material_identity, error));
+    CHECK(store.observe_layer_trajectory(group.group_ref, 12, "relation:2", "trajectory://12-2", material_identity, error));
+    CHECK(store.resolve_layer_group(group.group_ref, 12, resolved, error));
+    CHECK(resolved.trajectory_material_ready && resolved.trajectory_refs.size() == 2);
+    CHECK(store.resolve_layer_group(group.group_ref, 13, resolved, error));
+    CHECK(!resolved.trajectory_material_ready);
+
+    CHECK(store.observe_layer_trajectory(group.group_ref, 12, "relation:1", "trajectory://challenge-1", material_identity, error, "set:one"));
+    CHECK(store.observe_layer_trajectory(group.group_ref, 12, "relation:2", "trajectory://challenge-2", material_identity, error, "set:two"));
+    CHECK(store.resolve_layer_group(group.group_ref, 12, resolved, error, "set:one"));
+    CHECK(!resolved.trajectory_material_ready);
+    CHECK(store.resolve_layer_group(group.group_ref, 12, resolved, error, "set:two"));
+    CHECK(!resolved.trajectory_material_ready);
     const auto snapshot = common_flydelta_teaching_material_store_to_json(store);
     common_flydelta_teaching_material_store restored;
     CHECK(common_flydelta_teaching_material_store_from_json(snapshot, restored, error));
     CHECK(restored.groups().size() == store.groups().size());
     CHECK(restored.groups().front().relation_refs.size() == 2);
     CHECK(restored.groups().front().trajectory_material_ready);
+    CHECK(restored.resolve_layer_group(group.group_ref, 12, resolved, error));
+    CHECK(resolved.trajectory_material_ready && resolved.trajectory_refs.size() == 2);
+    CHECK(restored.resolve_layer_group(group.group_ref, 13, resolved, error));
+    CHECK(!resolved.trajectory_material_ready);
     auto legacy_snapshot = nlohmann::ordered_json::parse(snapshot);
     for (auto & item : legacy_snapshot["groups"]) {
         item.erase("relation_set_ready");
@@ -120,6 +147,32 @@ int main() {
         "dataset.missing", "tool_choice/dataset/grouped_sum",
         family_group, family_available, error));
     CHECK(!family_available);
+
+    // Concurrent workers update the same durable index through the runtime
+    // facade. Neither completed relation may be lost from the saved snapshot.
+    std::string concurrent_snapshot;
+    common_flydelta_teaching_material_persistence concurrent_persistence;
+    concurrent_persistence.save = [&](const std::string & snapshot, std::string &) {
+        concurrent_snapshot = snapshot;
+        return true;
+    };
+    common_flydelta_teaching_material_runtime concurrent_runtime(material_identity, concurrent_persistence);
+    CHECK(concurrent_runtime.observe_relation(relation("relation:parallel-1"), error));
+    CHECK(concurrent_runtime.observe_relation(relation("relation:parallel-2"), error));
+    const auto concurrent_group = concurrent_runtime.store().groups().front().group_ref;
+    bool first_saved = false, second_saved = false;
+    std::string first_error, second_error;
+    std::thread first([&] { first_saved = concurrent_runtime.observe_layer_trajectory(
+        concurrent_group, 12, "relation:parallel-1", "trajectory:parallel-1", first_error, "set:parallel"); });
+    std::thread second([&] { second_saved = concurrent_runtime.observe_layer_trajectory(
+        concurrent_group, 12, "relation:parallel-2", "trajectory:parallel-2", second_error, "set:parallel"); });
+    first.join();
+    second.join();
+    CHECK(first_saved && second_saved);
+    common_flydelta_teaching_material_store concurrent_restored;
+    CHECK(common_flydelta_teaching_material_store_from_json(concurrent_snapshot, concurrent_restored, error));
+    CHECK(concurrent_restored.resolve_layer_group(concurrent_group, 12, resolved, error, "set:parallel"));
+    CHECK(resolved.trajectory_material_ready && resolved.trajectory_refs.size() == 2);
 
     common_flydelta_representation_augmentation_action action;
     CHECK(common_flydelta_select_concept_synthesis_escape(false, true, action, error));
@@ -265,5 +318,53 @@ int main() {
         capture_job, evaluator_config, capture_callbacks, capture_result, error));
     CHECK(capture_result.concept_trajectory_refs.size() == 2);
     CHECK(capture_result.next_action == common_flydelta_next_action::run_concept_synthesis);
+    // The challenge freezes its inputs across queue serialization and uses
+    // its own layer-family persister, never the ordinary paired/local graft.
+    auto challenge = job;
+    challenge.concept_localization.capture_set_ref = "challenge:one";
+    challenge.concept_localization.origin_state_ref = "state:origin";
+    challenge.concept_localization.origin_direction_ref = challenge.seed.candidate_ref;
+    challenge.concept_localization.layers = {12, 14};
+    challenge.concept_localization.max_capture_model_calls = 12;
+    CHECK(common_flydelta_experiment_job_from_json(common_flydelta_experiment_job_to_json(challenge), decoded, error));
+    CHECK(decoded.concept_localization.layers == challenge.concept_localization.layers);
+    CHECK(common_flydelta_concept_localization_material_key(decoded) == common_flydelta_concept_localization_material_key(challenge));
+    decoded.seed.baseline_ref = "baseline:other";
+    CHECK(common_flydelta_concept_localization_material_key(decoded) != common_flydelta_concept_localization_material_key(challenge));
+    auto invalid_challenge = challenge;
+    invalid_challenge.concept_localization.layers = {12, 12};
+    CHECK(!common_flydelta_experiment_job_validate(invalid_challenge, 8, error));
+    callbacks.run_concept_localization_synthesis = [&](const auto & request,
+            std::vector<common_flydelta_concept_candidate> & output, std::string & assessment_ref, std::string & callback_error) {
+        if (!callbacks.run_concept_synthesis(request, output, callback_error)) return false;
+        const auto original = output;
+        for (auto candidate : original) {
+            candidate.layer_index = 14;
+            candidate.extraction_id += ":layer14";
+            candidate.values = {0, 1, 0};
+            output.push_back(std::move(candidate));
+        }
+        assessment_ref = "scan:one";
+        return true;
+    };
+    size_t persisted_families = 0;
+    callbacks.persist_experimental_layer_family_for_job = [&](const auto &, const auto & directions,
+            const std::string & assessment_ref, std::string & reference, std::string &) {
+        if (assessment_ref != "scan:one" || directions.size() != 2 ||
+                directions[0].layer_index != 12 || directions[1].layer_index != 14 ||
+                directions[0].values == directions[1].values) return false;
+        reference = "family:" + std::to_string(++persisted_families);
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(challenge, evaluator_config, callbacks, evaluator_result, error));
+    CHECK(persisted_families == 2 && evaluator_result.graft_direction_refs.size() == 2);
+    CHECK(evaluator_result.concept_localization_assessment_ref == "scan:one");
+    callbacks.run_concept_localization_synthesis = [](const auto &, auto & output, std::string & ref, std::string &) {
+        output.clear();
+        ref = "scan:no-signal";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(challenge, evaluator_config, callbacks, evaluator_result, error));
+    CHECK(evaluator_result.next_action == common_flydelta_next_action::retain && evaluator_result.graft_direction_refs.empty());
     return 0;
 }

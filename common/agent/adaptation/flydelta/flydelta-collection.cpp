@@ -103,6 +103,43 @@ bool common_flydelta_collect_experiment_job(
     return true;
 }
 
+bool common_flydelta_collect_concept_localization_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & parent_job,
+        const common_flydelta_concept_localization_request & request,
+        common_flydelta_experiment_collection_result & result, std::string & error) {
+    result = common_flydelta_experiment_collection_result::disabled;
+    error.clear();
+    if (queue_root.empty() || parent_job.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+            !common_flydelta_experiment_job_validate(parent_job, 128, error) || request.layers.empty() ||
+            !common_flydelta_concept_localization_request_validate(request, error) ||
+            request.origin_direction_ref != parent_job.seed.candidate_ref) {
+        if (error.empty()) error = "FlyDelta concept localization requires an explicit request and valid search parent";
+        return false;
+    }
+    auto job = parent_job;
+    job.kind = common_flydelta_experiment_job_kind::concept_capture;
+    job.concept_localization = request;
+    job.bootstrap_zoom_state_ref.clear();
+    job.search_state_ref.clear();
+    job.representation_augmentation_state_ref.clear();
+    job.capture_candidate_ids.clear();
+    job.training_example_ids.clear();
+    const auto identity = common_flydelta_concept_localization_material_key(job) + "\n" + parent_job.id;
+    job.id = "flydelta://job/concept-localization/" + hash_sha256_hex(identity.data(), identity.size());
+    if (!common_flydelta_experiment_job_validate(job, 128, error)) return false;
+    bool contains = false;
+    if (!common_flydelta_experiment_queue_contains(queue_root, job.id, contains, error)) return false;
+    if (contains) {
+        result = common_flydelta_experiment_collection_result::already_present;
+        return true;
+    }
+    if (!common_flydelta_experiment_queue_enqueue(queue_root, job, queue_limits, error)) return false;
+    result = common_flydelta_experiment_collection_result::enqueued;
+    return true;
+}
+
 bool common_flydelta_collect_refinement_job(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & queue_limits,
@@ -244,6 +281,11 @@ bool common_flydelta_collect_next_action_job(
         // candidate_ref, but resumes HOW MUCH at the existing WHERE anchor.
         follow_up.search_state_ref.clear();
         follow_up.representation_augmentation_state_ref.clear();
+        if (!follow_up.concept_localization.layers.empty()) {
+            // Layer-specific material permits a fresh WHERE challenge. The
+            // old origin remains immutable provenance, not a resume handle.
+            follow_up.bootstrap_zoom_state_ref.clear();
+        }
     }
     if (follow_up.id.size() > 512) {
         error = "FlyDelta next-action job identity exceeds its bound";

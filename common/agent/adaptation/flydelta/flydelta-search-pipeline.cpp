@@ -633,3 +633,47 @@ bool common_flydelta_append_search_pipeline_lifecycle(
     }
     return true;
 }
+
+std::vector<common_flydelta_frontier_position> common_flydelta_select_region_frontier(
+        const common_flydelta_search_pipeline_result & result, size_t limit) {
+    std::vector<common_flydelta_frontier_position> ranked;
+    for (size_t d = 0; d < result.directions.size(); ++d) {
+        for (size_t t = 0; t < result.directions[d].region_trials.size(); ++t) {
+            if (result.directions[d].region_trials[t].executed) ranked.push_back({d, t, "ranked"});
+        }
+    }
+    const auto trial = [&](const auto & p) -> const common_flydelta_intervention_region_trial & {
+        return result.directions[p.direction_index].region_trials[p.trial_index];
+    };
+    std::stable_sort(ranked.begin(), ranked.end(), [&](const auto & a, const auto & b) {
+        const auto & x = trial(a); const auto & y = trial(b);
+        if (x.search_score != y.search_score) return x.search_score > y.search_score;
+        if (x.candidate.layer_indices.size() != y.candidate.layer_indices.size())
+            return x.candidate.layer_indices.size() < y.candidate.layer_indices.size();
+        return x.candidate.total_scale < y.candidate.total_scale;
+    });
+    auto global = std::find_if(ranked.begin(), ranked.end(), [&](const auto & p) {
+        const auto & x = trial(p);
+        if (!x.safe_to_continue || !x.promising ||
+                (x.dose_evaluated && x.dose_action != common_flydelta_dose_action::accept) ||
+                x.outcome == common_flydelta_counterfactual_outcome::harmed) return false;
+        const auto & rounds = result.directions[p.direction_index].whirlpool_trace.rounds;
+        for (const auto & round : rounds) {
+            if (std::find(round.global_probed_layers.begin(), round.global_probed_layers.end(),
+                    x.candidate.anchor_layer_index) != round.global_probed_layers.end()) return true;
+        }
+        return false;
+    });
+    const bool has_global = global != ranked.end();
+    common_flydelta_frontier_position global_position;
+    if (has_global) global_position = *global;
+    if (ranked.size() > limit) ranked.resize(limit);
+    if (has_global && !ranked.empty()) {
+        const auto existing = std::find_if(ranked.begin(), ranked.end(), [&](const auto & p) {
+            return p.direction_index == global_position.direction_index && p.trial_index == global_position.trial_index;
+        });
+        if (existing != ranked.end()) existing->reason = "ranked_global";
+        else { global_position.reason = "reserved_global"; ranked.back() = global_position; }
+    }
+    return ranked;
+}

@@ -53,6 +53,9 @@ int main() {
     const auto group_ref = runtime->store().groups().front().group_ref;
     CHECK(runtime->observe_trajectory(group_ref, "trajectory://one", error));
     CHECK(runtime->observe_trajectory(group_ref, "trajectory://two", error));
+    CHECK(runtime->observe_layer_trajectory(group_ref, 4, "one", "trajectory://layer-four-one", error, "set:one"));
+    CHECK(runtime->observe_layer_trajectory(group_ref, 4, "two", "trajectory://layer-four-two", error, "set:one"));
+    CHECK(runtime->observe_layer_trajectory(group_ref, 5, "one", "trajectory://layer-five-one", error, "set:one"));
 
     runtime.reset();
     auto reopened = make_agent_flydelta_teaching_material_runtime(
@@ -63,6 +66,13 @@ int main() {
     CHECK(reopened->inspect_group(group_ref, relation_ready, trajectory_ready, error));
     CHECK(relation_ready && trajectory_ready);
     CHECK(reopened->store().groups().front().trajectory_refs.size() == 2);
+    common_flydelta_teaching_material_group layer_group;
+    CHECK(reopened->resolve_layer_group(group_ref, 4, layer_group, error, "set:one"));
+    CHECK(layer_group.trajectory_material_ready && layer_group.trajectory_refs.size() == 2);
+    CHECK(reopened->resolve_layer_group(group_ref, 5, layer_group, error, "set:one"));
+    CHECK(!layer_group.trajectory_material_ready);
+    CHECK(reopened->resolve_layer_group(group_ref, 4, layer_group, error, "set:other"));
+    CHECK(!layer_group.trajectory_material_ready);
     fs::remove(path, ignored);
     return 0;
 }

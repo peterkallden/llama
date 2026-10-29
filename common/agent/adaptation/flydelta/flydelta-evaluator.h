@@ -91,6 +91,12 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_experiment_job & job,
             std::vector<common_flydelta_concept_candidate> & candidates,
             std::string & error)> run_concept_synthesis;
+    // The same synthesis path with a durable representation-scan manifest.
+    // Required only for an explicitly authorized layer-local challenge.
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            std::vector<common_flydelta_concept_candidate> & candidates,
+            std::string & assessment_ref, std::string & error)> run_concept_localization_synthesis;
     // Optional host-owned seams for the decision-output-margin challenger.
     // The evaluator never invents a pair or a model row; absent providers
     // leave the existing synthesis portfolio unchanged.
@@ -118,6 +124,11 @@ struct common_flydelta_evaluator_callbacks {
             const common_flydelta_direction_candidate & candidate,
             std::string & direction_ref,
             std::string & error)> persist_experimental_direction_for_job;
+    std::function<bool(
+            const common_flydelta_experiment_job & job,
+            const std::vector<common_flydelta_concept_candidate> & layer_candidates,
+            const std::string & assessment_ref,
+            std::string & direction_ref, std::string & error)> persist_experimental_layer_family_for_job;
     // Persists one paired prefer/avoid basis as a single immutable composed
     // artifact. The artifact is still experimental and is resolved through
     // the ordinary candidate_ref path on the next search job.
@@ -275,6 +286,7 @@ struct common_flydelta_evaluator_result {
     bool has_paired_intervention = false;
     common_flydelta_paired_intervention_proposal paired_intervention;
     std::vector<std::string> concept_trajectory_refs;
+    std::string concept_localization_assessment_ref;
     // Opaque intervention reference for the next ordinary search surface.
     std::string graft_direction_ref;
     // Persisted portfolio refs for independent bounded frontier searches.

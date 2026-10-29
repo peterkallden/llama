@@ -46,6 +46,7 @@ struct common_flydelta_trace_arm {
     float leakage = 0.0f;
     float shift_norm = 0.0f;
     float search_score = 0.0f;
+    std::string frontier_selection_reason;
     bool promising = false;
     bool safe_to_continue = false;
     std::string execution_class;
@@ -83,12 +84,15 @@ struct common_flydelta_trace_arm {
 };
 
 struct common_flydelta_trace {
+    common_flydelta_concept_localization_request concept_localization;
     int schema_version = 1;
     std::string job_id;
     std::string phase;
     std::string behavior_key;
     std::string fixture_baseline_ref;
     std::string surface_parent_best_ref;
+    std::string where_origin_ref;
+    std::string where_status;
     size_t evidence_rank = 0;
     size_t search_rank = 0;
     size_t model_evaluations = 0;
@@ -127,6 +131,7 @@ struct common_flydelta_trace {
     bool has_next_action = false;
     common_flydelta_next_action next_action = common_flydelta_next_action::retain;
     std::string next_action_reason;
+    std::string concept_localization_assessment_ref;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
     bool has_selected_candidate = false;
@@ -147,6 +152,7 @@ struct common_flydelta_experiment_worker_result {
     std::vector<common_flydelta_capture_manifest> capture_manifests;
     std::vector<common_flydelta_concept_candidate> concept_candidates;
     std::vector<std::string> concept_trajectory_refs;
+    std::string concept_localization_assessment_ref;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
     bool has_paired_intervention = false;
@@ -229,6 +235,7 @@ struct common_flydelta_experiment_worker_report {
     bool utility_gate_evaluated = false;
     common_flydelta_utility_gate_decision utility_decision;
     std::string next_action_reason;
+    std::string concept_localization_assessment_ref;
     std::string graft_direction_ref;
     std::vector<std::string> graft_direction_refs;
     bool has_paired_intervention = false;

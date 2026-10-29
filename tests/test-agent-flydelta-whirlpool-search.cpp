@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-whirlpool-search.h"
+#include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +81,54 @@ int main() {
     CHECK(trace.rounds.front().centre_after == 5);
     CHECK(trace.final_centre == 5);
     CHECK(common_flydelta_whirlpool_trace_validate(trace, config, trials.size(), error));
+
+    // WHERE navigation may explore an unsafe diagnostic point; it does not
+    // grant that intervention permission to continue.
+    {
+        auto gated = config;
+        gated.max_rounds = 2;
+        gated.probes_per_round = 3;
+        gated.max_trials = 6;
+        std::vector<common_flydelta_intervention_region_trial> gated_trials;
+        common_flydelta_intervention_region_selection gated_selection;
+        common_flydelta_whirlpool_trace gated_trace;
+        CHECK(common_flydelta_run_whirlpool_search(fixture(), gated,
+            [](const auto &, const auto * c, auto & t, auto & m, auto & g, auto & available, std::string &) {
+                t = {}; t.executed = true; t.verifier_known = false; t.quality = !c ? 0.0f : c->anchor_layer_index == 3 ? 1.0f : 0.1f;
+                m = {}; available = c != nullptr;
+                if (c) { g.layer_index = c->anchor_layer_index; g.cosine = c->anchor_layer_index == 3 ? 0.0f : 0.9f;
+                    g.progress = 0.5f; g.leakage = 0.0f; g.shift_norm = 0.01f; }
+                return true;
+            }, gated_trials, gated_selection, gated_trace, error));
+        CHECK(gated_trace.best_trial_index < gated_trials.size());
+        CHECK(gated_trials[gated_trace.best_trial_index].candidate.anchor_layer_index == 3);
+        CHECK(gated_trace.rounds.front().centre_before == 5);
+        CHECK(gated_trace.rounds.front().centre_after == 3);
+        CHECK(!gated_trials[gated_trace.best_trial_index].safe_to_continue);
+        common_flydelta_search_pipeline_result pipeline;
+        pipeline.directions.resize(1);
+        pipeline.directions[0].region_trials = gated_trials;
+        common_flydelta_search_continuation continuation;
+        CHECK(common_flydelta_select_search_continuation(pipeline, continuation, error));
+        CHECK(continuation.region.anchor_layer_index != 3);
+        CHECK(pipeline.directions[0].region_trials[continuation.region_trial_index].safe_to_continue);
+    }
+
+    // Unsafe diagnostics still locate a region; no HELPED arm is selected.
+    {
+        auto gated = config;
+        gated.max_rounds = 1;
+        CHECK(common_flydelta_run_whirlpool_search(fixture(), gated,
+            [](const auto &, const auto * c, auto & t, auto & m, auto & g, auto & available, std::string &) {
+                t = {}; t.executed = true; t.quality = c ? 1.0f : 0.0f; m = {}; available = c != nullptr;
+                if (c) { g.layer_index = c->anchor_layer_index; g.cosine = 0.0f; g.progress = 0.5f;
+                    g.leakage = 0.0f; g.shift_norm = 0.01f; }
+                return true;
+            }, trials, selection, trace, error));
+        CHECK(trace.best_trial_index < trials.size());
+        CHECK(!trials[trace.best_trial_index].safe_to_continue);
+        CHECK(!selection.selected);
+    }
 
     common_flydelta_whirlpool_search_config batch_config = config;
     batch_config.max_rounds = 1;
@@ -248,6 +297,18 @@ int main() {
     CHECK(trace.rounds.front().guidance_decision_id == "whirlpool:probe:0");
     CHECK(trace.rounds.front().guidance_history_fingerprint == "sha256:test-history");
     CHECK(common_flydelta_whirlpool_trace_validate(trace, guided_config, trials.size(), error));
+
+    auto guided_global_config = guided_config;
+    guided_global_config.global_probes_per_round = 1;
+    CHECK(common_flydelta_run_whirlpool_search_batched(
+        fixture(), guided_global_config, batch_baseline_runner, batch_runner,
+        trials, selection, trace, error, guided_adviser));
+    CHECK(!trace.rounds.front().global_probed_layers.empty());
+    for (auto layer : trace.rounds.front().global_probed_layers) {
+        CHECK(std::find(trace.rounds.front().guidance_selected_layers.begin(),
+            trace.rounds.front().guidance_selected_layers.end(), layer) ==
+            trace.rounds.front().guidance_selected_layers.end());
+    }
 
     auto diagnostic_wins_config = guided_config;
     diagnostic_wins_config.layer_diagnostics = config.layer_diagnostics;

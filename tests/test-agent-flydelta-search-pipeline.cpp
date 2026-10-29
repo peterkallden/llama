@@ -19,6 +19,41 @@ static common_flydelta_experiment_fixture make_fixture() {
 
 int main() {
     std::string error;
+    {
+        common_flydelta_search_pipeline_result probe;
+        probe.directions.resize(1);
+        auto & direction = probe.directions.front();
+        direction.region_trials.resize(4);
+        for (size_t i = 0; i < 4; ++i) {
+            auto & t = direction.region_trials[i];
+            t.executed = true; t.safe_to_continue = true; t.promising = true;
+            t.search_score = float(4 - i); t.candidate.anchor_layer_index = uint32_t(i + 1);
+            t.candidate.layer_indices = {uint32_t(i + 1)};
+        }
+        direction.whirlpool_trace.rounds.resize(1);
+        direction.whirlpool_trace.rounds[0].global_probed_layers = {4};
+        auto frontier = common_flydelta_select_region_frontier(probe, 3);
+        CHECK(frontier.size() == 3 && frontier.back().trial_index == 3 && frontier.back().reason == "reserved_global");
+        direction.region_trials[3].safe_to_continue = false;
+        frontier = common_flydelta_select_region_frontier(probe, 3);
+        CHECK(frontier.back().trial_index == 2 && frontier.back().reason == "ranked");
+        direction.region_trials[3].safe_to_continue = true;
+        direction.region_trials[3].dose_evaluated = true;
+        direction.region_trials[3].dose_action = common_flydelta_dose_action::reject;
+        frontier = common_flydelta_select_region_frontier(probe, 3);
+        CHECK(frontier.back().trial_index == 2);
+        direction.region_trials[3].dose_action = common_flydelta_dose_action::accept;
+        direction.region_trials[3].executed = false;
+        CHECK(common_flydelta_select_region_frontier(probe, 3).back().trial_index == 2);
+        direction.region_trials[3].executed = true;
+        direction.region_trials[3].outcome = common_flydelta_counterfactual_outcome::harmed;
+        CHECK(common_flydelta_select_region_frontier(probe, 3).back().trial_index == 2);
+        direction.region_trials[3].outcome = common_flydelta_counterfactual_outcome::unknown;
+        direction.region_trials[3].search_score = 5;
+        frontier = common_flydelta_select_region_frontier(probe, 3);
+        CHECK(frontier.front().trial_index == 3 && frontier.front().reason == "ranked_global");
+        CHECK(common_flydelta_select_region_frontier(probe, 0).empty());
+    }
     common_flydelta_search_pipeline_config config;
     config.dimension = 2;
     config.layer.max_regions = 1;

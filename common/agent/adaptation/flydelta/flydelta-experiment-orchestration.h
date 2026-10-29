@@ -399,6 +399,10 @@ struct common_flydelta_bootstrap_zoom_state {
     float evidence_rank = 1.0f;
     std::string surface_origin = "bootstrap_rank1";
     std::string parent_surface_ref;
+    // Optional concept-localization provenance. A diagnostic WHERE result
+    // does not claim that the inherited anchor was behaviorally verified.
+    std::string where_origin_ref;
+    std::string where_status;
     // Progress is diagnostic search state, not evidence or activation
     // authority. The direction reference alone does not identify an arm;
     // the optional trial index identifies its complete persisted profile.

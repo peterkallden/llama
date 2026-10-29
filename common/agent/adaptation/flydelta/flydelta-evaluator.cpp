@@ -1,6 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 namespace {
@@ -395,14 +396,30 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::concept_synthesis: {
-            if (!callbacks.run_concept_synthesis) {
+            const bool challenge = !job.concept_localization.layers.empty();
+            if (challenge ? !callbacks.run_concept_localization_synthesis : !callbacks.run_concept_synthesis) {
                 error = "FlyDelta concept synthesis evaluator requires a host runner";
                 return false;
             }
-            if (!callbacks.run_concept_synthesis(job, result.concept_candidates, error) ||
-                    result.concept_candidates.empty()) {
+            const bool synthesized = challenge
+                ? callbacks.run_concept_localization_synthesis(job, result.concept_candidates,
+                    result.concept_localization_assessment_ref, error)
+                : callbacks.run_concept_synthesis(job, result.concept_candidates, error);
+            if (!synthesized || (!challenge && result.concept_candidates.empty())) {
                 if (error.empty()) error = "FlyDelta concept synthesis returned no candidates";
                 return false;
+            }
+            if (challenge && (result.concept_localization_assessment_ref.empty() ||
+                    result.concept_localization_assessment_ref.size() > 512)) {
+                error = "FlyDelta localization requires a durable representation assessment";
+                return false;
+            }
+            if (challenge && result.concept_candidates.empty()) {
+                result.processed_references = job.concept_localization.layers.size();
+                result.has_next_action = true;
+                result.next_action = common_flydelta_next_action::retain;
+                result.next_action_reason = "No usable layer-specific concept signal; retain origin without relocalization";
+                return true;
             }
             for (const auto & candidate : result.concept_candidates) {
                 if (!common_flydelta_concept_candidate_validate(
@@ -411,6 +428,67 @@ bool common_flydelta_evaluate_job(
                 if (!common_flydelta_concept_candidate_to_direction(
                         candidate, direction, error)) return false;
                 result.direction_candidates.push_back(std::move(direction));
+            }
+
+            if (challenge) {
+                if (!callbacks.persist_experimental_layer_family_for_job) {
+                    error = "FlyDelta localization requires layer-family artifact persistence";
+                    return false;
+                }
+                // A family fixes WHAT (semantics and estimator). Only its
+                // separately captured realizations vary with WHERE.
+                using key = std::pair<int, int>;
+                std::map<key, std::vector<size_t>> families;
+                for (size_t index = 0; index < result.concept_candidates.size(); ++index) {
+                    const auto & candidate = result.concept_candidates[index];
+                    if (candidate.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+                            candidate.behavior_key != job.seed.behavior_key ||
+                            std::find(job.concept_localization.layers.begin(), job.concept_localization.layers.end(),
+                                static_cast<uint32_t>(candidate.layer_index)) == job.concept_localization.layers.end()) {
+                        error = "FlyDelta concept localization candidate does not match its authorized job";
+                        return false;
+                    }
+                    auto & family = families[{static_cast<int>(candidate.synthesis_semantics), static_cast<int>(candidate.kind)}];
+                    for (const auto previous : family) {
+                        const auto & first = result.concept_candidates[previous];
+                        if (first.layer_index == candidate.layer_index || first.concept_key != candidate.concept_key ||
+                                first.capture_layout_revision != candidate.capture_layout_revision) {
+                            error = "FlyDelta concept layer family has duplicate layers or incompatible identity";
+                            return false;
+                        }
+                    }
+                    family.push_back(index);
+                }
+                std::vector<common_flydelta_concept_candidate> representatives;
+                std::vector<std::vector<size_t>> members;
+                for (const auto & family : families) {
+                    representatives.push_back(result.concept_candidates[family.second.front()]);
+                    members.push_back(family.second);
+                }
+                const auto selected = common_flydelta_select_concept_synthesis_frontier(
+                    representatives, config.concept_frontier_max_candidates);
+                for (const auto index : selected) {
+                    std::vector<common_flydelta_concept_candidate> directions;
+                    for (const auto member : members[index]) directions.push_back(result.concept_candidates[member]);
+                    std::string reference;
+                    if (!callbacks.persist_experimental_layer_family_for_job(job, directions,
+                            result.concept_localization_assessment_ref, reference, error) ||
+                            reference.empty() || reference.size() > 512) {
+                        if (error.empty()) error = "FlyDelta localization returned no bounded layer-family artifact";
+                        return false;
+                    }
+                    result.graft_direction_refs.push_back(std::move(reference));
+                }
+                if (result.graft_direction_refs.empty()) {
+                    error = "FlyDelta localization selected no layer families";
+                    return false;
+                }
+                result.processed_references = result.concept_candidates.size();
+                result.graft_direction_ref = result.graft_direction_refs.front();
+                result.has_next_action = true;
+                result.next_action = common_flydelta_next_action::run_bootstrap;
+                result.next_action_reason = "Layer-specific WHAT family persisted; start fresh Whirlpool WHERE challenge";
+                return true;
             }
 
             // Keep an explicitly host-labelled negative component attached to
@@ -745,7 +823,7 @@ bool common_flydelta_evaluate_job(
                     result.representation_augmentation_state.phase ==
                         common_flydelta_representation_augmentation_phase::done ||
                     result.representation_augmentation_state.remaining_budget == 0;
-                if (augmentation_terminal && callbacks.inspect_teaching_material_group &&
+                if (augmentation_terminal && job.concept_localization.layers.empty() && callbacks.inspect_teaching_material_group &&
                         !job.teaching_material_group_ref.empty() &&
                         result.next_action == common_flydelta_next_action::retain) {
                     bool relation_set_ready = false;
@@ -764,7 +842,7 @@ bool common_flydelta_evaluate_job(
                     } else if (result.next_action == common_flydelta_next_action::run_concept_synthesis) {
                         result.next_action_reason = "Concept trajectory material ready; schedule synthesis";
                     }
-                } else if (augmentation_terminal && callbacks.has_teaching_material_group &&
+                } else if (augmentation_terminal && job.concept_localization.layers.empty() && callbacks.has_teaching_material_group &&
                         !job.teaching_material_group_ref.empty() &&
                         result.next_action == common_flydelta_next_action::retain) {
                     bool material_available = false;

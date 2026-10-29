@@ -71,6 +71,26 @@ int main() {
     config.dimension = 3;
     std::vector<common_flydelta_concept_trajectory> trajectories = {
         trajectory(0), trajectory(1), trajectory(2)};
+    common_flydelta_concept_layer_assessment assessment;
+    CHECK(common_flydelta_assess_concept_layer(concept_spec, config, trajectories, 0.3f, assessment, error));
+    CHECK(assessment.usable && assessment.layer_index == 12 && assessment.trajectories == 3);
+    auto no_signal = trajectories;
+    no_signal.front().conditioned = no_signal.front().control;
+    CHECK(common_flydelta_assess_concept_layer(concept_spec, config, no_signal, 0.3f, assessment, error));
+    CHECK(!assessment.usable && assessment.reason == "no_usable_residual_signal");
+    auto mixed_layers = trajectories;
+    mixed_layers.back().layer_index = 14;
+    CHECK(!common_flydelta_assess_concept_layer(concept_spec, config, mixed_layers, 0.3f, assessment, error));
+    auto unverified_layer = trajectories;
+    unverified_layer.back().conditioned_host_verified = false;
+    CHECK(!common_flydelta_assess_concept_layer(concept_spec, config, unverified_layer, 0.3f, assessment, error));
+    auto cancelling = std::vector<common_flydelta_concept_trajectory>{trajectory(0), trajectory(1)};
+    cancelling[0].conditioned = {1, 0, 0};
+    cancelling[0].control = {0, 0, 0};
+    cancelling[1].conditioned = {-1, 0, 0};
+    cancelling[1].control = {0, 0, 0};
+    CHECK(common_flydelta_assess_concept_layer(concept_spec, config, cancelling, 0.3f, assessment, error));
+    CHECK(!assessment.usable && assessment.reason == "no_common_direction");
     std::vector<common_flydelta_concept_candidate> candidates;
     CHECK(common_flydelta_build_concept_candidates(
         concept_spec, config, trajectories, candidates, error));

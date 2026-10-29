@@ -163,9 +163,85 @@ bool common_flydelta_teaching_material_store::observe_trajectory(
     return true;
 }
 
+bool common_flydelta_teaching_material_store::observe_layer_trajectory(
+        const std::string & group_ref, int32_t layer_index,
+        const std::string & relation_ref, const std::string & trajectory_ref,
+        const common_flydelta_teaching_material_identity & identity, std::string & error,
+        const std::string & capture_set_ref) {
+    error.clear();
+    if (layer_index < 1 || (!capture_set_ref.empty() && !bounded(capture_set_ref)) ||
+            !bounded(group_ref) || !bounded(relation_ref) ||
+            !bounded(trajectory_ref) || !common_flydelta_teaching_material_identity_validate(identity, error)) {
+        if (error.empty()) error = "FlyDelta layer trajectory identity is invalid";
+        return false;
+    }
+    auto it = std::find_if(groups_.begin(), groups_.end(), [&](const auto & g) { return g.group_ref == group_ref; });
+    if (it == groups_.end() || it->compatibility_key != common_flydelta_teaching_material_compatibility_key(identity) ||
+            std::find(it->relation_refs.begin(), it->relation_refs.end(), relation_ref) == it->relation_refs.end()) {
+        error = "FlyDelta layer trajectory group, compatibility, or relation is invalid";
+        return false;
+    }
+    for (const auto & entry : it->layer_trajectories) {
+        if (entry.layer_index == layer_index && entry.relation_ref == relation_ref &&
+                entry.capture_set_ref == capture_set_ref) {
+            if (entry.trajectory_ref == trajectory_ref) return true;
+            error = "FlyDelta layer trajectory conflicts with existing material";
+            return false;
+        }
+        if (entry.trajectory_ref == trajectory_ref) {
+            error = "FlyDelta trajectory reference is already bound to another layer or relation";
+            return false;
+        }
+    }
+    if (it->layer_trajectories.size() >= 4096) {
+        error = "FlyDelta layer trajectory limit exceeded";
+        return false;
+    }
+    it->layer_trajectories.push_back({layer_index, relation_ref, trajectory_ref, capture_set_ref});
+    return true;
+}
+
+bool common_flydelta_teaching_material_store::resolve_layer_group(
+        const std::string & group_ref, int32_t layer_index,
+        common_flydelta_teaching_material_group & group, std::string & error,
+        const std::string & capture_set_ref) const {
+    error.clear();
+    group = {};
+    if (!bounded(group_ref) || layer_index < 1 ||
+            (!capture_set_ref.empty() && !bounded(capture_set_ref))) {
+        error = "FlyDelta layer material identity is invalid";
+        return false;
+    }
+    const auto it = std::find_if(groups_.begin(), groups_.end(), [&](const auto & g) { return g.group_ref == group_ref; });
+    if (it == groups_.end() || !it->relation_set_ready) return true;
+    std::vector<std::string> refs;
+    for (const auto & entry : it->layer_trajectories) {
+        if (entry.layer_index == layer_index && entry.capture_set_ref == capture_set_ref)
+            refs.push_back(entry.trajectory_ref);
+    }
+    if (refs.size() < it->minimum_trajectories) return true;
+    group = *it;
+    group.trajectory_refs = std::move(refs);
+    group.trajectory_material_ready = true;
+    return true;
+}
+
+bool common_flydelta_teaching_material_runtime::observe_layer_trajectory(
+        const std::string & group_ref, int32_t layer_index, const std::string & relation_ref,
+        const std::string & trajectory_ref, std::string & error, const std::string & capture_set_ref) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    common_flydelta_teaching_material_store next = store_;
+    if (!next.observe_layer_trajectory(group_ref, layer_index, relation_ref, trajectory_ref,
+            identity_, error, capture_set_ref)) return false;
+    if (!persist(next, error)) return false;
+    store_ = std::move(next);
+    return true;
+}
+
 bool common_flydelta_teaching_material_runtime::observe_relation(
         const common_flydelta_teaching_relation & relation,
         std::string & error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     common_flydelta_teaching_material_store next = store_;
     if (!next.observe(relation, identity_, error)) return false;
     if (!persist(next, error)) return false;
@@ -174,6 +250,7 @@ bool common_flydelta_teaching_material_runtime::observe_relation(
 }
 
 bool common_flydelta_teaching_material_runtime::load(std::string & error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     error.clear();
     if (!persistence_.load) return true;
     std::string snapshot;
@@ -198,6 +275,7 @@ bool common_flydelta_teaching_material_runtime::inspect_group(
         bool & relation_set_ready,
         bool & trajectory_material_ready,
         std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     relation_set_ready = false;
     trajectory_material_ready = false;
     common_flydelta_teaching_material_group group;
@@ -213,6 +291,7 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_behavior(
         common_flydelta_teaching_material_group & group,
         bool & available,
         std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     error.clear();
     group = {};
     available = false;
@@ -249,6 +328,7 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_family(
         common_flydelta_teaching_material_group & group,
         bool & available,
         std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     error.clear();
     group = {};
     available = false;
@@ -276,11 +356,31 @@ bool common_flydelta_teaching_material_runtime::observe_trajectory(
         const std::string & group_ref,
         const std::string & trajectory_ref,
         std::string & error) {
+    std::lock_guard<std::mutex> lock(mutex_);
     common_flydelta_teaching_material_store next = store_;
     if (!next.observe_trajectory(group_ref, trajectory_ref, identity_, error)) return false;
     if (!persist(next, error)) return false;
     store_ = std::move(next);
     return true;
+}
+
+bool common_flydelta_teaching_material_runtime::resolve_relation_set(
+        const std::string & ref, common_flydelta_teaching_material_group & group, std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return store_.resolve_relation_set(ref, group, error);
+}
+
+bool common_flydelta_teaching_material_runtime::resolve_ready_group(
+        const std::string & ref, common_flydelta_teaching_material_group & group, std::string & error) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return store_.resolve_ready_group(ref, group, error);
+}
+
+bool common_flydelta_teaching_material_runtime::resolve_layer_group(
+        const std::string & ref, int32_t layer, common_flydelta_teaching_material_group & group,
+        std::string & error, const std::string & capture_set_ref) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return store_.resolve_layer_group(ref, layer, group, error, capture_set_ref);
 }
 
 bool common_flydelta_teaching_material_store::resolve_ready_group(
@@ -325,6 +425,11 @@ std::string common_flydelta_teaching_material_store_to_json(
         const common_flydelta_teaching_material_store & store) {
     json groups = json::array();
     for (const auto & group : store.groups()) {
+        json layer_trajectories = json::array();
+        for (const auto & entry : group.layer_trajectories) {
+            layer_trajectories.push_back({{"layer_index", entry.layer_index}, {"relation_ref", entry.relation_ref},
+                {"trajectory_ref", entry.trajectory_ref}, {"capture_set_ref", entry.capture_set_ref}});
+        }
         groups.push_back({
             {"group_ref", group.group_ref},
             {"teaching_key", group.teaching_key},
@@ -342,6 +447,7 @@ std::string common_flydelta_teaching_material_store_to_json(
             }},
             {"relation_refs", group.relation_refs},
             {"trajectory_refs", group.trajectory_refs},
+            {"layer_trajectories", std::move(layer_trajectories)},
             {"minimum_relations", group.minimum_relations},
             {"minimum_trajectories", group.minimum_trajectories},
             {"relation_set_ready", group.relation_set_ready},
@@ -409,6 +515,10 @@ bool common_flydelta_teaching_material_store_from_json(
                 if (error.empty()) error = "FlyDelta teaching material store group is invalid";
                 return false;
             }
+            if (group.compatibility_key != common_flydelta_teaching_material_compatibility_key(group.identity)) {
+                error = "FlyDelta teaching material store compatibility key differs from its identity";
+                return false;
+            }
             for (const auto & ref : group.relation_refs) {
                 if (!bounded(ref)) {
                     error = "FlyDelta teaching material store relation reference is invalid";
@@ -421,7 +531,20 @@ bool common_flydelta_teaching_material_store_from_json(
                     return false;
                 }
             }
+            const auto layer_entries = item.value("layer_trajectories", json::array());
+            if (!layer_entries.is_array() || layer_entries.size() > 4096) {
+                error = "FlyDelta layer trajectory snapshot is invalid";
+                return false;
+            }
             decoded.groups_.push_back(std::move(group));
+            const auto & saved_group = decoded.groups_.back();
+            const std::string saved_ref = saved_group.group_ref;
+            const auto saved_identity = saved_group.identity;
+            for (const auto & entry : layer_entries) {
+                if (!decoded.observe_layer_trajectory(saved_ref, entry.value("layer_index", 0),
+                        entry.value("relation_ref", ""), entry.value("trajectory_ref", ""), saved_identity,
+                        error, entry.value("capture_set_ref", ""))) return false;
+            }
         }
         store = std::move(decoded);
         return true;

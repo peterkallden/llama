@@ -715,6 +715,69 @@ bool daemon_flydelta_register_evaluator(
             scoped_provider, proposal.proposal_id, std::move(directions),
             "flydelta:paired-concept-graft", direction_ref, persist_error);
     };
+    callbacks.persist_experimental_layer_family_for_job = [provider](
+            const common_flydelta_experiment_job & job,
+            const std::vector<common_flydelta_concept_candidate> & candidates,
+            const std::string & assessment_ref, std::string & direction_ref,
+            std::string & persist_error) {
+        const auto scoped = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
+        if (!scoped || candidates.empty() || candidates.size() > 8 || assessment_ref.empty() ||
+                !common_flydelta_concept_localization_request_validate(job.concept_localization, persist_error) ||
+                job.concept_localization.layers.empty()) {
+            if (persist_error.empty()) persist_error = "FlyDelta layer-family persistence has no authorized material";
+            return false;
+        }
+        json provenance = {{"schema_version", 1}, {"domain", "multi_layer"},
+            {"transferability", "unknown"}, {"where_status", "inherited"},
+            {"capture_set_ref", job.concept_localization.capture_set_ref},
+            {"material_key", common_flydelta_concept_localization_material_key(job)},
+            {"origin_state_ref", job.concept_localization.origin_state_ref},
+            {"origin_direction_ref", job.concept_localization.origin_direction_ref},
+            {"material_group_ref", job.teaching_material_group_ref},
+            {"assessment_ref", assessment_ref}, {"baseline_ref", job.seed.baseline_ref},
+            {"model_profile_fingerprint", job.seed.model_profile_fingerprint},
+            {"model_n_embd", scoped->model_n_embd}, {"model_n_layers", scoped->model_n_layers},
+            {"tokenizer_fingerprint", job.seed.tokenizer_fingerprint},
+            {"template_fingerprint", job.seed.template_fingerprint},
+            {"execution_context_fingerprint", job.seed.execution_context_fingerprint},
+            {"capture_layout_revision", scoped->capture_layout_revision},
+            {"authorized_layers", job.concept_localization.layers},
+            {"layer_directions", json::array()}, {"experimental_only", true}};
+        std::vector<common_flydelta_basis_direction> directions;
+        std::set<int32_t> layers;
+        for (const auto & candidate : candidates) {
+            if (!common_flydelta_concept_candidate_validate(candidate, scoped->model_n_embd, persist_error) ||
+                    !candidate.experimental_only || !layers.insert(candidate.layer_index).second ||
+                    candidate.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+                    candidate.capture_layout_revision != scoped->capture_layout_revision ||
+                    candidate.kind != candidates.front().kind ||
+                    candidate.synthesis_semantics != candidates.front().synthesis_semantics ||
+                    candidate.concept_key != candidates.front().concept_key ||
+                    candidate.behavior_key != job.seed.behavior_key ||
+                    std::find(job.concept_localization.layers.begin(), job.concept_localization.layers.end(),
+                        static_cast<uint32_t>(candidate.layer_index)) == job.concept_localization.layers.end()) {
+                if (persist_error.empty()) persist_error = "FlyDelta layer family contains incompatible direction material";
+                return false;
+            }
+            common_flydelta_basis_direction direction;
+            direction.layer_index = candidate.layer_index;
+            direction.values = candidate.values;
+            json binding = provenance;
+            binding["domain"] = "layer_bound";
+            binding["anchor_layer"] = candidate.layer_index;
+            binding.erase("layer_directions");
+            std::string reference;
+            if (!daemon_flydelta_register_composed_directions(scoped, candidate.extraction_id, {direction},
+                    "flydelta:layer-bound-concept", reference, persist_error, binding)) return false;
+            provenance["layer_directions"].push_back({{"layer_index", candidate.layer_index},
+                {"direction_ref", reference}, {"extraction_id", candidate.extraction_id},
+                {"kind", common_flydelta_concept_candidate_kind_name(candidate.kind)},
+                {"synthesis_semantics", common_flydelta_concept_synthesis_semantics_name(candidate.synthesis_semantics)}});
+            directions.push_back(std::move(direction));
+        }
+        return daemon_flydelta_register_composed_directions(scoped, job.concept_localization.capture_set_ref,
+            std::move(directions), "flydelta:concept-relocalization", direction_ref, persist_error, provenance);
+    };
     callbacks.run_concept_capture = [provider](
             const common_flydelta_experiment_job & job,
             std::vector<std::string> & trajectory_refs,
@@ -728,6 +791,12 @@ bool daemon_flydelta_register_evaluator(
             std::string & synthesis_error) {
         return daemon_flydelta_run_concept_synthesis(
             provider, job, candidates, synthesis_error);
+    };
+    callbacks.run_concept_localization_synthesis = [provider](
+            const common_flydelta_experiment_job & job,
+            std::vector<common_flydelta_concept_candidate> & candidates,
+            std::string & assessment_ref, std::string & synthesis_error) {
+        return daemon_flydelta_run_concept_synthesis(provider, job, candidates, synthesis_error, &assessment_ref);
     };
     callbacks.run_donor_capture = [provider](
             const common_flydelta_experiment_job & job,
@@ -764,8 +833,27 @@ bool daemon_flydelta_register_evaluator(
             return false;
         }
         if (resume != nullptr) {
-            return daemon_flydelta_run_bootstrap_zoom_slice(
-                scoped_provider, job, *resume, result, next, runner_error);
+            if (!daemon_flydelta_run_bootstrap_zoom_slice(
+                    scoped_provider, job, *resume, result, next, runner_error)) return false;
+            if (job.concept_localization.layers.empty()) {
+                json direction;
+                std::string ignored;
+                if (daemon_flydelta_read_json(*scoped_provider, job.seed.candidate_ref, direction, ignored) &&
+                        (direction.value("derivation", "") == "flydelta:concept-graft" ||
+                         direction.value("derivation", "") == "flydelta:paired-concept-graft")) {
+                    next.where_origin_ref = job.bootstrap_zoom_state_ref;
+                    next.where_status = "inherited";
+                    if (next.selection.selected && next.selection.trial_index >= resume->completed_trials.size() &&
+                            next.selection.trial_index < next.completed_trials.size()) {
+                        const auto & trial = next.completed_trials[next.selection.trial_index];
+                        if (trial.host_evaluated && trial.verifier_known &&
+                                trial.outcome == common_flydelta_counterfactual_outcome::helped) {
+                            next.where_status = "locally_revalidated";
+                        }
+                    }
+                }
+            }
+            return true;
         }
         if (!daemon_flydelta_run_search_pipeline(
                 scoped_provider, job, pipeline, result, runner_error)) {
@@ -793,6 +881,11 @@ bool daemon_flydelta_register_evaluator(
         if (next.local_layers.empty()) next.local_layers = {
             static_cast<uint32_t>(directions.front().layer_index)};
         next.surface_origin = "bootstrap_rank1";
+        if (!job.concept_localization.layers.empty()) {
+            next.where_origin_ref = job.concept_localization.origin_state_ref;
+            next.where_status = result.selection.selected ? "relocalized" : "challenged_unverified";
+            next.surface_origin = "concept_localization";
+        }
         return common_flydelta_bootstrap_zoom_state_validate(next, runner_error);
     };
     // Reuse the append-only lifecycle journal already used by the

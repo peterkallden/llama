@@ -230,6 +230,8 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"evidence_rank", state.evidence_rank},
         {"surface_origin", state.surface_origin},
         {"parent_surface_ref", state.parent_surface_ref},
+        {"where_origin_ref", state.where_origin_ref},
+        {"where_status", state.where_status},
         {"progress_available", state.progress_available},
         {"best_progress", progress_json(state.best_progress)},
         {"best_experimental_candidate_ref", state.best_experimental_candidate_ref},
@@ -308,6 +310,8 @@ bool state_from_json(const std::string & text,
         state.evidence_rank = value.value("evidence_rank", 1.0f);
         state.surface_origin = value.value("surface_origin", "bootstrap_rank1");
         state.parent_surface_ref = value.value("parent_surface_ref", "");
+        state.where_origin_ref = value.value("where_origin_ref", "");
+        state.where_status = value.value("where_status", "");
         state.progress_available = value.value("progress_available", false);
         if (state.progress_available && !parse_progress(
                 value.value("best_progress", json::object()), state.best_progress)) {

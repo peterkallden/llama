@@ -464,6 +464,10 @@ bool daemon_flydelta_capture_layer(
     }
     const size_t offset = static_cast<size_t>(std::distance(capture.layer_indices.begin(), it)) *
         capture.n_embd;
+    if (offset > capture.values.size() || capture.n_embd > capture.values.size() - offset) {
+        error = "FlyDelta concept capture has an incomplete layer row";
+        return false;
+    }
     values.assign(capture.values.begin() + static_cast<std::ptrdiff_t>(offset),
         capture.values.begin() + static_cast<std::ptrdiff_t>(offset + capture.n_embd));
     return true;
@@ -482,6 +486,10 @@ bool daemon_flydelta_resolve_concept_target(
     target = {};
     if (!provider) {
         error = "FlyDelta concept target has no resource provider";
+        return false;
+    }
+    if (!job.concept_localization.layers.empty() && !provider->resolve_bootstrap_zoom_state_for_job) {
+        error = "FlyDelta localization requires a scope-aware Bootstrap origin resolver";
         return false;
     }
 
@@ -535,6 +543,10 @@ bool daemon_flydelta_resolve_concept_target(
                 job, reference, state, resolve_error)
             : provider->resolve_bootstrap_zoom_state(reference, state, resolve_error);
         if (!resolved) return false;
+        if (!job.concept_localization.layers.empty() &&
+                (state.behavior_key != job.seed.behavior_key ||
+                 state.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
+                 state.capture_layout_revision != provider->capture_layout_revision)) return false;
         target.layer_index = static_cast<int32_t>(state.anchor_layer);
         target.local_layers = state.local_layers;
         target.parent_surface_ref = reference;
@@ -546,19 +558,23 @@ bool daemon_flydelta_resolve_concept_target(
     // The augmentation state's parent is the most localized explicit search
     // reference. Prefer it over the job envelope, then use the BootstrapZoom
     // ref carried through the same queued lineage.
-    const std::string parent_search_ref = has_augmentation
-        ? augmentation.parent_search_state_ref : job.search_state_ref;
-    bool resolved = apply_orchestration(parent_search_ref);
-    if (!resolved && parent_search_ref != job.bootstrap_zoom_state_ref) {
+    const bool localization = !job.concept_localization.layers.empty();
+    const std::string parent_search_ref = localization ? job.concept_localization.origin_state_ref
+        : has_augmentation ? augmentation.parent_search_state_ref : job.search_state_ref;
+    // A challenge requires a typed Bootstrap state with checkable model,
+    // behavior and capture-layout identity. An orchestration-only pointer
+    // does not itself carry those fields.
+    bool resolved = localization ? apply_bootstrap(parent_search_ref) : apply_orchestration(parent_search_ref);
+    if (!resolved && !localization && parent_search_ref != job.bootstrap_zoom_state_ref) {
         resolved = apply_bootstrap(parent_search_ref);
     }
-    if (!resolved) resolved = apply_orchestration(job.search_state_ref);
-    if (!resolved) resolved = apply_bootstrap(job.bootstrap_zoom_state_ref);
+    if (!resolved && !localization) resolved = apply_orchestration(job.search_state_ref);
+    if (!resolved && !localization) resolved = apply_bootstrap(job.bootstrap_zoom_state_ref);
 
     // A one-layer selected region is already an unambiguous localized
     // surface. Multi-layer regions require their parent state so we do not
     // invent an anchor by choosing an arbitrary member.
-    if (!resolved && has_augmentation && augmentation.selected_region.size() == 1) {
+    if (!resolved && !localization && has_augmentation && augmentation.selected_region.size() == 1) {
         target.layer_index = static_cast<int32_t>(augmentation.selected_region.front());
         target.local_layers = augmentation.selected_region;
         resolved = true;
@@ -614,6 +630,24 @@ bool daemon_flydelta_persist_concept_trajectory(
         const std::vector<std::string> & negative_violation_dimensions,
         std::string & trajectory_ref,
         std::string & error) {
+    if (!material.capture_set_ref.empty()) {
+        if (!common_flydelta_teaching_material_identity_validate(material.capture_identity, error) ||
+                material.capture_identity.model_profile_fingerprint != provider->model_profile_fingerprint ||
+                material.capture_identity.capture_layout_revision != provider->capture_layout_revision) {
+            if (error.empty()) error = "FlyDelta localization material identity is incompatible";
+            return false;
+        }
+        for (const auto * capture : {&baseline, &conditioned, &control}) {
+            if (!common_flydelta_hidden_state_capture_validate(*capture, 4U * 1024U * 1024U, error) ||
+                    !capture->captured || capture->n_embd != provider->model_n_embd ||
+                    capture->model_profile_fingerprint != provider->model_profile_fingerprint ||
+                    capture->capture_layout_revision != provider->capture_layout_revision ||
+                    capture->position != common_flydelta_capture_position::generation_boundary) {
+                if (error.empty()) error = "FlyDelta localization capture identity or boundary is incompatible";
+                return false;
+            }
+        }
+    }
     std::vector<float> baseline_values;
     std::vector<float> conditioned_values;
     std::vector<float> control_values;
@@ -623,7 +657,10 @@ bool daemon_flydelta_persist_concept_trajectory(
         return false;
     }
     const auto & relation = material.relation;
-    const std::string trajectory_identity = job_id + "\n" + relation.id;
+    const std::string trajectory_identity = job_id + "\n" + relation.id +
+        (material.capture_set_ref.empty() ? std::string{} :
+            "\n" + material.capture_set_ref + "\nlayer:" + std::to_string(material.layer_index) +
+            "\nrelation:" + material.relation_resource_ref);
     const std::string trajectory_id = "flydelta://trajectory/" +
         hash_sha256_hex(trajectory_identity.data(), trajectory_identity.size()).substr(0, 32);
     json payload = {
@@ -647,17 +684,26 @@ bool daemon_flydelta_persist_concept_trajectory(
         {"extraction_id", "flydelta://extraction/" + relation.teaching_key},
         {"behavior_key", relation.behavior_key},
         {"source", common_adaptation_evidence_source_name(relation.source)},
-        {"source_ref", relation.id},
+        {"source_ref", material.capture_set_ref.empty() ? relation.id : material.relation_resource_ref},
+        {"source_relation_id", relation.id},
         {"grounding_ref", relation.contrast_ref},
         {"verifier_ref", relation.verifier_ref},
         {"model_profile_fingerprint", provider->model_profile_fingerprint},
-        {"tokenizer_fingerprint", provider->model_profile_fingerprint + ":tokenizer"},
-        {"template_fingerprint", provider->model_profile_fingerprint + ":template"},
+        {"model_n_embd", provider->model_n_embd},
+        {"model_n_layers", provider->model_n_layers},
+        {"tokenizer_fingerprint", material.capture_set_ref.empty()
+            ? provider->model_profile_fingerprint + ":tokenizer" : material.capture_identity.tokenizer_fingerprint},
+        {"template_fingerprint", material.capture_set_ref.empty()
+            ? provider->model_profile_fingerprint + ":template" : material.capture_identity.template_fingerprint},
+        {"execution_context_fingerprint", material.capture_identity.execution_context_fingerprint},
+        {"verifier_revision", material.capture_identity.verifier_revision},
         {"capture_layout_revision", provider->capture_layout_revision},
-        {"scope_fingerprint", relation.scope.namespace_id + ":" + relation.scope.session_id},
+        {"scope_fingerprint", material.capture_set_ref.empty()
+            ? relation.scope.namespace_id + ":" + relation.scope.session_id : material.capture_identity.scope_fingerprint},
         {"parent_surface_ref", material.parent_surface_ref},
         {"parent_surface_revision", material.parent_surface_revision},
         {"parent_evidence_rank", material.parent_evidence_rank},
+        {"capture_set_ref", material.capture_set_ref},
     };
     if (negative_host_verified) {
         payload["negative_capture_ref"] = baseline_capture_ref;
@@ -683,7 +729,7 @@ bool daemon_flydelta_register_composed_directions(
         std::vector<common_flydelta_basis_direction> directions,
         const std::string & derivation,
         std::string & reference,
-        std::string & error) {
+        std::string & error, const json & localization) {
     error.clear();
     const std::string parent_ref = source_ref; // output may alias the source argument
     if (directions.empty() || directions.size() > 64 || derivation.empty()) {
@@ -694,6 +740,7 @@ bool daemon_flydelta_register_composed_directions(
         {"directions", json::array()},
         {"derivation", derivation},
     };
+    if (!localization.empty()) serialized["localization"] = localization;
     if (derivation == "flydelta:paired-concept-graft") {
         serialized["composition_kind"] = "paired_prefer_avoid";
         serialized["allow_duplicate_layers"] = true;
@@ -721,6 +768,7 @@ bool daemon_flydelta_register_composed_directions(
         request.text = serialized.dump();
         request.scope = common_runtime_resource_scope::session;
         request.namespace_id = provider->authority.namespace_id;
+        request.project_id = provider->authority.project_id;
         request.session_id = provider->authority.session_id;
         request.source_provider = "flydelta";
         request.source_tool = "compose-direction";
@@ -745,6 +793,110 @@ bool daemon_flydelta_register_composed_directions(
         provider->composed_directions[reference] = std::move(directions);
     }
     return true;
+}
+
+bool daemon_flydelta_resolve_concept_layer_family(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<common_flydelta_basis_direction> & directions,
+        uint32_t & origin_layer, std::string & error) {
+    error.clear();
+    origin_layer = 0;
+    directions.clear();
+    if (!provider || !common_flydelta_concept_localization_request_validate(job.concept_localization, error) ||
+            job.concept_localization.layers.empty()) {
+        if (error.empty()) error = "FlyDelta layer family has no authorized localization request";
+        return false;
+    }
+    json artifact;
+    if (!daemon_flydelta_read_json(*provider, job.seed.candidate_ref, artifact, error)) return false;
+    try {
+        const auto & localization = artifact.at("localization");
+        if (artifact.value("derivation", "") != "flydelta:concept-relocalization" ||
+                localization.value("schema_version", 0) != 1 ||
+                localization.value("domain", "") != "multi_layer" ||
+                !localization.value("experimental_only", false) ||
+                localization.value("capture_set_ref", "") != job.concept_localization.capture_set_ref ||
+                localization.value("material_key", "") != common_flydelta_concept_localization_material_key(job) ||
+                localization.value("origin_state_ref", "") != job.concept_localization.origin_state_ref ||
+                localization.value("origin_direction_ref", "") != job.concept_localization.origin_direction_ref ||
+                localization.value("material_group_ref", "") != job.teaching_material_group_ref ||
+                localization.value("baseline_ref", "") != job.seed.baseline_ref ||
+                localization.value("model_profile_fingerprint", "") != job.seed.model_profile_fingerprint ||
+                localization.value("model_n_embd", size_t{0}) != provider->model_n_embd ||
+                localization.value("model_n_layers", size_t{0}) != provider->model_n_layers ||
+                localization.value("tokenizer_fingerprint", "") != job.seed.tokenizer_fingerprint ||
+                localization.value("template_fingerprint", "") != job.seed.template_fingerprint ||
+                localization.value("execution_context_fingerprint", "") != job.seed.execution_context_fingerprint ||
+                localization.value("capture_layout_revision", "") != provider->capture_layout_revision ||
+                localization.at("authorized_layers").get<std::vector<uint32_t>>() != job.concept_localization.layers) {
+            error = "FlyDelta layer-family artifact is incompatible with its localization request";
+            return false;
+        }
+        json assessment;
+        if (!daemon_flydelta_read_json(*provider, localization.at("assessment_ref").get<std::string>(), assessment, error)) return false;
+        if (assessment.value("kind", "") != "flydelta_concept_localization_scan" ||
+                assessment.value("capture_set_ref", "") != job.concept_localization.capture_set_ref ||
+                assessment.value("material_key", "") != common_flydelta_concept_localization_material_key(job) ||
+                assessment.value("origin_state_ref", "") != job.concept_localization.origin_state_ref ||
+                assessment.value("origin_direction_ref", "") != job.concept_localization.origin_direction_ref ||
+                assessment.value("material_group_ref", "") != job.teaching_material_group_ref ||
+                assessment.value("model_profile_fingerprint", "") != job.seed.model_profile_fingerprint ||
+                assessment.value("model_n_embd", size_t{0}) != provider->model_n_embd ||
+                assessment.value("model_n_layers", size_t{0}) != provider->model_n_layers ||
+                assessment.value("capture_layout_revision", "") != provider->capture_layout_revision ||
+                assessment.value("minimum_alignment", -1.0f) != job.concept_localization.minimum_alignment ||
+                !assessment.value("experimental_only", false)) {
+            error = "FlyDelta layer-family assessment is incompatible";
+            return false;
+        }
+        const auto & bindings = localization.at("layer_directions");
+        const auto & serialized = artifact.at("directions");
+        if (!bindings.is_array() || bindings.empty() || bindings.size() > 8 ||
+                !serialized.is_array() || serialized.size() != bindings.size()) {
+            error = "FlyDelta layer-family artifact has incomplete direction bindings";
+            return false;
+        }
+        std::set<int32_t> unique;
+        for (size_t index = 0; index < bindings.size(); ++index) {
+            const int32_t layer = bindings[index].at("layer_index").get<int32_t>();
+            if (layer < 1 || static_cast<size_t>(layer) >= provider->model_n_layers || !unique.insert(layer).second ||
+                    std::find(job.concept_localization.layers.begin(), job.concept_localization.layers.end(),
+                        static_cast<uint32_t>(layer)) == job.concept_localization.layers.end() ||
+                    serialized[index].at("layer_index").get<int32_t>() != layer) {
+                error = "FlyDelta layer-family direction is outside its localization domain";
+                return false;
+            }
+            const auto & scans = assessment.at("layers");
+            const auto scan = std::find_if(scans.begin(), scans.end(), [&](const auto & entry) {
+                return entry.value("layer_index", 0) == layer && entry.value("usable", false);
+            });
+            if (scan == scans.end()) {
+                error = "FlyDelta layer-family direction lacks usable representation diagnostics";
+                return false;
+            }
+            json local;
+            if (!daemon_flydelta_read_json(*provider, bindings[index].at("direction_ref").get<std::string>(), local, error)) return false;
+            const auto & local_identity = local.at("localization");
+            if (local_identity.value("domain", "") != "layer_bound" ||
+                    local_identity.value("anchor_layer", 0) != layer ||
+                    local_identity.value("capture_set_ref", "") != job.concept_localization.capture_set_ref ||
+                    local_identity.value("material_key", "") != common_flydelta_concept_localization_material_key(job) ||
+                    local_identity.value("assessment_ref", "") != localization.at("assessment_ref").get<std::string>() ||
+                    local.at("directions").size() != 1 || local.at("directions").front() != serialized[index]) {
+                error = "FlyDelta layer-family realization does not match its immutable local direction";
+                return false;
+            }
+        }
+        if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, directions, error)) return false;
+        daemon_flydelta_concept_target target;
+        if (!daemon_flydelta_resolve_concept_target(provider, job, target, error)) return false;
+        origin_layer = static_cast<uint32_t>(target.layer_index);
+        return true;
+    } catch (const std::exception & exception) {
+        error = std::string("FlyDelta layer-family artifact is malformed: ") + exception.what();
+        return false;
+    }
 }
 
 bool daemon_flydelta_register_composed_direction(

@@ -563,6 +563,68 @@ bool common_flydelta_concept_candidate_to_direction(
         direction, candidate.values.size(), error);
 }
 
+bool common_flydelta_assess_concept_layer(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_concept_build_config & config,
+        const std::vector<common_flydelta_concept_trajectory> & trajectories,
+        float minimum_alignment, common_flydelta_concept_layer_assessment & assessment,
+        std::string & error) {
+    error.clear();
+    assessment = {};
+    if (!common_flydelta_concept_spec_validate(spec, error) ||
+            !common_flydelta_concept_build_config_validate(config, error) ||
+            !std::isfinite(minimum_alignment) || minimum_alignment < 0.0f || minimum_alignment > 1.0f) {
+        if (error.empty()) error = "FlyDelta concept layer assessment configuration is invalid";
+        return false;
+    }
+    if (trajectories.size() < config.min_trajectories || trajectories.size() > config.max_trajectories) {
+        error = "FlyDelta concept layer assessment requires complete bounded trajectories";
+        return false;
+    }
+    assessment.layer_index = trajectories.front().layer_index;
+    assessment.trajectories = trajectories.size();
+    std::vector<std::vector<float>> residuals;
+    std::vector<float> norms;
+    bool no_signal = false;
+    for (const auto & trajectory : trajectories) {
+        if (!common_flydelta_concept_trajectory_validate(spec, trajectory, config.dimension, error)) return false;
+        if (trajectory.layer_index != assessment.layer_index) {
+            error = "FlyDelta concept layer assessment mixes layers";
+            return false;
+        }
+        auto residual = subtract(subtract(trajectory.conditioned, trajectory.baseline),
+            subtract(trajectory.control, trajectory.baseline));
+        const float length = norm(residual);
+        if (!finite_vector(residual) || !std::isfinite(length)) {
+            error = "FlyDelta concept layer residual is non-finite";
+            return false;
+        }
+        no_signal = no_signal || length <= 1.0e-8f;
+        norms.push_back(length);
+        residuals.push_back(std::move(residual));
+    }
+    std::sort(norms.begin(), norms.end());
+    assessment.median_signal_norm = norms[norms.size() / 2];
+    if (no_signal) {
+        assessment.reason = "no_usable_residual_signal";
+        return true;
+    }
+    std::vector<size_t> indices(residuals.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    const auto mean = normalized(mean_vectors(residuals, indices, true));
+    if (mean.empty()) {
+        assessment.reason = "no_common_direction";
+        return true;
+    }
+    std::vector<float> alignments;
+    for (const auto & residual : residuals) alignments.push_back(cosine(residual, mean));
+    std::sort(alignments.begin(), alignments.end());
+    assessment.median_alignment = alignments[alignments.size() / 2];
+    assessment.usable = assessment.median_alignment >= minimum_alignment;
+    assessment.reason = assessment.usable ? "usable_representation" : "unstable_representation";
+    return true;
+}
+
 bool common_flydelta_build_concept_candidates(
         const common_flydelta_concept_spec & spec,
         const common_flydelta_concept_build_config & config,

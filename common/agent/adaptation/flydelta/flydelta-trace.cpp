@@ -86,6 +86,7 @@ void append_region_arm(const common_flydelta_intervention_region_trial & trial,
     }
     if (trial.geometry_available) copy_geometry(trial.geometry, arm);
     arm.search_score = trial.search_score;
+    arm.frontier_selection_reason = trial.frontier_selection_reason;
     arm.promising = trial.promising;
     arm.safe_to_continue = trial.safe_to_continue;
     arm.execution_class = trial.host_evaluated ? "full" :
@@ -207,6 +208,12 @@ void append_derived_trace(const common_flydelta_experiment_job & job,
     trace.has_next_action = result.has_next_action;
     trace.next_action = result.next_action;
     trace.next_action_reason = result.next_action_reason;
+    trace.concept_localization = job.concept_localization;
+    if (result.has_bootstrap_zoom_state) {
+        trace.where_origin_ref = result.bootstrap_zoom_state.where_origin_ref;
+        trace.where_status = result.bootstrap_zoom_state.where_status;
+    }
+    trace.concept_localization_assessment_ref = result.concept_localization_assessment_ref;
     trace.graft_direction_ref = result.graft_direction_ref;
     trace.graft_direction_refs = result.graft_direction_refs;
     trace.has_selected_candidate = result.has_selected_candidate;
@@ -304,7 +311,7 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
         {"geometry_available", arm.geometry_available},
         {"cosine", arm.cosine}, {"progress", arm.progress},
         {"leakage", arm.leakage}, {"shift_norm", arm.shift_norm},
-        {"search_score", arm.search_score}, {"promising", arm.promising},
+        {"search_score", arm.search_score}, {"frontier_selection_reason", arm.frontier_selection_reason}, {"promising", arm.promising},
         {"safe_to_continue", arm.safe_to_continue},
         {"execution_class", arm.execution_class},
         {"host_evaluated", arm.host_evaluated},
@@ -348,13 +355,15 @@ json trace_arm_json(const common_flydelta_trace_arm & arm) {
 bool common_flydelta_trace_validate(
         const common_flydelta_trace & trace, std::string & error) {
     error.clear();
-    if (trace.schema_version != 1 || trace.job_id.size() > 512 ||
+    if (!common_flydelta_concept_localization_request_validate(trace.concept_localization, error)) return false;
+    if (trace.schema_version != 1 || trace.concept_localization_assessment_ref.size() > 512 || trace.job_id.size() > 512 ||
             trace.phase.size() > 64 || trace.behavior_key.size() > 256 ||
             trace.fixture_baseline_ref.size() > 512 || trace.search_anchor_ref.size() > 512 ||
             trace.search_model_calls_used > trace.search_model_call_limit ||
             trace.physical_rows_completed > trace.physical_rows_started ||
             trace.physical_rows_unresolved != trace.physical_rows_started - trace.physical_rows_completed ||
             trace.surface_parent_best_ref.size() > 512 ||
+            trace.where_origin_ref.size() > 512 || trace.where_status.size() > 64 ||
             trace.next_action_reason.size() > 512 || trace.graft_direction_ref.size() > 512 ||
             trace.graft_direction_refs.size() > 8 ||
             trace.arms.size() > 256 ||
@@ -486,6 +495,17 @@ std::string common_flydelta_trace_to_json(const common_flydelta_trace & trace) {
         {"next_action_reason", trace.next_action_reason},
         {"graft_direction_ref", trace.graft_direction_ref},
         {"graft_direction_refs", trace.graft_direction_refs},
+        {"concept_localization", {
+            {"capture_set_ref", trace.concept_localization.capture_set_ref},
+            {"origin_state_ref", trace.concept_localization.origin_state_ref},
+            {"origin_direction_ref", trace.concept_localization.origin_direction_ref},
+            {"layers", trace.concept_localization.layers},
+            {"max_capture_model_calls", trace.concept_localization.max_capture_model_calls},
+            {"minimum_alignment", trace.concept_localization.minimum_alignment},
+            {"assessment_ref", trace.concept_localization_assessment_ref},
+            {"where_origin_ref", trace.where_origin_ref},
+            {"where_status", trace.where_status},
+        }},
         {"selected_candidate", trace.has_selected_candidate ? json({
             {"pipeline_index", trace.selected_candidate.pipeline_index},
             {"direction_index", trace.selected_candidate.direction_index},

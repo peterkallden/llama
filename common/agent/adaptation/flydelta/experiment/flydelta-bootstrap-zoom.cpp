@@ -188,6 +188,11 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             state.search_rank > 4 || !finite_value(state.evidence_rank) ||
             state.evidence_rank <= 0.0f || state.evidence_rank > 1024.0f ||
             state.surface_origin.empty() || state.surface_origin.size() > 128 ||
+            state.where_origin_ref.size() > 512 ||
+            (!state.where_status.empty() && state.where_status != "inherited" &&
+             state.where_status != "locally_revalidated" && state.where_status != "relocalized" &&
+             state.where_status != "challenged_unverified") ||
+            (state.where_status.empty() != state.where_origin_ref.empty()) ||
             state.parent_surface_ref.size() > 512 ||
             state.best_experimental_candidate_ref.size() > 512 || state.progress_iteration > 64 ||
             state.local_layers.size() > 3 || state.completed_trials.size() > 8 ||

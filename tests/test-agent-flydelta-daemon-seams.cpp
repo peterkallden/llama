@@ -238,5 +238,149 @@ int main() {
     const float strength = std::sqrt(0.001f);
     CHECK(std::abs(reloaded.front().values[0] * strength - 0.01f) < 1e-6f);
     CHECK(std::abs(reloaded.front().values[3] * strength + 0.01f) < 1e-6f);
+    // Exercise the real resource adapter and synthesis across two layer-local
+    // realizations. These captures are controlled fixtures, not model proof.
+    provider->model_n_embd = 2;
+    provider->lifecycle_store = std::make_shared<common_learning_in_memory_lifecycle_store>();
+    common_flydelta_teaching_material_identity material_identity;
+    material_identity.model_profile_fingerprint = "model:seams";
+    material_identity.tokenizer_fingerprint = "tokenizer:seams";
+    material_identity.template_fingerprint = "template:seams";
+    material_identity.capture_layout_revision = "layer-input:v1";
+    material_identity.execution_context_fingerprint = "context:seams";
+    material_identity.scope_fingerprint = "scope:seams";
+    material_identity.verifier_revision = "verifier:seams";
+    provider->teaching_material_runtime = std::make_shared<common_flydelta_teaching_material_runtime>(material_identity);
+    common_flydelta_evaluator_config localization_config;
+    common_flydelta_evaluator_callbacks localization_callbacks;
+    CHECK(daemon_flydelta_register_evaluator(provider, localization_config, localization_callbacks, error));
+    provider->resolve_bootstrap_zoom_state_for_job = [](const auto &, const std::string & ref,
+            common_flydelta_bootstrap_zoom_state & state, std::string & callback_error) {
+        callback_error.clear();
+        if (ref != "state:seams-origin") return false;
+        state.behavior_key = "behavior:seams";
+        state.model_profile_fingerprint = "model:seams";
+        state.capture_layout_revision = "layer-input:v1";
+        state.anchor_layer = 2;
+        state.local_layers = {2};
+        state.surface_revision = 1;
+        return true;
+    };
+    std::vector<std::string> relation_refs;
+    for (size_t index = 0; index < 2; ++index) {
+        common_flydelta_teaching_relation input;
+        input.id = "semantic:relation:" + std::to_string(index);
+        input.teaching_key = "concept:seams";
+        input.behavior_key = "behavior:seams";
+        input.source = common_adaptation_evidence_source::user_taught_concept;
+        input.scope = job_scope;
+        input.task_fingerprint = "task:relation:" + std::to_string(index);
+        input.baseline_ref = "baseline:relation";
+        input.conditioned_ref = "conditioned:relation";
+        input.control_ref = "control:relation";
+        input.verifier_ref = "verifier:relation";
+        input.evidence_ref = "evidence:relation";
+        input.status = common_flydelta_teaching_relation_status::resolved;
+        input.baseline_origin = common_flydelta_teaching_origin::host_derived;
+        input.conditioned_origin = common_flydelta_teaching_origin::host_derived;
+        input.control_origin = common_flydelta_teaching_origin::host_counterfactual;
+        input.confidence = 1.0f;
+        input.host_approved = true;
+        common_flydelta_teaching_relation stored;
+        CHECK(daemon_flydelta_persist_teaching_relation(&resources, provider->authority, input, stored, error));
+        CHECK(stored.id != input.id);
+        CHECK(provider->teaching_material_runtime->observe_relation(stored, error));
+        relation_refs.push_back(stored.id);
+    }
+    const auto material_group = provider->teaching_material_runtime->store().groups().front();
+    common_flydelta_experiment_job localization_job;
+    localization_job.id = "job:localization";
+    localization_job.kind = common_flydelta_experiment_job_kind::concept_synthesis;
+    localization_job.seed.scope = job_scope;
+    localization_job.seed.model_profile_fingerprint = material_identity.model_profile_fingerprint;
+    localization_job.seed.tokenizer_fingerprint = material_identity.tokenizer_fingerprint;
+    localization_job.seed.template_fingerprint = material_identity.template_fingerprint;
+    localization_job.seed.execution_context_fingerprint = material_identity.execution_context_fingerprint;
+    localization_job.seed.behavior_key = "behavior:seams";
+    localization_job.seed.baseline_ref = "baseline:experiment";
+    localization_job.seed.verifier_ref = "verifier:experiment";
+    localization_job.teaching_material_group_ref = material_group.group_ref;
+    localization_job.concept_localization.capture_set_ref = "challenge:seams";
+    localization_job.concept_localization.origin_state_ref = "state:seams-origin";
+    localization_job.concept_localization.origin_direction_ref = "direction:origin";
+    localization_job.concept_localization.layers = {2, 4};
+    localization_job.concept_localization.max_capture_model_calls = 12;
+    const auto material_key = common_flydelta_concept_localization_material_key(localization_job);
+    for (int32_t layer : {2, 4}) {
+        for (const auto & relation_ref : relation_refs) {
+            daemon_flydelta_concept_relation_material material;
+            CHECK(daemon_flydelta_parse_teaching_relation(*provider, relation_ref, material, error));
+            material.relation_resource_ref = relation_ref;
+            material.layer_index = layer;
+            material.capture_set_ref = material_key;
+            material.capture_identity = material_identity;
+            common_flydelta_hidden_state_capture baseline;
+            baseline.captured = true;
+            baseline.model_profile_fingerprint = provider->model_profile_fingerprint;
+            baseline.capture_layout_revision = provider->capture_layout_revision;
+            baseline.layer_indices = {static_cast<uint32_t>(layer)};
+            baseline.n_embd = 2;
+            baseline.token_index = 0;
+            baseline.position = common_flydelta_capture_position::generation_boundary;
+            baseline.values = {0.1f, 0.2f};
+            auto control = baseline;
+            auto conditioned = baseline;
+            conditioned.values[layer == 2 ? 0 : 1] += 1.0f;
+            std::string trajectory_ref;
+            CHECK(daemon_flydelta_persist_concept_trajectory(provider, material, material_group.group_ref,
+                "job:capture", "capture:baseline", "capture:conditioned", "capture:control",
+                baseline, conditioned, control, true, false, "", {}, trajectory_ref, error));
+            CHECK(provider->teaching_material_runtime->observe_layer_trajectory(material_group.group_ref,
+                layer, relation_ref, trajectory_ref, error, material_key));
+        }
+    }
+    auto snapshot = common_flydelta_teaching_material_store_to_json(provider->teaching_material_runtime->store());
+    common_flydelta_teaching_material_store reloaded_material;
+    CHECK(common_flydelta_teaching_material_store_from_json(snapshot, reloaded_material, error));
+    provider->teaching_material_runtime->store() = std::move(reloaded_material);
+    std::vector<common_flydelta_concept_candidate> local_candidates;
+    std::string scan_ref;
+    CHECK(daemon_flydelta_run_concept_synthesis(provider, localization_job, local_candidates, error, &scan_ref));
+    std::vector<common_flydelta_concept_candidate> layer_family;
+    for (const auto & candidate : local_candidates) {
+        if (candidate.kind != common_flydelta_concept_candidate_kind::raw_mean ||
+                candidate.synthesis_semantics != common_flydelta_concept_synthesis_semantics::control_residualized) continue;
+        layer_family.push_back(candidate);
+    }
+    CHECK(layer_family.size() == 2 && layer_family[0].values != layer_family[1].values);
+    std::string family_ref;
+    CHECK(localization_callbacks.persist_experimental_layer_family_for_job(
+        localization_job, layer_family, scan_ref, family_ref, error));
+    localization_job.seed.candidate_ref = family_ref;
+    std::vector<common_flydelta_basis_direction> family_directions;
+    uint32_t origin = 0;
+    CHECK(daemon_flydelta_resolve_concept_layer_family(provider, localization_job, family_directions, origin, error));
+    CHECK(origin == 2 && family_directions.size() == 2);
+    std::string family_json;
+    CHECK(resources.read_text(family_ref, provider->authority, 1024 * 1024, family_json, error));
+    auto corrupted_family = flydelta_json::parse(family_json);
+    corrupted_family["directions"][0]["values"] = {0.0f, 1.0f};
+    std::string corrupted_ref;
+    CHECK(put(corrupted_family, corrupted_ref));
+    auto corrupt_job = localization_job;
+    corrupt_job.seed.candidate_ref = corrupted_ref;
+    CHECK(!daemon_flydelta_resolve_concept_layer_family(provider, corrupt_job, family_directions, origin, error));
+    auto wrong_baseline = localization_job;
+    wrong_baseline.seed.baseline_ref = "baseline:other";
+    CHECK(!daemon_flydelta_resolve_concept_layer_family(provider, wrong_baseline, family_directions, origin, error));
+    arm.intervention_ref = family_ref;
+    arm.layer_indices = {2};
+    CHECK(binding.prepare_arm(arm, request, error));
+    const auto first_overlay = request.flydelta_activation->sparse_overlay.data;
+    arm.layer_indices = {4};
+    CHECK(binding.prepare_arm(arm, request, error));
+    CHECK(first_overlay != request.flydelta_activation->sparse_overlay.data);
+    arm.layer_indices = {3};
+    CHECK(!binding.prepare_arm(arm, request, error));
     std::cout << "daemon_seams=passed controlled_backend=yes model_quality_claim=no\n";
 }

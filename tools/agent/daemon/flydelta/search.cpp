@@ -29,6 +29,10 @@ bool daemon_flydelta_run_search_pipeline(
         return false;
     }
     provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
+    if (!provider) {
+        error = "FlyDelta WHERE search requires a scoped resource provider";
+        return false;
+    }
     common_flydelta_experiment_fixture fixture;
     fixture.id = job.seed.verifier_ref;
     fixture.task_fingerprint = job.seed.task_fingerprint;
@@ -56,7 +60,14 @@ bool daemon_flydelta_run_search_pipeline(
     if (!common_flydelta_experiment_fixture_validate(fixture, error)) return false;
 
     std::vector<common_flydelta_basis_direction> basis;
-    if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, basis, error)) return false;
+    uint32_t inherited_layer = 0;
+    if (!job.concept_localization.layers.empty()) {
+        if (!config.use_whirlpool_search || !config.use_intervention_region_search) {
+            error = "FlyDelta concept relocalization requires the existing Whirlpool WHERE path";
+            return false;
+        }
+        if (!daemon_flydelta_resolve_concept_layer_family(provider, job, basis, inherited_layer, error)) return false;
+    } else if (!daemon_flydelta_parse_directions(*provider, job.seed.candidate_ref, basis, error)) return false;
     common_flydelta_search_pipeline_direction input;
     input.direction.kind = common_flydelta_direction_kind::raw_repair;
     input.direction.layer_index = basis.front().layer_index;
@@ -76,6 +87,16 @@ bool daemon_flydelta_run_search_pipeline(
     std::sort(input.layer_anchors.begin(), input.layer_anchors.end());
     input.layer_anchors.erase(std::unique(input.layer_anchors.begin(), input.layer_anchors.end()),
         input.layer_anchors.end());
+    if (inherited_layer != 0) {
+        // The origin is only a prior. If its signal was filtered out, use the
+        // nearest available realization without moving a vector across layers.
+        const auto prior = std::min_element(input.available_layers.begin(), input.available_layers.end(),
+            [&](uint32_t left, uint32_t right) {
+                return std::abs(static_cast<int64_t>(left) - inherited_layer) <
+                    std::abs(static_cast<int64_t>(right) - inherited_layer);
+            });
+        input.layer_anchors = {*prior};
+    }
     if (!common_flydelta_search_pipeline_direction_validate(input, config, error)) return false;
 
     size_t arm_index = 0;
@@ -663,35 +684,13 @@ bool daemon_flydelta_run_search_pipeline(
 
     // Whirlpool/region search ranks compact diagnostic observations first.
     // Only the bounded frontier is re-run with generation and host
-    // verification; the search algorithm and its candidate ordering remain
-    // unchanged.
-    struct frontier_arm {
-        size_t direction_index = 0;
-        size_t trial_index = 0;
-    };
-    std::vector<frontier_arm> frontier;
-    for (size_t direction_index = 0; direction_index < result.directions.size(); ++direction_index) {
-        const auto & direction = result.directions[direction_index];
-        for (size_t trial_index = 0; trial_index < direction.region_trials.size(); ++trial_index) {
-            if (direction.region_trials[trial_index].executed) {
-                frontier.push_back({direction_index, trial_index});
-            }
-        }
-    }
-    std::stable_sort(frontier.begin(), frontier.end(), [&](const frontier_arm & left,
-            const frontier_arm & right) {
-        const auto & left_trial = result.directions[left.direction_index].region_trials[left.trial_index];
-        const auto & right_trial = result.directions[right.direction_index].region_trials[right.trial_index];
-        if (left_trial.search_score != right_trial.search_score) {
-            return left_trial.search_score > right_trial.search_score;
-        }
-        if (left_trial.candidate.layer_indices.size() != right_trial.candidate.layer_indices.size()) {
-            return left_trial.candidate.layer_indices.size() < right_trial.candidate.layer_indices.size();
-        }
-        return left_trial.candidate.total_scale < right_trial.candidate.total_scale;
-    });
+    // verification. The bounded selector may reserve one slot for a
+    // diagnostically admissible global exploration candidate.
     constexpr size_t full_generation_top_k = 3;
-    if (frontier.size() > full_generation_top_k) frontier.resize(full_generation_top_k);
+    const auto frontier = common_flydelta_select_region_frontier(result, full_generation_top_k);
+    for (const auto & location : frontier) {
+        result.directions[location.direction_index].region_trials[location.trial_index].frontier_selection_reason = location.reason;
+    }
     if (frontier.empty()) {
         result.search_status = common_flydelta_search_status::no_useful_utility;
         return true;

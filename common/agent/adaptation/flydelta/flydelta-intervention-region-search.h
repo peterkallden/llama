@@ -80,6 +80,7 @@ struct common_flydelta_intervention_region_trial {
     // Continuous diagnostic objective used by adaptive experiment search.
     // It is never a host verdict and cannot select/promote a candidate.
     float search_score = 0.0f;
+    std::string frontier_selection_reason;
     bool promising = false;
     bool safe_to_continue = false;
     std::string observed_decision_summary;

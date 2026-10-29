@@ -724,6 +724,10 @@ common_agent_server_context_host_make_flydelta_model_host(
                     std::vector<std::string> & trajectory_refs,
                     std::string & capture_error) {
                 if (!run_concept_capture(job, trajectory_refs, capture_error)) return false;
+                // The scoped capture producer persists relation/layer/set
+                // bindings. Never feed multi-layer material into the legacy
+                // single-layer readiness accumulator.
+                if (!job.concept_localization.layers.empty()) return true;
                 if (!teaching_material_runtime) return true;
                 if (job.teaching_material_group_ref.empty()) {
                     capture_error = "FlyDelta concept capture requires a teaching material group";

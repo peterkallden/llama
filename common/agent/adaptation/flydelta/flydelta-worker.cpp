@@ -164,8 +164,17 @@ bool validate_result(
         error = "FlyDelta donor capture worker result requires a manifest";
         return false;
     }
+    const bool no_usable_localization = !claimed.job.concept_localization.layers.empty() &&
+        !result.concept_localization_assessment_ref.empty() &&
+        result.has_next_action && result.next_action == common_flydelta_next_action::retain &&
+        result.concept_candidates.empty() && result.direction_candidates.empty() &&
+        result.graft_direction_refs.empty() && result.graft_direction_ref.empty();
+    if (result.concept_localization_assessment_ref.size() > 512) {
+        error = "FlyDelta localization assessment reference exceeds its bound";
+        return false;
+    }
     if (claimed.job.kind == common_flydelta_experiment_job_kind::concept_synthesis &&
-            (result.concept_candidates.empty() || result.direction_candidates.empty() ||
+            !no_usable_localization && (result.concept_candidates.empty() || result.direction_candidates.empty() ||
              result.graft_direction_ref.empty() || result.graft_direction_refs.empty() ||
              result.graft_direction_refs.front() != result.graft_direction_ref)) {
         error = "FlyDelta concept synthesis worker result requires candidates and a graft reference";
@@ -258,6 +267,7 @@ bool common_flydelta_experiment_worker_run_once(
     report.utility_gate_evaluated = result.utility_gate_evaluated;
     report.utility_decision = result.utility_decision;
     report.next_action_reason = std::move(result.next_action_reason);
+    report.concept_localization_assessment_ref = std::move(result.concept_localization_assessment_ref);
     report.graft_direction_ref = std::move(result.graft_direction_ref);
     report.graft_direction_refs = std::move(result.graft_direction_refs);
     report.has_paired_intervention = result.has_paired_intervention;
@@ -287,6 +297,7 @@ bool common_flydelta_worker_result_from_evaluator(
     target.capture_manifests = source.capture_manifests;
     target.concept_candidates = source.concept_candidates;
     target.concept_trajectory_refs = source.concept_trajectory_refs;
+    target.concept_localization_assessment_ref = source.concept_localization_assessment_ref;
     target.graft_direction_ref = source.graft_direction_ref;
     target.graft_direction_refs = source.graft_direction_refs;
     target.has_paired_intervention = source.has_paired_intervention;

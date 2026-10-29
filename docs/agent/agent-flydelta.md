@@ -2587,11 +2587,14 @@ use that shared fingerprint as well. History readers preserve duplicate rows
 so the common projection can distinguish identical retries from conflicting
 observations and exclude conflicting identities completely.
 
-`off`, `shadow` and failure fallback retain legacy probe truncation before
-visited layers are removed. They do not refill shorter batches. Only an
-experimental successful decision selects from the larger unvisited proposal
-pool. Search traces report the actual applied centre and executed probe layers
-separately from the posterior and hypothetical order.
+With global exploration disabled, `off`, `shadow` and failure fallback retain
+legacy probe truncation before visited layers are removed; they do not refill
+shorter batches. With global exploration enabled, the existing unvisited local
+proposal pool may be refilled and a separate global probe is reserved within
+the round budget. Experimental guidance can select from the unvisited local
+pool; it does not select the global probe. Search traces distinguish guidance
+choices, global probes and actual probed layers from posterior and hypothetical
+orders.
 
 At cold start all unsupported categories have the same prior means:
 `p_known=0.5` and each conditional outcome probability is `1/3`. Independent
@@ -2680,7 +2683,13 @@ serialized search trace is the record of the applied centre and layers:
 `model_midpoint` or `bayesian_posterior`;
 `initial_centre_guidance_selected_layers` contains the applied centre, and
 each round records `guidance_original_layers`, `guidance_posterior_layers`,
-`guidance_hypothetical_layers`, `guidance_selected_layers` and `probed_layers`.
+`guidance_hypothetical_layers`, `guidance_selected_layers`,
+`global_probed_layers` and `probed_layers`. `guidance_selected_layers` is the
+selected local prefix reported by the adviser, not evidence of execution;
+`global_probed_layers` records separately proposed global probes admitted to
+the batch, and `probed_layers` records the admitted local/global union. A
+shadow decision or fallback can make guidance selections differ from the
+actual local probes. Check the completed trial and arm records for execution.
 For example, an adviser can propose another centre while the algorithm keeps
 a current diagnostic. Compare the applied trace, not just the earlier event.
 Correlate selected arm IDs with actual execution, overlay confirmation and
@@ -4458,6 +4467,48 @@ ignored. The concept trajectory retains the parent surface reference and
 revision for comparison and restart provenance, while the evidence rank is
 unchanged by synthesis or grafting.
 
+A host can explicitly schedule a bounded concept-localization challenge from a
+prior search job. Its queue payload freezes the originating state and
+direction, authorized layer list, capture limit and alignment threshold. The
+origin must resolve to a scoped Bootstrap state with compatible model,
+behavior and capture-layout identity. The
+material key additionally binds the teaching group, verifier, baseline, scope
+and model/runtime identities. It is experimental search input, not evidence
+or authorization for activation. The ordinary local graft remains the default.
+
+Capture uses the same approved relations at each requested layer. The existing
+execution journal reserves logical capture rows before inference, records
+physical attempts separately, and bounds retries. Each completed trajectory is
+stored and indexed by material key, relation and layer. Interrupted capture
+can reuse completed entries; an inference interrupted before publication may
+have to run again and its physical consumption remains accounted for.
+Readiness is computed independently for each layer and requires distinct
+relations. Legacy single-layer trajectories stay in their existing list.
+
+The synthesis adapter checks every material binding, computes a representation
+scan (residual signal and alignment) per layer, and persists a diagnostic
+manifest. An unusable signal is recorded rather than treated as behavioral
+failure or a verified improvement. Each eligible layer is synthesized from
+its own trajectories. Matching synthesis semantics and estimators form an
+experimental family with separately persisted layer-bound directions. The
+family manifest binds the scan, all realization references and the original
+WHERE provenance. It does not assert that a vector transfers between layers.
+
+The normal Whirlpool path checks the manifest and uses only the family's
+actual layer-specific realizations. The inherited WHERE is an initial prior;
+if it was filtered out, the closest eligible layer supplies the initial
+centre. The resulting Bootstrap state distinguishes a host-verified
+relocalization from a diagnostic-only challenge. Neither the scan nor the
+challenge creates learning credit or activation authority.
+
+The concept-synthesis model smoke accepts `--localization-layers L1,L2,...`
+to run the explicit challenge after the ordinary local graft. It uses the
+production queue and resident host, prints the capture/synthesis traces and
+runs each resulting family search serially. The host trace carries prompts,
+model output, requested/applied overlay and verifier results. No model result
+is implied by this description; the explicit challenge must be run and its
+trace examined to evaluate its behavior.
+
 Teacher-forced margin scoring in the model smoke is behavior-specific as well:
 the positive continuation is the family target and the negative continuation
 is the fixture's nearest declared alternative. It must not use one global
@@ -5376,7 +5427,7 @@ diagnostic result and shrinks the neighbourhood for the next round:
 dense all-layer capture
   -> separation/Fisher/geometry prior
   -> initial layer centre
-  -> local layer probes
+  -> local layer probes + bounded global exploration when enabled
   -> margin + geometry objective
   -> recentre and shrink
   -> bounded host-verified arms
@@ -5388,6 +5439,15 @@ a penalty. Without margin, the provider falls back to quality and the existing
 geometry signals. `cosine`, `progress`, `leakage` and `shift_norm` remain
 diagnostics only. `UNKNOWN` and `NEUTRAL` may guide later probes, but only a
 host-known baseline-fail / candidate-pass trial can be selected as `HELPED`.
+
+Recentring is a WHERE exploration decision based on the measured diagnostic
+objective, not permission to reuse the probed intervention. An executed
+observation with unsafe geometry can therefore move the exploratory centre;
+it does not thereby become a safe continuation or produce learning evidence.
+After Whirlpool, the existing continuation selector separately requires an
+executed, safe, promising, non-HARMED trial. When DoseController is enabled,
+`safe_to_continue` also requires its final dose decision to be `accept`; an
+unresolved retry, safety boundary or rejection is not a safe continuation.
 
 Whirlpool does not mix activation spaces. Samples and directions remain
 partitioned by layer/region, model profile, execution context and capture
@@ -5405,6 +5465,24 @@ Shallow   -> one or two local rounds, then small rank-2/margin controls
 Deep      -> bounded multi-round refinement, then coefficient/TFO search
 ```
 
+For new searches, `global_probes_per_round` defaults to one. Global probes
+are sampled deterministically from allowed, unvisited layers outside the
+current radius and consume the existing round and trial budgets. Older saved
+jobs that lack the field retain the local-only policy. The seed currently uses
+task/model fingerprints, allowed layers and round; it does not include a
+fixture-group identity, so independent searches can repeat a global layer.
+
+The daemon ranks executed diagnostic observations for a bounded frontier of at
+most three full-generation arms. If an admissible global probe is not already
+in that frontier, the best such probe replaces the lowest-ranked slot. Global
+admission requires safe, promising, non-HARMED diagnostics and an accepted
+dose when evaluated. Without an admissible global probe the ordinary ranking
+is retained. Ranked candidates retain the existing selection behavior: the
+global admission condition is not a blanket safety filter on every ranked
+arm. `frontier_selection_reason` distinguishes `ranked`, `ranked_global` and
+`reserved_global`. Selection for full evaluation is not a `HELPED` verdict;
+the host verifier and existing continuation and lifecycle gates remain separate.
+
 The generic pipeline enables Whirlpool by default. Callers and tests may set
 `use_whirlpool_search=false` when they need the fixed region strategy for an
 explicit comparison or fallback. A worker can still tune its round/probe
@@ -5420,6 +5498,20 @@ and region reached per model call. The separate region `selection` field keeps
 its original meaning and is populated only by a host-known `HELPED` result.
 This prevents a search accelerator from being incorrectly evaluated as a
 promotion mechanism.
+
+The 2026-10-29 restoration was checked by the focused
+`test-agent-flydelta-whirlpool-search` and `test-agent-flydelta-search-pipeline`
+CTests. The first checks that a high-scoring unsafe observation can move the
+WHERE centre while the separate continuation selector chooses a safe trial.
+A Qwen 2.5 1.5B Vulkan smoke on NVIDIA ran the `filtered-north-orders`
+fixture before and after that correction. Both baseline generations produced
+`data.filter(dataset=id=d1, conditions=region="north")`, which the host
+rejected as invalid DSL; the valid repair was host-generated. Both traces
+showed local layer 14 and global layer 17, and neither run completed a
+host-verified overlay arm. This is evidence of the bounded diagnostic path,
+not evidence of model improvement or of a matched quality comparison between
+ordinary top-three selection and the reserved-global frontier. That comparison
+remains outstanding.
 
 The model smoke prints the trace as machine-readable lines after a
 `--region-scan` run:

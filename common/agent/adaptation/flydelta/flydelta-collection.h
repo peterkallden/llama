@@ -62,6 +62,16 @@ bool common_flydelta_collect_experiment_job(
         common_flydelta_experiment_collection_result & result,
         std::string & error);
 
+// Explicit bounded challenge from a known search lineage. This preserves the
+// original comparison inputs while starting capture in the existing queue.
+bool common_flydelta_collect_concept_localization_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & parent_job,
+        const common_flydelta_concept_localization_request & request,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error);
+
 // Enqueues one bounded follow-up only after the host-side disposition has
 // selected refine. The request supplies the same evidence and capture
 // references as the original experiment; the variant prevents queue-id

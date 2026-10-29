@@ -1,6 +1,8 @@
 #include "agent/adaptation/flydelta/flydelta-job.h"
+#include "hash/hash.h"
 
 #include <cmath>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
@@ -13,6 +15,53 @@ bool bounded(const std::string & value, size_t max_size = 512) {
 }
 
 } // namespace
+
+bool common_flydelta_concept_localization_request_validate(
+        const common_flydelta_concept_localization_request & request,
+        std::string & error) {
+    error.clear();
+    if (request.layers.empty()) {
+        if (request.capture_set_ref.empty() && request.origin_state_ref.empty() && request.origin_direction_ref.empty() &&
+                request.max_capture_model_calls == 0) return true;
+    } else if (request.layers.size() >= 2 && request.layers.size() <= 8 && bounded(request.capture_set_ref) &&
+            bounded(request.origin_state_ref) && bounded(request.origin_direction_ref) && request.max_capture_model_calls >= 6 &&
+            request.max_capture_model_calls <= 1536 && std::isfinite(request.minimum_alignment) &&
+            request.minimum_alignment >= 0.0f && request.minimum_alignment <= 1.0f) {
+        std::set<uint32_t> unique;
+        for (const auto layer : request.layers) {
+            if (layer == 0 || layer > INT32_MAX || !unique.insert(layer).second) {
+                error = "FlyDelta concept localization layers must be positive and unique";
+                return false;
+            }
+        }
+        return true;
+    }
+    error = "FlyDelta concept localization requires bounded material, origin, layers and capture budget";
+    return false;
+}
+
+std::string common_flydelta_concept_localization_material_key(
+        const common_flydelta_experiment_job & job) {
+    std::string error;
+    if (!common_flydelta_concept_localization_request_validate(job.concept_localization, error) ||
+            job.concept_localization.layers.empty()) return {};
+    const json identity = {
+        {"revision", "concept-layer-material-v1"},
+        {"request", job.concept_localization.capture_set_ref},
+        {"origin", job.concept_localization.origin_state_ref},
+        {"origin_direction", job.concept_localization.origin_direction_ref},
+        {"group", job.teaching_material_group_ref}, {"layers", job.concept_localization.layers},
+        {"budget", job.concept_localization.max_capture_model_calls},
+        {"minimum_alignment", job.concept_localization.minimum_alignment},
+        {"model", job.seed.model_profile_fingerprint}, {"tokenizer", job.seed.tokenizer_fingerprint},
+        {"template", job.seed.template_fingerprint}, {"context", job.seed.execution_context_fingerprint},
+        {"baseline", job.seed.baseline_ref}, {"verifier", job.seed.verifier_ref},
+        {"verifier_revision", job.seed.verifier_contract_revision}, {"behavior", job.seed.behavior_key},
+        {"scope", {job.seed.scope.namespace_id, job.seed.scope.project_id, job.seed.scope.session_id, job.seed.scope.turn_id}},
+    };
+    const auto bytes = identity.dump();
+    return "flydelta://concept-layer-material/" + hash_sha256_hex(bytes.data(), bytes.size());
+}
 
 const char * common_flydelta_experiment_job_kind_name(
         common_flydelta_experiment_job_kind kind) {
@@ -77,6 +126,15 @@ bool common_flydelta_experiment_job_validate(
         for (const auto & ref : refs) if (!bounded(ref)) return false;
         return true;
     };
+    if (!common_flydelta_concept_localization_request_validate(job.concept_localization, error)) return false;
+    if (!job.concept_localization.layers.empty() &&
+            ((job.kind != common_flydelta_experiment_job_kind::concept_capture &&
+              job.kind != common_flydelta_experiment_job_kind::concept_synthesis &&
+              job.kind != common_flydelta_experiment_job_kind::search_pipeline) ||
+             !bounded(job.teaching_material_group_ref))) {
+        error = "FlyDelta concept localization is only valid for material and search jobs";
+        return false;
+    }
     if (job.kind != common_flydelta_experiment_job_kind::donor_capture &&
             !job.capture_candidate_ids.empty()) {
         error = "FlyDelta capture-candidate references are only valid for donor capture jobs";
@@ -210,6 +268,16 @@ std::string common_flydelta_experiment_job_to_json(
     };
     if (job.whirlpool_global_probes_per_round)
         value["whirlpool_global_probes_per_round"] = job.whirlpool_global_probes_per_round;
+    if (!job.concept_localization.layers.empty()) {
+        value["concept_localization"] = {
+            {"capture_set_ref", job.concept_localization.capture_set_ref},
+            {"origin_state_ref", job.concept_localization.origin_state_ref},
+            {"origin_direction_ref", job.concept_localization.origin_direction_ref},
+            {"layers", job.concept_localization.layers},
+            {"max_capture_model_calls", job.concept_localization.max_capture_model_calls},
+            {"minimum_alignment", job.concept_localization.minimum_alignment},
+        };
+    }
     return value.dump();
 }
 
@@ -267,6 +335,13 @@ bool common_flydelta_experiment_job_from_json(
         job.representation_augmentation_state_ref = value.value(
             "representation_augmentation_state_ref", "");
         job.teaching_material_group_ref = value.value("teaching_material_group_ref", "");
+        const auto localization = value.value("concept_localization", json::object());
+        job.concept_localization.capture_set_ref = localization.value("capture_set_ref", "");
+        job.concept_localization.origin_state_ref = localization.value("origin_state_ref", "");
+        job.concept_localization.origin_direction_ref = localization.value("origin_direction_ref", "");
+        job.concept_localization.layers = localization.value("layers", std::vector<uint32_t>{});
+        job.concept_localization.max_capture_model_calls = localization.value("max_capture_model_calls", size_t{0});
+        job.concept_localization.minimum_alignment = localization.value("minimum_alignment", 0.3f);
         job.evaluation_candidate_id = value.value("evaluation_candidate_id", "");
         job.evaluation_suite_ref = value.value("evaluation_suite_ref", "");
         job.evaluation_revision = value.value("evaluation_revision", "");

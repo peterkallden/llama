@@ -3,8 +3,10 @@
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,6 +32,13 @@ bool common_flydelta_teaching_material_identity_validate(
 std::string common_flydelta_teaching_material_compatibility_key(
         const common_flydelta_teaching_material_identity & identity);
 
+struct common_flydelta_layer_trajectory {
+    int32_t layer_index = 0;
+    std::string relation_ref;
+    std::string trajectory_ref;
+    std::string capture_set_ref;
+};
+
 struct common_flydelta_teaching_material_group {
     std::string group_ref;
     std::string teaching_key;
@@ -38,6 +47,8 @@ struct common_flydelta_teaching_material_group {
     common_flydelta_teaching_material_identity identity;
     std::vector<std::string> relation_refs;
     std::vector<std::string> trajectory_refs;
+    // Separate from legacy single-layer material; readiness is per layer.
+    std::vector<common_flydelta_layer_trajectory> layer_trajectories;
     size_t minimum_relations = 2;
     size_t minimum_trajectories = 2;
     bool relation_set_ready = false;
@@ -66,6 +77,16 @@ public:
             const std::string & trajectory_ref,
             const common_flydelta_teaching_material_identity & identity,
             std::string & error);
+
+    bool observe_layer_trajectory(
+            const std::string & group_ref, int32_t layer_index,
+            const std::string & relation_ref, const std::string & trajectory_ref,
+            const common_flydelta_teaching_material_identity & identity,
+            std::string & error, const std::string & capture_set_ref = {});
+
+    bool resolve_layer_group(const std::string & group_ref, int32_t layer_index,
+            common_flydelta_teaching_material_group & group, std::string & error,
+            const std::string & capture_set_ref = {}) const;
 
     // Resolves only a group with complete trajectory material. Relation and
     // trajectory payloads remain in the host's existing artifact store.
@@ -138,9 +159,23 @@ public:
             const std::string & trajectory_ref,
             std::string & error);
 
+    bool observe_layer_trajectory(const std::string & group_ref, int32_t layer_index,
+            const std::string & relation_ref, const std::string & trajectory_ref,
+            std::string & error, const std::string & capture_set_ref = {});
+
+    bool resolve_relation_set(const std::string & group_ref,
+            common_flydelta_teaching_material_group & group, std::string & error) const;
+    bool resolve_ready_group(const std::string & group_ref,
+            common_flydelta_teaching_material_group & group, std::string & error) const;
+    bool resolve_layer_group(const std::string & group_ref, int32_t layer_index,
+            common_flydelta_teaching_material_group & group, std::string & error,
+            const std::string & capture_set_ref = {}) const;
+
     const common_flydelta_teaching_material_identity & identity() const {
         return identity_;
     }
+    // Legacy direct access is intended for single-threaded setup/tests only.
+    // Runtime callers should use the synchronized facade above.
     const common_flydelta_teaching_material_store & store() const {
         return store_;
     }
@@ -155,6 +190,7 @@ private:
     common_flydelta_teaching_material_identity identity_;
     common_flydelta_teaching_material_persistence persistence_;
     common_flydelta_teaching_material_store store_;
+    mutable std::mutex mutex_;
 };
 
 // Reference-only snapshot helpers. The host may place this JSON in the

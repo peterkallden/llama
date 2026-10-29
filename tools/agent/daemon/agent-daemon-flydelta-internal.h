@@ -158,11 +158,15 @@ bool daemon_flydelta_load_dose_calibration(
 
 struct daemon_flydelta_concept_relation_material {
     common_flydelta_teaching_relation relation;
+    // The relation's stored URI can differ from its original semantic id.
+    std::string relation_resource_ref;
     std::string semantic_anchor;
     int32_t layer_index = -1;
     std::string parent_surface_ref;
     uint64_t parent_surface_revision = 0;
     float parent_evidence_rank = 0.0f;
+    std::string capture_set_ref;
+    common_flydelta_teaching_material_identity capture_identity;
 };
 
 struct daemon_flydelta_concept_target {
@@ -381,7 +385,7 @@ bool daemon_flydelta_run_concept_synthesis(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
         std::vector<common_flydelta_concept_candidate> & candidates,
-        std::string & error);
+        std::string & error, std::string * localization_assessment_ref = nullptr);
 
 bool daemon_flydelta_run_decision_margin_challenger(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
@@ -442,7 +446,13 @@ bool daemon_flydelta_register_composed_directions(
         std::vector<common_flydelta_basis_direction> directions,
         const std::string & derivation,
         std::string & reference,
-        std::string & error);
+        std::string & error, const json & localization = json::object());
+
+bool daemon_flydelta_resolve_concept_layer_family(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<common_flydelta_basis_direction> & directions,
+        uint32_t & origin_layer, std::string & error);
 
 bool daemon_flydelta_register_composed_direction(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
